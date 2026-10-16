@@ -1,0 +1,116 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+// The sled's slide test (jolt sledtest slide): a documented sled (VEHICLE_TYPE_SLED, its presets, no motor) at rest on a
+// 15 degree slope, let go there and not dropped onto it, so no landing can toss a coin: a drop from a metre up lands the
+// sled on an edge, and a millimetre of start decides whether it slides or stops. The sled's speed is read at fixed times of
+// physics time and compared with the controller-level sled scenario (the same sled let go at rest on a 15 degree slope in
+// the harness) within 2%. This file is the layout and the pass line, which have no scene in them, so a test can run the
+// same numbers against a scene without a region.
+
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Text;
+using OpenMetaverse;
+
+namespace OpenSim.Region.PhysicsModules.Jolt.Diagnostics
+{
+    internal static class SledSlideScenario
+    {
+        /// <summary>The slope, in degrees.</summary>
+        public const float SlopeDegrees = 15f;
+
+        /// <summary>The ramp that makes the slope where the region's ground has none: a box long enough for the whole test.</summary>
+        public static readonly Vector3 RampSize = new Vector3(64f, 8f, 1f);
+
+        /// <summary>The sled's box.</summary>
+        public static readonly Vector3 SledSize = new Vector3(2f, 1f, 0.5f);
+
+        /// <summary>The gap between the sled's underside and the ramp's top face when it is let go (metres).</summary>
+        public const float Gap = 0.0005f;
+
+        /// <summary>How far up the slope from the ramp's centre the sled starts (metres).</summary>
+        public const float StartUphill = 20f;
+
+        /// <summary>Physics seconds after the sled is let go at which its speed is read.</summary>
+        public static readonly double[] Times = { 1.0, 2.0, 3.0, 4.0 };
+
+        /// <summary>
+        /// The sled's speed (m/s) at <see cref="Times"/>: the harness's sled scenario at 45 Hz with 2 collision steps, the
+        /// documented sled let go at rest on its 15 degree slope (2.766 5.395 7.938 10.397; at 64 Hz with 2 collision steps
+        /// 2.769 5.399 7.942 10.402), whose figures agree at every rate within 0.1%.
+        /// </summary>
+        public static readonly double[] Speeds = { 2.766, 5.395, 7.938, 10.397 };
+
+        /// <summary>The pass line: the largest error of a reading, as a percent of the figure it is read against.</summary>
+        public const double TolerancePercent = 2.0;
+
+        /// <summary>The ramp's and the sled's rotation: about the world's y axis, which turns the box's +x end down the slope.</summary>
+        public static Quaternion Tilt()
+            => Quaternion.CreateFromAxisAngle(Vector3.UnitY, SlopeDegrees * (float)(Math.PI / 180.0));
+
+        /// <summary>
+        /// Where the ramp and the sled go: the ramp centred at (<paramref name="x"/>, <paramref name="y"/>,
+        /// <paramref name="rampZ"/>), the sled on its top face <see cref="StartUphill"/> metres up the slope from the centre,
+        /// with the sled's underside <see cref="Gap"/> above the face and the same rotation, nose down the slope.
+        /// </summary>
+        public static (Vector3 Ramp, Vector3 Sled, Quaternion Rotation) Layout(float x, float y, float rampZ)
+        {
+            Quaternion q = Tilt();
+            var ramp = new Vector3(x, y, rampZ);
+            // In the ramp's own axes: up the slope is -x, and up from the face is z, half the ramp's thickness plus the
+            // sled's half thickness plus the gap.
+            var inRamp = new Vector3(-StartUphill, 0f, RampSize.Z * 0.5f + SledSize.Z * 0.5f + Gap);
+            return (ramp, ramp + inRamp * q, q);
+        }
+
+        /// <summary>The lowest the ramp's far (downhill) end reaches below its centre, so a caller can keep it off the ground.</summary>
+        public static float RampHalfDrop()
+            => RampSize.X * 0.5f * (float)Math.Sin(SlopeDegrees * Math.PI / 180.0) + RampSize.Z * 0.5f;
+
+        /// <summary>The speed at <paramref name="t"/> from samples of (physics time, speed), linearly between the two around it.</summary>
+        public static double SpeedAt(IReadOnlyList<(double T, double Speed)> samples, double t)
+        {
+            for (int i = 1; i < samples.Count; i++)
+            {
+                if (samples[i].T >= t - 1e-9)
+                {
+                    double span = samples[i].T - samples[i - 1].T;
+                    if (span <= 0.0)
+                        return samples[i].Speed;
+                    return samples[i - 1].Speed + (samples[i].Speed - samples[i - 1].Speed) * (t - samples[i - 1].T) / span;
+                }
+            }
+            return samples.Count > 0 ? samples[samples.Count - 1].Speed : 0.0;
+        }
+
+        /// <summary>
+        /// Reads the samples at <see cref="Times"/> against <see cref="Speeds"/>. Returns true when every reading is within
+        /// <see cref="TolerancePercent"/>, and one line for each reading for the log.
+        /// </summary>
+        public static bool Check(IReadOnlyList<(double T, double Speed)> samples, out List<string> lines)
+        {
+            lines = new List<string>();
+            bool pass = samples.Count > 0 && samples[samples.Count - 1].T >= Times[Times.Length - 1] - 1e-9;
+            for (int i = 0; i < Times.Length; i++)
+            {
+                double got = SpeedAt(samples, Times[i]);
+                double error = Math.Abs(got - Speeds[i]) / Speeds[i] * 100.0;
+                bool ok = error <= TolerancePercent;
+                pass &= ok;
+                lines.Add(string.Format(CultureInfo.InvariantCulture, "t = {0:0.0} s: {1:0.000} m/s against {2:0.000} ({3:0.00}% off) {4}",
+                    Times[i], got, Speeds[i], error, ok ? "ok" : "OFF"));
+            }
+            return pass;
+        }
+
+        /// <summary>One sample for the log.</summary>
+        public static string Describe((double T, double Speed) sample)
+            => string.Format(CultureInfo.InvariantCulture, "t = {0:0.000} s  speed {1:0.000} m/s", sample.T, sample.Speed);
+    }
+}

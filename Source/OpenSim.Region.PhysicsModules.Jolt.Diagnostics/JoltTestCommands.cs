@@ -628,7 +628,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Diagnostics
 
         // Sled tests. `jolt sledtest [slide|nosteer|grip]` (default slide). Rezzes a physical
         // VEHICLE_TYPE_SLED on the terrain and drives ONE aspect of the extracted controller:
-        //   slide   : born nose-down -> glides forward down its nose (SimulateSledMovement gravity engine)
+        //   slide   : let go at rest on a 15 degree ramp -> speed at 1, 2, 3, 4 s against the controller-level scenario (2%)
         //   nosteer : angular motor -> the sled does NOT turn (motor TS 1000 inert) - the car/sled contrast
         //   grip    : nose-down glide -> forward speed builds while lateral slip stays gripped
         private void JoltSledTest(string scenario)
@@ -659,34 +659,64 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Diagnostics
             return (sled, pa, jp, id);
         }
 
-        // ---- sled (slide): born nose-down -> glides forward down its nose --------------------------
+        // ---- sled (slide): let go at rest on a 15 degree slope, speed read at fixed physics times --------
+        // The sled is not dropped: it starts on a 15 degree ramp, its underside half a millimetre above the ramp's face, so there is no
+        // landing for a millimetre of start to toss (a drop from a metre up lands on an edge and either slides or stops).
+        // Its speed is read at 1, 2, 3 and 4 s of physics time, every sample is logged, and the readings are compared with the
+        // controller-level sled scenario within 2% (SledSlideScenario).
         private void SledSlideTest()
         {
             float cx = 128f, cy = 128f;
             float ground = TerrainHeightAt(cx, cy);
-            Quaternion pitch = Quaternion.CreateFromAxisAngle(Vector3.UnitY, 20f * (float)(Math.PI / 180.0)); // nose down
-            var (sled, pa, jp, id) = RezSled(cx, cy, ground + 1.0f, pitch);
-            if (pa == null) { MainConsole.Instance.Output($"{LogHeader} sledtest: sled has no PhysActor."); return; }
+            float rampZ = ground + SledSlideScenario.RampHalfDrop() + 6f;   // the ramp's low end 6 m above the ground
+            var (rampPos, sledPos, tilt) = SledSlideScenario.Layout(cx, cy, rampZ);
 
-            MainConsole.Instance.Output($"{LogHeader} [sledtest:slide] sled id={id} born nose-down ~20deg, type={pa.VehicleType} (expect 1)");
-            MainConsole.Instance.Output($"     t   |  fwdSpeed |   speedXY | z-ground |  tiltDeg");
+            SceneObjectGroup ramp = RezTestPrim("box", rampPos, SledSlideScenario.RampSize);
+            ramp.UpdateGroupRotationR(tilt);
+            if (ramp.RootPart.PhysActor != null) ramp.RootPart.PhysActor.Orientation = tilt;
 
-            float maxSpeed = 0f;
-            for (int i = 0; i <= 8; i++)
+            var (sled, pa, jp, id) = RezSled(sledPos.X, sledPos.Y, sledPos.Z, tilt);
+            if (pa == null)
             {
-                System.Threading.Thread.Sleep(500);
-                if (!CarState(jp, out float tilt, out SVector3 p, out SVector3 lv, out SQuaternion o))
-                { MainConsole.Instance.Output($"  {i * 0.5f,4:0.0}s | (no body state)"); continue; }
-                var fwd = SVector3.Transform(new SVector3(1f, 0f, 0f), o);
-                float fwdSpeed = lv.X * fwd.X + lv.Y * fwd.Y + lv.Z * fwd.Z;
-                float speedXY = (float)Math.Sqrt(lv.X * lv.X + lv.Y * lv.Y);
-                if (speedXY > maxSpeed) maxSpeed = speedXY;
-                MainConsole.Instance.Output($"  {i * 0.5f,4:0.0}s | {fwdSpeed,9:0.000} | {speedXY,9:0.000} | {p.Z - TerrainHeightAt(p.X, p.Y),8:0.000} | {tilt,8:0.0}");
+                MainConsole.Instance.Output($"{LogHeader} sledtest: sled has no PhysActor.");
+                _scene.DeleteSceneObject(ramp, false);
+                return;
             }
 
-            bool pass = maxSpeed > 0.5f;
-            MainConsole.Instance.Output($"{LogHeader} [sledtest:slide] {(pass ? "PASS" : "FAIL")}: sled glided down its nose (max XY speed {maxSpeed:0.00} m/s).");
+            // Physics time since the sled was let go: the steps the region has taken, not the wall clock, so a late sample
+            // cannot move a reading. Without step counting (an engine step rate of 0) the wall clock stands in.
+            SubstepAccumulator steps = _s.Substeps;
+            var wall = System.Diagnostics.Stopwatch.StartNew();
+            long steps0 = steps?.Steps ?? 0;
+            Func<double> now = () => steps != null ? (steps.Steps - steps0) * (double)steps.StepSeconds : wall.Elapsed.TotalSeconds;
+
+            MainConsole.Instance.Output($"{LogHeader} [sledtest:slide] sled id={id} at rest on a {SledSlideScenario.SlopeDegrees:0} degree ramp, type={pa.VehicleType} (expect 1), clock={(steps != null ? "physics steps" : "wall clock")}");
+
+            var samples = new List<(double T, double Speed)>();
+            double last = -1.0, end = SledSlideScenario.Times[SledSlideScenario.Times.Length - 1] + 0.2;
+            var timeout = System.Diagnostics.Stopwatch.StartNew();
+            while (timeout.Elapsed.TotalSeconds < 30.0)
+            {
+                double t = now();
+                if (t >= last + 0.1)
+                {
+                    if (!CarState(jp, out _, out _, out SVector3 lv, out _))
+                    { MainConsole.Instance.Output($"  t = {t:0.000} s  (no body state)"); break; }
+                    var sample = (T: t, Speed: (double)lv.Length());
+                    samples.Add(sample);
+                    last = t;
+                    MainConsole.Instance.Output($"  {SledSlideScenario.Describe(sample)}");
+                    if (t >= end) break;
+                }
+                System.Threading.Thread.Sleep(5);
+            }
+
+            bool pass = SledSlideScenario.Check(samples, out List<string> lines);
+            foreach (string line in lines)
+                MainConsole.Instance.Output($"  {line}");
+            MainConsole.Instance.Output($"{LogHeader} [sledtest:slide] {(pass ? "PASS" : "FAIL")}: speed at 1, 2, 3, 4 s against the controller-level sled scenario within {SledSlideScenario.TolerancePercent:0}%.");
             _scene.DeleteSceneObject(sled, false);
+            _scene.DeleteSceneObject(ramp, false);
         }
 
         // ---- sled (nosteer): angular motor -> the sled does NOT turn (the car/sled contrast) -------

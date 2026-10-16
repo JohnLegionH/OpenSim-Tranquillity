@@ -40,7 +40,8 @@ public class VehicleInWorldzMouselookTurnTests
     //   Second Life, 45 Hz: overshoot 11.43 degrees, within half a degree from 8.7 s on.
     //   InWorldz,    45 Hz: no overshoot (89.78 degrees at most), 20.8 degrees short at 1 s, 2.6 at 2 s, within 0.4 from 3 s,
     //                       0.9 short from 12 s on.
-    //   InWorldz,    11 Hz: no overshoot (89.15 at most), 39.6 degrees short at 1 s, within 1.5 degrees from 4 s on (readings 0.85 to 1.47 short)
+    //   InWorldz,    11 Hz: no overshoot (89.15 at most), 39.6 degrees short at 1 s (19.7 once the motor ramps in each collision step),
+    //                       within 1.5 degrees from 4 s on (readings 0.85 to 1.47 short)
     //                       (inside the dead zone's 2.8 degrees, where InWorldz stops steering).
     // The car drives on under Halcyon's linear motor, which ramps from a 0.04 m/s start and takes the car through the turn at a
     // different speed than the documented equation did; it comes to rest inside the dead zone a little short of the camera
@@ -69,12 +70,11 @@ public class VehicleInWorldzMouselookTurnTests
         }
         Assert.True(peak - 90.0 < 0.5, $"overshoot {peak - 90.0}");                     // the turn does not carry past the camera
         // Full rate until within 30 degrees, then slower. The angular motor is Halcyon's stepwise ramp, whose growth per step is
-        // the same share of a timescale at any rate, but at one step per heartbeat (11 Hz) it starts later from its stiction
-        // start: 36.9 degrees short at 1 s there, against about 20 at 45 Hz.
-        if (physicsRate > 0)
-            Assert.InRange(Err(1.0), -25.0, -15.0);
-        else
-            Assert.InRange(Err(1.0), -40.0, -30.0);
+        // the same share of a timescale at any rate, from its stiction start. It used to start later at one step per heartbeat
+        // (11 Hz), because the ramp took a whole heartbeat's step from the start: 36.9 degrees short at 1 s there, against about
+        // 20 at 45 Hz. It runs in each collision step now (15 ms at 11 Hz with the default 6, Halcyon's own step), and is 19.7
+        // short at 1 s at 11 Hz and 20 at 45 Hz.
+        Assert.InRange(Err(1.0), -25.0, -15.0);
         Assert.True(hold.Where(s => s.T >= 4.0).All(s => Math.Abs(HeadingDegrees(s) - 90.0) < 2.0), $"within two degrees of the camera from 4 s on: errors {string.Join(" ", hold.Where(s => s.T >= 4.0).Select(s => $"{s.T:0.0}:{HeadingDegrees(s) - 90.0:0.00}").Where((x, i) => i % 6 == 0))}");
         Assert.True(hold.Where(s => s.T >= 3.0).All(s => Math.Abs(HeadingDegrees(s) - 90.0) < 2.81), "inside the dead zone from 3 s on");
         if (physicsRate > 0)

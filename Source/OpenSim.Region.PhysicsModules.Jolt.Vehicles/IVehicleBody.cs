@@ -34,6 +34,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
     ///    (deltaV = f / mass * dt). Bullet ApplyCentralForce == Jolt AddForce.
     ///  - AddTorque(t) = continuous torque consumed by the NEXT step
     ///    (deltaW = invInertia * t * dt). Bullet ApplyTorque == Jolt AddTorque.
+    ///    (A host that runs the controller inside the engine's collision steps gives the body these two as the velocity
+    ///    changes they make over the collision step; the controller itself adds no force and no torque.)
     ///  - Orientation is the PRIM orientation (SL convention), not any engine-internal
     ///    axis-corrected body orientation.
     /// </summary>

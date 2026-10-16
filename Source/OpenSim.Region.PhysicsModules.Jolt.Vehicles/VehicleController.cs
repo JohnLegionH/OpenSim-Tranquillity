@@ -78,7 +78,7 @@
  * VehicleSpring, each as the exact solution over the step the engine takes.
  *
  * One evaluation-order note: ApplyGravity's ground fudge test is written here as
- * `IsGroundVehicle && _body.HasCollision` (BulletSim: `HasSomeCollision && IsGroundVehicle`) so
+ * `GroundVehicle && _body.HasCollision` (BulletSim: `HasSomeCollision && IsGroundVehicle`) so
  * the engine query short-circuits away for non-ground vehicles; the result is identical.
  *
  * THIS SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND.
@@ -95,7 +95,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
     /// The vehicle controller, backend-agnostic: Second Life's documented vehicle behaviours and the sled's
     /// slope assist from the Halcyon sled movement, on a frame structure derived from the Halcyon vehicle code.
     /// The host owns one instance per vehicle body and calls Step(dt) every frame BEFORE the
-    /// physics step while the vehicle is active and physical.
+    /// physics step while the vehicle is active and physical. A host whose engine splits its step into collision steps
+    /// calls <see cref="BeginUpdate"/> before the step and <see cref="StepOnce"/> before each collision step instead, so that
+    /// the terms that integrate over time are worked out over the collision step's own length.
     /// </summary>
     /// <summary>
     /// What the vehicle knows of its driver's camera: the world direction it looks along, and whether the driver is in
@@ -105,14 +107,153 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
     public sealed class VehicleController
     {
-        // The neutral physics seam this controller reads/writes through
-        private readonly IVehicleBody _body;
+        // The neutral physics seam this controller reads/writes through. _hostBody is the host's body, which the
+        // Update-rate work (BeginUpdate, Rest, Hold and the script-facing calls) uses. _body is the body the code in front
+        // of it reads and writes: the host's, except inside StepOnce, where a host that steps inside the engine's collision
+        // steps (Jolt's step listener) hands in its own view of the body for that one step.
+        private readonly IVehicleBody _hostBody;
+        private IVehicleBody _body;
 
-        // Vehicle properties and runtime state
+        // Vehicle properties and runtime state, as the script calls set them (the live set).
         private VehicleProperties _props;
+
+        // The snapshot of the live properties the steps read: the type, flags, parameters and reference frame as they were
+        // when BeginUpdate (or a call that asks a question of the vehicle) last took them. Script threads change the live
+        // set at any time and never this one, which is written only on the host's thread between engine steps, so what a
+        // collision step reads does not change while the engine steps. Its Dynamics is the live one: the running state of the
+        // motors, which the steps advance. A script's motor set reaches it through the pending set below.
+        private readonly VehicleProperties _sp = new VehicleProperties();
+        private volatile bool _paramsDirty = true;
+        private static readonly VehFloatParam[] FloatKeys = (VehFloatParam[])Enum.GetValues(typeof(VehFloatParam));
+        private static readonly VehVectorParam[] VectorKeys = (VehVectorParam[])Enum.GetValues(typeof(VehVectorParam));
+        private static readonly VehRotationParam[] RotationKeys = (VehRotationParam[])Enum.GetValues(typeof(VehRotationParam));
+
+        /// <summary>
+        /// Whether a call that changes the motors' running state waits for the next <see cref="BeginUpdate"/> (or question put
+        /// to the vehicle) instead of acting at once: a script's motor direction set, a type change (which clears the
+        /// running state), <see cref="StopMotors"/> and <see cref="ResumeAfterHold"/>. The host that steps inside the
+        /// engine's collision steps sets it, so that a call from a script or scene thread never changes the running state
+        /// while the engine steps; the effect is the same, because the state only acts in a step. Calls are applied at the
+        /// start of the next Update, the clearing ones before the motor sets (a motor set made after one of them is the
+        /// later call, and one made before it was dropped when the call was made).
+        /// </summary>
+        public bool DeferStateChanges { get; set; }
+
+        // Taken by every call that writes the live properties and by the snapshot copy, so the copy never reads a
+        // dictionary a script thread is changing. Lock order: _propsGate, then _pendingGate.
+        private readonly object _propsGate = new object();
+
+        private readonly object _pendingGate = new object();
+        private Vector3 _pendingLinear, _pendingAngular;
+        private bool _hasPendingLinear, _hasPendingAngular;
+
+        // Calls that clear or stop the running state, waiting for the next Update (written under _pendingGate; the first two are
+        // also read without it, by the questions below).
+        private volatile bool _pendingTypeReset, _pendingStop;
+        private bool _pendingResume;
+
+        // True while any of the three waits (read without the lock, like the motor flags, so the common case, nothing
+        // waiting, costs nothing).
+        private volatile bool _hasPendingState;
+
+        private void SetLinearMotor(Vector3 direction)
+        {
+            if (!DeferStateChanges)
+            {
+                MoveLinear(direction);
+                return;
+            }
+            lock (_pendingGate)
+            {
+                _pendingLinear = direction;
+                _hasPendingLinear = true;
+            }
+        }
+
+        private void SetAngularMotor(Vector3 direction)
+        {
+            if (!DeferStateChanges)
+            {
+                MoveAngular(direction);
+                return;
+            }
+            lock (_pendingGate)
+            {
+                _pendingAngular = direction;
+                _hasPendingAngular = true;
+            }
+        }
+
+        // Takes the live properties and the pending motor sets into the snapshot. On the host's thread, between engine steps.
+        private void RefreshSnapshot()
+        {
+            if (_hasPendingLinear || _hasPendingAngular || _hasPendingState)
+            {
+                Vector3 linear, angular;
+                bool hasLinear, hasAngular, typeReset, stop, resume;
+                lock (_pendingGate)
+                {
+                    linear = _pendingLinear;
+                    angular = _pendingAngular;
+                    hasLinear = _hasPendingLinear;
+                    hasAngular = _hasPendingAngular;
+                    typeReset = _pendingTypeReset;
+                    stop = _pendingStop;
+                    resume = _pendingResume;
+                    _hasPendingLinear = _hasPendingAngular = false;
+                    _pendingTypeReset = _pendingStop = _pendingResume = false;
+                    _hasPendingState = false;
+                }
+                if (typeReset)
+                    ResetRunningState();
+                if (stop)
+                    StopMotorsNow();
+                if (resume)
+                    _props.Dynamics.LastAccessTOD = Clock();
+                if (hasLinear)
+                    MoveLinear(linear);
+                if (hasAngular)
+                    MoveAngular(angular);
+            }
+            if (!_paramsDirty)
+                return;
+            lock (_propsGate)
+                CopySnapshot();
+        }
+
+        private void CopySnapshot()
+        {
+            _paramsDirty = false;
+            _sp.Type = _props.Type;
+            _sp.Flags = _props.Flags;
+            foreach (VehFloatParam key in FloatKeys)
+                if (_props.ParamsFloat.TryGetValue(key, out float f))
+                    _sp.ParamsFloat[key] = f;
+            foreach (VehVectorParam key in VectorKeys)
+                if (_props.ParamsVec.TryGetValue(key, out Vector3 v))
+                    _sp.ParamsVec[key] = v;
+            foreach (VehRotationParam key in RotationKeys)
+                if (_props.ParamsRot.TryGetValue(key, out Quaternion q))
+                    _sp.ParamsRot[key] = q;
+            _sp.Dynamics = _props.Dynamics;
+        }
+
+        // A type change clears the running state: the motors off until a script sets one, the clocks and carries back to
+        // their start.
+        private void ResetRunningState()
+        {
+            _props.Dynamics.Reset();
+            _props.Dynamics.LinearDecayIndex = float.PositiveInfinity;
+            _props.Dynamics.AngularDecayIndex = float.PositiveInfinity;
+            _props.Dynamics.LastAccessTOD = Clock();
+            _bankingAirTime = 0;
+        }
 
         // Cached mass
         private float m_vehicleMass;
+
+        /// <summary>The body's mass as <see cref="BeginUpdate"/> read it.</summary>
+        public float BodyMass => m_vehicleMass;
 
         // The clock the motor reset and the spike checks read: the time since the last step or motor set.
         // The wall clock by default; a host that steps faster or slower than real time (a test harness)
@@ -177,9 +318,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // =====================================================================
         public VehicleController(IVehicleBody body)
         {
+            _hostBody = body;
             _body = body;
             _props = new VehicleProperties();
             SetVehicleDefaults(VehicleType.None);
+            RefreshSnapshot();
         }
 
         // =====================================================================
@@ -191,14 +334,23 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             get { return (_props.Type != VehicleType.None); }
         }
 
-        /// <summary>True once a script has set the linear motor, until the motors are reset.</summary>
-        public bool LinearMotorSet => !float.IsPositiveInfinity(_props.Dynamics.LinearDecayIndex);
+        /// <summary>
+        /// True once a script has set the linear motor, until the motors are reset. A type change or StopMotors that waits for
+        /// the next Update (<see cref="DeferStateChanges"/>) already counts: the motors are reported as they will be once it
+        /// has landed, so a host asking between Updates is not told of a motor the call has ended. A motor set that waits is
+        /// not counted until it lands.
+        /// </summary>
+        public bool LinearMotorSet => !(_pendingTypeReset || _pendingStop) && !float.IsPositiveInfinity(_props.Dynamics.LinearDecayIndex);
 
         public bool IsGroundVehicle
         {
             // A motorcycle is a car where InWorldz tells the two apart (VehicleDynamics.cs:2826).
             get { return (_props.Type == VehicleType.Car || _props.Type == VehicleType.Motorcycle || _props.Type == VehicleType.Sled); }
         }
+
+        // The same, for the step: the type as of the last snapshot.
+        private bool GroundVehicle
+            => _sp.Type == VehicleType.Car || _sp.Type == VehicleType.Motorcycle || _sp.Type == VehicleType.Sled;
 
         /// <summary>Read a current float vehicle param (preset default + any llSetVehicleFloatParam override).
         /// Introspection for the host / tests - e.g. asserting the boat preset's buoyancy.</summary>
@@ -214,8 +366,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// <summary>The current reference frame (llSetVehicleRotationParam VEHICLE_REFERENCE_FRAME). For tests.</summary>
         internal Quaternion ReferenceFrame => _props.GetRot(VehRotationParam.ReferenceFrame);
 
-        /// <summary>True once a script has set the angular motor, until the motors are reset. For tests.</summary>
-        internal bool AngularMotorSet => !float.IsPositiveInfinity(_props.Dynamics.AngularDecayIndex);
+        /// <summary>True once a script has set the angular motor, until the motors are reset; as <see cref="LinearMotorSet"/>. For tests.</summary>
+        internal bool AngularMotorSet => !(_pendingTypeReset || _pendingStop) && !float.IsPositiveInfinity(_props.Dynamics.AngularDecayIndex);
 
         /// <summary>The seconds since each motor was set, as its decay clock reads (negative while a short motor's decay is
         /// held back under InWorldz's behaviour). For tests.</summary>
@@ -234,12 +386,33 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// <see cref="CheckResetMotors"/> reads as "idle or just rezzed": its motors, their decay and its hover go on from
         /// where they were.
         /// </summary>
-        public void ResumeAfterHold() => _props.Dynamics.LastAccessTOD = Clock();
+        public void ResumeAfterHold()
+        {
+            if (!DeferStateChanges)
+            {
+                _props.Dynamics.LastAccessTOD = Clock();
+                return;
+            }
+            lock (_pendingGate)
+            {
+                _pendingResume = true;
+                _hasPendingState = true;
+            }
+        }
 
         // =================================================================
         // Process vehicle type change from LSL
         // =================================================================
         public void ProcessTypeChange(Vehicle pType)
+        {
+            lock (_propsGate)
+            {
+                ProcessTypeChangeCore(pType);
+                _paramsDirty = true;
+            }
+        }
+
+        private void ProcessTypeChangeCore(Vehicle pType)
         {
             VehicleType newType;
             switch (pType)
@@ -255,14 +428,24 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 default:                    newType = VehicleType.None; break;
             }
 
+            // A motor set made before the type change is dropped by it. The running state is cleared now, or at the start
+            // of the next Update when the host defers it (DeferStateChanges); the type and the presets are live properties
+            // and reach the steps through the snapshot, at the same boundary. No motor runs until a script sets one.
+            lock (_pendingGate)
+            {
+                _hasPendingLinear = _hasPendingAngular = false;
+                if (DeferStateChanges)
+                {
+                    _pendingTypeReset = true;
+                    _pendingStop = false;
+                    _pendingResume = false;
+                    _hasPendingState = true;
+                }
+            }
             _props.Type = newType;
             SetVehicleDefaults(newType);
-            _props.Dynamics.Reset();
-            // No motor until a script sets one.
-            _props.Dynamics.LinearDecayIndex = float.PositiveInfinity;
-            _props.Dynamics.AngularDecayIndex = float.PositiveInfinity;
-            _props.Dynamics.LastAccessTOD = Clock();
-            _bankingAirTime = 0;
+            if (!DeferStateChanges)
+                ResetRunningState();
 
             // (No scene-event registration or Refresh here; the host reacts to IsActive instead:
             // per-frame Step drive + body physical params.)
@@ -272,6 +455,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // Process float param from LSL
         // =================================================================
         public void ProcessFloatVehicleParam(Vehicle pParam, float pValue)
+        {
+            lock (_propsGate)
+            {
+                ProcessFloatVehicleParamCore(pParam, pValue);
+                _paramsDirty = true;
+            }
+        }
+
+        private void ProcessFloatVehicleParamCore(Vehicle pParam, float pValue)
         {
             // ClampF passes NaN through (Math.Max/Min propagate it), so a non-finite script value
             // would be stored and drive the motors. Ignore it; the stored param is unchanged.
@@ -365,7 +557,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 case Vehicle.ANGULAR_MOTOR_DIRECTION:
                     _props.ParamsVec[VehVectorParam.AngularMotorDirection] = HeldAngularMotor(new Vector3(pValue, pValue, pValue));
                     if (!ScriptMotorIgnored())
-                        MoveAngular(_props.ParamsVec[VehVectorParam.AngularMotorDirection]);
+                        SetAngularMotor(_props.ParamsVec[VehVectorParam.AngularMotorDirection]);
                     break;
                 case Vehicle.LINEAR_FRICTION_TIMESCALE:
                     pValue = ClampF(pValue, S.MinTimescale, S.MaxTimescale);
@@ -374,7 +566,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 case Vehicle.LINEAR_MOTOR_DIRECTION:
                     pValue = ClampF(pValue, -S.MaxLinearSpeed, S.MaxLinearSpeed);
                     _props.ParamsVec[VehVectorParam.LinearMotorDirection] = new Vector3(pValue, pValue, pValue);
-                    MoveLinear(_props.ParamsVec[VehVectorParam.LinearMotorDirection]);
+                    SetLinearMotor(_props.ParamsVec[VehVectorParam.LinearMotorDirection]);
                     break;
                 case Vehicle.LINEAR_MOTOR_OFFSET:
                     pValue = ClampF(pValue, -S.MaxMotorOffset, S.MaxMotorOffset);
@@ -384,22 +576,31 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
             // InWorldz: "Special case for legacy scripts: height<=0 nd eff=0 means no hover". A hover that was on is cleared
             // and its timescale put to the off value (VehicleDynamics.cs:1562-1571).
-            if (hoverWasOn && HoverOffByLegacyRule())
+            if (hoverWasOn && HoverOffByLegacyRule(_props))
                 _props.ParamsFloat[VehFloatParam.HoverTimescale] = S.MaxHoverTimescale;
         }
 
         // Hover is commanded: its timescale is below the off value and the legacy rule does not switch it off.
         private bool HoverCommanded()
-            => _props.GetFloat(VehFloatParam.HoverTimescale, 1000f) < S.MaxHoverTimescale && !HoverOffByLegacyRule();
+            => _props.GetFloat(VehFloatParam.HoverTimescale, 1000f) < S.MaxHoverTimescale && !HoverOffByLegacyRule(_props);
 
         // InWorldz: a hover height of zero or below with efficiency zero is no hover (VehicleDynamics.cs:1563-1564).
-        private bool HoverOffByLegacyRule()
-            => _props.GetFloat(VehFloatParam.HoverHeight, 0f) <= 0f && _props.GetFloat(VehFloatParam.HoverEfficiency, 0f) == 0f;
+        private static bool HoverOffByLegacyRule(VehicleProperties p)
+            => p.GetFloat(VehFloatParam.HoverHeight, 0f) <= 0f && p.GetFloat(VehFloatParam.HoverEfficiency, 0f) == 0f;
 
         // =================================================================
         // Process vector param from LSL
         // =================================================================
         public void ProcessVectorVehicleParam(Vehicle pParam, Vector3 pValue)
+        {
+            lock (_propsGate)
+            {
+                ProcessVectorVehicleParamCore(pParam, pValue);
+                _paramsDirty = true;
+            }
+        }
+
+        private void ProcessVectorVehicleParamCore(Vehicle pParam, Vector3 pValue)
         {
             if (!float.IsFinite(pValue.X) || !float.IsFinite(pValue.Y) || !float.IsFinite(pValue.Z))
                 return;   // non-finite: see ProcessFloatVehicleParam
@@ -415,7 +616,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     pValue = HeldAngularMotor(pValue);
                     _props.ParamsVec[VehVectorParam.AngularMotorDirection] = pValue;
                     if (!ScriptMotorIgnored())
-                        MoveAngular(pValue);
+                        SetAngularMotor(pValue);
                     break;
                 case Vehicle.LINEAR_FRICTION_TIMESCALE:
                     pValue.X = ClampF(pValue.X, S.MinTimescale, S.MaxTimescale);
@@ -426,7 +627,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 case Vehicle.LINEAR_MOTOR_DIRECTION:
                     pValue = HeldLinearMotor(pValue);
                     _props.ParamsVec[VehVectorParam.LinearMotorDirection] = pValue;
-                    MoveLinear(pValue);
+                    SetLinearMotor(pValue);
                     break;
                 case Vehicle.LINEAR_MOTOR_OFFSET:
                     pValue.X = ClampF(pValue.X, -S.MaxMotorOffset, S.MaxMotorOffset);
@@ -480,6 +681,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // =================================================================
         public void ProcessRotationVehicleParam(Vehicle pParam, Quaternion pValue)
         {
+            lock (_propsGate)
+            {
+                ProcessRotationVehicleParamCore(pParam, pValue);
+                _paramsDirty = true;
+            }
+        }
+
+        private void ProcessRotationVehicleParamCore(Vehicle pParam, Quaternion pValue)
+        {
             switch (pParam)
             {
                 case Vehicle.REFERENCE_FRAME:
@@ -530,6 +740,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // flag, and set with -1 sets every flag.
         public void ProcessVehicleFlags(int pParam, bool remove)
         {
+            lock (_propsGate)
+            {
+                ProcessVehicleFlagsCore(pParam, remove);
+                _paramsDirty = true;
+            }
+        }
+
+        private void ProcessVehicleFlagsCore(int pParam, bool remove)
+        {
             ExtendedVehicleFlags flags = FromScriptFlags(pParam);
 
             if (remove)
@@ -543,6 +762,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // =================================================================
         /// <summary>A saved vehicle's flags, in place of every flag it has (its type's).</summary>
         public void RestoreFlags(int flags)
+        {
+            lock (_propsGate)
+            {
+                RestoreFlagsCore(flags);
+                _paramsDirty = true;
+            }
+        }
+
+        private void RestoreFlagsCore(int flags)
         {
             _props.Flags = FromScriptFlags(flags);
         }
@@ -572,6 +800,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         public void RestoreFlagsOverPreset(int flags, int presetFlags)
         {
+            lock (_propsGate)
+            {
+                RestoreFlagsOverPresetCore(flags, presetFlags);
+                _paramsDirty = true;
+            }
+        }
+
+        private void RestoreFlagsOverPresetCore(int flags, int presetFlags)
+        {
             ExtendedVehicleFlags record = FromScriptFlags(flags);
             ExtendedVehicleFlags changed = record ^ FromScriptFlags(presetFlags);
             _props.Flags = (_props.Flags & ~changed) | (record & changed);
@@ -581,6 +818,21 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// ubODE's ODEDynamics.Stop (motor effect 0), so a vehicle put back inside the edge does not drive out again until a
         /// script sets a motor.</summary>
         public void StopMotors()
+        {
+            lock (_pendingGate)
+            {
+                _hasPendingLinear = _hasPendingAngular = false;
+                if (DeferStateChanges)
+                {
+                    _pendingStop = true;
+                    _hasPendingState = true;
+                    return;
+                }
+            }
+            StopMotorsNow();
+        }
+
+        private void StopMotorsNow()
         {
             _props.Dynamics.LinearDecayIndex = float.PositiveInfinity;
             _props.Dynamics.AngularDecayIndex = float.PositiveInfinity;
@@ -595,6 +847,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// ODEDynamics.DoSetVehicle stores the directions with no motor effect.</summary>
         public void RestoreMotorDirections(Vector3 linear, Vector3 angular)
         {
+            lock (_propsGate)
+            {
+                RestoreMotorDirectionsCore(linear, angular);
+                _paramsDirty = true;
+            }
+        }
+
+        private void RestoreMotorDirectionsCore(Vector3 linear, Vector3 angular)
+        {
             if (float.IsFinite(linear.X) && float.IsFinite(linear.Y) && float.IsFinite(linear.Z))
                 _props.ParamsVec[VehVectorParam.LinearMotorDirection] = HeldLinearMotor(linear);
             if (float.IsFinite(angular.X) && float.IsFinite(angular.Y) && float.IsFinite(angular.Z))
@@ -606,38 +867,40 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         #region Step — Main Simulation Entry Point
 
         /// <summary>
-        /// Called every physics frame by the host, BEFORE the engine step.
-        /// This is the main simulation entry point, in the place of Halcyon's VehicleDynamics.Simulate().
+        /// One whole step for a host that has no collision steps inside its engine step: <see cref="BeginUpdate"/> and then
+        /// <see cref="StepOnce"/> over the same time, in the place of Halcyon's VehicleDynamics.Simulate(). A host whose
+        /// engine splits a step into collision steps calls BeginUpdate before the engine step and StepOnce before each
+        /// collision step instead.
         /// </summary>
         public void Step(float pTimestep)
         {
             if (!IsActive) return;
+            BeginUpdate(pTimestep);
+            StepOnce(pTimestep, _hostBody);
+        }
+
+        /// <summary>
+        /// The part of a step that runs once per engine step (Update), on the host's thread, before the engine step: the
+        /// terms that are events or read the world (the stale-motor reset, the camera steering, the ground-penetration fix,
+        /// the stall check, the motor-height rays, the wind). They write the host body's velocity and the state
+        /// <see cref="StepOnce"/> reads, and do not move while the engine steps.
+        /// </summary>
+        public void BeginUpdate(float pTimestep)
+        {
+            if (!IsActive) return;
+            RefreshSnapshot();
 
             m_frameNum++;
-            m_vehicleMass = _body.Mass;
+            m_vehicleMass = _hostBody.Mass;
+            _updateStep = pTimestep;
+            _stepSeconds = pTimestep;
+            _stepShare = 1f;
 
-            // Every block steps over the step the engine is about to take. (The Halcyon code smoothed it 0.8/0.2 per
-            // step, and filtered a velocity whose sign flipped since the last step; both made the result depend on the
-            // step rate, and at a steady rate the smoothed step is the step.)
+            // The Halcyon code smoothed the step 0.8/0.2 per step, and filtered a velocity whose sign flipped since the
+            // last step; both made the result depend on the step rate, and at a steady rate the smoothed step is the step.
             float timeStep = pTimestep;
 
-            // -------------------------------------------------------
-            // Read current state from physics engine
-            _vframe = _props.GetRot(VehRotationParam.ReferenceFrame);
-            _rotation = _body.Orientation * _vframe;
-
-            Vector3 physAngVel = _body.AngularVelocity;
-            Vector3 physLinVel = _body.LinearVelocity;
-            _worldAngularVel = physAngVel;
-            _worldLinearVel = physLinVel;
-
-            // Convert to local coordinates
-            Quaternion invRotation = Quaternion.Inverse(_rotation);
-            _localAngularVel = _worldAngularVel * invRotation;
-            _localLinearVel = _worldLinearVel * invRotation;
-            _rawWorldAngularVel = physAngVel;
-            _rawWorldLinearVel = physLinVel;
-            _rawLocalLinearVel = physLinVel * invRotation;
+            ReadState();
 
             // -------------------------------------------------------
             // Reset motors if stale (more than 1 second since last access)
@@ -647,7 +910,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             TorqueInit();
             ClearLinearMotorStalled();
 
-            _props.Dynamics.Timestep = timeStep;
+            _sp.Dynamics.Timestep = timeStep;
 
             // InWorldz's camera steering sets the angular motor from the driver's camera before the motors act.
             if (InWorldz)
@@ -664,44 +927,131 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             }
 
             // -------------------------------------------------------
+            // The stall check reads the position change over the step, which is noise inside a collision step: it is
+            // made here, once, and the steps read its result. Only the sled's slope assist and InWorldz's motors ask for it.
+            if (InWorldz || _sp.Type == VehicleType.Sled)
+                IsLinearMotorStalled();
+
+            // -------------------------------------------------------
+            // InWorldz's motor-height rule: the down rays, and the clock that switches the motors off.
+            SimulateMotorHeight(pTimestep);
+
+            // The wind is not read here: it is sampled and applied in every collision step (StepCore).
+
+            // Any torque added so far is applied now: StepOnce starts its own accumulator.
+            TorqueFini();
+
+            // Save state for next frame
+            _sp.Dynamics.LastPosition = _body.Position;
+            _sp.Dynamics.Timestep = timeStep;
+        }
+
+        /// <summary>
+        /// The part of a step that runs once per collision step of the engine (Jolt's step listener) or, for a host with
+        /// none, once per step after <see cref="BeginUpdate"/>: the terms that integrate over time. The linear and angular
+        /// motors and their ramp and decay, the friction on both, deflection, the vertical attractor, banking, hover, the
+        /// sled's slope assist and the vehicle's share of gravity. Each is the exact solution of its equation over
+        /// <paramref name="h"/>, the collision step's own length, from the body as it is at the start of the step, and is
+        /// written as a change of velocity, never a force or torque (a force added from inside a collision step would be
+        /// applied again in each later one).
+        /// <para>
+        /// It reads the parameters and results <see cref="BeginUpdate"/> left, which nothing changes while the engine
+        /// steps, and the velocities, orientation and position of <paramref name="body"/> as of now. <paramref name="body"/>
+        /// is the host's view of the body for this step: its velocity writes are what the step is.
+        /// </para>
+        /// </summary>
+        public void StepOnce(float h, IVehicleBody body)
+        {
+            if (!IsActive) return;
+            IVehicleBody host = _body;
+            _body = body;
+            try
+            {
+                StepCore(h);
+            }
+            finally
+            {
+                _body = host;
+            }
+        }
+
+        // The length of the engine step BeginUpdate was given, and the share of it the step being run covers (1 for a
+        // whole step). InWorldz's laws have a few constants that are per step, not per second (a share of the angular
+        // velocity taken off each step, the smallest change worth making); a collision step takes its share of each, so the
+        // sum over a step is what it was when the controller ran once.
+        private float _updateStep = VehicleLimits.MinPhysicsTimestep;
+        private float _stepShare = 1f;
+        private float _stepSeconds = VehicleLimits.MinPhysicsTimestep;
+
+        // The body's state at the start of a step, in the frames the terms work in.
+        private void ReadState()
+        {
+            _vframe = _sp.GetRot(VehRotationParam.ReferenceFrame);
+            _rotation = _body.Orientation * _vframe;
+
+            Vector3 physAngVel = _body.AngularVelocity;
+            Vector3 physLinVel = _body.LinearVelocity;
+            _worldAngularVel = physAngVel;
+            _worldLinearVel = physLinVel;
+
+            // Convert to local coordinates
+            Quaternion invRotation = Quaternion.Inverse(_rotation);
+            _localAngularVel = _worldAngularVel * invRotation;
+            _localLinearVel = _worldLinearVel * invRotation;
+            _rawWorldAngularVel = physAngVel;
+            _rawWorldLinearVel = physLinVel;
+            _rawLocalLinearVel = physLinVel * invRotation;
+        }
+
+        private void StepCore(float h)
+        {
+            _stepSeconds = h;
+            _stepShare = _updateStep > 0f ? Math.Min(1f, h / _updateStep) : 1f;
+
+            // -------------------------------------------------------
+            // Read current state from physics engine
+            ReadState();
+
+            TorqueInit();
+
+            // -------------------------------------------------------
             // Deflection + sled run in the order Angular -> Linear -> Sled, BEFORE hover.
             // Angular deflection — swings the nose toward the velocity direction (weathervane).
             if (S.DoAngularDeflection)
             {
-                SimulateAngularDeflection(timeStep);
+                SimulateAngularDeflection(h);
             }
 
             // Linear deflection — changing velocity toward the forward axis (the "tracking" bite).
             if (S.DoLinearDeflection)
             {
-                SimulateLinearDeflection(timeStep);
+                SimulateLinearDeflection(h);
             }
 
             // (The sled's slope assist is an acceleration inside the linear motor and friction step: SledAssist.)
 
             // -------------------------------------------------------
             // Hover — maintain target height above terrain/water/global
-            SimulateHover(pTimestep);
+            SimulateHover(h);
 
             // -------------------------------------------------------
             // Vertical attractor and banking
             _attractorChange = Vector3.Zero;
             float tilt = 0f;
             if (S.DoVerticalAttractor)
-                SimulateVerticalAttractor(pTimestep, out tilt, out _);
+                SimulateVerticalAttractor(h, out tilt, out _);
 
             // -------------------------------------------------------
-            // InWorldz: the wind, or the water's current, at the vehicle's position pushes it (before the motors, as in Halcyon).
-            SimulateWind(pTimestep);
+            // InWorldz: the wind, or the water's current, at the vehicle's position pushes it (before the motors, as in
+            // Halcyon), sampled and applied in every collision step with the step's own length.
+            SimulateWind(h);
 
             // -------------------------------------------------------
             // Motors and friction, linear and angular, then the banking turn motor. They are stepped over the
-            // step the engine is about to take (pTimestep), not the smoothed one: each is the exact solution
-            // over that step.
-            SimulateMotorHeight(pTimestep);
-            SimulateLinearMotorAndFriction(pTimestep, S.DoMotors, S.DoLinearFriction);
-            float angularz = SimulateAngularMotorAndFriction(pTimestep, S.DoMotors, S.DoAngularFriction);
-            float banking = S.DoVerticalAttractor ? SimulateBanking(pTimestep, tilt) : 0f;
+            // step the engine is about to take (h), not the smoothed one: each is the exact solution over that step.
+            SimulateLinearMotorAndFriction(h, S.DoMotors, S.DoLinearFriction);
+            float angularz = SimulateAngularMotorAndFriction(h, S.DoMotors, S.DoAngularFriction);
+            float banking = S.DoVerticalAttractor ? SimulateBanking(h, tilt) : 0f;
             _motorTorqueVelChange += new Vector3(0f, 0f, angularz + banking);
 
             // Apply gravity manually (same pattern as BSDynamics)
@@ -711,10 +1061,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             TorqueFini();
 
             // Save state for next frame
-            _props.Dynamics.LastPosition = _body.Position;
-            _props.Dynamics.Timestep = timeStep;
-            _props.Dynamics.LocalLinearVelocity = _localLinearVel;
-            _props.Dynamics.LocalAngularVelocity = _localAngularVel;
+            _sp.Dynamics.LocalLinearVelocity = _localLinearVel;
+            _sp.Dynamics.LocalAngularVelocity = _localAngularVel;
         }
 
         /// <summary>
@@ -730,11 +1078,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// the wind moves (the simulator's sleep threshold is 0 for it too, VehicleDynamics.cs:784-789).
         /// </summary>
         public bool IsIdle
-            => (_props.Flags & (ExtendedVehicleFlags.MouselookSteer | ExtendedVehicleFlags.MouselookBank)) == 0
-            && !(InWorldz && (_props.Flags & (ExtendedVehicleFlags.MousePointSteer | ExtendedVehicleFlags.MousePointBank
+            => Refreshed() && (_sp.Flags & (ExtendedVehicleFlags.MouselookSteer | ExtendedVehicleFlags.MouselookBank)) == 0
+            && !(InWorldz && (_sp.Flags & (ExtendedVehicleFlags.MousePointSteer | ExtendedVehicleFlags.MousePointBank
                 | ExtendedVehicleFlags.ReactToWind | ExtendedVehicleFlags.ReactToCurrents)) != 0)
-            && MotorIdle(_props.Dynamics.LinearDirection, _props.GetVec(VehVectorParam.LinearMotorDecayTimescale), _props.Dynamics.LinearDecayIndex)
-            && MotorIdle(_props.Dynamics.AngularDirection, _props.GetVec(VehVectorParam.AngularMotorDecayTimescale), _props.Dynamics.AngularDecayIndex)
+            && MotorIdle(_sp.Dynamics.LinearDirection, _sp.GetVec(VehVectorParam.LinearMotorDecayTimescale), _sp.Dynamics.LinearDecayIndex)
+            && MotorIdle(_sp.Dynamics.AngularDirection, _sp.GetVec(VehVectorParam.AngularMotorDecayTimescale), _sp.Dynamics.AngularDecayIndex)
             && HoverIdle()
             && AttractorIdle();
 
@@ -757,6 +1105,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         {
             get
             {
+                RefreshSnapshot();
                 float rest = S.RestSpeed;
                 // A vehicle in the air is not at rest: one swinging through upright under its attractor is idle for a
                 // moment and turning slowly, and holding it would stop the swing.
@@ -775,7 +1124,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         internal Vector3 SteadySpeed()
         {
-            _rotation = _body.Orientation * _props.GetRot(VehRotationParam.ReferenceFrame);
+            RefreshSnapshot();
+            _rotation = _body.Orientation * _sp.GetRot(VehRotationParam.ReferenceFrame);
             Vector3 accel = _body.Gravity * GravityShare() * Quaternion.Inverse(_rotation) + SledAssist();
             if (_body.HasCollision)
             {
@@ -787,11 +1137,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 else if (ay >= ax) accel.Y = 0f;
                 else accel.X = 0f;
             }
-            Vector3 motor = _props.Dynamics.LinearDirection;
-            Vector3 motorTs = _props.GetVec(VehVectorParam.LinearMotorTimescale);
-            Vector3 decayTs = _props.GetVec(VehVectorParam.LinearMotorDecayTimescale);
-            Vector3 frictionTs = S.DoLinearFriction ? _props.GetVec(VehVectorParam.LinearFrictionTimescale) : FrictionOff;
-            double age = _props.Dynamics.LinearDecayIndex;
+            Vector3 motor = _sp.Dynamics.LinearDirection;
+            Vector3 motorTs = _sp.GetVec(VehVectorParam.LinearMotorTimescale);
+            Vector3 decayTs = _sp.GetVec(VehVectorParam.LinearMotorDecayTimescale);
+            Vector3 frictionTs = S.DoLinearFriction ? _sp.GetVec(VehVectorParam.LinearFrictionTimescale) : FrictionOff;
+            double age = _sp.Dynamics.LinearDecayIndex;
             return new Vector3(
                 (float)SteadyOnAxis(accel.X, motor.X, motorTs.X, decayTs.X, age, frictionTs.X),
                 (float)SteadyOnAxis(accel.Y, motor.Y, motorTs.Y, decayTs.Y, age, frictionTs.Y),
@@ -810,13 +1160,19 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             return Math.Abs(drive / rate);
         }
 
+        private bool Refreshed()
+        {
+            RefreshSnapshot();
+            return true;
+        }
+
         // The attractor has nothing left to do when it is off, the vehicle is upright to within AttractorIdleAngle, or
         // it rests on something that holds its tilt (a car parked on a slope).
         private bool AttractorIdle()
         {
-            if (_props.GetFloat(VehFloatParam.VerticalAttractionTimescale, 1000f) >= S.MaxAttractTimescale || _body.HasCollision)
+            if (_sp.GetFloat(VehFloatParam.VerticalAttractionTimescale, 1000f) >= S.MaxAttractTimescale || _body.HasCollision)
                 return true;
-            Quaternion rotation = _body.Orientation * _props.GetRot(VehRotationParam.ReferenceFrame);
+            Quaternion rotation = _body.Orientation * _sp.GetRot(VehRotationParam.ReferenceFrame);
             return (Vector3.UnitZ * rotation).Z >= Math.Cos(AttractorIdleAngle);
         }
 
@@ -851,9 +1207,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         public void Rest(float pTimestep)
         {
             if (!IsActive) return;
-            _props.Dynamics.LastAccessTOD = Clock();
-            _props.Dynamics.LinearDecayIndex += pTimestep;
-            _props.Dynamics.AngularDecayIndex += pTimestep;
+            RefreshSnapshot();
+            _sp.Dynamics.LastAccessTOD = Clock();
+            _sp.Dynamics.LinearDecayIndex += pTimestep;
+            _sp.Dynamics.AngularDecayIndex += pTimestep;
             _hoverCarry = null;
             _attractorCarry = null;
             _ownsRoll = false;
@@ -869,6 +1226,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         public void Hold(float pTimestep)
         {
             if (!IsActive) return;
+            RefreshSnapshot();
             Rest(pTimestep);
             ApplyGravity();
             _body.LinearVelocity = Vector3.Zero;
@@ -905,7 +1263,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
             _props.Dynamics.TargetLinearDelta = direction - _props.Dynamics.LinearDirection;
             _props.Dynamics.LinearDirection = direction;
-            _body.KeepAwake();
+            _hostBody.KeepAwake();
         }
 
         /// <summary>
@@ -936,7 +1294,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             direction = LimitedAngularRate(direction);
             _props.Dynamics.TargetAngularDelta = direction - _props.Dynamics.AngularDirection;
             _props.Dynamics.AngularDirection = direction;
-            _body.KeepAwake();
+            _hostBody.KeepAwake();
         }
 
         /// <summary>
@@ -1074,10 +1432,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         private bool IsLinearMotorStalled()
         {
             Vector3 currpos = _body.Position;
-            Vector3 lastpos = _props.Dynamics.LastPosition;
+            Vector3 lastpos = _sp.Dynamics.LastPosition;
             Vector3 posdelta = currpos - lastpos;
             float currspeed = Vector3.Mag(_worldLinearVel);
-            float timeStep = _props.Dynamics.Timestep;
+            float timeStep = _sp.Dynamics.Timestep;
 
             if (!_linearMotorStallChecked)
             {
@@ -1085,14 +1443,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 // over a span of time whatever the step. (It was 0.8 / 0.2 per step, which is this time constant at
                 // the 64 Hz step the code was tuned at.)
                 float share = 1f - (float)Math.Exp(-timeStep / StallSmoothing);
-                _props.Dynamics.ShortTermPositionDelta += (posdelta / timeStep - _props.Dynamics.ShortTermPositionDelta) * share;
+                _sp.Dynamics.ShortTermPositionDelta += (posdelta / timeStep - _sp.Dynamics.ShortTermPositionDelta) * share;
                 _linearMotorStallChecked = true;
 
                 // If either motor is starting fresh, assume not stalled
-                if (_props.Dynamics.LinearDecayIndex > VehicleLimits.ThresholdLinearMotorEngaged &&
-                    _props.Dynamics.AngularDecayIndex > VehicleLimits.ThresholdAngularMotorEngaged)
+                if (_sp.Dynamics.LinearDecayIndex > VehicleLimits.ThresholdLinearMotorEngaged &&
+                    _sp.Dynamics.AngularDecayIndex > VehicleLimits.ThresholdAngularMotorEngaged)
                 {
-                    float stspeed = Vector3.Mag(_props.Dynamics.ShortTermPositionDelta);
+                    float stspeed = Vector3.Mag(_sp.Dynamics.ShortTermPositionDelta);
 
                     if (stspeed < currspeed * 0.5f)
                     {
@@ -1119,7 +1477,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // VehicleDynamics.cs:1546-1548): a vehicle set to 0.98 floats, where Second Life's would sink slowly.
         private float Buoyancy()
         {
-            float buoyancy = _props.GetFloat(VehFloatParam.Buoyancy, 0f);
+            float buoyancy = _sp.GetFloat(VehFloatParam.Buoyancy, 0f);
             if (InWorldz && buoyancy >= LegacyFloatBuoyancy && buoyancy < 1f)
                 return 1f;
             return buoyancy;
@@ -1144,7 +1502,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             float share = 1f - buoyancy;   // ComputeGravity(buoyancy), GravModifier = 1
 
             // Reduce downward force if vehicle is sitting on ground
-            if (IsGroundVehicle && _body.HasCollision)
+            if (GroundVehicle && _body.HasCollision)
                 share *= GroundGravityFactor;
             return share;
         }
@@ -1181,8 +1539,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         }
 
         /// <summary>
-        /// Add torque as an impulse (mass-dependent).
-        /// Equivalent to Halcyon AddTorque with ForceMode.Impulse.
+        /// Add a torque (mass-dependent), which the step turns into the change of angular velocity it makes over the step:
+        /// the inverse of the body's inertia tensor times the torque times the step. It is never handed to the engine as a
+        /// torque: the engine applies an accumulated torque in every collision step and clears it only after the last, so a
+        /// torque added from inside a collision step would turn the body again in each later step of the engine step.
         /// </summary>
         internal void AddTorqueImpulse(Vector3 torque)
         {
@@ -1194,10 +1554,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         private void TorqueFini()
         {
-            // Clean up near-zero values
-            if (Math.Abs(_accumTorqueVelChange.X) < VehicleLimits.MinPhysicsForce) _accumTorqueVelChange.X = 0f;
-            if (Math.Abs(_accumTorqueVelChange.Y) < VehicleLimits.MinPhysicsForce) _accumTorqueVelChange.Y = 0f;
-            if (Math.Abs(_accumTorqueVelChange.Z) < VehicleLimits.MinPhysicsForce) _accumTorqueVelChange.Z = 0f;
+            // Clean up near-zero values (a change per step: a collision step takes its share of the limit)
+            float tiny = VehicleLimits.MinPhysicsForce * _stepShare;
+            if (Math.Abs(_accumTorqueVelChange.X) < tiny) _accumTorqueVelChange.X = 0f;
+            if (Math.Abs(_accumTorqueVelChange.Y) < tiny) _accumTorqueVelChange.Y = 0f;
+            if (Math.Abs(_accumTorqueVelChange.Z) < tiny) _accumTorqueVelChange.Z = 0f;
 
             if (Math.Abs(_accumTorqueImpulse.X) < VehicleLimits.MinPhysicsForce) _accumTorqueImpulse.X = 0f;
             if (Math.Abs(_accumTorqueImpulse.Y) < VehicleLimits.MinPhysicsForce) _accumTorqueImpulse.Y = 0f;
@@ -1210,10 +1571,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 _body.AngularVelocity = _body.AngularVelocity + velChange;
             }
 
-            // Apply impulse torques (mass-scaled)
+            // Apply torques as the angular velocity change they make over the step (mass-scaled)
             if (_accumTorqueImpulse != Vector3.Zero)
             {
-                _body.AddTorque(_accumTorqueImpulse);
+                _body.AngularVelocity = _body.AngularVelocity + AngularChangeOf(_accumTorqueImpulse * _stepSeconds);
             }
 
             // (No activation nudge here; the host keeps an active vehicle body from sleeping.)
@@ -1262,8 +1623,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 return;
             }
             Vector3 rate = Vector3.Zero;
-            float timescale = _props.GetFloat(VehFloatParam.AngularDeflectionTimescale, 1000f);
-            float efficiency = _props.GetFloat(VehFloatParam.AngularDeflectionEfficiency, 0f);
+            float timescale = _sp.GetFloat(VehFloatParam.AngularDeflectionTimescale, 1000f);
+            float efficiency = _sp.GetFloat(VehFloatParam.AngularDeflectionEfficiency, 0f);
             float speed = _rawWorldLinearVel.Length();
             if (timescale < VehicleLimits.MaxTimescale && efficiency > 0f && speed >= VehicleLimits.ThresholdDeflectionSpeed)
             {
@@ -1296,17 +1657,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         private void SimulateAngularDeflectionInWorldz(float h)
         {
-            float timescale = _props.GetFloat(VehFloatParam.AngularDeflectionTimescale, 1000f);
-            float efficiency = _props.GetFloat(VehFloatParam.AngularDeflectionEfficiency, 0f);
+            float timescale = _sp.GetFloat(VehFloatParam.AngularDeflectionTimescale, 1000f);
+            float efficiency = _sp.GetFloat(VehFloatParam.AngularDeflectionEfficiency, 0f);
             Vector3 push = HalcyonVehicleLaws.AngularDeflectionPush(_rotation, _worldLinearVel, _localLinearVel, _worldAngularVel,
                 timescale, efficiency, h, S.ReferenceSpeed);
             if (push == Vector3.Zero)
                 return;
             if (IsLinearMotorStalled())
                 return;
-            if (Math.Abs(push.X) >= VehicleLimits.ThresholdAngularMotorDeltaV ||
-                Math.Abs(push.Y) >= VehicleLimits.ThresholdAngularMotorDeltaV ||
-                Math.Abs(push.Z) >= VehicleLimits.ThresholdAngularMotorDeltaV)
+            float least = VehicleLimits.ThresholdAngularMotorDeltaV * _stepShare;
+            if (Math.Abs(push.X) >= least || Math.Abs(push.Y) >= least || Math.Abs(push.Z) >= least)
                 AddTorqueVelocityChange(push);
         }
 
@@ -1330,13 +1690,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         private void SimulateLinearDeflection(float h)
         {
-            float timescale = _props.GetFloat(VehFloatParam.LinearDeflectionTimescale, 1000f);
-            float efficiency = _props.GetFloat(VehFloatParam.LinearDeflectionEfficiency, 0f);
+            float timescale = _sp.GetFloat(VehFloatParam.LinearDeflectionTimescale, 1000f);
+            float efficiency = _sp.GetFloat(VehFloatParam.LinearDeflectionEfficiency, 0f);
             if (timescale >= VehicleLimits.MaxTimescale || efficiency <= 0f)
                 return;
             float share = 1f - (float)Math.Exp(-efficiency * h / timescale);
             Vector3 forward = Vector3.UnitX * _rotation;
-            Vector3 change = (_props.Flags & ExtendedVehicleFlags.NoDeflectionUp) != 0
+            Vector3 change = (_sp.Flags & ExtendedVehicleFlags.NoDeflectionUp) != 0
                 ? HorizontalDeflection(_rawWorldLinearVel, forward, share)
                 : Deflection(_rawWorldLinearVel, forward, share);
             if (change != Vector3.Zero)
@@ -1357,7 +1717,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         private Vector3 SledAssist()
         {
-            if (_props.Type != VehicleType.Sled)
+            if (_sp.Type != VehicleType.Sled)
                 return Vector3.Zero;
             float noseDown = -(Vector3.UnitX * _rotation).Z;   // sin of the pitch, nose down positive
             if (Math.Abs(noseDown) <= VehicleLimits.ThresholdDeflectionAngle || IsLinearMotorStalled())
@@ -1434,8 +1794,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 LetGoOfHover();
                 return;
             }
-            float timescale = _props.GetFloat(VehFloatParam.HoverTimescale, 1000f);
-            float efficiency = _props.GetFloat(VehFloatParam.HoverEfficiency, 0f);
+            float timescale = _sp.GetFloat(VehFloatParam.HoverTimescale, 1000f);
+            float efficiency = _sp.GetFloat(VehFloatParam.HoverEfficiency, 0f);
             double e0 = _body.Position.Z - targetZ;
             if (upOnly && e0 >= 0)
             {
@@ -1533,7 +1893,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             if (HoverTurnsGravityOff())
                 return 0f;
             float share = 1f - Buoyancy();
-            if (IsGroundVehicle && _body.HasCollision)
+            if (GroundVehicle && _body.HasCollision)
                 share *= GroundGravityFactor;
             return share;
         }
@@ -1552,7 +1912,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             if (InWorldz)
                 return GravityShareBelow();   // buoyancy does not vanish above the height
             float share = 1f;
-            if (IsGroundVehicle && _body.HasCollision)
+            if (GroundVehicle && _body.HasCollision)
                 share *= GroundGravityFactor;
             return share;
         }
@@ -1582,10 +1942,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         private bool HoverTarget(out float targetZ, out bool upOnly)
         {
-            float hoverHeight = _props.GetFloat(VehFloatParam.HoverHeight, 0f);
-            float hoverTimescale = _props.GetFloat(VehFloatParam.HoverTimescale, 1000f);
+            float hoverHeight = _sp.GetFloat(VehFloatParam.HoverHeight, 0f);
+            float hoverTimescale = _sp.GetFloat(VehFloatParam.HoverTimescale, 1000f);
             targetZ = 0f;
-            upOnly = (_props.Flags & ExtendedVehicleFlags.HoverUpOnly) != 0;
+            upOnly = (_sp.Flags & ExtendedVehicleFlags.HoverUpOnly) != 0;
 
             // InWorldz: with HOVER_UP_ONLY the hover force acts only "if diff > 0 || Buoyancy > 0" (diff the height still
             // to climb): below its height the vehicle is lifted as ever, but above it hover acts only while buoyancy is
@@ -1600,7 +1960,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 return false;
 
             // InWorldz: a height of zero or below with efficiency zero is no hover, "legacy scripts" (VehicleDynamics.cs:1563-1564).
-            if (InWorldz && HoverOffByLegacyRule())
+            if (InWorldz && HoverOffByLegacyRule(_sp))
                 return false;
 
             Vector3 pos = _body.Position;
@@ -1610,17 +1970,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             // set the vehicle hovers at that height rather than above the ground or water (the flag's page on the
             // Second Life wiki), whatever other hover flag is set with it; InWorldz's hover does the same ("Global hover
             // overrides water and ground", VehicleDynamics.cs:1575-1576).
-            if ((_props.Flags & ExtendedVehicleFlags.HoverGlobalHeight) != 0)
+            if ((_sp.Flags & ExtendedVehicleFlags.HoverGlobalHeight) != 0)
             {
                 targetBase = 0f; // Global = absolute height, hover height is the target
             }
-            else if ((_props.Flags & ExtendedVehicleFlags.HoverWaterOnly) != 0
-                     && (_props.Flags & ExtendedVehicleFlags.HoverTerrainOnly) == 0)
+            else if ((_sp.Flags & ExtendedVehicleFlags.HoverWaterOnly) != 0
+                     && (_sp.Flags & ExtendedVehicleFlags.HoverTerrainOnly) == 0)
             {
                 targetBase = _body.GetWaterLevel(pos);
             }
-            else if ((_props.Flags & ExtendedVehicleFlags.HoverTerrainOnly) != 0
-                     && (_props.Flags & ExtendedVehicleFlags.HoverWaterOnly) == 0)
+            else if ((_sp.Flags & ExtendedVehicleFlags.HoverTerrainOnly) != 0
+                     && (_sp.Flags & ExtendedVehicleFlags.HoverWaterOnly) == 0)
             {
                 targetBase = _body.GetTerrainHeight(pos);
             }
@@ -1665,8 +2025,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         private void SimulateVerticalAttractor(float h, out float angle, out bool inverted)
         {
-            float timescale = _props.GetFloat(VehFloatParam.VerticalAttractionTimescale, 1000f);
-            float efficiency = _props.GetFloat(VehFloatParam.VerticalAttractionEfficiency, 0f);
+            float timescale = _sp.GetFloat(VehFloatParam.VerticalAttractionTimescale, 1000f);
+            float efficiency = _sp.GetFloat(VehFloatParam.VerticalAttractionEfficiency, 0f);
             Vector3 x = Vector3.UnitX * _rotation, y = Vector3.UnitY * _rotation, z = Vector3.UnitZ * _rotation;
             angle = (float)Math.Acos(Utils.Clamp(z.Z, -1f, 1f));
             inverted = false;
@@ -1683,7 +2043,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 return;
             }
 
-            bool rollOnly = (_props.Flags & ExtendedVehicleFlags.LimitRollOnly) != 0;
+            bool rollOnly = (_sp.Flags & ExtendedVehicleFlags.LimitRollOnly) != 0;
 
             // The roll rate the attractor set last step turns with the vehicle: it is put back on the axis the roll is now
             // about, so a turn about the world's vertical (banking's) cannot leave part of it across that axis as a pitch
@@ -1784,13 +2144,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         private bool AttractorDormant(float tilt, float h)
         {
-            VehicleDynamicsState d = _props.Dynamics;
+            VehicleDynamicsState d = _sp.Dynamics;
             bool wasDormant = d.AttractorQuietTime >= VehicleLimits.MaxAttractDormancy;
             d.AttractorQuietTime += h;
             double threshold = VehicleLimits.ThresholdAttractorAngle * (wasDormant ? 1.0 : h / HalcyonStep);
             if (Math.Abs(d.LastVerticalAngle - tilt) >= threshold)
                 d.AttractorQuietTime = 0f;
-            float measured = _props.Type == VehicleType.Airplane && tilt > Math.PI / 2.0 ? (float)Math.PI - tilt : tilt;
+            float measured = _sp.Type == VehicleType.Airplane && tilt > Math.PI / 2.0 ? (float)Math.PI - tilt : tilt;
             return measured < VehicleLimits.ThresholdOverturnAngle && d.AttractorQuietTime >= VehicleLimits.MaxAttractDormancy;
         }
 
@@ -1823,10 +2183,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         private float AttractorStrength(float tilt, float h)
         {
-            VehicleDynamicsState d = _props.Dynamics;
+            VehicleDynamicsState d = _sp.Dynamics;
             float last = d.LastVerticalAngle;
             d.LastVerticalAngle = tilt;
-            if (_props.Type == VehicleType.Airplane)
+            if (_sp.Type == VehicleType.Airplane)
                 return 1f;
 
             double steps = h / HalcyonStep;
@@ -1854,10 +2214,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             float strength = AttractorStrength(tilt, h);
             float pitchShare = 1f;
             if (rollOnly)
-                pitchShare = _props.Type == VehicleType.Airplane || _props.Type == VehicleType.Balloon ? 0f : (float)RollOnlyPitchShare;
+                pitchShare = _sp.Type == VehicleType.Airplane || _sp.Type == VehicleType.Balloon ? 0f : (float)RollOnlyPitchShare;
 
             (float rollPush, float pitchPush) = HalcyonVehicleLaws.AttractorPush(y.Z, x.Z, efficiency, timescale, h, strength, pitchShare);
+            // The share is Halcyon's per step; a collision step takes its share of the step's, compounded.
             float damping = HalcyonVehicleLaws.AttractorDampingShare(efficiency);
+            if (_stepShare < 1f)
+                damping = 1f - (float)Math.Pow(1.0 - damping, _stepShare);
             float rollRate = Vector3.Dot(worldAngularVel, x);
             float pitchRate = Vector3.Dot(worldAngularVel, y);
 
@@ -1912,13 +2275,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             double airTime = _bankingAirTime;
             _bankingAirTime = _body.HasCollision ? 0 : _bankingAirTime + h;
 
-            float timescale = _props.GetFloat(VehFloatParam.BankingTimescale, 1000f);
-            float efficiency = _props.GetFloat(VehFloatParam.BankingEfficiency, 0f);
+            float timescale = _sp.GetFloat(VehFloatParam.BankingTimescale, 1000f);
+            float efficiency = _sp.GetFloat(VehFloatParam.BankingEfficiency, 0f);
             if (!S.DoBanking || efficiency == 0f || timescale >= S.MaxAttractTimescale
-                || _props.GetFloat(VehFloatParam.VerticalAttractionTimescale, 1000f) >= S.MaxAttractTimescale)
+                || _sp.GetFloat(VehFloatParam.VerticalAttractionTimescale, 1000f) >= S.MaxAttractTimescale)
                 return 0f;
 
-            float mix = _props.GetFloat(VehFloatParam.BankingMix, 0.5f);
+            float mix = _sp.GetFloat(VehFloatParam.BankingMix, 0.5f);
             float forwardSpeed = Math.Abs(_rawLocalLinearVel.X);
             float speedShare = Utils.Clamp(forwardSpeed, 0, S.ReferenceSpeed) / S.ReferenceSpeed;
 
@@ -1931,25 +2294,25 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             else if (angle < -HalfPi)
                 angle = -(float)Math.PI - angle;
             // InWorldz lets a script set the range (VEHICLE_BANKING_AZIMUTH); Second Life's roll range is the whole pi / 2.
-            float range = InWorldz ? _props.GetFloat(VehFloatParam.BankingAzimuth, HalfPi) : HalfPi;
+            float range = InWorldz ? _sp.GetFloat(VehFloatParam.BankingAzimuth, HalfPi) : HalfPi;
             float roll = Utils.Clamp(angle * HalfPi / range, -HalfPi, HalfPi);
             if (Math.Abs(roll) <= VehicleLimits.ThresholdBankAngle)
                 return 0f;
             float attitude = tilt > Math.PI / 2.0 ? -1f : 1f;
             // InWorldz: an airplane flying inverted banks by the inverted banking modifier (VehicleDynamics.cs:1241-1247,
             // 1376-1377; only an airplane is marked inverted there).
-            if (InWorldz && _props.Type == VehicleType.Airplane && tilt > Math.PI / 2.0)
-                efficiency *= _props.GetFloat(VehFloatParam.InvertedBankingModifier, 1f);
+            if (InWorldz && _sp.Type == VehicleType.Airplane && tilt > Math.PI / 2.0)
+                efficiency *= _sp.GetFloat(VehFloatParam.InvertedBankingModifier, 1f);
 
             float target = -roll * attitude * efficiency * (float)Math.PI * ((1f - mix) + mix * speedShare);
             // With the angular motor engaged, banking turns no faster than the legacy angular speed.
-            if (_props.Dynamics.AngularDecayIndex < VehicleLimits.ThresholdAngularMotorEngaged)
+            if (_sp.Dynamics.AngularDecayIndex < VehicleLimits.ThresholdAngularMotorEngaged)
                 target = Utils.Clamp(target, -VehicleLimits.MaxLegacyAngularVelocity, VehicleLimits.MaxLegacyAngularVelocity);
             target = Utils.Clamp(target, -S.MaxAngularSpeed, S.MaxAngularSpeed);
 
             float w0 = _rawWorldAngularVel.Z;
             float w1;
-            if ((_props.Flags & ExtendedVehicleFlags.LimitMotorUp) != 0 && !_body.HasCollision)
+            if ((_sp.Flags & ExtendedVehicleFlags.LimitMotorUp) != 0 && !_body.HasCollision)
                 w1 = (float)((w0 + target * Math.Exp(-airTime / timescale) * h / timescale) * Math.Exp(-h / timescale));
             else
                 w1 = target + (w0 - target) * (float)Math.Exp(-h / timescale);
@@ -1989,14 +2352,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             Vector3 gravityWorld = _body.Gravity * GravityShare();
             // The constant accelerations along the vehicle's axes: its gravity, and a sled's slope assist.
             Vector3 gravity = gravityWorld * Quaternion.Inverse(_rotation) + SledAssist();
-            Vector3 motor = _props.Dynamics.LinearDirection;
-            Vector3 motorTs = _props.GetVec(VehVectorParam.LinearMotorTimescale);
-            Vector3 decayTs = _props.GetVec(VehVectorParam.LinearMotorDecayTimescale);
-            Vector3 frictionTs = frictionOn ? _props.GetVec(VehVectorParam.LinearFrictionTimescale) : FrictionOff;
+            Vector3 motor = _sp.Dynamics.LinearDirection;
+            Vector3 motorTs = _sp.GetVec(VehVectorParam.LinearMotorTimescale);
+            Vector3 decayTs = _sp.GetVec(VehVectorParam.LinearMotorDecayTimescale);
+            Vector3 frictionTs = frictionOn ? _sp.GetVec(VehVectorParam.LinearFrictionTimescale) : FrictionOff;
 
             if (!motorOn)
-                _props.Dynamics.LinearDecayIndex = float.PositiveInfinity;
-            double age = _props.Dynamics.LinearDecayIndex;
+                _sp.Dynamics.LinearDecayIndex = float.PositiveInfinity;
+            double age = _sp.Dynamics.LinearDecayIndex;
 
             // Friction and gravity alone over the step, and the motor with them.
             Vector3 frictionOnly = FrictionStep(v0, frictionTs, h, gravity);
@@ -2035,9 +2398,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
             // VEHICLE_FLAG_LIMIT_MOTOR_UP / LIMIT_MOTOR_DOWN: the motor does not push up (down) in world terms.
             // Friction's share is left whole.
-            if ((_props.Flags & ExtendedVehicleFlags.LimitMotorUp) != 0 && motorChange.Z > 0)
+            if ((_sp.Flags & ExtendedVehicleFlags.LimitMotorUp) != 0 && motorChange.Z > 0)
                 motorChange.Z = 0;
-            if ((_props.Flags & ExtendedVehicleFlags.LimitMotorDown) != 0 && motorChange.Z < 0)
+            if ((_sp.Flags & ExtendedVehicleFlags.LimitMotorDown) != 0 && motorChange.Z < 0)
                 motorChange.Z = 0;
 
             bool hoverFights = false;
@@ -2049,21 +2412,21 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 // compared as a change of velocity against an acceleration, as there.
                 if (motorChange.Z > 0f)
                 {
-                    motorChange.Z += _body.Gravity.Z * (1f - _props.GetFloat(VehFloatParam.Buoyancy, 0f));
+                    motorChange.Z += _body.Gravity.Z * (1f - _sp.GetFloat(VehFloatParam.Buoyancy, 0f)) * _stepShare;
                     if (motorChange.Z < 0f)
                         motorChange.Z = 0f;
                 }
 
                 // "Hover moderation. If hover is present, accelerate the motor decay" (2714-2720): a motor that still moves the
                 // vehicle up or down while a hover flag is set and the hover is on has its decay clock put on ten seconds.
-                hoverFights = Math.Abs(motorChange.Z) > VehicleLimits.ThresholdLinearMotorDeltaV
-                    && (_props.Flags & (ExtendedVehicleFlags.HoverGlobalHeight | ExtendedVehicleFlags.HoverTerrainOnly | ExtendedVehicleFlags.HoverWaterOnly)) != 0
-                    && _props.GetFloat(VehFloatParam.HoverTimescale, 1000f) < S.MaxHoverTimescale;
+                hoverFights = Math.Abs(motorChange.Z) > VehicleLimits.ThresholdLinearMotorDeltaV * _stepShare
+                    && (_sp.Flags & (ExtendedVehicleFlags.HoverGlobalHeight | ExtendedVehicleFlags.HoverTerrainOnly | ExtendedVehicleFlags.HoverWaterOnly)) != 0
+                    && _sp.GetFloat(VehFloatParam.HoverTimescale, 1000f) < S.MaxHoverTimescale;
             }
 
-            _props.Dynamics.LinearDecayIndex += h;
+            _sp.Dynamics.LinearDecayIndex += h;
             if (hoverFights)
-                _props.Dynamics.LinearDecayIndex += HoverModerationSeconds;
+                _sp.Dynamics.LinearDecayIndex += HoverModerationSeconds * _stepShare;
 
             // InWorldz's motor-height rule: the motor is not applied while it holds (the clock above still runs).
             if (_motorsOffByHeight)
@@ -2083,12 +2446,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         private Vector3 HalcyonLinearMotorChange(float h, Vector3 lastvel, Vector3 motor, Vector3 motorTs, Vector3 decayTs)
         {
-            float index = _props.Dynamics.LinearDecayIndex;
-            Vector3 target = _props.Dynamics.LinearTargetVelocity;
+            float index = _sp.Dynamics.LinearDecayIndex;
+            Vector3 target = _sp.Dynamics.LinearTargetVelocity;
             Vector3 local = HalcyonVehicleLaws.LinearMotor(h, lastvel, motor, motorTs, decayTs, ref index, ref target,
                 S.MaxLinearSpeed, IsLinearMotorStalled);
-            _props.Dynamics.LinearDecayIndex = index;
-            _props.Dynamics.LinearTargetVelocity = target;
+            _sp.Dynamics.LinearDecayIndex = index;
+            _sp.Dynamics.LinearTargetVelocity = target;
             if (local == lastvel)
                 return Vector3.Zero;
 
@@ -2116,13 +2479,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         private Vector3 MotorOffsetTurn(Vector3 motorChange)
         {
-            Vector3 offset = _props.GetVec(VehVectorParam.LinearMotorOffset);
+            Vector3 offset = _sp.GetVec(VehVectorParam.LinearMotorOffset);
             if (offset == Vector3.Zero || motorChange == Vector3.Zero)
                 return Vector3.Zero;
             Vector3 r = offset * _rotation;
-            Vector3 angularImpulse = Vector3.Cross(r, motorChange * m_vehicleMass);
+            return AngularChangeOf(Vector3.Cross(r, motorChange * m_vehicleMass));
+        }
 
-            // To the body's axes, through the inverse of its principal moments, and back to the world.
+        // The change of angular velocity an angular impulse makes: to the body's axes, through the inverse of its principal
+        // moments, and back to the world.
+        private Vector3 AngularChangeOf(Vector3 angularImpulse)
+        {
             Quaternion bodyRotation = _body.Orientation;
             Vector3 local = angularImpulse * Quaternion.Inverse(bodyRotation);
             Vector3 inertia = _body.InertiaDiagonal;
@@ -2133,7 +2500,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             return local * bodyRotation;
         }
 
-        // InWorldz's wind: the wind (or water current) at the vehicle's position as last sampled, held between samples.
+        // InWorldz's wind: the wind (or water current) at the vehicle's position as of the last collision step.
         private Vector3 _windSample;
 
         /// <summary>The wind the vehicle last sampled, in the world's frame. For tests.</summary>
@@ -2143,8 +2510,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// InWorldz's wind and water currents (VehicleDynamics.cs:863-992, BuildWindData and SimulateWindForces, read, not run),
         /// only under <see cref="VehicleBehaviour.InWorldz"/>. A vehicle with VEHICLE_FLAG_REACT_TO_WIND set is pushed by the
         /// wind at its position (the surface wind or the wind aloft above the water), and one with VEHICLE_FLAG_REACT_TO_CURRENTS
-        /// by the water's current below the water; the wind module of the region says which. The wind is read once in eight
-        /// steps (frame number mod 8) and held between reads. Its push is
+        /// by the water's current below the water; the wind module of the region says which. The wind is read in every
+        /// collision step at the vehicle's position, and the sample must not take a lock (<see cref="IVehicleBody.TryGetWind"/>).
+        /// Its push is
         /// <see cref="HalcyonVehicleLaws.WindLinearVelocityChange"/> on the vehicle's velocity, scaled by
         /// VEHICLE_LINEAR_WIND_EFFICIENCY, and <see cref="HalcyonVehicleLaws.WindAngularVelocityChange"/> on its angular
         /// velocity, scaled by VEHICLE_ANGULAR_WIND_EFFICIENCY. With neither flag set, under Second Life's behaviour, or with
@@ -2157,29 +2525,28 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         private void SimulateWind(float h)
         {
             const ExtendedVehicleFlags react = ExtendedVehicleFlags.ReactToWind | ExtendedVehicleFlags.ReactToCurrents;
-            if (!InWorldz || (_props.Flags & react) == 0)
+            if (!InWorldz || (_sp.Flags & react) == 0)
             {
                 _windSample = Vector3.Zero;
                 return;
             }
 
             Vector3 position = _body.Position;
-            if (m_frameNum % HalcyonVehicleLaws.WindSampleInterval == 0)
-                _windSample = _body.TryGetWind(position, out Vector3 wind) && float.IsFinite(wind.X) && float.IsFinite(wind.Y)
-                    ? new Vector3(wind.X, wind.Y, 0f) : Vector3.Zero;
+            _windSample = _body.TryGetWind(position, out Vector3 wind) && float.IsFinite(wind.X) && float.IsFinite(wind.Y)
+                ? new Vector3(wind.X, wind.Y, 0f) : Vector3.Zero;
 
             bool underWater = position.Z < _body.GetWaterLevel(position);
-            if (!underWater && (_props.Flags & ExtendedVehicleFlags.ReactToWind) == 0)
+            if (!underWater && (_sp.Flags & ExtendedVehicleFlags.ReactToWind) == 0)
                 return;
 
             Vector3 windLocal = _windSample * Quaternion.Inverse(_rotation);
             Vector3 push = HalcyonVehicleLaws.WindLinearVelocityChange(windLocal, _localLinearVel,
-                _props.GetVec(VehVectorParam.LinearWindEfficiency), h);
+                _sp.GetVec(VehVectorParam.LinearWindEfficiency), h);
             if (push != Vector3.Zero)
                 ApplyLinearVelocityChange(push * _rotation);
 
             Vector3 turn = HalcyonVehicleLaws.WindAngularVelocityChange(windLocal, _localAngularVel,
-                _props.GetVec(VehVectorParam.AngularWindEfficiency), h);
+                _sp.GetVec(VehVectorParam.AngularWindEfficiency), h);
             if (turn != Vector3.Zero)
                 AddTorqueVelocityChange(turn * _rotation);
         }
@@ -2210,9 +2577,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             if (!InWorldz)
                 return;
 
-            float limit = _props.GetFloat(VehFloatParam.DisableMotorsAbove, 0f);
-            if (_props.GetFloat(VehFloatParam.HoverTimescale, 1000f) < S.MaxHoverTimescale
-                || _props.GetFloat(VehFloatParam.Buoyancy, 0f) > 0f
+            float limit = _sp.GetFloat(VehFloatParam.DisableMotorsAbove, 0f);
+            if (_sp.GetFloat(VehFloatParam.HoverTimescale, 1000f) < S.MaxHoverTimescale
+                || _sp.GetFloat(VehFloatParam.Buoyancy, 0f) > 0f
                 || _localLinearVel.Length() < HalcyonVehicleLaws.MotorHeightMinSpeed)
             {
                 _heightAbove = 0f;
@@ -2240,7 +2607,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             }
 
             _motorsOffByHeight = HalcyonVehicleLaws.MotorsOffAboveHeight(_heightAbove, limit,
-                _props.GetFloat(VehFloatParam.DisableMotorsAfter, 0f), h, ref _timeAboveHeight);
+                _sp.GetFloat(VehFloatParam.DisableMotorsAfter, 0f), h, ref _timeAboveHeight);
         }
 
         /// <summary>
@@ -2252,11 +2619,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         private float SimulateAngularMotorAndFriction(float h, bool motorOn, bool frictionOn)
         {
             Vector3 worldVel = _rawWorldAngularVel;
-            Vector3 motorTs = _props.GetVec(VehVectorParam.AngularMotorTimescale);
-            Vector3 motor = MouselookMotor(_props.Dynamics.AngularDirection, motorTs);
-            Vector3 decayTs = _props.GetVec(VehVectorParam.AngularMotorDecayTimescale);
-            Vector3 frictionTs = frictionOn ? _props.GetVec(VehVectorParam.AngularFrictionTimescale) : FrictionOff;
-            bool torqueWorldZ = (_props.Flags & ExtendedVehicleFlags.TorqueWorldZ) != 0;
+            Vector3 motorTs = _sp.GetVec(VehVectorParam.AngularMotorTimescale);
+            Vector3 motor = MouselookMotor(_sp.Dynamics.AngularDirection, motorTs);
+            Vector3 decayTs = _sp.GetVec(VehVectorParam.AngularMotorDecayTimescale);
+            Vector3 frictionTs = frictionOn ? _sp.GetVec(VehVectorParam.AngularFrictionTimescale) : FrictionOff;
+            bool torqueWorldZ = (_sp.Flags & ExtendedVehicleFlags.TorqueWorldZ) != 0;
 
             // The velocity the equation acts on: about the vehicle's axes, or with TORQUE_WORLD_Z the vehicle's X
             // and Y of the velocity without its world-Z part, and world Z.
@@ -2273,8 +2640,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             }
 
             if (!motorOn)
-                _props.Dynamics.AngularDecayIndex = float.PositiveInfinity;
-            double age = _props.Dynamics.AngularDecayIndex;
+                _sp.Dynamics.AngularDecayIndex = float.PositiveInfinity;
+            double age = _sp.Dynamics.AngularDecayIndex;
 
             if (InWorldz)
                 return SimulateAngularMotorAndFrictionInWorldz(h, v0, motor, motorTs, decayTs, frictionTs, torqueWorldZ);
@@ -2299,7 +2666,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 change = (v1 - v0) * _rotation;
             }
 
-            _props.Dynamics.AngularDecayIndex += h;
+            _sp.Dynamics.AngularDecayIndex += h;
 
             // The change about world Z is applied in Step, with banking's.
             float aboutWorldZ = change.Z;
@@ -2332,16 +2699,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             {
                 // The motor-height rule: no motor, and no target velocity to carry forward (VehicleDynamics.cs:2746-2749).
                 motorWorld = Vector3.Zero;
-                _props.Dynamics.AngularTargetVelocity = Vector3.Zero;
+                _sp.Dynamics.AngularTargetVelocity = Vector3.Zero;
             }
             Vector3 frictionWorld = ChangeToWorld(frictionChange, torqueWorldZ);
-            if (Math.Abs(motorWorld.X) < VehicleLimits.ThresholdAngularMotorDeltaV && Math.Abs(motorWorld.Y) < VehicleLimits.ThresholdAngularMotorDeltaV)
+            float least = VehicleLimits.ThresholdAngularMotorDeltaV * _stepShare;
+            if (Math.Abs(motorWorld.X) < least && Math.Abs(motorWorld.Y) < least)
             {
                 motorWorld.X = 0f;
                 motorWorld.Y = 0f;
             }
 
-            _props.Dynamics.AngularDecayIndex += h;
+            _sp.Dynamics.AngularDecayIndex += h;
 
             // The change about world Z is applied in Step, with banking's.
             Vector3 change = motorWorld + frictionWorld;
@@ -2378,7 +2746,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         private Vector3 HalcyonAngularMotor(float h, Vector3 lastvel, Vector3 motor, Vector3 motorTs, Vector3 decayTs)
         {
-            VehicleDynamicsState d = _props.Dynamics;
+            VehicleDynamicsState d = _sp.Dynamics;
             float[] last = { lastvel.X, lastvel.Y, lastvel.Z };
             float[] dir = { motor.X, motor.Y, motor.Z };
             float[] ts = { motorTs.X, motorTs.Y, motorTs.Z };
@@ -2402,7 +2770,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             // The attractor's timescale as the clamp reads it, held to at least the step; with the attractor switched off for
             // the region there is nothing to overpower, and the clamp is out.
             float attractTimescale = S.DoVerticalAttractor
-                ? Math.Max(_props.GetFloat(VehFloatParam.VerticalAttractionTimescale, 1000f), h)
+                ? Math.Max(_sp.GetFloat(VehFloatParam.VerticalAttractionTimescale, 1000f), h)
                 : float.PositiveInfinity;
             for (int i = 0; i < 3; i++)
             {
@@ -2427,7 +2795,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
                 // The clamp against the vertical attractor, on the roll and pitch velocities.
                 if (i < 2 && attractTimescale < S.MaxAttractTimescale)
-                    newvel[i] = HalcyonVehicleLaws.AttractorClamp(newvel[i], _props.Type, attractTimescale);
+                    newvel[i] = HalcyonVehicleLaws.AttractorClamp(newvel[i], _sp.Type, attractTimescale);
 
                 // The new target: the new velocity while ramping toward zero, else held to the direction.
                 if (dir[i] * newvel[i] < 0 || ramp[i] < 0)
@@ -2493,7 +2861,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             // InWorldz sets the motor from the camera in SimulateMouselookInput instead.
             if (InWorldz)
                 return motor;
-            if ((_props.Flags & mouselook) == 0 || DriverCamera?.Invoke() is not DriverView { InMouselook: true, At: Vector3 camera }
+            if ((_sp.Flags & mouselook) == 0 || DriverCamera?.Invoke() is not DriverView { InMouselook: true, At: Vector3 camera }
                 || !float.IsFinite(camera.X) || !float.IsFinite(camera.Y) || !float.IsFinite(camera.Z)
                 || camera.LengthSquared() < MinCameraAxis)
                 return motor;
@@ -2504,7 +2872,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             double yaw = Math.Atan2(d.Y, d.X);
             double pitch = -Math.Atan2(d.Z, Math.Sqrt(d.X * d.X + d.Y * d.Y));
             motor.Y = Aim(pitch, motor.Y, motorTs.Y);
-            if ((_props.Flags & ExtendedVehicleFlags.MouselookBank) != 0)
+            if ((_sp.Flags & ExtendedVehicleFlags.MouselookBank) != 0)
                 motor.X = Aim(-yaw, motor.X, motorTs.X);
             else
                 motor.Z = Aim(yaw, motor.Z, motorTs.Z);
@@ -2538,7 +2906,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         {
             const ExtendedVehicleFlags any = ExtendedVehicleFlags.MouselookSteer | ExtendedVehicleFlags.MouselookBank
                 | ExtendedVehicleFlags.MousePointSteer | ExtendedVehicleFlags.MousePointBank;
-            ExtendedVehicleFlags flags = _props.Flags;
+            ExtendedVehicleFlags flags = _sp.Flags;
             if ((flags & any) == 0 || DriverCamera?.Invoke() is not DriverView { At: Vector3 camera } view
                 || !float.IsFinite(camera.X) || !float.IsFinite(camera.Y) || !float.IsFinite(camera.Z)
                 || camera.LengthSquared() < MinCameraAxis)
@@ -2557,7 +2925,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             // looking down (a camera looking up gives a negative share, which pitches the nose up for a positive y direction).
             float ycam = (flags & ExtendedVehicleFlags.LimitRollOnly) != 0 ? 0f
                 : MouselookShare(-d.Z, VehFloatParam.MouselookAltitude);
-            Vector3 direction = _props.GetVec(VehVectorParam.AngularMotorDirection);
+            Vector3 direction = _sp.GetVec(VehVectorParam.AngularMotorDirection);
             if (steering && (xcam != 0f || ycam != 0f))
                 MoveAngular(new Vector3(0f, ycam * direction.Y, xcam * direction.Z));
             if (banking && xcam != 0f)
@@ -2574,7 +2942,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         private float MouselookShare(float component, VehFloatParam range)
         {
-            float most = _props.GetFloat(range, (float)(Math.PI / 4.0));
+            float most = _sp.GetFloat(range, (float)(Math.PI / 4.0));
             if (!(most > 0f))
                 return 0f;
             float share = Utils.Clamp(component * (float)(Math.PI / 2.0) / most, -1f, 1f);

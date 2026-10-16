@@ -513,6 +513,23 @@ public abstract class PhysicsActor
     /// </remarks>
     public virtual void SetConstantForce(Vector3 force, bool local) { }
 
+    /// <summary>
+    /// The constant force of llSetForce on a physical object. <paramref name="force"/> is in region axes: for a call with
+    /// local = TRUE the script layer has already turned the vector by the calling prim's rotation at the moment of the call.
+    /// <paramref name="local"/> says the script gave it in the object's own axes, so an engine that integrates forces more
+    /// often than once per frame may keep the vector in the object's frame and turn it with the object on every step
+    /// (JoltPrim does). A new call replaces the previous force, and a zero force ends it. The default sets <see cref="Force"/>,
+    /// the region-axes vector, which is what every engine did before this call existed.
+    /// </summary>
+    public virtual void SetScriptForce(Vector3 force, bool local) { Force = force; }
+
+    /// <summary>
+    /// The constant torque of llSetTorque on a physical object, with the same contract as <see cref="SetScriptForce"/>:
+    /// region axes, <paramref name="local"/> only says that the script gave it in the object's own axes. The default sets
+    /// <see cref="Torque"/>.
+    /// </summary>
+    public virtual void SetScriptTorque(Vector3 torque, bool local) { Torque = torque; }
+
     public abstract void AvatarJump(float forceZ);
     public abstract void AddAngularForce(Vector3 force, bool pushforce);
     public abstract void SetMomentum(Vector3 momentum);

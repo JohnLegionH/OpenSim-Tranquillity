@@ -300,13 +300,17 @@ public class PoolHandoffTests
             var hold = holder.B.HoldPoolGateForTest();
             var stepper = Start("waiter-step", () => waiterResult = Step(waiter));
             Assert.True(waits.Wait(Limit), "the waiter did not reach the pool");
-            // The waiter holds no region lock while it waits, so removing it does not wait for the pool.
-            var remover = Start("waiter-remove", () => waiter.Dispose());
-            Join(remover, "removing the waiting region");
+            // Removing a region destroys its physics system, which waits for every pool gate (an Update in flight may be
+            // reading joltc's map of systems), so the removal waits behind the holder like the step does. The waiter holds
+            // no region lock while it waits, so its scene-thread calls would still return.
+            var removed = new ManualResetEventSlim(false);
+            var remover = Start("waiter-remove", () => { waiter.Dispose(); removed.Set(); });
+            Assert.False(removed.Wait(500), "the region was removed while the pool gate was held");
             hold.Dispose();
             Join(stepper, "the removed region's waiting step");
-            Assert.Equal(0, waiterResult.BodyUpdateCount);
-            Assert.Equal(0f, waiterResult.PhysicsMilliseconds);   // it ran nothing: the backend was gone
+            Join(remover, "removing the waiting region");
+            // Its step was ahead of the removal in the queue (or got the pool first), so it ran or found the backend gone.
+            Assert.True(waiterResult.PhysicsMilliseconds >= 0f);
 
             // The pool was passed on: the next region steps.
             var next = Start("other-step", () => Step(other));
@@ -344,14 +348,16 @@ public class PoolHandoffTests
             var waiting = Start("waiter-step", () => Step(waiter));
             Assert.True(waits.Wait(Limit), "the second region did not reach the pool");
 
-            // The holder has the pool but not yet its region lock: removing it completes now, and its step then finds the
-            // backend gone, runs nothing, and passes the pool on.
-            var remover = Start("holder-remove", () => holder.Dispose());
-            Join(remover, "removing the region that holds the pool");
+            // The holder has the pool but not yet its region lock: removing it waits for the pool like any create or destroy
+            // of a physics system, so it completes only after the holder's step has ended and passed the pool on.
+            var removed = new ManualResetEventSlim(false);
+            var remover = Start("holder-remove", () => { holder.Dispose(); removed.Set(); });
+            Assert.False(removed.Wait(500), "the region was removed while its own step held the pool");
             release.Set();
             Join(holding, "the removed region's step");
             Join(waiting, "the waiting region's step");
-            Assert.Equal(0f, holderResult.PhysicsMilliseconds);
+            Join(remover, "removing the region that holds the pool");
+            Assert.True(holderResult.PhysicsMilliseconds >= 0f);
             if (fair)
                 Assert.Equal(0, waiter.B.PoolQueuedForTest);
         }

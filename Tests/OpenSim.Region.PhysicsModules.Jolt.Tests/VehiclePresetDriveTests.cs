@@ -30,7 +30,9 @@ public class VehiclePresetDriveTests
     // The 11 Hz figure (measured with the documented presets) and how far the other rates may lie from it.
     [Theory]
     [InlineData("car", 0f, "release", 7.537f, 1f)]       // motor 8 m/s, timescale 1 s, forward friction 100 s
-    [InlineData("car", 0f, "before", 16.569f, 2.5f)]
+    // (16.315: the 11 Hz figure with the vehicle run in each collision step. Run once per heartbeat it was 16.569 at 11 Hz and 16.28 to 16.37
+    // at the other rates; run in each collision step it is 16.15 to 16.32 at all four, a spread of 1.0% against 1.8%.)
+    [InlineData("car", 0f, "before", 16.315f, 2.5f)]
     [InlineData("carturn", 0f, "before", 14.125f, 2.5f)]
     [InlineData("car-down", 15f, "steady", 10.674f, 1.5f)]
     [InlineData("sled", 15f, "steady", 12.649f, 1.5f)]  // forward friction 30 s, the slope assist, no hover

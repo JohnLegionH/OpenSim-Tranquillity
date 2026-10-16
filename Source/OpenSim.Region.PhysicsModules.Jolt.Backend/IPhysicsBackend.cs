@@ -699,6 +699,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         void RemoveBody(BodyId body);
         bool IsBodyValid(BodyId body);
 
+        /// <summary>
+        /// Attaches a provider that changes <paramref name="body"/>'s velocities before every collision step of an
+        /// Update (see <see cref="IStepForceProvider"/>). The backend registers one step listener with the engine when the
+        /// first provider attaches and removes it when the last detaches; both happen between Updates. Dispose the result
+        /// to detach. Never call this, or dispose the result, from inside a provider. Removing the body detaches its
+        /// providers.
+        /// </summary>
+        IDisposable AttachStepForceProvider(BodyId body, IStepForceProvider provider);
+
         void SetBodyShape(BodyId body, ShapeId shape, bool recomputeMass);
         void SetBodyMotionType(BodyId body, BodyMotionType motionType, bool activate);
         /// <summary>Moves a live body to another layer in place: its transform, velocity and id are kept.</summary>

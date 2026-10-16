@@ -116,10 +116,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         /// The wind at a region position (the water's current below the water, the surface wind above it, the wind aloft over
         /// that), from the region's wind module. False when the region has no wind module.
         /// </summary>
-        internal bool TryGetWind(Vector3 pos, out Vector3 wind)
+        internal bool TryGetWind(Vector3 pos, out Vector3 wind) => SampleWind(m_wind, pos, out wind);
+
+        /// <summary>The region's wind module (null when it has none), for a step provider to capture before the Update.</summary>
+        internal IWindModule WindModule => m_wind;
+
+        /// <summary>
+        /// The wind at a region position from <paramref name="module"/>, which must answer without taking a lock (it is read
+        /// inside the engine's collision steps). Allocation free. False when there is no module or the position is not finite.
+        /// </summary>
+        internal static bool SampleWind(IWindModule module, Vector3 pos, out Vector3 wind)
         {
             wind = Vector3.Zero;
-            IWindModule module = m_wind;
             if (module == null || !float.IsFinite(pos.X) || !float.IsFinite(pos.Y) || !float.IsFinite(pos.Z))
                 return false;
             const float Limit = 1e6f;
@@ -2434,6 +2442,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 vehicles = new JoltPrim[_vehicles.Count];
                 _vehicles.CopyTo(vehicles);
             }
+            long started = System.Diagnostics.Stopwatch.GetTimestamp();
             foreach (JoltPrim v in vehicles)
             {
                 try { v.StepVehicle(timeStep); }
@@ -2443,7 +2452,27 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     m_log.LogError($"{LogHeader} vehicle step EXCEPTION for prim {v.LocalID}: {e}");
                 }
             }
+            Interlocked.Add(ref _vehicleStepTicks, System.Diagnostics.Stopwatch.GetTimestamp() - started);
+            Interlocked.Add(ref _vehicleStepCalls, vehicles.Length);
         }
+
+        // The time the per-Update vehicle drive has taken (Stopwatch ticks) and the vehicle steps it made, for the cost
+        // figures of the tests.
+        private long _vehicleStepTicks, _vehicleStepCalls;
+        internal long VehicleStepTicks => Interlocked.Read(ref _vehicleStepTicks);
+        internal long VehicleStepCalls => Interlocked.Read(ref _vehicleStepCalls);
+        // The time the vehicles' step force providers have taken inside the collision steps (Stopwatch ticks).
+        private long _vehicleOnStepTicks, _vehicleOnStepCalls;
+        internal void AddVehicleStepTicks(long ticks)
+        {
+            Interlocked.Add(ref _vehicleOnStepTicks, ticks);
+            Interlocked.Increment(ref _vehicleOnStepCalls);
+        }
+        internal long VehicleOnStepTicks => Interlocked.Read(ref _vehicleOnStepTicks);
+        internal long VehicleOnStepCalls => Interlocked.Read(ref _vehicleOnStepCalls);
+
+        // Everything the vehicle drive costs: the Update-rate part and the collision steps' part.
+        internal long VehicleDriveTicks => VehicleStepTicks + VehicleOnStepTicks;
 
         // Prims with a script force or torque set (llSetForce, llSetTorque): each is applied before every backend step,
         // next to the vehicle drive, until the script sets it back to zero.
