@@ -107,6 +107,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             }
         }
 
+        public float GravityMultiplier => _prim.GravModifier;
+
         public void SetGravityFactor(float factor)
         {
             if (_prim.BodyHandle.IsValid)

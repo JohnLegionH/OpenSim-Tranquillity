@@ -178,6 +178,13 @@ public class VehicleRestoreRouteTests
         void HandBack(Run r)
         {
             PhysicsActor old = r.Actor;
+            if (route == VehicleRoute.Crossing)
+            {
+                // Core starts the crossing and has the engine write the motors' running state into the record it sends
+                // (SceneObjectGroup.CrossAsync).
+                old.CrossingStart();
+                old.CaptureVehicleRunningState(ref r.VehiclePart.VehicleParams.vd);
+            }
             saved = VehicleRestore.Saved(r.VehiclePart, route);
             o.Saved = saved.vd;
             Vector3 pos = old.Position;

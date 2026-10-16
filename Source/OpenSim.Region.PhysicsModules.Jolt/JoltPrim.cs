@@ -2134,7 +2134,31 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             RestoreWindEfficiency(vd);
             _vehicle.RestoreMotorDirections(vd.m_linearMotorDirection, vd.m_angularMotorDirection);
             _vehicle.ProcessRotationVehicleParam(VehicleCode.REFERENCE_FRAME, vd.m_referenceFrame);
+            // A record saved by a region crossing carries the motors' running state: they go on from where they were.
+            _vehicle.RestoreRunningMotors(
+                vd.m_linearMotorRunAge.HasValue && vd.m_linearMotorRunDirection.HasValue && vd.m_linearMotorRunTarget.HasValue
+                    ? new MotorRunningState(vd.m_linearMotorRunAge.Value, vd.m_linearMotorRunDirection.Value, vd.m_linearMotorRunTarget.Value)
+                    : (MotorRunningState?)null,
+                vd.m_angularMotorRunAge.HasValue && vd.m_angularMotorRunDirection.HasValue && vd.m_angularMotorRunTarget.HasValue
+                    ? new MotorRunningState(vd.m_angularMotorRunAge.Value, vd.m_angularMotorRunDirection.Value, vd.m_angularMotorRunTarget.Value)
+                    : (MotorRunningState?)null);
             WakeVehicle();
+        }
+
+        // Core calls this as it starts to cross a vehicle into another region: the motors' running state goes into the record
+        // that is sent, so that the vehicle goes on driving on the other side (SetVehicle takes it up). A motor that is off
+        // writes nothing.
+        public override void CaptureVehicleRunningState(ref VehicleData vd)
+        {
+            if (_vehicle == null)
+                return;
+            _vehicle.GetRunningMotors(out MotorRunningState? linear, out MotorRunningState? angular);
+            vd.m_linearMotorRunAge = linear?.Age;
+            vd.m_linearMotorRunDirection = linear?.Direction;
+            vd.m_linearMotorRunTarget = linear?.Target;
+            vd.m_angularMotorRunAge = angular?.Age;
+            vd.m_angularMotorRunDirection = angular?.Direction;
+            vd.m_angularMotorRunTarget = angular?.Target;
         }
 
         // A value for each axis of the four motor timescales, where the record holds one (a script's vector call writes it;

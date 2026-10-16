@@ -65,6 +65,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// spreads it over the step as it does any gravity, and it does not keep a resting body awake.</summary>
         void SetGravityFactor(float factor);
 
+        /// <summary>The body's gravity multiplier (llSetPhysicsMaterial GRAVITY_MULTIPLIER), 1 by default. Under
+        /// <see cref="VehicleBehaviour.InWorldz"/> the vehicle's weight is this less its buoyancy; Second Life's vehicles
+        /// ignore it.</summary>
+        float GravityMultiplier => 1f;
+
         /// <summary>Body currently has a contact (ground-vehicle gravity fudge; unused by boats).</summary>
         bool HasCollision { get; }
 

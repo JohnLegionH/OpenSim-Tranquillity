@@ -33,7 +33,7 @@
  * attractor itself and the angular deflection ported from InWorldz Halcyon
  * (InWorldz.PhysxPhysics/Vehicle/VehicleDynamics.cs: MovementExpDecay, GetGrowthRate, the linear motor of Simulate(),
  * the attractor clamp of the angular motor, SimulateAngularDeflection, SimulateVerticalAttractor, the motor-height clock,
- * SimulateWindForces;
+ * SimulateWindForces, SimulateBoatGroundDrag;
  * InWorldz.PhysxPhysics/PhysUtil.cs: AngleBetween, RotBetween, Rot2Euler).
  * Adapted 2026 by Legion Builds
  */
@@ -449,6 +449,35 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             double z = Math.Atan2(v.Y, v.X);
 
             return new Vector3((float)x, (float)y, (float)z);
+        }
+
+        /// <summary>The decay clock that switches a linear motor off (VehicleDynamics.cs:1062, MaxDecayTimescale x 10).</summary>
+        public const float MotorOffClock = VehicleLimits.MaxDecayTimescale * 10.0f;
+
+        /// <summary>
+        /// Whether the corner of a boat's hull that leads its motion is at or under the ground (VehicleDynamics.cs:1037-1073,
+        /// SimulateBoatGroundDrag, read, not run). Four probes, 90% of the box's half size out along the vehicle's x or y
+        /// axis and at 98% of its half height below the box's centre, are rotated by the vehicle's rotation; a probe counts
+        /// when the vehicle moves along its side faster than <see cref="VehicleLimits.ThresholdLinearMotorDeltaV"/> and the probe's
+        /// bottom (the vehicle's z, plus the box's centre z unrotated as Halcyon adds it, plus the probe's z) is not above the
+        /// terrain under the probe. <paramref name="groundAt"/> gives the terrain height at a region x and y.
+        /// </summary>
+        public static bool BoatLeadingEdgeOnGround(Vector3 localVelocity, Vector3 position, Quaternion rotation,
+            Vector3 center, Vector3 halfSize, Func<float, float, float> groundAt)
+        {
+            const float t = VehicleLimits.ThresholdLinearMotorDeltaV;
+            Vector3 dfwd = new Vector3(halfSize.X * 0.9f, 0f, -halfSize.Z * 0.98f) * rotation;
+            Vector3 dback = new Vector3(-halfSize.X * 0.9f, 0f, -halfSize.Z * 0.98f) * rotation;
+            Vector3 dleft = new Vector3(0f, halfSize.Y * 0.9f, -halfSize.Z * 0.98f) * rotation;
+            Vector3 dright = new Vector3(0f, -halfSize.Y * 0.9f, -halfSize.Z * 0.98f) * rotation;
+            float botfwd = position.Z + center.Z + dfwd.Z;
+            float botback = position.Z + center.Z + dback.Z;
+            float botleft = position.Z + center.Z + dleft.Z;
+            float botright = position.Z + center.Z + dright.Z;
+            return (localVelocity.X > t && botfwd <= groundAt(position.X + dfwd.X, position.Y + dfwd.Y)) ||
+                   (localVelocity.X < -t && botback <= groundAt(position.X + dback.X, position.Y + dback.Y)) ||
+                   (localVelocity.Y > t && botleft <= groundAt(position.X + dleft.X, position.Y + dleft.Y)) ||
+                   (localVelocity.Y < -t && botright <= groundAt(position.X + dright.X, position.Y + dright.Y));
         }
     }
 }
