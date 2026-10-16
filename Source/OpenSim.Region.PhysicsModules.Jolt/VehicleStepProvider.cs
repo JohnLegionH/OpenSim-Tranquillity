@@ -25,6 +25,7 @@
 
 using System.Diagnostics;
 using OpenMetaverse;
+using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.PhysicsModules.Jolt.Backend;
 using OpenSim.Region.PhysicsModules.Jolt.Vehicles;
 using SVector3 = System.Numerics.Vector3;
@@ -43,6 +44,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private Vector3 _inertia;
         private bool _hasCollision;
         private float _appliedGravityFactor = float.NaN;
+        private IWindModule _wind;   // the region's wind module, taken in Arm; OnStep never looks it up
 
         // The body as the current collision step sees it. Position and rotation do not change inside a step; the velocities
         // are read once and written back once if the controller changed them, and read back what was written in between.
@@ -68,6 +70,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _mass = mass;
             _inertia = inertiaDiagonal;
             _hasCollision = hasCollision;
+            _wind = _module.WindModule;
             _appliedGravityFactor = float.NaN;   // the first step sets the vehicle's share, whatever the host set before
             _armed = true;
         }
@@ -167,9 +170,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public float GetTerrainHeight(Vector3 pos) => _module.TerrainHeightAt(pos.X, pos.Y);
         public float GetWaterLevel(Vector3 pos) => _module.WaterLevel;
 
-        // A wind sample for the step. The region's wind module answers it without a lock (ZephyrWind publishes an immutable
-        // snapshot with each update); the step reads it only when the controller is told to take the wind in every collision
-        // step (VehicleController.WindEverySubstep).
-        public bool TryGetWind(Vector3 position, out Vector3 wind) => _module.TryGetWind(position, out wind);
+        // A wind sample for the step, from the module Arm captured. The module answers without a lock (ZephyrWind publishes an
+        // immutable snapshot with each update), so a collision step takes none.
+        public bool TryGetWind(Vector3 position, out Vector3 wind) => JoltScene.SampleWind(_wind, position, out wind);
     }
 }

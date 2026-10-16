@@ -14,7 +14,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
 /// How the vehicle controller is split between the Update (BeginUpdate) and the collision steps (StepOnce): what the steps
-/// read is fixed when the Update starts, a script's motor set waits for the next Update, the wind can be taken in every
+/// read is fixed when the Update starts, a script's motor set waits for the next Update, a script's type change, stop and resume wait for it too, the wind is taken in every
 /// collision step, a torque is a change of angular velocity, and InWorldz's per-step constants take their share of a step.
 /// Pure (a body with no engine), so the classes run in parallel.
 /// </summary>
@@ -58,7 +58,7 @@ public class VehicleStepSplitTests
     public void A_motor_set_waits_for_the_next_Update_when_the_host_asks_it_to()
     {
         var rig = new BehaviourRig(new VehicleSettings(), Vehicle.TYPE_CAR, gravity: false);
-        rig.Car.DeferMotorSets = true;
+        rig.Car.DeferStateChanges = true;
         rig.Car.ProcessVectorVehicleParam(Vehicle.LINEAR_MOTOR_DIRECTION, new Vector3(8f, 0f, 0f));
         Assert.False(rig.Car.LinearMotorSet, "the motor was set at once");
         Assert.Equal(new Vector3(8f, 0f, 0f), rig.Car.GetVecParam(VehVectorParam.LinearMotorDirection));   // the setting itself is read at once
@@ -79,7 +79,7 @@ public class VehicleStepSplitTests
     public void A_type_change_drops_a_motor_set_that_was_waiting()
     {
         var rig = new BehaviourRig(new VehicleSettings(), Vehicle.TYPE_CAR, gravity: false);
-        rig.Car.DeferMotorSets = true;
+        rig.Car.DeferStateChanges = true;
         rig.Car.ProcessVectorVehicleParam(Vehicle.LINEAR_MOTOR_DIRECTION, new Vector3(8f, 0f, 0f));
         rig.Car.ProcessTypeChange(Vehicle.TYPE_SLED);
         rig.Car.BeginUpdate(Update);
@@ -88,10 +88,9 @@ public class VehicleStepSplitTests
 
     // ---- The wind in every collision step ----
 
-    private static BehaviourRig WindRig(bool everyStep)
+    private static BehaviourRig WindRig()
     {
         var rig = new BehaviourRig(new VehicleSettings { Behaviour = VehicleBehaviour.InWorldz }, Vehicle.TYPE_CAR, gravity: false);
-        rig.Car.WindEverySubstep = everyStep;
         rig.Car.ProcessVehicleFlags(0x20000, false);   // VEHICLE_FLAG_REACT_TO_WIND, as a script numbers it
         rig.Car.ProcessVectorVehicleParam(Vehicle.LINEAR_WIND_EFFICIENCY, new Vector3(0.5f, 0.5f, 0f));
         rig.Body.WindAt = _ => new Vector3(5f, 0f, 0f);
@@ -102,37 +101,24 @@ public class VehicleStepSplitTests
     [InlineData(1)]
     [InlineData(2)]
     [InlineData(3)]
-    public void The_wind_is_sampled_in_every_collision_step_when_asked(int n)
+    public void The_wind_is_sampled_in_every_collision_step(int n)
     {
-        var rig = WindRig(everyStep: true);
+        var rig = WindRig();
         for (int i = 0; i < 16; i++)
             rig.StepUpdate(Update, n);
         Assert.Equal(16 * n, rig.Body.WindReads);
     }
 
-    [Fact]
-    public void The_wind_is_sampled_once_in_eight_Updates_otherwise()
-    {
-        var rig = WindRig(everyStep: false);
-        for (int i = 0; i < 16; i++)
-            rig.StepUpdate(Update, 2);
-        Assert.Equal(2, rig.Body.WindReads);
-    }
-
-    // A constant wind pushes the vehicle wind x efficiency x time. Sampled once in eight Updates (InWorldz's pacing) the first
-    // sample is the eighth Update's, so the first seven push nothing; sampled in every collision step it pushes from the first.
+    // A constant wind pushes the vehicle wind x efficiency x time from the first step: 5 m/s x 0.5 x 1 s.
     [Theory]
-    [InlineData(false, 1)]
-    [InlineData(false, 3)]
-    [InlineData(true, 1)]
-    [InlineData(true, 3)]
-    public void A_steady_wind_pushes_a_vehicle_alike_however_it_is_sampled(bool everyStep, int n)
+    [InlineData(1)]
+    [InlineData(3)]
+    public void A_steady_wind_pushes_a_vehicle_from_the_first_step_however_the_Update_is_split(int n)
     {
-        var rig = WindRig(everyStep);
+        var rig = WindRig();
         for (int i = 0; i < 45; i++)
             rig.StepUpdate(Update, n);
-        double expected = everyStep ? 2.5 : 2.5 * 38.0 / 45.0;   // 5 m/s x 0.5 x 1 s; less the first seven Updates unless sampled in every step
-        Assert.InRange(rig.Body.LinearVelocity.X, expected * 0.99, expected * 1.01);
+        Assert.InRange(rig.Body.LinearVelocity.X, 2.5 * 0.99, 2.5 * 1.01);
     }
 
     // ---- A torque is a change of angular velocity ----

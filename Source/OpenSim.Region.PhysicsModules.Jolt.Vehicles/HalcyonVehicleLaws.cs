@@ -79,9 +79,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             return false;
         }
 
-        /// <summary>Steps between two samples of the wind at a vehicle's position (VehicleDynamics.cs:64, NumTimeStepsPerWindChk).</summary>
-        public const int WindSampleInterval = 8;
-
         /// <summary>The largest wind efficiency a script can set on any axis, either way (VehicleDynamics.cs:448-459).</summary>
         public const float MaxWindEfficiency = 10f;
 

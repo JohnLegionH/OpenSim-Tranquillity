@@ -129,20 +129,34 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         private static readonly VehRotationParam[] RotationKeys = (VehRotationParam[])Enum.GetValues(typeof(VehRotationParam));
 
         /// <summary>
-        /// Whether a script's motor direction set waits for the next <see cref="BeginUpdate"/> (or question put to the vehicle)
-        /// instead of acting at once. The host that steps inside the engine's collision steps sets it, so that a set on a
-        /// script thread never changes the motors' running state while the engine steps; the effect is the same, because a
-        /// motor only acts in a step.
+        /// Whether a call that changes the motors' running state waits for the next <see cref="BeginUpdate"/> (or question put
+        /// to the vehicle) instead of acting at once: a script's motor direction set, a type change (which clears the
+        /// running state), <see cref="StopMotors"/> and <see cref="ResumeAfterHold"/>. The host that steps inside the
+        /// engine's collision steps sets it, so that a call from a script or scene thread never changes the running state
+        /// while the engine steps; the effect is the same, because the state only acts in a step. Calls are applied at the
+        /// start of the next Update, the clearing ones before the motor sets (a motor set made after one of them is the
+        /// later call, and one made before it was dropped when the call was made).
         /// </summary>
-        public bool DeferMotorSets { get; set; }
+        public bool DeferStateChanges { get; set; }
+
+        // Taken by every call that writes the live properties and by the snapshot copy, so the copy never reads a
+        // dictionary a script thread is changing. Lock order: _propsGate, then _pendingGate.
+        private readonly object _propsGate = new object();
 
         private readonly object _pendingGate = new object();
         private Vector3 _pendingLinear, _pendingAngular;
         private bool _hasPendingLinear, _hasPendingAngular;
 
+        // Calls that clear or stop the running state, waiting for the next Update (under _pendingGate).
+        private bool _pendingTypeReset, _pendingStop, _pendingResume;
+
+        // True while any of the three waits (read without the lock, like the motor flags, so the common case, nothing
+        // waiting, costs nothing).
+        private volatile bool _hasPendingState;
+
         private void SetLinearMotor(Vector3 direction)
         {
-            if (!DeferMotorSets)
+            if (!DeferStateChanges)
             {
                 MoveLinear(direction);
                 return;
@@ -156,7 +170,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         private void SetAngularMotor(Vector3 direction)
         {
-            if (!DeferMotorSets)
+            if (!DeferStateChanges)
             {
                 MoveAngular(direction);
                 return;
@@ -171,18 +185,29 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // Takes the live properties and the pending motor sets into the snapshot. On the host's thread, between engine steps.
         private void RefreshSnapshot()
         {
-            if (_hasPendingLinear || _hasPendingAngular)
+            if (_hasPendingLinear || _hasPendingAngular || _hasPendingState)
             {
                 Vector3 linear, angular;
-                bool hasLinear, hasAngular;
+                bool hasLinear, hasAngular, typeReset, stop, resume;
                 lock (_pendingGate)
                 {
                     linear = _pendingLinear;
                     angular = _pendingAngular;
                     hasLinear = _hasPendingLinear;
                     hasAngular = _hasPendingAngular;
+                    typeReset = _pendingTypeReset;
+                    stop = _pendingStop;
+                    resume = _pendingResume;
                     _hasPendingLinear = _hasPendingAngular = false;
+                    _pendingTypeReset = _pendingStop = _pendingResume = false;
+                    _hasPendingState = false;
                 }
+                if (typeReset)
+                    ResetRunningState();
+                if (stop)
+                    StopMotorsNow();
+                if (resume)
+                    _props.Dynamics.LastAccessTOD = Clock();
                 if (hasLinear)
                     MoveLinear(linear);
                 if (hasAngular)
@@ -190,6 +215,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             }
             if (!_paramsDirty)
                 return;
+            lock (_propsGate)
+                CopySnapshot();
+        }
+
+        private void CopySnapshot()
+        {
             _paramsDirty = false;
             _sp.Type = _props.Type;
             _sp.Flags = _props.Flags;
@@ -203,6 +234,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 if (_props.ParamsRot.TryGetValue(key, out Quaternion q))
                     _sp.ParamsRot[key] = q;
             _sp.Dynamics = _props.Dynamics;
+        }
+
+        // A type change clears the running state: the motors off until a script sets one, the clocks and carries back to
+        // their start.
+        private void ResetRunningState()
+        {
+            _props.Dynamics.Reset();
+            _props.Dynamics.LinearDecayIndex = float.PositiveInfinity;
+            _props.Dynamics.AngularDecayIndex = float.PositiveInfinity;
+            _props.Dynamics.LastAccessTOD = Clock();
+            _bankingAirTime = 0;
         }
 
         // Cached mass
@@ -337,15 +379,30 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// <see cref="CheckResetMotors"/> reads as "idle or just rezzed": its motors, their decay and its hover go on from
         /// where they were.
         /// </summary>
-        public void ResumeAfterHold() => _props.Dynamics.LastAccessTOD = Clock();
+        public void ResumeAfterHold()
+        {
+            if (!DeferStateChanges)
+            {
+                _props.Dynamics.LastAccessTOD = Clock();
+                return;
+            }
+            lock (_pendingGate)
+            {
+                _pendingResume = true;
+                _hasPendingState = true;
+            }
+        }
 
         // =================================================================
         // Process vehicle type change from LSL
         // =================================================================
         public void ProcessTypeChange(Vehicle pType)
         {
-            ProcessTypeChangeCore(pType);
-            _paramsDirty = true;
+            lock (_propsGate)
+            {
+                ProcessTypeChangeCore(pType);
+                _paramsDirty = true;
+            }
         }
 
         private void ProcessTypeChangeCore(Vehicle pType)
@@ -364,16 +421,24 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 default:                    newType = VehicleType.None; break;
             }
 
+            // A motor set made before the type change is dropped by it. The running state is cleared now, or at the start
+            // of the next Update when the host defers it (DeferStateChanges); the type and the presets are live properties
+            // and reach the steps through the snapshot, at the same boundary. No motor runs until a script sets one.
             lock (_pendingGate)
+            {
                 _hasPendingLinear = _hasPendingAngular = false;
+                if (DeferStateChanges)
+                {
+                    _pendingTypeReset = true;
+                    _pendingStop = false;
+                    _pendingResume = false;
+                    _hasPendingState = true;
+                }
+            }
             _props.Type = newType;
             SetVehicleDefaults(newType);
-            _props.Dynamics.Reset();
-            // No motor until a script sets one.
-            _props.Dynamics.LinearDecayIndex = float.PositiveInfinity;
-            _props.Dynamics.AngularDecayIndex = float.PositiveInfinity;
-            _props.Dynamics.LastAccessTOD = Clock();
-            _bankingAirTime = 0;
+            if (!DeferStateChanges)
+                ResetRunningState();
 
             // (No scene-event registration or Refresh here; the host reacts to IsActive instead:
             // per-frame Step drive + body physical params.)
@@ -384,8 +449,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // =================================================================
         public void ProcessFloatVehicleParam(Vehicle pParam, float pValue)
         {
-            ProcessFloatVehicleParamCore(pParam, pValue);
-            _paramsDirty = true;
+            lock (_propsGate)
+            {
+                ProcessFloatVehicleParamCore(pParam, pValue);
+                _paramsDirty = true;
+            }
         }
 
         private void ProcessFloatVehicleParamCore(Vehicle pParam, float pValue)
@@ -518,8 +586,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // =================================================================
         public void ProcessVectorVehicleParam(Vehicle pParam, Vector3 pValue)
         {
-            ProcessVectorVehicleParamCore(pParam, pValue);
-            _paramsDirty = true;
+            lock (_propsGate)
+            {
+                ProcessVectorVehicleParamCore(pParam, pValue);
+                _paramsDirty = true;
+            }
         }
 
         private void ProcessVectorVehicleParamCore(Vehicle pParam, Vector3 pValue)
@@ -603,8 +674,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // =================================================================
         public void ProcessRotationVehicleParam(Vehicle pParam, Quaternion pValue)
         {
-            ProcessRotationVehicleParamCore(pParam, pValue);
-            _paramsDirty = true;
+            lock (_propsGate)
+            {
+                ProcessRotationVehicleParamCore(pParam, pValue);
+                _paramsDirty = true;
+            }
         }
 
         private void ProcessRotationVehicleParamCore(Vehicle pParam, Quaternion pValue)
@@ -659,8 +733,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // flag, and set with -1 sets every flag.
         public void ProcessVehicleFlags(int pParam, bool remove)
         {
-            ProcessVehicleFlagsCore(pParam, remove);
-            _paramsDirty = true;
+            lock (_propsGate)
+            {
+                ProcessVehicleFlagsCore(pParam, remove);
+                _paramsDirty = true;
+            }
         }
 
         private void ProcessVehicleFlagsCore(int pParam, bool remove)
@@ -679,8 +756,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// <summary>A saved vehicle's flags, in place of every flag it has (its type's).</summary>
         public void RestoreFlags(int flags)
         {
-            RestoreFlagsCore(flags);
-            _paramsDirty = true;
+            lock (_propsGate)
+            {
+                RestoreFlagsCore(flags);
+                _paramsDirty = true;
+            }
         }
 
         private void RestoreFlagsCore(int flags)
@@ -713,8 +793,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         public void RestoreFlagsOverPreset(int flags, int presetFlags)
         {
-            RestoreFlagsOverPresetCore(flags, presetFlags);
-            _paramsDirty = true;
+            lock (_propsGate)
+            {
+                RestoreFlagsOverPresetCore(flags, presetFlags);
+                _paramsDirty = true;
+            }
         }
 
         private void RestoreFlagsOverPresetCore(int flags, int presetFlags)
@@ -730,7 +813,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         public void StopMotors()
         {
             lock (_pendingGate)
+            {
                 _hasPendingLinear = _hasPendingAngular = false;
+                if (DeferStateChanges)
+                {
+                    _pendingStop = true;
+                    _hasPendingState = true;
+                    return;
+                }
+            }
+            StopMotorsNow();
+        }
+
+        private void StopMotorsNow()
+        {
             _props.Dynamics.LinearDecayIndex = float.PositiveInfinity;
             _props.Dynamics.AngularDecayIndex = float.PositiveInfinity;
             _props.Dynamics.LinearTargetVelocity = Vector3.Zero;
@@ -744,8 +840,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// ODEDynamics.DoSetVehicle stores the directions with no motor effect.</summary>
         public void RestoreMotorDirections(Vector3 linear, Vector3 angular)
         {
-            RestoreMotorDirectionsCore(linear, angular);
-            _paramsDirty = true;
+            lock (_propsGate)
+            {
+                RestoreMotorDirectionsCore(linear, angular);
+                _paramsDirty = true;
+            }
         }
 
         private void RestoreMotorDirectionsCore(Vector3 linear, Vector3 angular)
@@ -830,13 +929,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             // InWorldz's motor-height rule: the down rays, and the clock that switches the motors off.
             SimulateMotorHeight(pTimestep);
 
-            // -------------------------------------------------------
-            // InWorldz: the wind, or the water's current, at the vehicle's position pushes it (before the motors, as in
-            // Halcyon). Sampled here, once in eight steps, unless the host asks for it in every collision step.
-            if (!WindEverySubstep)
-                SimulateWind(pTimestep);
+            // The wind is not read here: it is sampled and applied in every collision step (StepCore).
 
-            // The wind's turn, and any other torque added so far, is applied now: StepOnce starts its own accumulator.
+            // Any torque added so far is applied now: StepOnce starts its own accumulator.
             TorqueFini();
 
             // Save state for next frame
@@ -872,12 +967,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 _body = host;
             }
         }
-
-        /// <summary>
-        /// Whether the wind is sampled and applied in every collision step (the host's step listener) instead of once in
-        /// eight engine steps in <see cref="BeginUpdate"/> (InWorldz's own pacing, and what a region does today).
-        /// </summary>
-        public bool WindEverySubstep { get; set; }
 
         // The length of the engine step BeginUpdate was given, and the share of it the step being run covers (1 for a
         // whole step). InWorldz's laws have a few constants that are per step, not per second (a share of the angular
@@ -946,9 +1035,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 SimulateVerticalAttractor(h, out tilt, out _);
 
             // -------------------------------------------------------
-            // InWorldz: the wind in every collision step, when the host asks for that.
-            if (WindEverySubstep)
-                SimulateWind(h);
+            // InWorldz: the wind, or the water's current, at the vehicle's position pushes it (before the motors, as in
+            // Halcyon), sampled and applied in every collision step with the step's own length.
+            SimulateWind(h);
 
             // -------------------------------------------------------
             // Motors and friction, linear and angular, then the banking turn motor. They are stepped over the
@@ -2404,7 +2493,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             return local * bodyRotation;
         }
 
-        // InWorldz's wind: the wind (or water current) at the vehicle's position as last sampled, held between samples.
+        // InWorldz's wind: the wind (or water current) at the vehicle's position as of the last collision step.
         private Vector3 _windSample;
 
         /// <summary>The wind the vehicle last sampled, in the world's frame. For tests.</summary>
@@ -2414,8 +2503,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// InWorldz's wind and water currents (VehicleDynamics.cs:863-992, BuildWindData and SimulateWindForces, read, not run),
         /// only under <see cref="VehicleBehaviour.InWorldz"/>. A vehicle with VEHICLE_FLAG_REACT_TO_WIND set is pushed by the
         /// wind at its position (the surface wind or the wind aloft above the water), and one with VEHICLE_FLAG_REACT_TO_CURRENTS
-        /// by the water's current below the water; the wind module of the region says which. The wind is read once in eight
-        /// steps (frame number mod 8) and held between reads. Its push is
+        /// by the water's current below the water; the wind module of the region says which. The wind is read in every
+        /// collision step at the vehicle's position, and the sample must not take a lock (<see cref="IVehicleBody.TryGetWind"/>).
+        /// Its push is
         /// <see cref="HalcyonVehicleLaws.WindLinearVelocityChange"/> on the vehicle's velocity, scaled by
         /// VEHICLE_LINEAR_WIND_EFFICIENCY, and <see cref="HalcyonVehicleLaws.WindAngularVelocityChange"/> on its angular
         /// velocity, scaled by VEHICLE_ANGULAR_WIND_EFFICIENCY. With neither flag set, under Second Life's behaviour, or with
@@ -2435,9 +2525,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             }
 
             Vector3 position = _body.Position;
-            if (WindEverySubstep || m_frameNum % HalcyonVehicleLaws.WindSampleInterval == 0)
-                _windSample = _body.TryGetWind(position, out Vector3 wind) && float.IsFinite(wind.X) && float.IsFinite(wind.Y)
-                    ? new Vector3(wind.X, wind.Y, 0f) : Vector3.Zero;
+            _windSample = _body.TryGetWind(position, out Vector3 wind) && float.IsFinite(wind.X) && float.IsFinite(wind.Y)
+                ? new Vector3(wind.X, wind.Y, 0f) : Vector3.Zero;
 
             bool underWater = position.Z < _body.GetWaterLevel(position);
             if (!underWater && (_sp.Flags & ExtendedVehicleFlags.ReactToWind) == 0)

@@ -116,10 +116,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         /// The wind at a region position (the water's current below the water, the surface wind above it, the wind aloft over
         /// that), from the region's wind module. False when the region has no wind module.
         /// </summary>
-        internal bool TryGetWind(Vector3 pos, out Vector3 wind)
+        internal bool TryGetWind(Vector3 pos, out Vector3 wind) => SampleWind(m_wind, pos, out wind);
+
+        /// <summary>The region's wind module (null when it has none), for a step provider to capture before the Update.</summary>
+        internal IWindModule WindModule => m_wind;
+
+        /// <summary>
+        /// The wind at a region position from <paramref name="module"/>, which must answer without taking a lock (it is read
+        /// inside the engine's collision steps). Allocation free. False when there is no module or the position is not finite.
+        /// </summary>
+        internal static bool SampleWind(IWindModule module, Vector3 pos, out Vector3 wind)
         {
             wind = Vector3.Zero;
-            IWindModule module = m_wind;
             if (module == null || !float.IsFinite(pos.X) || !float.IsFinite(pos.Y) || !float.IsFinite(pos.Z))
                 return false;
             const float Limit = 1e6f;

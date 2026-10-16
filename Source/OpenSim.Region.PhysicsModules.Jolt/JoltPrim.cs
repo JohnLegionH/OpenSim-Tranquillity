@@ -2087,9 +2087,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (clock != null)
                     _vehicle.Clock = clock;
                 _vehicle.DriverCamera = DriverCameraAxis;
-                // A script's motor set waits for the next Update, so it never changes the motors' running state while the
-                // engine steps; the controller's steps run in the engine's collision steps.
-                _vehicle.DeferMotorSets = true;
+                // A script's motor set, a type change and the stop and resume calls wait for the next Update, so none changes the
+                // motors' running state while the engine steps; the controller's steps run in the engine's collision steps.
+                _vehicle.DeferStateChanges = true;
                 _vehicleStepProvider = new VehicleStepProvider(_module, this, _vehicle);
             }
         }
