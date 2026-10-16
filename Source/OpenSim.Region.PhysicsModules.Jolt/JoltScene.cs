@@ -2434,6 +2434,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 vehicles = new JoltPrim[_vehicles.Count];
                 _vehicles.CopyTo(vehicles);
             }
+            long started = System.Diagnostics.Stopwatch.GetTimestamp();
             foreach (JoltPrim v in vehicles)
             {
                 try { v.StepVehicle(timeStep); }
@@ -2443,7 +2444,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     m_log.LogError($"{LogHeader} vehicle step EXCEPTION for prim {v.LocalID}: {e}");
                 }
             }
+            Interlocked.Add(ref _vehicleStepTicks, System.Diagnostics.Stopwatch.GetTimestamp() - started);
+            Interlocked.Add(ref _vehicleStepCalls, vehicles.Length);
         }
+
+        // The time the per-Update vehicle drive has taken (Stopwatch ticks) and the vehicle steps it made, for the cost
+        // figures of the tests.
+        private long _vehicleStepTicks, _vehicleStepCalls;
+        internal long VehicleStepTicks => Interlocked.Read(ref _vehicleStepTicks);
+        internal long VehicleStepCalls => Interlocked.Read(ref _vehicleStepCalls);
+        internal long VehicleDriveTicks => VehicleStepTicks;
 
         // Prims with a script force or torque set (llSetForce, llSetTorque): each is applied before every backend step,
         // next to the vehicle drive, until the script sets it back to zero.
