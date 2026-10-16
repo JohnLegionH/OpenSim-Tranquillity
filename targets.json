@@ -208,7 +208,8 @@
       "restore_paths": "",
       "overlay_paths": "",
       "tests_project": "",
-      "tests": ""
+      "tests": "",
+      "skip": true
     },
     {
       "name": "viewer-address-rework",
