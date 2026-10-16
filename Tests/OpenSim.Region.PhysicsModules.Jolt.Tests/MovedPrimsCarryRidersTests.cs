@@ -465,7 +465,11 @@ public class MovedPrimsCarryRidersTests
         Say($"MOVE jump {rider} rate {rate:0}: fastest up {F(maxUp)} m/s, across {F(maxAcross)} m/s");
         // The rider moved with the platform at 1 m/s until the jump and keeps that speed as it falls; a fling would be 100 m/s.
         Assert.True(maxAcross < 2.0, $"the rider was thrown sideways at {maxAcross:0.00} m/s");
-        Assert.True(maxUp < 1.0, $"the rider was thrown up at {maxUp:0.00} m/s");
+        // A box rider falls the platform's 3 m to the land and bounces there: wood on land combines to (0.5 + 0.05) / 2 = 0.275
+        // under the shipped averaging, so it leaves the land at 0.275 x sqrt(2 g x 3) = 2.1 m/s (measured 1.9 to 2.2). That is
+        // the bounce, not a fling, which would be 100 m/s: it is added to the allowance of an avatar, which does not bounce.
+        double bounce = rider == "box" ? 0.275 * Math.Sqrt(2 * 9.80665 * KinematicScenarios.PlatformHeight) : 0.0;
+        Assert.True(maxUp < 1.0 + bounce * 1.1, $"the rider was thrown up at {maxUp:0.00} m/s");
     }
 
     [Theory]

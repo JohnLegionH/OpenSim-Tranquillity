@@ -17,6 +17,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// rate. Serial with the other native tests: the harness runs step a real backend.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[PinnedMaterials]
 public class VehicleGravityTests
 {
     private const double G = 9.80665;

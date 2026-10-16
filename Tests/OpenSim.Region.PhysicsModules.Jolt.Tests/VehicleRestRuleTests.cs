@@ -159,6 +159,7 @@ public class VehicleRestRuleTests
 /// the shared job pool.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[PinnedMaterials]
 public class VehicleRestRuleHarnessTests
 {
     private static RunResult Run(string scenario, double rate, float? slope = null, bool rule = true)

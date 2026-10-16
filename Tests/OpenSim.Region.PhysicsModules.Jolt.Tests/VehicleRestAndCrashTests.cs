@@ -59,8 +59,10 @@ public class VehicleRestAndCrashTests
         RunResult r = Run("park-wake", rate);
         // Asleep for the two seconds before the key.
         Assert.All(r.Samples.Where(s => s.T >= Harness.Harness.WakeKeyAt - 2.0 && s.T < Harness.Harness.WakeKeyAt), s => Assert.Equal(0, s.Active));
-        // The key drives it: the car preset covers about 12 m in the 2 s of the key.
-        Assert.InRange(r.Summary.DistanceBeforeRelease, 9f, 15f);
+        // The key drives it. The car preset's motor (timescale 1 s) against the ground's friction: wood (0.6) on land (0.4) combines
+        // to 0.5, a deceleration of 0.5 g = 4.9 m/s2 while it moves, so dv/dt = (8 - v) / 1 - 4.9 and v = 3.1 (1 - e^-t), which
+        // covers 3.1 (2 - (1 - e^-2)) = 3.5 m in the 2 s of the key (it was 9 to 15 m with the vehicle's friction at 0).
+        Assert.InRange(r.Summary.DistanceBeforeRelease, 3f, 4f);
     }
 
     // A crash: every speed stays finite, nothing passes through what it hit or sinks deep into it, and no object
@@ -134,6 +136,10 @@ public class VehicleRestAndCrashTests
     [InlineData("crash-drop")]
     public void A_crash_comes_out_alike_at_11_and_45_hz(string scenario)
     {
+        // Two cars driven at each other bounce apart (a car keeps its material's restitution), meet again with their keys still
+        // down and, at 11 Hz, glance and spin away where at 45 Hz they stop: after the second meeting the outcome is not a function of
+        // the step rate. The head-on crash keeps the earlier material keys, in which a car does not bounce.
+        MaterialPins.Enabled = scenario == "crash-headon";
         RunResult a = Run(scenario, 11.0), b = Run(scenario, 45.0);
         Assert.InRange(Math.Abs(a.Summary.ImpactT - b.Summary.ImpactT), 0.0, 1.5 / 11.0);
         float leaving = Math.Abs(a.Summary.LeavingSpeed - b.Summary.LeavingSpeed);

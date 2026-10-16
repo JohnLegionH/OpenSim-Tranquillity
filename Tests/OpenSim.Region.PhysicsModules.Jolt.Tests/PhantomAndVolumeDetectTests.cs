@@ -101,7 +101,10 @@ public class PhantomAndVolumeDetectTests
         Assert.Equal(1, detector.ObjectStarts);
         CollisionWatch boxEvents = Watch(r, "box");
         Assert.DoesNotContain(slab.LocalId, boxEvents.Touched);
-        Assert.Equal(1, boxEvents.LandStarts);                    // an ordinary box: it lands once
+        // An ordinary box lands, bounces and lands again: wood on land combines to (0.5 + 0.05) / 2 = 0.275 under the shipped
+        // averaging, so it leaves the 6 m fall's 10.8 m/s at 2.97 m/s and rises e^2 x 6 m = 0.45 m (measured 0.42 m), which ends
+        // its land contact. Its next rebound (0.73 m/s, 0.03 m) is too low to end the contact again: one start more, not two.
+        Assert.Equal(2, boxEvents.LandStarts);
     }
 
     // ------------------------------------------------------------------ phantom
@@ -139,7 +142,8 @@ public class PhantomAndVolumeDetectTests
         RunResult r = Run("phantom-physical-drop", physicsRate);
         HarnessPart slab = Part(r, "slab"), box = Part(r, "box");
         Assert.InRange(box.EndPosition.Z, Ground + 0.2f, Ground + 0.3f);
-        Assert.Equal(1, box.Watch.LandStarts);                    // "land collision events are queued"
+        // The same bounce chain as the volume-detect drop above (a 6 m fall onto land at 0.275 combined): two land starts.
+        Assert.Equal(2, box.Watch.LandStarts);                    // "land collision events are queued"
         Assert.Equal(0, box.Watch.ObjectStarts);
         Assert.DoesNotContain(box.LocalId, slab.Watch.Touched);
     }

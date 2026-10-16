@@ -23,6 +23,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// so it lands, and the landing ends its spin: that is not a spin that stops by itself, and the last test shows it. Serial with the other native tests: every run steps a real backend on the shared job pool.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[PinnedMaterials]
 public class SpinKeepsTurningTests
 {
     private readonly ITestOutputHelper _out;

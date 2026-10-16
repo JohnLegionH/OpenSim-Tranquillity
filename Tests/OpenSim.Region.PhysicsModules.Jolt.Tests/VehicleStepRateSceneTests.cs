@@ -26,6 +26,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// collision steps. The figures are written to the test output. Serial with the other native tests.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[PinnedMaterials]
 public class VehicleStepRateSceneTests
 {
     private readonly ITestOutputHelper _out;

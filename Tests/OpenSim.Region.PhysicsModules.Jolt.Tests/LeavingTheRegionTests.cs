@@ -36,6 +36,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// Serial with the other native tests: every run steps a real backend on the shared job pool.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[PinnedMaterials]
 public class LeavingTheRegionTests
 {
     private readonly ITestOutputHelper _out;

@@ -26,6 +26,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// other native tests: every run steps a real backend on the shared job pool.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[PinnedMaterials]
 public class ScriptForceTests
 {
     private const float G = 9.80665f;

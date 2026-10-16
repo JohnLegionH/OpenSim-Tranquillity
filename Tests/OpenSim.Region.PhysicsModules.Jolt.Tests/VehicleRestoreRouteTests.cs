@@ -34,6 +34,7 @@ using SharedVehicle = OpenSim.Region.PhysicsModules.SharedBase.Vehicle;
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 [Collection(JoltNativeSerial.Name)]
+[PinnedMaterials]
 public class VehicleRestoreRouteTests
 {
     private readonly ITestOutputHelper _out;

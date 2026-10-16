@@ -15,6 +15,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// figure at 22.5, 45 and 90 Hz within a stated share of it. Serial with the other native tests.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[PinnedMaterials]
 public class VehiclePresetDriveTests
 {
     private static float Figure(Summary m, string figure) => figure switch

@@ -20,6 +20,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// other native tests.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[PinnedMaterials]
 public class VehicleInWorldzMouselookTurnTests
 {
     private readonly ITestOutputHelper _out;

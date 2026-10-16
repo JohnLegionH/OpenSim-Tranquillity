@@ -27,7 +27,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 public class RestingContactAcrossMoveAndSelectionTests
 {
     private static readonly Vector3 BoxSize = new(0.5f, 0.5f, 0.5f);
-    private const double ActAt = 4.0;
+    // The box falls 0.5 m onto the platform and bounces (wood on wood combines to 0.5 under the shipped averaging: it rises 12 cm,
+    // then 3 cm), so it sleeps about 3.7 s in, not 3.1 s as with a quarter of that bounce. The tests act after that.
+    private const double ActAt = 5.0;
 
     private sealed class Result
     {
@@ -74,7 +76,7 @@ public class RestingContactAcrossMoveAndSelectionTests
     [InlineData(0.0)]
     public void A_sleeping_box_wakes_and_falls_when_its_platform_is_moved_away(double physicsHz)
     {
-        Result res = Run(physicsHz, 7f, (r, s) =>
+        Result res = Run(physicsHz, 8f, (r, s) =>
         {
             if (double.IsNaN(s.ActedAt) && r.Now >= ActAt)
             {
@@ -99,8 +101,8 @@ public class RestingContactAcrossMoveAndSelectionTests
             List<double> starts = w.TimesOf("start", other), ends = w.TimesOf("end", other);
             Assert.True(starts.Count > 0 && starts[0] < res.SleptAt, $"{w.Name}: no start before the box slept");
             Assert.Equal(0, CountIn(ends, starts[^1], res.ActedAt));
-            Assert.Equal(1, CountIn(ends, res.ActedAt, 7.0));
-            Assert.Equal(0, CountIn(starts, res.ActedAt, 7.0));
+            Assert.Equal(1, CountIn(ends, res.ActedAt, 8.0));
+            Assert.Equal(0, CountIn(starts, res.ActedAt, 8.0));
             Assert.True(ends[^1] < res.ActedAt + 0.5, $"{w.Name}: ended at {ends[^1]:0.00} s, the platform moved at {res.ActedAt:0.00} s");
         }
     }
@@ -142,14 +144,22 @@ public class RestingContactAcrossMoveAndSelectionTests
         foreach ((double T, Vector3 Position, bool _) p in res.Trace.Where(p => p.T > res.ActedAt && p.T < res.ReleasedAt))
             Assert.True(Vector3.Distance(p.Position, heldAt) < 0.01f, $"moved while selected at {p.T:0.00}: {p.Position} (held at {heldAt})");
         Vector3 end = res.Trace[^1].Position;
-        Assert.True(MathF.Abs(end.Z - heldAt.Z) < 0.05f, $"not back on the platform at the end: {end}, held at {heldAt}");
+        // Held where a rebound had lifted it, if it was selected as it landed (the box bounces to 6 cm), so the end is judged
+        // against the platform's top: the platform's centre, half its 0.5 m thickness, half the box.
+        float restZ = res.Platform.Actor.Position.Z + 0.25f + BoxSize.Z * 0.5f;
+        Assert.True(MathF.Abs(end.Z - restZ) < 0.05f, $"not back on the platform at the end: {end}, it rests at {restZ}");
 
-        // Touching from the landing to the end: one start, no end on either side.
+        // Touching from the landing to the end, no end after it is selected. One start when it is selected as it lands. Selected
+        // asleep, it has landed two or three times first: it arrives at 3.1 m/s, rebounds at 1.6 m/s (12 cm) and again at 0.8 m/s
+        // (3 cm), the third arrival being under the engine's 1 m/s bounce cutoff.
         foreach ((CollisionWatch w, uint other) in new[] { (res.Platform.Watch, res.Box.LocalId), (res.Box.Watch, res.Platform.LocalId) })
         {
-            Assert.Equal(1, w.StartsOf(other));
+            // Selected asleep: two or three starts (the 3 cm rebound ends the contact at some step rates and not others), each
+            // start after the first following one end, so it is touching at the end.
+            // Selected as it lands (held in the first rebound), one or two.
+            Assert.InRange(w.StartsOf(other), selectAsleep ? 2 : 1, selectAsleep ? 3 : 2);
             Assert.True(w.TimesOf("start", other)[0] <= res.ActedAt + 1e-9, $"{w.Name}: started after the selection");
-            Assert.Equal(0, w.EndsOf(other));
+            Assert.Equal(w.StartsOf(other) - 1, w.EndsOf(other));   // each rebound before the selection ended the contact once; none after
         }
     }
 }

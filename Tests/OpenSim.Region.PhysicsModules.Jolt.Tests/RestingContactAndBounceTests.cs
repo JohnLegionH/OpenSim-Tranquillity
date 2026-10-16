@@ -68,8 +68,8 @@ public class RestingContactAndBounceTests
             List<double> starts = w.TimesOf("start", other), ends = w.TimesOf("end", other);
             Assert.True(starts.Count > 0 && starts[0] < box.SleptAt, $"{r.Name} {w}: no start before the box slept");
             Assert.Equal(0, CountIn(ends, starts[^1], Lift));
-            Assert.Equal(1, CountIn(ends, Lift, 8.0));
-            Assert.Equal(0, CountIn(starts, Lift, 8.0));
+            Assert.Equal(1, CountIn(ends, Lift, 10.0));
+            Assert.Equal(0, CountIn(starts, Lift, 10.0));
             Assert.True(ends[^1] < Lift + 0.5, $"{r.Name} {w}: ended at {ends[^1]:0.00} s, thrown at {Lift} s");
         }
 
@@ -98,9 +98,14 @@ public class RestingContactAndBounceTests
         double settled = starts.Where(t => t < Lift).Max();
         Assert.True(settled < box.SleptAt, $"{r.Name}: last land start before the throw at {settled:0.00} s, asleep at {box.SleptAt:0.00} s");
         Assert.Equal(0, CountIn(ends, settled, Lift));
-        // Thrown up at 4 m/s it is off the ground for about 0.8 s: one end, then the land again.
+        // Thrown up at 4 m/s it is off the ground for about 0.8 s: one end, then the land again. It comes back at about 4 m/s and
+        // wood on land combines to 0.275 (the shipped averaging), so it rebounds at 1.1 m/s and rises 6 cm: that lifts it clear of
+        // the land at 0, 45 and 90 Hz (a second end and start, 1.02 s after the throw) but not at 22.5 Hz, where its next
+        // sample is already back at 1 cm. Every start after the throw follows an end, so the counts are equal, one or two.
         Assert.Equal(1, CountIn(ends, Lift, Lift + 0.5));
-        Assert.Equal(1, CountIn(starts, Lift, Lift + 1.2));
+        int landings = CountIn(starts, Lift, Lift + 1.2);
+        Assert.InRange(landings, 1, 2);
+        Assert.Equal(landings, CountIn(ends, Lift, Lift + 1.2));
 
         // land_collision goes on while it is asleep (ubODE): one update every heartbeat it is asleep before the throw.
         int asleep = (int)Math.Floor((Lift - box.SleptAt) / Heartbeat) - 1;
@@ -249,7 +254,7 @@ public class RestingContactAndBounceTests
 
     /// <summary>
     /// A 1 m box of restitution `restitution` dropped `drop` metres (its base above the top) onto a fixed plate of
-    /// restitution 1, so the pair's restitution is the box's (r1 x r2). The heartbeat runs at the physics step rate, one
+    /// the same restitution, so the pair's is that value under the shipped averaging. The heartbeat runs at the physics step rate, one
     /// step per heartbeat, so every step the engine takes is seen (11 Hz: one step per heartbeat, as in a region). Returns
     /// the highest point its base reaches above the plate after the first bounce: the highest stepped position, or from a
     /// sample in flight, where its rise from there ends (its damped rise, less the v x step / 2 the stepping loses on the way).
@@ -264,7 +269,7 @@ public class RestingContactAndBounceTests
             DefaultDuration = _ => MathF.Sqrt(2f * drop / G) + 2.5f,
             Setup = r =>
             {
-                r.AddOtherBox(new Vector3(10f, 10f, 2f), new Vector3(128f, 128f, plateTop - 1f), Quaternion.Identity, false).Restitution = 1f;
+                r.AddOtherBox(new Vector3(10f, 10f, 2f), new Vector3(128f, 128f, plateTop - 1f), Quaternion.Identity, false).Restitution = restitution;
                 r.AddBox(Vector3.One, new Vector3(128f, 128f, plateTop + drop + 0.5f), Quaternion.Identity).Restitution = restitution;
             },
             Input = r => trace.Add((r.Actor.Position, r.Actor.Velocity)),

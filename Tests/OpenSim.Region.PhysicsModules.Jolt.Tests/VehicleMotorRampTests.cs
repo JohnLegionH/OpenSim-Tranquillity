@@ -12,6 +12,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>Driven vehicles through the harness at the four heartbeat rates (serial: real backends on the shared pool).</summary>
 [Collection(JoltNativeSerial.Name)]
+[PinnedMaterials]
 public class VehicleMotorDriveTests
 {
     private const double ReferenceRate = 720.0;

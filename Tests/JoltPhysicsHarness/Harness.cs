@@ -33,12 +33,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Harness;
 /// [Jolt] material keys a test assembly may pin to the values the module had before vehicles kept their parts' materials
 /// and the combine rules, terrain, damping and preset defaults changed: a vehicle with no contact friction, no damping, the
 /// geometric-mean and product combine rules, terrain 0.6 / 0 and the Second Life preset table. The tests of a controller's
-/// laws (a friction timescale's decay, a motor's ramp, a rest rule) need a vehicle that only its controller acts on. Off
-/// unless <see cref="Enabled"/> is set, so the harness program and the baselines use the module's defaults.
+/// laws (a friction timescale's decay, a motor's ramp, a rest rule) need a vehicle that only its controller acts on, and a
+/// test class asks for the pins with <see cref="Enabled"/> (for the test being run). Every other run, and the harness
+/// program and the baselines, use the module's shipped defaults.
 /// </summary>
 public static class MaterialPins
 {
-    public static bool Enabled;
+    private static readonly AsyncLocal<bool> EnabledHere = new();
+
+    /// <summary>Whether the runs of the test now executing are pinned. Per test, so classes that do not ask run in parallel unpinned.</summary>
+    public static bool Enabled
+    {
+        get => EnabledHere.Value;
+        set => EnabledHere.Value = value;
+    }
     private static readonly (string Key, string Value)[] Pins =
     {
         ("VehicleContactFriction", "0"), ("PrimLinearDamping", "0"), ("PrimAngularDamping", "0"),
@@ -47,9 +55,9 @@ public static class MaterialPins
     };
 
     /// <summary>A vehicle that bounces off what it hits only through its material: its restitution 0, as a vehicle's was.</summary>
-    public static void PinVehicle(OpenSim.Region.PhysicsModules.SharedBase.PhysicsActor vehicle)
+    public static void PinVehicle(OpenSim.Region.PhysicsModules.SharedBase.PhysicsActor vehicle, bool pinned)
     {
-        if (Enabled)
+        if (pinned)
             vehicle.Restitution = 0f;
     }
 
@@ -665,11 +673,15 @@ public sealed class Run
     /// <see cref="HarnessOptions.VehicleScriptAgain"/>.</summary>
     internal readonly List<Action<PhysicsActor>> VehicleCalls = new();
 
+    /// <summary>The run takes the earlier material keys (see <see cref="MaterialPins"/>).</summary>
+    public bool Pinned => MaterialPins.Enabled && !Options.UseDefaults;
+
     public void MakeVehicle(Vehicle type)
     {
         VehiclePart ??= VehicleRestore.NewRecord(Actor);
         VehiclePart.SetVehicleType((int)type);
-        VehicleCalls.Add(a => { MaterialPins.PinVehicle(a); a.VehicleType = (int)type; });
+        bool pinned = Pinned;
+        VehicleCalls.Add(a => { MaterialPins.PinVehicle(a, pinned); a.VehicleType = (int)type; });
     }
 
     public void SetFloat(Vehicle code, float v)
@@ -1509,7 +1521,7 @@ public static class Harness
             {
                 SetupCrashCar(r);
                 r.AddOtherBox(CarSize, new Vector3(CrashStartX + 60f, 85f, Course.Ground + CarSize.Z * 0.5f + 0.02f), West, true);
-                MaterialPins.PinVehicle(r.Other);
+                MaterialPins.PinVehicle(r.Other, r.Pinned);
                 r.Other.VehicleType = (int)Vehicle.TYPE_CAR;
                 r.AlsoDriven.Add(r.Other);
             },

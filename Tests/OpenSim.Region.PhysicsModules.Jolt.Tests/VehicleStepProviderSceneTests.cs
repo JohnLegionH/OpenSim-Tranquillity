@@ -22,6 +22,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// never faults. Serial with the other native tests.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[PinnedMaterials]
 public class VehicleStepProviderSceneTests
 {
     private const float Heartbeat = 1f / 11f;

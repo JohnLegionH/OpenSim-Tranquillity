@@ -41,8 +41,13 @@ public class FastObjectTests
                 yield return new object[] { t, r[0], r[1] };
     }
 
-    private static RunResult Shot(Scenario sc, double rate, double physicsRate, float ball, float speed)
-        => Harness.Harness.Run(sc, new HarnessOptions { RateHz = rate, PhysicsRateHz = physicsRate, ShotBall = ball, ShotSpeed = speed });
+    private static RunResult Shot(Scenario sc, double rate, double physicsRate, float ball, float speed, params (string Key, string Value)[] jolt)
+    {
+        var o = new HarnessOptions { RateHz = rate, PhysicsRateHz = physicsRate, ShotBall = ball, ShotSpeed = speed };
+        foreach ((string key, string value) in jolt)
+            o.Jolt[key] = value;
+        return Harness.Harness.Run(sc, o);
+    }
 
     private static RunResult Shot(string scenario, double rate, double physicsRate, float ball, float speed)
         => Shot(Harness.Harness.Find(scenario), rate, physicsRate, ball, speed);
@@ -61,8 +66,13 @@ public class FastObjectTests
                 RunResult r = Shot(target, rate, physicsRate, ball, speed);
                 Assert.Equal(0, r.Summary.NonFinite);
                 // It was shot: it covered the gap to what it was shot at.
-                float moved = r.Samples.Max(s => Vector3.Distance(s.Position, r.Samples[0].Position));
-                Assert.True(moved > TunnelScenarios.StartGap * 0.9f, $"{r.Name}: moved {moved:0.00} m");
+                // A ball that struck it and was on its way back before the next sample (a prim bounces: wood on wood combines to 0.5)
+                // has covered the gap as well: it is seen moving back toward where it started.
+                Vector3 start = r.Samples[0].Position;
+                float moved = r.Samples.Max(s => Vector3.Distance(s.Position, start));
+                bool comingBack = r.Samples.Any(s => Vector3.Distance(s.Position, start) > TunnelScenarios.StartGap * 0.5f
+                                                     && Vector3.Dot(s.Velocity, s.Position - start) < 0f);
+                Assert.True(moved > TunnelScenarios.StartGap * 0.9f || comingBack, $"{r.Name}: moved {moved:0.00} m");
                 if (r.Summary.Tunneled != 0)
                     through.Add(r.Name);
             }
@@ -150,12 +160,12 @@ public class FastObjectTests
         };
     }
 
-    // The contact's restitution is the two prims' product (ubODE's rule, PhysicsMaterialTests): 0.5 here.
+    // The contact's restitution is the two prims' average (the shipped rule): the ball's 0.5 against a wall of 0.5 gives 0.5.
     [Theory]
     [MemberData(nameof(Rates))]
     public void A_fast_ball_bounces_off_a_wall_with_its_restitution_as_a_slow_one_does(double rate, double physicsRate)
     {
-        Scenario bouncy = WithMaterials("tunnel-wall-10cm", 0f, 0.5f, 0f, 1f);
+        Scenario bouncy = WithMaterials("tunnel-wall-10cm", 0f, 0.5f, 0f, 0.5f);
         // 3 m/s: never cast at any of these rates (a 0.2 m ball is cast from 5 m/s at 11 Hz).
         RunResult slow = Shot(bouncy, rate, physicsRate, 0.2f, 3f);
         RunResult fast = Shot(bouncy, rate, physicsRate, 0.2f, 100f);
@@ -165,7 +175,7 @@ public class FastObjectTests
         Assert.InRange(slowShare, 0.4f, 0.6f);
         Assert.InRange(fastShare, 0.4f, 0.6f);
 
-        Scenario dead = WithMaterials("tunnel-wall-10cm", 0f, 0f, 0f, 1f);
+        Scenario dead = WithMaterials("tunnel-wall-10cm", 0f, 0f, 0f, 0f);
         RunResult fastDead = Shot(dead, rate, physicsRate, 0.2f, 100f);
         Assert.Equal(0, fastDead.Summary.Tunneled);
         Assert.True(Rebound(fastDead) < 0.05f * 100f, $"{fastDead.Name}: came back at {Rebound(fastDead):0.00} m/s with restitution 0");
@@ -199,7 +209,9 @@ public class FastObjectTests
                 },
                 PassedThrough = ground.PassedThrough,
             };
-            RunResult res = Shot(sc, rate, physicsRate, 0.2f, speed);
+            // The land's own friction is 0 here, so a ball of friction 0 meets none (the shipped land friction of 0.4 averages with the
+            // ball's: 0.2 for a ball of 0, 0.5 for a ball of 1).
+            RunResult res = Shot(sc, rate, physicsRate, 0.2f, speed, ("TerrainFriction", "0"));
             Assert.Equal(0, res.Summary.Tunneled);
             // The fastest it moved along x after the first contact with the ground (the ball's lowest point).
             int hit = res.Samples.FindIndex(s => s.Height < 0.1f + 0.02f);

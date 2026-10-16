@@ -25,6 +25,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// Set ANGULAR_TARGET_OUT to a file to have the figures runs append their rows to it.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[PinnedMaterials]
 public class AngularTargetTests
 {
     private readonly ITestOutputHelper _output;

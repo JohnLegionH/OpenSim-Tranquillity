@@ -39,7 +39,7 @@ public class FastObjectsLinksetsAndAvatarsTests
     private const uint RootId = 1501, WestId = 1502, EastId = 1503;
     private const float X = AvatarHitScenarios.X, Y = AvatarHitScenarios.Y;
     private const double At = AvatarHitScenarios.At;
-    private const double ActAt = 4.0;                  // a resting object is asleep by then
+    private const double ActAt = 5.0;                  // a resting object is asleep by then (a wood box on wood bounces to 0.5 and sleeps about 3.7 s in)
 
     private static float Level(Vector3 v) => MathF.Sqrt(v.X * v.X + v.Y * v.Y);
 
@@ -166,8 +166,8 @@ public class FastObjectsLinksetsAndAvatarsTests
     [InlineData(0.0)]
     public void A_fast_ball_dropped_20_m_is_cast_and_rebounds_to_the_height_its_restitution_gives(double physicsHz)
     {
-        // A 0.2 m ball of restitution 0.5 let fall 20 m (its base above the top) onto a fixed plate of restitution 1, so
-        // the pair's restitution is the ball's.
+        // A 0.2 m ball of restitution 0.5 let fall 20 m (its base above the top) onto a fixed plate of restitution 0.5, so
+        // the pair's restitution is the ball's (averaging two equal values).
         const float Drop = 20f, Restitution = 0.5f, PlateTop = 60f, Radius = 0.1f;
         var trace = new List<(Vector3 P, Vector3 V)>();
         bool cast = false;
@@ -177,7 +177,7 @@ public class FastObjectsLinksetsAndAvatarsTests
             DefaultDuration = _ => MathF.Sqrt(2f * Drop / G) + 2.5f,
             Setup = r =>
             {
-                r.AddOtherBox(new Vector3(10f, 10f, 2f), new Vector3(128f, 128f, PlateTop - 1f), Quaternion.Identity, false).Restitution = 1f;
+                r.AddOtherBox(new Vector3(10f, 10f, 2f), new Vector3(128f, 128f, PlateTop - 1f), Quaternion.Identity, false).Restitution = Restitution;
                 r.AddSphere(2f * Radius, new Vector3(128f, 128f, PlateTop + Drop + Radius)).Restitution = Restitution;
             },
             Input = r =>
@@ -439,7 +439,7 @@ public class FastObjectsLinksetsAndAvatarsTests
         var sc = new Scenario
         {
             Name = "linkset-resize-asleep",
-            DefaultDuration = _ => 8f,
+            DefaultDuration = _ => 9f,
             Setup = r =>
             {
                 top = r.GroundAt(128f, 128f) + ContactScenarios.PlatformHeight;
