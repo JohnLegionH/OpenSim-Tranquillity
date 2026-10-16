@@ -191,8 +191,7 @@
       "restore_paths": "",
       "overlay_paths": "",
       "tests_project": "Tests/OpenSim.Region.Framework.Tests/OpenSim.Region.Framework.Tests.csproj",
-      "tests": "FullyQualifiedName~PGSQLInventoryMoveItemTests|FullyQualifiedName~PGSQLAuthenticationSetDataItemTests",
-      "skip": true
+      "tests": "FullyQualifiedName~PGSQLInventoryMoveItemTests|FullyQualifiedName~PGSQLAuthenticationSetDataItemTests"
     },
     {
       "name": "viewer-address-rework",
