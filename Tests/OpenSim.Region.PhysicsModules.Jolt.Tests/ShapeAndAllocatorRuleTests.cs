@@ -201,12 +201,14 @@ public class ShapeAndAllocatorRuleTests
         Assert.DoesNotContain(il, x => x.Op == OpCodes.Ldsfld || x.Op == OpCodes.Ldfld);   // no field can supply a depth
     }
 
-    // No step listener: the stock joltc keeps its map of physics systems (s_PhysicsSystems) without a lock, and only its
-    // step listener callback reads that map during a step. With no listener, nothing reads the map while another
-    // region's system is created or destroyed. So no Jolt assembly adds a step listener, implements one, or takes a
-    // binding object's step listener view (a vehicle constraint's AsPhysicsStepListener).
+    // Only the backend uses a step listener: the stock joltc keeps its map of physics systems (s_PhysicsSystems) without a
+    // lock, and only its step listener callback reads that map during a step. The backend creates and destroys every
+    // physics system with all pool gates held, so no Update is running to read the map; any other code that registered a
+    // listener would not have that protection. So the only listener type is the backend's own ForceStepListener, and the
+    // only code that adds, removes or creates one is the backend (no other Jolt assembly, no binding object's step
+    // listener view such as a vehicle constraint's AsPhysicsStepListener).
     [Fact]
-    public void No_step_listener_is_used()
+    public void Only_the_backend_uses_a_step_listener()
     {
         Assembly[] assemblies =
         {
@@ -221,7 +223,7 @@ public class ShapeAndAllocatorRuleTests
         var listenerTypes = assemblies.SelectMany(a => a.GetTypes())
             .Where(t => t.GetInterfaces().Any(i => i.FullName == "JoltPhysicsSharp.IPhysicsStepListener"))
             .Select(t => t.FullName).ToArray();
-        Assert.Empty(listenerTypes);
+        Assert.Equal(new[] { "OpenSim.Region.PhysicsModules.Jolt.Backend.JoltPhysicsBackend+ForceStepListener" }, listenerTypes);
 
         var calls = new SortedSet<string>();
         foreach (Assembly assembly in assemblies)
@@ -231,6 +233,8 @@ public class ShapeAndAllocatorRuleTests
                     if (ins.Op != OpCodes.Call && ins.Op != OpCodes.Callvirt && ins.Op != OpCodes.Newobj && ins.Op != OpCodes.Ldftn)
                         continue;
                     MethodBase callee = Resolve(caller, ins.Token);
+                    if (caller.DeclaringType?.FullName?.StartsWith("OpenSim.Region.PhysicsModules.Jolt.Backend.JoltPhysicsBackend", StringComparison.Ordinal) == true)
+                        continue;   // the backend's own use
                     if (callee?.DeclaringType?.Namespace == "JoltPhysicsSharp" && callee.Name.Contains("StepListener", StringComparison.Ordinal))
                         calls.Add($"{caller.DeclaringType!.Name}.{caller.Name} -> {callee.DeclaringType.Name}.{callee.Name}");
                 }
