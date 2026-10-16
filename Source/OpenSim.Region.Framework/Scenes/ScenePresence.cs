@@ -2248,7 +2248,7 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         h.Z = 0f;
         if (h.LengthSquared() < 0.0001f)
             return Vector3.Zero;
-        return Vector3.Normalize(h);
+        return Vector3.Normalize(in h);
     }
 
     /// <summary>The horizontal direction the body faces, or zero when it faces straight up or down.</summary>

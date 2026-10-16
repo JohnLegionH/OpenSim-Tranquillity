@@ -123,7 +123,7 @@ public class RiderArrivalFacingTests : OpenSimTestCase
     private static void AssertHeading(Vector3 expected, Vector3 sent)
     {
         Vector3 flat = new(sent.X, sent.Y, 0f);
-        Assert.InRange(Vector3.Distance(Vector3.Normalize(flat), expected), 0f, 0.01f);
+        Assert.InRange(Vector3.Distance(Vector3.Normalize(in flat), expected), 0f, 0.01f);
     }
 
     [Fact]
