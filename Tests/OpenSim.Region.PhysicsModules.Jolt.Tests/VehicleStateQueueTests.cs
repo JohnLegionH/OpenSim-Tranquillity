@@ -47,8 +47,8 @@ public class VehicleStateQueueTests
         {
             rig.Car.StepOnce(Update / n, rig.Body);
             rig.Body.Advance(Update / n);
-            Assert.True(rig.Car.LinearMotorSet, "the type change cleared the motors inside the Update");
-            Assert.True(rig.Car.AngularMotorSet);
+            Assert.True(float.IsFinite(rig.Car.LinearMotorAge), "the type change cleared the motors inside the Update");
+            Assert.True(float.IsFinite(rig.Car.AngularMotorAge));
             age += Update / n;
             Assert.Equal(age, rig.Car.LinearMotorAge, 4);   // the motor's clock ran on, unbroken
         }
@@ -70,7 +70,7 @@ public class VehicleStateQueueTests
         {
             rig.Car.StepOnce(Update / n, rig.Body);
             rig.Body.Advance(Update / n);
-            Assert.True(rig.Car.LinearMotorSet, "StopMotors stopped the motors inside the Update");
+            Assert.True(float.IsFinite(rig.Car.LinearMotorAge), "StopMotors stopped the motors inside the Update");
         }
         float speed = rig.Body.LinearVelocity.X;
         Assert.True(speed > 0f, "the motor drove through the Update");
@@ -165,12 +165,12 @@ public class VehicleStateQueueTests
             {
                 rig.Car.BeginUpdate(Update);
                 float age = rig.Car.LinearMotorAge;
-                bool set = rig.Car.LinearMotorSet;
+                bool set = float.IsFinite(rig.Car.LinearMotorAge);
                 for (int i = 0; i < n; i++)
                 {
                     rig.Car.StepOnce(Update / n, rig.Body);
                     rig.Body.Advance(Update / n);
-                    Assert.Equal(set, rig.Car.LinearMotorSet);
+                    Assert.Equal(set, float.IsFinite(rig.Car.LinearMotorAge));
                     if (set)
                     {
                         age += Update / n;

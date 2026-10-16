@@ -147,8 +147,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         private Vector3 _pendingLinear, _pendingAngular;
         private bool _hasPendingLinear, _hasPendingAngular;
 
-        // Calls that clear or stop the running state, waiting for the next Update (under _pendingGate).
-        private bool _pendingTypeReset, _pendingStop, _pendingResume;
+        // Calls that clear or stop the running state, waiting for the next Update (written under _pendingGate; the first two are
+        // also read without it, by the questions below).
+        private volatile bool _pendingTypeReset, _pendingStop;
+        private bool _pendingResume;
 
         // True while any of the three waits (read without the lock, like the motor flags, so the common case, nothing
         // waiting, costs nothing).
@@ -332,8 +334,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             get { return (_props.Type != VehicleType.None); }
         }
 
-        /// <summary>True once a script has set the linear motor, until the motors are reset.</summary>
-        public bool LinearMotorSet => !float.IsPositiveInfinity(_props.Dynamics.LinearDecayIndex);
+        /// <summary>
+        /// True once a script has set the linear motor, until the motors are reset. A type change or StopMotors that waits for
+        /// the next Update (<see cref="DeferStateChanges"/>) already counts: the motors are reported as they will be once it
+        /// has landed, so a host asking between Updates is not told of a motor the call has ended. A motor set that waits is
+        /// not counted until it lands.
+        /// </summary>
+        public bool LinearMotorSet => !(_pendingTypeReset || _pendingStop) && !float.IsPositiveInfinity(_props.Dynamics.LinearDecayIndex);
 
         public bool IsGroundVehicle
         {
@@ -359,8 +366,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// <summary>The current reference frame (llSetVehicleRotationParam VEHICLE_REFERENCE_FRAME). For tests.</summary>
         internal Quaternion ReferenceFrame => _props.GetRot(VehRotationParam.ReferenceFrame);
 
-        /// <summary>True once a script has set the angular motor, until the motors are reset. For tests.</summary>
-        internal bool AngularMotorSet => !float.IsPositiveInfinity(_props.Dynamics.AngularDecayIndex);
+        /// <summary>True once a script has set the angular motor, until the motors are reset; as <see cref="LinearMotorSet"/>. For tests.</summary>
+        internal bool AngularMotorSet => !(_pendingTypeReset || _pendingStop) && !float.IsPositiveInfinity(_props.Dynamics.AngularDecayIndex);
 
         /// <summary>The seconds since each motor was set, as its decay clock reads (negative while a short motor's decay is
         /// held back under InWorldz's behaviour). For tests.</summary>

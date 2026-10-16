@@ -15,7 +15,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// InWorldz's wind and water currents (Halcyon VehicleDynamics.cs:863-992, read, not run), under
 /// VehicleBehaviour = InWorldz only: a vehicle with REACT_TO_WIND is pushed by the wind at its position and one with
 /// REACT_TO_CURRENTS by the water's current, in proportion to its wind efficiencies (12001 linear, 12002 angular); the wind
-/// is read once in eight steps. Pure (a body with no engine, a stand-in wind module) and parallel.
+/// is read in every step. Pure (a body with no engine, a stand-in wind module) and parallel.
 /// </summary>
 public class VehicleWindTests
 {
@@ -134,9 +134,9 @@ public class VehicleWindTests
         // taper counts a vehicle at rest as moving the positive way, so these are the two directions that start from rest.
         BehaviourRig boat = Boat(VehicleBehaviour.InWorldz, Wind, Vector3.Zero, Blowing(10f, -10f), new Vector3(0.05f, 0.05f, 0f));
         boat.Run(Step, 45 / 2);
-        // 10 m/s at 0.05 is 0.5 rad/s every second, for the 15 steps from the first read to the end of the run.
-        Assert.InRange(boat.Body.AngularVelocity.X, 0.15f, 0.19f);
-        Assert.InRange(boat.Body.AngularVelocity.Y, 0.15f, 0.19f);
+        // 10 m/s at 0.05 is 0.5 rad/s every second, for the 22 steps of the run (the wind is read in every step).
+        Assert.InRange(boat.Body.AngularVelocity.X, 0.23f, 0.26f);
+        Assert.InRange(boat.Body.AngularVelocity.Y, 0.23f, 0.26f);
         Assert.InRange(Math.Abs(boat.Body.AngularVelocity.Z), 0f, 0.01f);
     }
 
@@ -228,27 +228,26 @@ public class VehicleWindTests
     }
 
     [Fact]
-    public void The_wind_is_read_once_in_eight_steps()
+    public void The_wind_is_read_in_every_step()
     {
         BehaviourRig boat = Boat(VehicleBehaviour.InWorldz, Wind, new Vector3(0.02f, 0f, 0f), Blowing(10f));
         boat.Run(Step, 64);
-        Assert.Equal(8, boat.Body.WindReads);
+        Assert.Equal(64, boat.Body.WindReads);
     }
 
     [Fact]
-    public void A_gust_that_ends_is_felt_until_the_next_read_and_then_not()
+    public void A_gust_that_ends_is_not_felt_in_the_steps_after_it()
     {
         float gust = 10f;
         BehaviourRig boat = Boat(VehicleBehaviour.InWorldz, Wind, new Vector3(0.5f, 0f, 0f), _ => new Vector3(gust, 0f, 0f));
-        boat.Run(Step, 16);                      // reads at steps 8 and 16
+        boat.Run(Step, 16);
         float before = boat.Body.LinearVelocity.X;
+        Assert.True(before > 0.1f, "the gust pushed it");
         gust = 0f;
-        boat.Run(Step, 4);                       // steps 17-20: the last read (10 m/s) is held
-        Assert.True(boat.Body.LinearVelocity.X > before + 0.1f);
-        boat.Run(Step, 4);                       // step 24 reads the calm
-        float calmed = boat.Body.LinearVelocity.X;
+        boat.Run(Step, 4);                       // the wind is read in every step: the calm is felt at once, and nothing pushes
+        Assert.Equal(before, boat.Body.LinearVelocity.X, 5);
         boat.Run(Step, 20);
-        Assert.Equal(calmed, boat.Body.LinearVelocity.X, 5);
+        Assert.Equal(before, boat.Body.LinearVelocity.X, 5);
     }
 
     [Fact]
