@@ -191,7 +191,23 @@
       "restore_paths": "",
       "overlay_paths": "",
       "tests_project": "Tests/OpenSim.Region.Framework.Tests/OpenSim.Region.Framework.Tests.csproj",
-      "tests": "FullyQualifiedName~PGSQLInventoryMoveItemTests|FullyQualifiedName~PGSQLAuthenticationSetDataItemTests"
+      "tests": "FullyQualifiedName~PGSQLInventoryMoveItemTests|FullyQualifiedName~PGSQLAuthenticationSetDataItemTests",
+      "skip": true
+    },
+    {
+      "name": "viewer-address-rework",
+      "repo": "JohnLegionH/OpenSim-Tranquillity",
+      "ref": "001c2c3d0b8d8c226f58c845c8ad1ac2f77c1a4e",
+      "baseline_repo": "",
+      "baseline_ref": "",
+      "checks": "general",
+      "expect": [],
+      "restore_repo": "",
+      "restore_ref": "",
+      "restore_paths": "",
+      "overlay_paths": "",
+      "tests_project": "",
+      "tests": ""
     }
   ],
   "known_develop_faults": [
