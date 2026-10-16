@@ -1,3 +1,9 @@
+# Copyright (c) 2026 Legion Builds
+#
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 # Harness runs whose traces the Jolt harness workflow (.github/workflows/jolt-harness.yml) uploads from every runner in
 # its matrix, under traced/<name>/ in the artifact, so the platforms can be set side by side. Same format as runs.txt.
 # They are not compared with a baseline: runs.txt lists the runs that are.

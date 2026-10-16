@@ -1,3 +1,9 @@
+# Copyright (c) 2026 Legion Builds
+#
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 # Runs the Jolt physics harness on Windows x64 and Linux x64, the platforms the Jolt module ships its native for,
 # with the runs listed in Tests/JoltPhysicsHarness/ci/runs.txt, checks their summaries against the baseline recorded
 # for the joltc build they loaded (Tests/JoltPhysicsHarness/ci/baselines; a build with none is reported as skipped),
