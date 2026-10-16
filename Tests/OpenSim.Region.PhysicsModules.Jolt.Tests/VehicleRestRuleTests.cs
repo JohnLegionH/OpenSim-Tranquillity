@@ -163,7 +163,7 @@ public class VehicleRestRuleHarnessTests
 {
     private static RunResult Run(string scenario, double rate, float? slope = null, bool rule = true)
     {
-        var o = new HarnessOptions { RateHz = rate };
+        var o = new HarnessOptions { RateHz = rate }.SecondLife();
         if (slope.HasValue) o.SlopeDeg = slope.Value;
         if (!rule) o.Jolt["VehicleRestSpeed"] = "0";
         return Harness.Harness.Run(Harness.Harness.Find(scenario), o);

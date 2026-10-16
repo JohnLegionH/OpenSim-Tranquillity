@@ -55,7 +55,7 @@ public class PhysicsMaterialTests
                 act?.Invoke(r, r.PhysicsTime);
             },
         };
-        var o = new HarnessOptions { RateHz = Heartbeat, PhysicsRateHz = physicsHz };
+        var o = new HarnessOptions { RateHz = Heartbeat, PhysicsRateHz = physicsHz }.SecondLife();
         foreach ((string key, string value) in jolt)
             o.Jolt[key] = value;
         Harness.Harness.Run(sc, o);
@@ -616,7 +616,7 @@ public class PhysicsMaterialTests
                     }
                 },
             };
-            var o = new HarnessOptions { RateHz = Heartbeat, PhysicsRateHz = physicsHz };
+            var o = new HarnessOptions { RateHz = Heartbeat, PhysicsRateHz = physicsHz }.SecondLife();
             if (changed)
             {
                 o.Jolt["PrimLinearDamping"] = "0.5";

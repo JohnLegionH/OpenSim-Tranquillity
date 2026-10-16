@@ -80,8 +80,8 @@ public class StartupSettingsLineTests
         var line = Assert.Single(lines);
         Assert.Equal(LogLevel.Information, line.Level);
         Assert.Contains("region 'Example Region'", line.Message);
-        Assert.Contains("VehicleBehaviour=SecondLife", line.Message);
-        Assert.Contains("VehiclePresets=Documented", line.Message);
+        Assert.Contains("VehicleBehaviour=InWorldz", line.Message);
+        Assert.Contains("VehiclePresets=Legacy", line.Message);
         Assert.Contains("AvatarPushMaxSpeed=" + JoltConfigDefault("AvatarPushMaxSpeed"), line.Message);
         Assert.Contains("AvatarObjectPushPerMomentum=" + JoltConfigDefault("AvatarObjectPushPerMomentum"), line.Message);
         Assert.Contains("AvatarObjectPushMaxForce=" + JoltConfigDefault("AvatarObjectPushMaxForce"), line.Message);

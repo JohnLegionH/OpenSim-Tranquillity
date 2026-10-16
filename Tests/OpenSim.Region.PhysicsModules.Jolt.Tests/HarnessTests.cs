@@ -23,7 +23,7 @@ public class HarnessTests
     private static RunResult Run(string scenario, double rate = 11.0, float? slope = null, float? duration = null, float? keyRepeat = null,
                                  float? walkFactor = null)
     {
-        var o = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Duration = duration, Jolt = { ["VehiclePresets"] = "legacy" } };
+        var o = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Duration = duration, Jolt = { ["VehiclePresets"] = "legacy" } }.SecondLife();
         if (walkFactor.HasValue) o.Jolt["AvatarWalkSpeedFactor"] = walkFactor.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
         if (keyRepeat.HasValue) o.KeyRepeat = keyRepeat.Value;
         return Harness.Harness.Run(Harness.Harness.Find(scenario), o);
@@ -90,7 +90,7 @@ public class HarnessTests
     [InlineData(45.0, 9.367f, 3.785f)]
     public void Region_feed_drives_the_pad_as_a_region_does(double physicsRate, float distance, float releaseSpeed)
     {
-        var o = new HarnessOptions { RateHz = 11.0, SlopeDeg = 0f, PhysicsRateHz = physicsRate, Feed = InputFeed.Region };
+        var o = new HarnessOptions { RateHz = 11.0, SlopeDeg = 0f, PhysicsRateHz = physicsRate, Feed = InputFeed.Region }.SecondLife();
         Summary m = Harness.Harness.Run(Harness.Harness.Find("testcar"), o).Summary;
         Assert.InRange(m.DistanceBeforeRelease, distance * 0.99f, distance * 1.01f);
         Assert.InRange(m.ReleaseSpeed, releaseSpeed * 0.99f, releaseSpeed * 1.01f);
@@ -207,7 +207,7 @@ public class HarnessTests
     public void Vehicle_param_overrides_reach_the_controller()
     {
         // The same car with a slower motor covers less ground under the key: an override changes the run.
-        var o = new HarnessOptions { RateHz = 11.0, SlopeDeg = 0f };
+        var o = new HarnessOptions { RateHz = 11.0, SlopeDeg = 0f }.SecondLife();
         Summary plain = Harness.Harness.Run(Harness.Harness.Find("testcar"), o).Summary;
         o.VehicleParams.Add(VehicleParamSetting.Parse("LINEAR_MOTOR_TIMESCALE=3"));
         Summary slower = Harness.Harness.Run(Harness.Harness.Find("testcar"), o).Summary;
@@ -219,7 +219,7 @@ public class HarnessTests
     public void Start_offset_moves_the_scenario_body_by_that_much()
     {
         RunResult plain = Run("drop");
-        var o = new HarnessOptions { StartOffsetX = 0.001f, StartOffsetY = -0.002f, Jolt = { ["VehiclePresets"] = "legacy" } };
+        var o = new HarnessOptions { StartOffsetX = 0.001f, StartOffsetY = -0.002f, Jolt = { ["VehiclePresets"] = "legacy" } }.SecondLife();
         RunResult moved = Harness.Harness.Run(Harness.Harness.Find("drop"), o);
         // The box falls straight down, so its first sample is still off by the offset on x and y.
         Assert.Equal(plain.Samples[0].Position.X + 0.001f, moved.Samples[0].Position.X, 0.0002f);
@@ -230,7 +230,7 @@ public class HarnessTests
     [Fact]
     public void The_tower_traces_every_box_and_says_when_each_fell_asleep()
     {
-        RunResult r = Harness.Harness.Run(Harness.Harness.Find("tower-10"), new HarnessOptions { RateHz = 11.0, PhysicsRateHz = 45.0 });
+        RunResult r = Harness.Harness.Run(Harness.Harness.Find("tower-10"), new HarnessOptions { RateHz = 11.0, PhysicsRateHz = 45.0 }.SecondLife());
         string[] lines = r.PartsToCsv().TrimEnd('\n').Split('\n');
         Assert.Equal(RunResult.PartsCsvHeader, lines[0]);
         // One line per box per heartbeat, every box named.

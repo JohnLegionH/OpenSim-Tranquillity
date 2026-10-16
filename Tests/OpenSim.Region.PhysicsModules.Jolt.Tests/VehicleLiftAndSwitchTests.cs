@@ -46,7 +46,7 @@ public class VehicleLiftAndSwitchTests
             },
             Input = r => r.SetVector(SharedVehicle.LINEAR_MOTOR_DIRECTION, new Vector3(15f, 0f, 0f)),
         };
-        var o = new HarnessOptions { RateHz = 11, PhysicsRateHz = physicsRate };
+        var o = new HarnessOptions { RateHz = 11, PhysicsRateHz = physicsRate }.SecondLife();
         o.Jolt["VehicleBehaviour"] = behaviour;
         return Harness.Harness.Run(sc, o);
     }
@@ -125,7 +125,7 @@ public class VehicleLiftAndSwitchTests
             },
         };
         _on = false;
-        RunResult run = Harness.Harness.Run(sc, new HarnessOptions { RateHz = 11, PhysicsRateHz = physicsRate });
+        RunResult run = Harness.Harness.Run(sc, new HarnessOptions { RateHz = 11, PhysicsRateHz = physicsRate }.SecondLife());
         Sample before = run.Samples.Last(s => s.T <= 2.0);
         var after = run.Samples.Where(s => s.T > 2.3).Take(4).ToList();
         _out.WriteLine($"p{physicsRate}: vz before {before.Velocity.Z:0.000}; vz at the first heartbeats after physics on: " +

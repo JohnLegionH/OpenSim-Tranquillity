@@ -305,7 +305,7 @@ public class VehicleStartSpeedTests
     {
         float Distance(float start)
         {
-            var o = new HarnessOptions { RateHz = rate, SlopeDeg = 0f, Hold = 3f, Duration = 4f, StartSpeed = start };
+            var o = new HarnessOptions { RateHz = rate, SlopeDeg = 0f, Hold = 3f, Duration = 4f, StartSpeed = start }.SecondLife();
             return Harness.Harness.Run(Harness.Harness.Find("testcar"), o).Summary.DistanceBeforeRelease;
         }
         float fromRest = Distance(0f), fromCreep = Distance(0.005f);

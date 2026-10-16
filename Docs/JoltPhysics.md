@@ -1358,16 +1358,20 @@ setting does not change another's. They have no `[Jolt]` keys.
 `[Jolt] VehicleBehaviour` chooses whose behaviour a region's vehicles follow where Second Life's documentation and the
 InWorldz (Halcyon) simulator differ. It is read once when the region starts.
 
-- `SecondLife` (the default): what Second Life's wiki documents. Nothing changes for a region that does not set the key.
-- `InWorldz`: the behaviours in the table below, camera steering (below the table), and the InWorldz preset values
-  (`VehiclePresets = legacy`).
+- `SecondLife`: what Second Life's wiki documents, with the documented presets. A region that wants the behaviour of releases before the default changed sets this.
+- `InWorldz` (the default): Second Life compatible behaviour with the fixes of the InWorldz Halcyon simulator: the behaviours in the table below,
+  camera steering (below the table), and the InWorldz preset values (`VehiclePresets = legacy`). A boat's ground drag, the motor offset on every
+  linear force, NO_DEFLECTION_UP removing only an upward change, banking by the sine of the roll without the attractor and the vehicle's gravity
+  multiplier are part of it too.
+
+A vehicle's running motors cross a region border under both behaviours.
 
 ```ini
 [Jolt]
     VehicleBehaviour = InWorldz
 ```
 
-Any other value is refused at start-up: the log names the allowed values (`SecondLife, InWorldz`) and `SecondLife` is used.
+Any other value is refused at start-up: the log names the allowed values (`SecondLife, InWorldz`) and `InWorldz` is used.
 
 **How it combines with `VehiclePresets`:** where `VehiclePresets` is set it decides the preset values, whatever the behaviour;
 where it is not set, the behaviour does (`InWorldz` gives `legacy`, `SecondLife` gives `documented`).
@@ -1433,8 +1437,8 @@ A per-axis timescale or a decay above 120 s set by a script acts at once, but th
 holds one float for each and keeps a decay at 120 s at most, so after the vehicle is rezzed, copied, loaded with the region or crosses into
 another region the motor comes back with one value on all three axes.
 
-Choose `InWorldz` for a region whose vehicles were built for InWorldz or Halcyon grids and are tuned against these behaviours; leave
-the default for vehicles built for Second Life. In the harness the choice is `--jolt VehicleBehaviour=InWorldz`; the runs `iw-car-pad`,
+Choose `InWorldz` for a region whose vehicles were built for InWorldz or Halcyon grids and are tuned against these behaviours; set
+`SecondLife` for vehicles built for Second Life that are tuned against its documented behaviour. In the harness the choice is `--jolt VehicleBehaviour=InWorldz`; the runs `iw-car-pad`,
 `iw-car-ramp`, `iw-airplane` and `iw-mouselook-turn` of `ci/runs.txt` record it (a car on level ground, a car down a 15 degree ramp,
 an airplane, a car turned 90 degrees by the mouselook camera), checked with the regression check below like the other runs.
 
@@ -1640,7 +1644,12 @@ prim whose physics is switched back on (`SceneObjectPart.AddToPhysics`). The mod
   hover timescale of 1000 s becomes 300 s, `VehicleMaxHoverTimescale`; both turn hover off);
 - the reference frame;
 - the saved motor directions, with neither motor running until a script sets it, as on ubODE. A car
-  saved while it was being driven does not drive off when it is rezzed.
+  saved while it was being driven does not drive off when it is rezzed. The one exception is a region crossing: a
+  vehicle whose motor is running when core starts to cross it carries that motor's running state in the record it sends
+  (the time on its decay clock, its direction and the velocity its ramp has reached; `PhysicsActor.CaptureVehicleRunningState`,
+  the `LMRAGE`, `LMRDIR` and `LMRTGT` elements and their angular `AMR` twins of the record's XML), and the neighbour region
+  starts the motor again from there. A held throttle keeps driving through a border, under both `VehicleBehaviour` values. The
+  record's running state is dropped once it is taken up, and when a crossing fails.
 
 Its velocity is the one the simulator replays onto it, so a vehicle arriving from another region at speed
 keeps it. A vehicle loaded with the region has its velocity zeroed on each step of its first 0.27 s, until

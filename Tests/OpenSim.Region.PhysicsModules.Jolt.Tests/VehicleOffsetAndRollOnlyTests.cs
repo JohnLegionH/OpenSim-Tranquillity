@@ -171,7 +171,7 @@ public class VehicleOffsetAndRollOnlyHarnessTests
     {
         var end = new Dictionary<double, Sample>();
         foreach (double rate in Harness.Harness.Rates)
-            end[rate] = Harness.Harness.Run(Harness.Harness.Find("motor-offset"), new HarnessOptions { RateHz = rate }).Samples[^1];
+            end[rate] = Harness.Harness.Run(Harness.Harness.Find("motor-offset"), new HarnessOptions { RateHz = rate }.SecondLife()).Samples[^1];
         Sample reference = end[90.0];
         Assert.True(reference.Tilt > 20f, $"tilt {reference.Tilt}");
         float w = reference.AngularVelocity.Length();
@@ -188,7 +188,7 @@ public class VehicleOffsetAndRollOnlyHarnessTests
     {
         foreach (double rate in Harness.Harness.Rates)
         {
-            RunResult r = Harness.Harness.Run(Harness.Harness.Find("rollonly"), new HarnessOptions { RateHz = rate });
+            RunResult r = Harness.Harness.Run(Harness.Harness.Find("rollonly"), new HarnessOptions { RateHz = rate }.SecondLife());
             float end = r.Samples[^1].Tilt;
             Assert.True(Math.Abs(end - 30f) < 0.5f, $"{rate} Hz: tilt at the end {end:0.00}, expected the 30 degree pitch alone");
         }

@@ -59,6 +59,7 @@ public class VehicleStepRateSceneTests
             IConfig jolt = config.AddConfig("Jolt");
             jolt.Set("PhysicsStepRate", rate.ToString(CultureInfo.InvariantCulture));
             jolt.Set("PhysicsStepCollisionSteps", collisionSteps.ToString(CultureInfo.InvariantCulture));
+            jolt.Set("VehicleBehaviour", "SecondLife");   // closed-form answers of the documented laws; the default is InWorldz
             more?.Invoke(jolt);
             Scene = new JoltScene();
             Scene.Initialise(config);
@@ -324,7 +325,7 @@ public class VehicleStepRateSceneTests
 
     private static double[] SledSpeeds(double rate, int n)
     {
-        var o = new HarnessOptions { RateHz = 11.0, PhysicsRateHz = rate, SlopeDeg = 15f, Duration = 5f };
+        var o = new HarnessOptions { RateHz = 11.0, PhysicsRateHz = rate, SlopeDeg = 15f, Duration = 5f }.SecondLife();
         o.Jolt["PhysicsStepCollisionSteps"] = n.ToString(CultureInfo.InvariantCulture);
         RunResult r = Harness.Harness.Run(Harness.Harness.Find("sled"), o);
         var samples = r.Samples;

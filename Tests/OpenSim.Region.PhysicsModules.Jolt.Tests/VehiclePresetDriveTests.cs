@@ -43,7 +43,7 @@ public class VehiclePresetDriveTests
     {
         foreach (double rate in Harness.Harness.Rates)
         {
-            float got = Figure(Harness.Harness.Run(Harness.Harness.Find(scenario), new HarnessOptions { RateHz = rate, SlopeDeg = slope }).Summary, figure);
+            float got = Figure(Harness.Harness.Run(Harness.Harness.Find(scenario), new HarnessOptions { RateHz = rate, SlopeDeg = slope }.SecondLife()).Summary, figure);
             float tol = Math.Abs(at11) * percent / 100f;
             Assert.True(Math.Abs(got - at11) <= tol, $"{scenario} {figure} at {rate} Hz: {got:0.000} against {at11:0.000} (within {percent}%)");
         }

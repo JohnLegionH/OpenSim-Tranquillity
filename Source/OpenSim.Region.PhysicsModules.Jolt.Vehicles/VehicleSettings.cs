@@ -43,7 +43,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         /// <summary>
         /// Whose behaviour the vehicle code follows where Second Life's pages and the InWorldz Halcyon code differ.
-        /// <see cref="VehicleBehaviour.SecondLife"/>, the default, is what the pages document. <see cref="VehicleBehaviour.InWorldz"/>
+        /// <see cref="VehicleBehaviour.SecondLife"/>, the default of a controller that is given no settings, is what the pages
+        /// document; a region's default comes from [Jolt] VehicleBehaviour, which is InWorldz (JoltConfig). <see cref="VehicleBehaviour.InWorldz"/>
         /// turns on six behaviours of Halcyon's vehicle code (the pitch righting kept under LIMIT_ROLL_ONLY, hover up only
         /// acting with buoyancy, friction that would push up dropped, the delay of a short motor's decay, the stronger and
         /// escalating self-righting, and the buoyancy adjustment); it does not choose the preset values, which are

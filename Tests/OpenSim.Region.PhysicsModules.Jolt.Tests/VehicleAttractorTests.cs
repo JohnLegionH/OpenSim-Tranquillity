@@ -23,7 +23,7 @@ public class VehicleAttractorTests
 
     private static RunResult Run(string scenario, double rate, float timescale, float efficiency, float duration)
     {
-        var o = new HarnessOptions { RateHz = rate, Duration = duration };
+        var o = new HarnessOptions { RateHz = rate, Duration = duration }.SecondLife();
         o.VehicleParams.Add(VehicleParamSetting.Parse("VERTICAL_ATTRACTION_TIMESCALE=" + timescale.ToString(CultureInfo.InvariantCulture)));
         o.VehicleParams.Add(VehicleParamSetting.Parse("VERTICAL_ATTRACTION_EFFICIENCY=" + efficiency.ToString(CultureInfo.InvariantCulture)));
         return Harness.Harness.Run(Harness.Harness.Find(scenario), o);
@@ -93,7 +93,7 @@ public class VehicleAttractorTests
         var landings = new List<float>();
         foreach (double rate in new[] { 11.0, 45.0 })
         {
-            var o = new HarnessOptions { RateHz = rate, SlopeDeg = 33f, Jolt = { ["VehiclePresets"] = "legacy" } };
+            var o = new HarnessOptions { RateHz = rate, SlopeDeg = 33f, Jolt = { ["VehiclePresets"] = "legacy" } }.SecondLife();
             o.VehicleFlags.Add(VehicleFlagSetting.Parse("-LIMIT_ROLL_ONLY"));
             RunResult r = Harness.Harness.Run(Harness.Harness.Find("testcar-down"), o);
             int off = r.Samples.FindIndex(s => !s.Touching && s.Position.Y < Course.RampTopY + 1f);

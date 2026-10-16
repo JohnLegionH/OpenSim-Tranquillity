@@ -267,7 +267,7 @@ public class VehicleBankingAndMouselookHarnessTests
 {
     private static RunResult Run(string scenario, double physicsRate, Action<HarnessOptions> more = null)
     {
-        var o = new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsRate };
+        var o = new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsRate }.SecondLife();
         more?.Invoke(o);
         return Harness.Harness.Run(Harness.Harness.Find(scenario), o);
     }

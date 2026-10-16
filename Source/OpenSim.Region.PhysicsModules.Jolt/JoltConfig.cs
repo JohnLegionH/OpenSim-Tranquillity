@@ -59,7 +59,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public float VehicleGroundGravityFactor = 1f;   // gravity on a car or sled touching something; 1 = whole
         public VehiclePresetSet VehiclePresets = VehiclePresetSet.Documented;   // the values llSetVehicleType gives each type
         public bool VehiclePresetsSet = false;     // VehiclePresets came from a valid value in the configuration
-        public VehicleBehaviour VehicleBehaviour = VehicleBehaviour.SecondLife;   // whose behaviour the vehicle code follows where they differ
+        public VehicleBehaviour VehicleBehaviour = VehicleBehaviour.InWorldz;   // whose behaviour the vehicle code follows where they differ
 
         // The limits a script's vehicle parameters are held to (VehicleSettings says what each one does).
         public float VehicleMaxLinearSpeed = VehicleLimits.MaxLinearVelocity;       // m/s

@@ -153,7 +153,7 @@ public class VehicleInWorldzSolverTests
     [Fact]
     public void The_region_setting_decides_the_cap_when_it_is_set_and_the_behaviour_when_it_is_not()
     {
-        Assert.Equal(120f, Configured().EffectiveMaxDecayTimescale);
+        Assert.Equal(1000f, Configured().EffectiveMaxDecayTimescale);   // the shipped default is InWorldz
         Assert.Equal(120f, Configured(("VehicleBehaviour", "SecondLife")).EffectiveMaxDecayTimescale);
         Assert.Equal(1000f, Configured(("VehicleBehaviour", "InWorldz")).EffectiveMaxDecayTimescale);
         Assert.Equal(60f, Configured(("VehicleBehaviour", "InWorldz"), ("VehicleMaxDecayTimescale", "60")).EffectiveMaxDecayTimescale);

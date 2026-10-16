@@ -19,7 +19,7 @@ public class VehicleMotorDriveTests
     private static List<Sample> Drive(string scenario, double rate, string presets)
     {
         // A 4 s hold lands on a heartbeat at every rate (a whole number of steps at 11, 22.5, 45 and 90 Hz).
-        var o = new HarnessOptions { RateHz = rate, SlopeDeg = 0f, Hold = 4f, Duration = 6f, Jolt = { ["VehiclePresets"] = presets } };
+        var o = new HarnessOptions { RateHz = rate, SlopeDeg = 0f, Hold = 4f, Duration = 6f, Jolt = { ["VehiclePresets"] = presets } }.SecondLife();
         return Harness.Harness.Run(Harness.Harness.Find(scenario), o).Samples;
     }
 

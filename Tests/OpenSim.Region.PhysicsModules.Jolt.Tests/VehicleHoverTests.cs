@@ -24,7 +24,7 @@ public class VehicleHoverTests
 
     private static RunResult Run(double rate, float timescale, float efficiency, float duration, float height = Height, params string[] flags)
     {
-        var o = new HarnessOptions { RateHz = rate, Duration = duration };
+        var o = new HarnessOptions { RateHz = rate, Duration = duration }.SecondLife();
         o.VehicleParams.Add(VehicleParamSetting.Parse($"HOVER_TIMESCALE={timescale.ToString(System.Globalization.CultureInfo.InvariantCulture)}"));
         o.VehicleParams.Add(VehicleParamSetting.Parse($"HOVER_EFFICIENCY={efficiency.ToString(System.Globalization.CultureInfo.InvariantCulture)}"));
         o.VehicleParams.Add(VehicleParamSetting.Parse($"HOVER_HEIGHT={height.ToString(System.Globalization.CultureInfo.InvariantCulture)}"));

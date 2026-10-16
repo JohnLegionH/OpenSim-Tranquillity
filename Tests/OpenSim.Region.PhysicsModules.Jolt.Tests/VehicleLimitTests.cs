@@ -31,6 +31,10 @@ public class VehicleLimitTests
 
     private static VehicleSettings Settings(params (string key, string value)[] kv)
     {
+        // These are the limits of Second Life's documented behaviour (the decay cap 120 s, the angular cap on the magnitude); the
+        // shipped default is InWorldz, so the choice is pinned unless the test sets it.
+        if (!kv.Any(p => p.key == "VehicleBehaviour"))
+            kv = kv.Append(("VehicleBehaviour", "SecondLife")).ToArray();
         var warnings = new List<string>();
         VehicleSettings s = JoltConfig.FromConfig(Source(kv), warnings).ToVehicleSettings();
         Assert.Empty(warnings);
