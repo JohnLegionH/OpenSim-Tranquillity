@@ -29,6 +29,11 @@ public class PoolGateSystemMapTests
     // Every wait below is a cap on something that should return, generous so that a stalled machine cannot reach it.
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(60);
 
+    private sealed class Accelerate : IStepForceProvider
+    {
+        public void OnStep(in StepBody body, in StepInfo step) => body.AddLinearVelocity(new Vector3(0.1f, 0f, 0f) * step.DeltaTime);
+    }
+
     private static PhysicsBackendSettings Region(string name, int collisionSteps = 2)
     {
         PhysicsBackendSettings s = JoltTestBackend.Settings(maxBodies: 4096, maxBodyPairs: 4096, maxContactConstraints: 1024);
@@ -43,6 +48,75 @@ public class PoolGateSystemMapTests
         t.B.SetBodyGravityFactor(box, 0f);
         t.B.SetBodyLinearVelocity(box, new Vector3(0f, 0f, 1f));
         return box;
+    }
+
+    [Fact]
+    public void Creating_and_closing_regions_while_another_region_steps_with_a_listener_registered_does_not_crash_or_hang()
+    {
+        using var steady = new JoltTestBackend(Region("Steady"));
+        for (int i = 0; i < 20; i++)
+            steady.B.AttachStepForceProvider(Floater(steady, i), new Accelerate());
+        Assert.True(steady.B.HasStepListener);
+
+        using var stop = new CancellationTokenSource();
+        long updates = 0;
+        var stepper = new Thread(() =>
+        {
+            var states = new BodyState[64];
+            var chars = new CharacterState[4];
+            var contacts = new ContactReport[64];
+            while (!stop.IsCancellationRequested)
+            {
+                steady.B.Step(1f / 64f, states, chars, contacts);
+                Interlocked.Increment(ref updates);
+            }
+        }) { IsBackground = true, Name = "steady-region-step" };
+
+        // Two threads open and close regions at once, each with a provider attached to its own body and a step in between,
+        // so the system map changes while the steady region is inside Update and calling OnStep.
+        const int perThread = 25;
+        int done = 0;
+        Exception failure = null;
+        var openers = new List<Thread>();
+        for (int k = 0; k < 2; k++)
+        {
+            int id = k;
+            openers.Add(new Thread(() =>
+            {
+                try
+                {
+                    for (int i = 0; i < perThread; i++)
+                    {
+                        var t = new JoltTestBackend(Region($"Cycle{id}-{i}"));
+                        BodyId box = Floater(t);
+                        t.B.AttachStepForceProvider(box, new Accelerate());
+                        t.B.Step(1f / 64f, new BodyState[8], new CharacterState[2], new ContactReport[8]);
+                        if (i % 2 == 0)
+                            t.B.RemoveBody(box);
+                        t.Dispose();   // the attached provider and its listener go with the region
+                        Interlocked.Increment(ref done);
+                    }
+                }
+                catch (Exception e) { failure = e; }
+            }) { IsBackground = true, Name = "region-cycle-" + k });
+        }
+
+        var sw = Stopwatch.StartNew();
+        stepper.Start();
+        foreach (Thread th in openers) th.Start();
+        bool finished = true;
+        foreach (Thread th in openers)
+            finished &= th.Join(Limit);
+        stop.Cancel();
+        bool stepperStopped = stepper.Join(Limit);
+        _out.WriteLine($"{Volatile.Read(ref done)} regions created and closed in {sw.ElapsedMilliseconds} ms while the steady region ran {Interlocked.Read(ref updates)} Updates with a listener");
+
+        Assert.True(finished, "creating and closing regions did not finish within the limit - a deadlock between create/dispose and Step");
+        Assert.True(stepperStopped, "the steady region's Step did not return");
+        Assert.Null(failure);
+        Assert.Equal(2 * perThread, done);
+        Assert.True(Interlocked.Read(ref updates) > 0);
+        Assert.Equal(0, steady.B.StepForceProviderFaults);
     }
 
     [Fact]

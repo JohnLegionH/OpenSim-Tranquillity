@@ -984,6 +984,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             _system.Gravity = settings.Gravity;
             _linearCastThreshold = _system.Settings.LinearCastThreshold;
             _bodyInterface = _system.BodyInterface;
+            _bodyInterfaceNoLock = _system.BodyInterfaceNoLock;
             // [Jolt] VelocityIterations and PositionIterations: the solver's velocity and position steps per collision step.
             // PhysicsBackendSettings.Default keeps Jolt's own 10 and 2; the module's [Jolt] default is 20 velocity steps, since a
             // tall stack needs more to come to rest: ten 0.5 m boxes do not fall asleep at 10 and do at 20.
@@ -1288,6 +1289,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // Jolt object lives here so it is serialised against Step by the caller's lock.
         private void DisposeNative()
         {
+            // The step listener comes off first: it points at this backend, and the system is about to go.
+            ReleaseStepProviders();
+
             // Characters own native CharacterVirtual objects + shapes and hold a ref to _system, so
             // dispose them BEFORE the system teardown below.
             lock (_characterGate)
@@ -2175,6 +2179,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 return; // an avatar query-marker is owned by its character; RemoveCharacter destroys it.
 
             var joltId = new BodyID(rec.NativeBodyId);
+            DropProvidersOfBody(body.Value);   // a force provider never outlives its body
             _bodyInterface.RemoveAndDestroyBody(joltId);
             _joltToRecord.TryRemove(rec.NativeBodyId, out _);
             _bodies.Remove(body.Value); // bumps the generation so the stale handle fails validation.
