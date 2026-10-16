@@ -225,6 +225,20 @@ namespace OpenSim.Region.Framework.Scenes.Tests
         }
 
         [Fact]
+        public void AnEngineThatNeverReportsLeavesAnyObjectPhysicalAndSaysNothing()
+        {
+            TestHelpers.InMethod();
+            (TestScene scene, SceneObjectGroup so, Alerts alerts) = NewObject(40, () => new Body());
+
+            so.ScriptSetPhysicsStatus(true);
+            so.UpdateFlags(true, false, false, false);
+
+            Assert.True(so.UsesPhysics);
+            Assert.All(so.Parts, p => Assert.True(p.PhysActor.IsPhysical));
+            Assert.Empty(alerts.Sent);
+        }
+
+        [Fact]
         public void AnEnginesShapeCountIsReportedAsItIsAndAWeightIsScaledBySizeWhilePhysical()
         {
             TestHelpers.InMethod();

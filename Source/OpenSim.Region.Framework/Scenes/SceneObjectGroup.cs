@@ -3277,6 +3277,8 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
     private string m_physicsTooComplexDetail = "";
     private bool m_physicsTooComplexTold;
 
+    // The owner's message and the refusal follow what InWorldz Halcyon does when an object is over its limit
+    // (an alert, then the physics flag cleared). No Halcyon code is copied.
     /// <summary>
     /// The physics engine says this object is over its limit on how complex a physical object may be (see
     /// <see cref="PhysicsActor.OnComplexityError"/>). The owner is told, and the object is made non-physical, as
