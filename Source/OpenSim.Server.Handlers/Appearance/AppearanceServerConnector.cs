@@ -1,3 +1,10 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
 using System;
 using System.Net;
 using Nini.Config;
@@ -17,7 +24,7 @@ namespace OpenSim.Server.Handlers.Appearance;
 /// <c>LocalServiceModule</c> from its own config section and registers one
 /// <see cref="SimpleStreamHandler"/> on the server it is given.
 ///
-/// <para>Robust.HG.ini.example / Robust.ini.example:</para>
+/// <para>GridServer.HG.ini.example / GridServer.ini.example:</para>
 /// <code>
 /// [ServiceList]
 ///     AppearanceServiceConnector = "${Const|PublicPort}/OpenSim.Server.Handlers.dll:AppearanceServerConnector"

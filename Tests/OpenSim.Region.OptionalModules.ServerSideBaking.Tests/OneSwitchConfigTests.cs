@@ -1,3 +1,10 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
 using Nini.Config;
 using OpenSim.Region.ClientStack.LindenCaps.AIS;
 using OpenSim.Region.OptionalModules.Avatar.ServerSideBaking;
@@ -67,7 +74,7 @@ public class OneSwitchConfigTests
     public void the_two_global_lines_are_the_documented_keys_and_sections()
     {
         // If either name drifts, the line an operator was told to add stops working and nothing says so. These are
-        // the exact section and key names written into OpenSimDefaults.ini and the design brief's config contract.
+        // the exact section and key names written into RegionServerDefaults.ini and the design brief's config contract.
         Assert.Equal("AIS", AISv3Module.ConfigSection);
         Assert.Equal("Appearance", ServerSideBakingModule.ConfigSection);
 
