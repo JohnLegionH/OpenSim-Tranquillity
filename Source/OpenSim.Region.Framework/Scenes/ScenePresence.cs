@@ -2236,6 +2236,26 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         return false;
     }
 
+    // set after a carried arrival at Debug level: the next agent update's facing is logged once
+    private bool m_logFacingReply;
+
+    // when the agent data of the crossing arrived
+    private long m_agentDataTicks;
+
+    private static Vector3 HeadingOf(Quaternion rot)
+    {
+        Vector3 h = Vector3.Transform(Vector3.UnitX, rot);
+        h.Z = 0f;
+        if (h.LengthSquared() < 0.0001f)
+            return Vector3.Zero;
+        return Vector3.Normalize(h);
+    }
+
+    /// <summary>The horizontal direction the body faces, or zero when it faces straight up or down.</summary>
+    private Vector3 BodyHeading() => HeadingOf(Rotation);
+
+    private static float HeadingDegrees(Vector3 h) => MathF.Atan2(h.Y, h.X) * (180f / MathF.PI);
+
     public void RotateToLookAt(Vector3 lookAt)
     {
         if(ParentID == 0)
@@ -2288,7 +2308,14 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
 
             bool flying = ((m_AgentControlFlags & ACFlags.AGENT_CONTROL_FLY) != 0);
 
-            Vector3 look = Lookat;
+            // an avatar an object carried in is told which way its body faces, not where its camera points: the
+            // viewer turns the avatar to the look-at it is sent, and the camera can be looking any way
+            bool carriedArrival = (m_crossingFlags & AgentData.CrossingCarried) != 0 && !CarriedByGroup.IsZero()
+                && m_scene.EnableStandingRiderCrossing;
+            Vector3 cameraLook = Lookat;
+            Vector3 bodyLook = BodyHeading();
+
+            Vector3 look = cameraLook;
             look.Z = 0f;
             look.Normalize();
             if ((Math.Abs(look.X) < 0.01) && (Math.Abs(look.Y) < 0.01))
@@ -2299,6 +2326,8 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
                 if ((Math.Abs(look.X) < 0.01) && (Math.Abs(look.Y) < 0.01) )
                     look = new Vector3(0.99f, 0.042f, 0);
             }
+            if (carriedArrival && bodyLook != Vector3.Zero)
+                look = bodyLook;
 
             // Check Default Location (Also See EntityTransferModule.TeleportAgentWithinRegion)
             if (AbsolutePosition.X == 128f && AbsolutePosition.Y == 128f && AbsolutePosition.Z == 22.5f)
@@ -2369,6 +2398,15 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
             {
                 m_gotRegionHandShake = false; // allow it if not a crossing
                 ControllingClient.SendRegionHandshake();
+            }
+
+            if (carriedArrival && m_log.IsEnabled(LogLevel.Debug))
+            {
+                m_log.LogDebug($"[SCENE PRESENCE]: Carried arrival of {Name} in {Scene.Name} at {AbsolutePosition}: " +
+                    $"body heading {HeadingDegrees(bodyLook):F1}, camera heading {HeadingDegrees(cameraLook):F1}, " +
+                    $"look-at sent {HeadingDegrees(look):F1} degrees; {System.Environment.TickCount64 - m_agentDataTicks} ms " +
+                    $"after the agent data, {Util.EnvironmentTickCountSubtract(ts)} ms into CompleteMovement");
+                m_logFacingReply = true;
             }
 
             ControllingClient.MoveAgentIntoRegion(m_scene.RegionInfo, AbsolutePosition, look);
@@ -2785,6 +2823,12 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
 
         if (AllowMovement)
         {
+            if (m_logFacingReply)
+            {
+                m_logFacingReply = false;
+                m_log.LogDebug($"[SCENE PRESENCE]: First reply of {Name} in {Scene.Name} after a carried arrival: " +
+                    $"facing {HeadingDegrees(HeadingOf(agentData.BodyRotation)):F1} degrees, was {HeadingDegrees(BodyHeading()):F1}");
+            }
             Rotation = agentData.BodyRotation;
 
             //m_log.LogDebug("[SCENE PRESENCE]: Initial body rotation {0} for {1}", agentData.BodyRotation, Name);
@@ -5296,6 +5340,7 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
 
         m_crossingFlags = cAgent.CrossingFlags;
         m_gotCrossUpdate = (m_crossingFlags != 0);
+        m_agentDataTicks = System.Environment.TickCount64;
         // a region with the rider crossing feature off takes an avatar sent as carried for an ordinary one
         if ((m_crossingFlags & AgentData.CrossingCarried) != 0 && m_scene.EnableStandingRiderCrossing)
         {
