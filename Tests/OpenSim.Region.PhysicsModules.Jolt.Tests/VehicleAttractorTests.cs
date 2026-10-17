@@ -17,6 +17,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// test car over the 33 degree crest with its key held. Serial with the other native tests: real backends.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[PinnedMaterials]
 public class VehicleAttractorTests
 {
     private const double StartTilt = 30.0;

@@ -28,6 +28,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
     {
         internal const string Section = "Jolt";
 
+        /// <summary>Whose basic-forces behaviour the engine follows where InWorldz and Second Life differ: for now the physics material presets.</summary>
+        internal enum BasicForces { InWorldz = 0, SecondLife }
+
         // 65536 bodies per standard 256 x 256 m region, scaled by AREA for varregions.
         internal const int BaseMaxBodies = 65536;
         internal const long BaseArea = 256L * 256L;
@@ -76,7 +79,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public float VehicleMinHoverHeight = VehicleLimits.MinRegionHeight;         // m
         public float VehicleMaxHoverHeight = VehicleLimits.MaxRegionHeight;         // m
         public float VehicleSledAssist = VehicleSettings.DefaultSledAssist;         // share of gravity
-        public float VehicleContactFriction = 0f;                                   // contact friction of a vehicle body
+        public float? VehicleContactFriction;                                       // contact friction of every part of a vehicle body; null = each part's material
+        public float SledContactFriction = 0f;                                      // contact friction of every part of a sled
+        public BasicForces BasicForcesBehaviour = BasicForces.InWorldz;             // which preset table llSetPhysicsMaterial's materials use
+        public MaterialCombine FrictionCombine = MaterialCombine.Average;           // how two surfaces' friction combines
+        public MaterialCombine RestitutionCombine = MaterialCombine.Average;        // how two surfaces' restitution combines
+        public float TerrainFriction = PhysicsBackendSettings.DefaultTerrainFriction;
+        public float TerrainRestitution = PhysicsBackendSettings.DefaultTerrainRestitution;
         public float VehicleRestSpeed = VehicleSettings.DefaultRestSpeed;           // m/s; 0 = no rest rule
 
         // The engine's own speed caps on every moving body (Jolt's BodyCreationSettings defaults).
@@ -151,7 +160,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         // The default PhysicsStepRate: fixed 45 Hz physics steps, whatever the heartbeat.
         internal const float DefaultPhysicsStepRate = 45f;
-        internal const float DefaultPrimLinearDamping = 0.05f;
+        internal const float DefaultPrimLinearDamping = 0.02f;   // Halcyon's, for every physical object, vehicles included (PhysxActorFactory.cs)
         internal const float DefaultPrimAngularDamping = 0.05f;
 
         /// <summary>Parse [Jolt]. Missing keys keep their defaults; each invalid one adds a line to <paramref name="warnings"/>.</summary>
@@ -217,7 +226,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 c.VehicleMaxHoverHeight = VehicleLimits.MaxRegionHeight;
             }
             c.VehicleSledAssist = F(cfg, "VehicleSledAssist", c.VehicleSledAssist, 0f, 10f, warnings);
-            c.VehicleContactFriction = F(cfg, "VehicleContactFriction", c.VehicleContactFriction, 0f, 10f, warnings);
+            // Unset (or empty) leaves each part of a vehicle its material's friction; a number replaces it.
+            string contactFriction = cfg.GetString("VehicleContactFriction", null);
+            if (!string.IsNullOrWhiteSpace(contactFriction))
+                c.VehicleContactFriction = TryF(contactFriction, 0f, 10f, out float vcf) ? vcf : WarnNull(contactFriction, "VehicleContactFriction", warnings);
+            c.SledContactFriction = F(cfg, "SledContactFriction", c.SledContactFriction, 0f, 10f, warnings);
+            c.BasicForcesBehaviour = E(cfg, "BasicForcesBehaviour", c.BasicForcesBehaviour, warnings, out _);
+            c.FrictionCombine = E(cfg, "FrictionCombine", c.FrictionCombine, warnings, out _);
+            c.RestitutionCombine = E(cfg, "RestitutionCombine", c.RestitutionCombine, warnings, out _);
+            c.TerrainFriction = F(cfg, "TerrainFriction", c.TerrainFriction, 0f, JoltPrim.MaxFriction, warnings);
+            c.TerrainRestitution = F(cfg, "TerrainRestitution", c.TerrainRestitution, 0f, 1f, warnings);
             c.VehicleRestSpeed = F(cfg, "VehicleRestSpeed", c.VehicleRestSpeed, 0f, 1f, warnings);
             c.BodyMaxLinearSpeed = F(cfg, "BodyMaxLinearSpeed", c.BodyMaxLinearSpeed, 1f, 100000f, warnings);
             c.BodyMaxAngularSpeed = F(cfg, "BodyMaxAngularSpeed", c.BodyMaxAngularSpeed, 0.1f, 10000f, warnings);
@@ -253,7 +271,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             string N(float v) => v.ToString("0.###", CultureInfo.InvariantCulture);
             string B(bool v) => v ? "true" : "false";
-            return $"VehicleBehaviour={VehicleBehaviour}, VehiclePresets={EffectivePresets}, " +
+            return $"VehicleBehaviour={VehicleBehaviour}, VehiclePresets={EffectivePresets}, BasicForcesBehaviour={BasicForcesBehaviour}, " +
+                   $"FrictionCombine={FrictionCombine}, RestitutionCombine={RestitutionCombine}, TerrainFriction={N(TerrainFriction)}, TerrainRestitution={N(TerrainRestitution)}, " +
+                   $"VehicleContactFriction={(VehicleContactFriction.HasValue ? N(VehicleContactFriction.Value) : "material")}, SledContactFriction={N(SledContactFriction)}, " +
                    $"AvatarPushMaxSpeed={N(AvatarPushMaxSpeed)}, AvatarPushRecovery={N(AvatarPushRecovery)}, " +
                    $"AvatarObjectPushPerMomentum={N(AvatarObjectPushPerMomentum)}, AvatarObjectPushMaxForce={N(AvatarObjectPushMaxForce)}, " +
                    $"MaxPhysicalComplexity={MaxPhysicalComplexity}, KeyframedMotionCarriesRiders={B(KeyframedMotionCarriesRiders)}, " +
@@ -281,6 +301,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             MaxHoverHeight = VehicleMaxHoverHeight,
             SledAssist = VehicleSledAssist,
             ContactFriction = VehicleContactFriction,
+            SledContactFriction = SledContactFriction,
             RestSpeed = VehicleRestSpeed,
         };
 
@@ -349,6 +370,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             PhysicsBackendSettings s = PhysicsBackendSettings.Default;
             s.Gravity = new SVector3(0f, 0f, Gravity);
+            s.FrictionCombine = FrictionCombine;
+            s.RestitutionCombine = RestitutionCombine;
+            s.TerrainFriction = TerrainFriction;
+            s.TerrainRestitution = TerrainRestitution;
             s.MaxBodies = MaxBodies > 0 ? MaxBodies : ScaleByArea(BaseMaxBodies, sizeX, sizeY);
             s.MaxBodyPairs = ScaleCapsWithArea ? ScaleByArea(MaxBodyPairs, sizeX, sizeY) : MaxBodyPairs;
             s.MaxContactConstraints = ScaleCapsWithArea ? ScaleByArea(MaxContactConstraints, sizeX, sizeY) : MaxContactConstraints;
@@ -398,6 +423,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             v = 0f;
             return raw != null && float.TryParse(raw.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out v)
                    && float.IsFinite(v) && v >= min && v <= max;
+        }
+
+        // An invalid VehicleContactFriction: warn, and leave the vehicle its material's friction.
+        private static float? WarnNull(string raw, string key, List<string> warnings)
+        {
+            warnings?.Add($"[{Section}] {key} = \"{raw}\" is invalid (expected a finite number in [0, 10], or nothing for the material's value); using the material's.");
+            return null;
         }
 
         private static int I(IConfig cfg, string key, int def, int min, int max, List<string> warnings)

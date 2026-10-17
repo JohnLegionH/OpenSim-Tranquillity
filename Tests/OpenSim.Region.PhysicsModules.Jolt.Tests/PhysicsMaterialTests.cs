@@ -7,6 +7,7 @@
 
 using System.Globalization;
 using OpenMetaverse;
+using OpenSim.Region.PhysicsModules.Jolt.Backend;
 using OpenSim.Region.PhysicsModules.Jolt.Harness;
 using OpenSim.Region.PhysicsModules.SharedBase;
 using Xunit;
@@ -19,7 +20,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// llSetPhysicsMaterial (Friction, Restitution, GravModifier, Density), PRIM_MATERIAL (SetMaterial) and the prims'
 /// damping ([Jolt] PrimLinearDamping, PrimAngularDamping). The figures are the Second Life wiki's (llSetPhysicsMaterial's
 /// ranges, PRIM_MATERIAL's table, mass as density times volume), and ubODE's where the wiki gives none: two touching
-/// surfaces combine as friction sqrt(f1 x f2) and restitution r1 x r2, and gravity is (1 - buoyancy) x the multiplier.
+/// surfaces combine by the shipped rules (the average of the two, for friction and restitution), and gravity is (1 - buoyancy) x the multiplier.
 /// Every scene here has the prim's damping in its prediction. Serial with the other native tests: every run steps a real
 /// backend on the shared job pool.
 /// </summary>
@@ -56,6 +57,9 @@ public class PhysicsMaterialTests
             },
         };
         var o = new HarnessOptions { RateHz = Heartbeat, PhysicsRateHz = physicsHz };
+        // The module's shipped defaults, damping included.
+        o.Jolt["PrimLinearDamping"] = JoltConfig.DefaultPrimLinearDamping.ToString(CultureInfo.InvariantCulture);
+        o.Jolt["PrimAngularDamping"] = JoltConfig.DefaultPrimAngularDamping.ToString(CultureInfo.InvariantCulture);
         foreach ((string key, string value) in jolt)
             o.Jolt[key] = value;
         Harness.Harness.Run(sc, o);
@@ -115,14 +119,17 @@ public class PhysicsMaterialTests
 
     private static void SetFriction(PhysicsActor a, float f) => a.Friction = f;
 
+    // The friction two touching surfaces give under the shipped default rule ([Jolt] FrictionCombine; the average).
+    private static float CombinedFriction(float a, float b) => JoltPhysicsBackend.Combine(new JoltConfig().FrictionCombine, a, b);
+
     [Theory]
     [InlineData(45.0, 0.5f, 0.5f)]
     [InlineData(0.0, 0.5f, 0.5f)]
-    [InlineData(45.0, 0.25f, 1.0f)]   // sqrt(0.25 x 1) = 0.5
+    [InlineData(45.0, 0.25f, 1.0f)]   // averaged: 0.625
     [InlineData(0.0, 0.25f, 1.0f)]
     public void A_box_holds_on_a_slope_below_its_friction(double physicsHz, float boxFriction, float plateFriction)
     {
-        // tan 20 deg = 0.364, below the combined friction 0.5.
+        // tan 20 deg = 0.364, below the combined friction (0.5; 0.625 for 0.25 and 1).
         (List<Point> trace, Vector3 down) = Slope(physicsHz, 20f, b => SetFriction(b, boxFriction), p => SetFriction(p, plateFriction));
         float moved = Vector3.Dot(At(trace, 2.5).Position - At(trace, 0.5).Position, down);
         Assert.InRange(moved, -0.02f, 0.02f);
@@ -137,8 +144,8 @@ public class PhysicsMaterialTests
     public void A_box_slides_down_a_slope_above_its_friction_at_the_formulas_acceleration(double physicsHz, float boxFriction,
         float plateFriction)
     {
-        // tan 40 deg = 0.839, above the combined friction 0.5: a = g (sin 40 - 0.5 cos 40), less the damping c x v.
-        float mu = MathF.Sqrt(boxFriction * plateFriction);
+        // tan 40 deg = 0.839, above the combined friction (0.5; 0.625 for 0.25 and 1): a = g (sin 40 - mu cos 40), less the damping c x v.
+        float mu = CombinedFriction(boxFriction, plateFriction);
         float th = 40f * MathF.PI / 180f;
         float a = G * (MathF.Sin(th) - mu * MathF.Cos(th));
         (List<Point> trace, Vector3 down) = Slope(physicsHz, 40f, b => SetFriction(b, boxFriction), p => SetFriction(p, plateFriction));
@@ -208,14 +215,14 @@ public class PhysicsMaterialTests
     [InlineData(0.0, 0.9f)]
     public void A_box_dropped_2_m_rebounds_to_the_height_its_restitution_gives(double physicsHz, float restitution)
     {
-        // A 1 m box dropped with its base 2 m above a fixed plate of restitution 1: the combined restitution is the box's
-        // (r1 x r2), and it leaves at restitution x its arrival speed. RestingContactAndBounceTests covers 0.1 to 0.9 at
+        // A 1 m box dropped with its base 2 m above a fixed plate of the same restitution: the combined restitution is that
+        // value under any rule that gives r for r and r (the shipped one averages), and it leaves at restitution x its arrival speed. RestingContactAndBounceTests covers 0.1 to 0.9 at
         // every step rate and drop height, sampling every step.
         const float plateTop = 60f;
         float c = JoltConfig.DefaultPrimLinearDamping;
         List<Point> trace = Run(physicsHz, 3f, r =>
         {
-            r.AddOtherBox(new Vector3(10f, 10f, 2f), new Vector3(128f, 128f, plateTop - 1f), Quaternion.Identity, false).Restitution = 1f;
+            r.AddOtherBox(new Vector3(10f, 10f, 2f), new Vector3(128f, 128f, plateTop - 1f), Quaternion.Identity, false).Restitution = restitution;
             r.AddBox(Unit, new Vector3(128f, 128f, plateTop + 2f + 0.5f), Quaternion.Identity).Restitution = restitution;
         });
         double expected = RiseHeight(restitution * FallSpeed(2.0, c), c);
@@ -230,7 +237,7 @@ public class PhysicsMaterialTests
         const float plateTop = 60f;
         List<Point> trace = Run(physicsHz, 3f, r =>
         {
-            r.AddOtherBox(new Vector3(10f, 10f, 2f), new Vector3(128f, 128f, plateTop - 1f), Quaternion.Identity, false).Restitution = 1f;
+            r.AddOtherBox(new Vector3(10f, 10f, 2f), new Vector3(128f, 128f, plateTop - 1f), Quaternion.Identity, false).Restitution = 0f;
             r.AddBox(Unit, new Vector3(128f, 128f, plateTop + 2f + 0.5f), Quaternion.Identity).Restitution = 0f;
         });
         Assert.All(trace.Where(p => p.T > 0.8), p => Assert.True(p.Position.Z < plateTop + 0.5f + 0.05f, $"rose to {p.Position.Z} at {p.T}"));
@@ -245,9 +252,10 @@ public class PhysicsMaterialTests
         // way round it does not bounce.
         const float plateTop = 60f;
         float c = JoltConfig.DefaultPrimLinearDamping;
+        // The plate has the striking child's restitution, so the pair's is the child's under the shipped averaging.
         List<Point> Drop(float rootR, float childR) => Run(physicsHz, 3f, r =>
         {
-            r.AddOtherBox(new Vector3(10f, 10f, 2f), new Vector3(128f, 128f, plateTop - 1f), Quaternion.Identity, false).Restitution = 1f;
+            r.AddOtherBox(new Vector3(10f, 10f, 2f), new Vector3(128f, 128f, plateTop - 1f), Quaternion.Identity, false).Restitution = childR;
             r.AddBox(Unit, new Vector3(128f, 128f, plateTop + 2f + 1.5f), Quaternion.Identity).Restitution = rootR;
             r.AddChildBox(Unit, new Vector3(128f, 128f, plateTop + 2f + 0.5f), Quaternion.Identity).Restitution = childR;
         });
@@ -391,7 +399,7 @@ public class PhysicsMaterialTests
             box.Friction = 0.123f;
             box.Restitution = 0.123f;
             box.SetMaterial(material);
-        });
+        }, null, ("BasicForcesBehaviour", "SecondLife"));   // the wiki's table; MaterialsTests checks the default (InWorldz) table
         Assert.Equal(friction, box.Friction);
         Assert.Equal(restitution, box.Restitution);
     }
@@ -401,14 +409,14 @@ public class PhysicsMaterialTests
     [InlineData(0.0)]
     public void Rubber_bounces_by_its_restitution(double physicsHz)
     {
-        // PRIM_MATERIAL_RUBBER: 0.9 on a plate of restitution 1.
+        // PRIM_MATERIAL_RUBBER: 0.9 (the wiki's table) on a plate of 0.9.
         const float plateTop = 60f;
         float c = JoltConfig.DefaultPrimLinearDamping;
         List<Point> trace = Run(physicsHz, 3f, r =>
         {
-            r.AddOtherBox(new Vector3(10f, 10f, 2f), new Vector3(128f, 128f, plateTop - 1f), Quaternion.Identity, false).Restitution = 1f;
+            r.AddOtherBox(new Vector3(10f, 10f, 2f), new Vector3(128f, 128f, plateTop - 1f), Quaternion.Identity, false).Restitution = 0.9f;
             r.AddBox(Unit, new Vector3(128f, 128f, plateTop + 2f + 0.5f), Quaternion.Identity).SetMaterial(6);
-        });
+        }, null, ("BasicForcesBehaviour", "SecondLife"));
         Within((float)RiseHeight(0.9 * FallSpeed(2.0, c), c), 5f, ReboundPeak(trace, plateTop, 0.5f));
     }
 
@@ -494,6 +502,7 @@ public class PhysicsMaterialTests
     public void A_coasting_box_loses_speed_and_spin_as_its_damping_gives(double physicsHz, float? damping)
     {
         double c = damping ?? JoltConfig.DefaultPrimLinearDamping;
+        double ca = damping ?? JoltConfig.DefaultPrimAngularDamping;
         double h = Substep(physicsHz);
         double start = double.NaN;
         List<Point> trace = Run(physicsHz, 2.5f, r =>
@@ -512,15 +521,15 @@ public class PhysicsMaterialTests
         Point end = At(trace, start + 2.0);
         double keep = Math.Pow(1 - c * h, Math.Round((end.T - start) / h));
         Within((float)(5 * keep), 1f, end.Velocity.X);
-        Within((float)(2 * keep), 1f, end.Spin.Z);
+        Within((float)(2 * Math.Pow(1 - ca * h, Math.Round((end.T - start) / h))), 1f, end.Spin.Z);
     }
 
     [Fact]
-    public void The_damping_settings_default_to_0_05_and_are_read_from_Jolt()
+    public void The_damping_settings_default_to_0_02_and_0_05_and_are_read_from_Jolt()
     {
         var warnings = new List<string>();
         JoltConfig d = JoltConfig.FromConfig(new Nini.Config.IniConfigSource(), warnings);
-        Assert.Equal(0.05f, d.PrimLinearDamping);
+        Assert.Equal(0.02f, d.PrimLinearDamping);
         Assert.Equal(0.05f, d.PrimAngularDamping);
 
         var src = new Nini.Config.IniConfigSource();
@@ -535,7 +544,7 @@ public class PhysicsMaterialTests
         cfg.Set("PrimLinearDamping", "-1");
         cfg.Set("PrimAngularDamping", "abc");
         JoltConfig bad = JoltConfig.FromConfig(src, warnings);
-        Assert.Equal(0.05f, bad.PrimLinearDamping);
+        Assert.Equal(0.02f, bad.PrimLinearDamping);
         Assert.Equal(0.05f, bad.PrimAngularDamping);
         Assert.Equal(2, warnings.Count);
     }
@@ -593,11 +602,10 @@ public class PhysicsMaterialTests
     [InlineData("crash-wall", 0.0)]
     [InlineData("crash-drop", 45.0)]
     [InlineData("crash-drop", 0.0)]
-    public void A_vehicle_keeps_its_own_damping_and_contact_material(string scenario, double physicsHz)
+    public void A_vehicle_ignores_the_gravity_multiplier(string scenario, double physicsHz)
     {
-        // The same vehicle run, with the prim damping settings at 0.5 and the car's own physics material set to rubber
-        // with a gravity multiplier of 2, gives the same trace to the bit: a vehicle has no damping and its own contact
-        // friction and restitution, and its gravity is the vehicle's.
+        // The same vehicle run, with a gravity multiplier of 2, gives the same trace to the bit: a vehicle's gravity is
+        // the vehicle's own. (Its damping and contact materials are those of any prim; MaterialsTests checks them.)
         Scenario sc = Harness.Harness.Find(scenario);
         RunResult Once(bool changed)
         {
@@ -610,18 +618,10 @@ public class PhysicsMaterialTests
                 {
                     sc.Setup(r);
                     if (changed)
-                    {
-                        r.Actor.SetMaterial(6);
                         r.Actor.GravModifier = 2f;
-                    }
                 },
             };
             var o = new HarnessOptions { RateHz = Heartbeat, PhysicsRateHz = physicsHz };
-            if (changed)
-            {
-                o.Jolt["PrimLinearDamping"] = "0.5";
-                o.Jolt["PrimAngularDamping"] = "0.5";
-            }
             return Harness.Harness.Run(wrapped, o);
         }
         RunResult plain = Once(false), changedRun = Once(true);
@@ -659,7 +659,7 @@ public class PhysicsMaterialTests
         float friction = float.NaN, readRestitution = float.NaN, density = float.NaN, mass = float.NaN;
         List<Point> trace = Run(physicsHz, 3f, r =>
         {
-            r.AddOtherBox(new Vector3(10f, 10f, 2f), new Vector3(128f, 128f, plateTop - 1f), Quaternion.Identity, false).Restitution = 1f;
+            r.AddOtherBox(new Vector3(10f, 10f, 2f), new Vector3(128f, 128f, plateTop - 1f), Quaternion.Identity, false).Restitution = restitution;
             PhysicsActor box = r.AddBox(Unit, new Vector3(128f, 128f, plateTop + 2f + 0.5f), Quaternion.Identity);
             SetFlag(box, flag, true);
             box.Friction = 0.25f;
@@ -719,7 +719,7 @@ public class PhysicsMaterialTests
     public void A_phantom_or_volume_detect_prim_keeps_its_friction(double physicsHz, Flag flag)
     {
         // The flag goes off before the first step: a phantom box on the plate would fall through it.
-        float mu = MathF.Sqrt(0.25f * 1.0f);
+        float mu = CombinedFriction(0.25f, 1.0f);
         float th = 40f * MathF.PI / 180f;
         float a = G * (MathF.Sin(th) - mu * MathF.Cos(th));
         (List<Point> trace, Vector3 down) = Slope(physicsHz, 40f, b =>

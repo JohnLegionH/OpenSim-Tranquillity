@@ -67,6 +67,7 @@ public class HarnessTests
     // independent of the step; "before" the figure before the motors and friction followed the documented model
     // (velocity approaching the motor's exponentially, friction acting on every axis all the time).
 
+    [PinnedMaterials]
     [Fact]
     public void Test_car_on_level_ground_at_11_hz()
     {
@@ -79,6 +80,7 @@ public class HarnessTests
         Assert.InRange(m.MaxTilt, 0f, 1f);
     }
 
+    [PinnedMaterials]
     // The region feed on a test course's pad drive (3 s key, the course's test car). Measured in a region before the
     // motor ramp was made independent of the step: 5.59 m / 5.00 m/s under the key at one step per heartbeat and
     // 8.43 m / 6.14 m/s at PhysicsStepRate 45, which this feed then gave to within 1% (5.62 / 5.01 and 8.40 / 6.12;
@@ -96,6 +98,7 @@ public class HarnessTests
         Assert.InRange(m.ReleaseSpeed, releaseSpeed * 0.99f, releaseSpeed * 1.01f);
     }
 
+    [PinnedMaterials]
     [Theory]
     [InlineData(5f, 0.856f)]     // in-world 0.90; the equation g sin(5) * 1 s = 0.855 (0.896 with gravity outside it; before 0.907)
     [InlineData(15f, 2.542f)]    // in-world 2.85; the equation 2.538 (2.655 with gravity outside it; before 2.850): friction acts along the car's axes, the
@@ -109,6 +112,7 @@ public class HarnessTests
         Assert.False(double.IsNaN(m.TimeToRest), "came to rest on the run-out");
     }
 
+    [PinnedMaterials]
     [Fact]
     public void Preset_car_on_level_ground_at_11_hz()
     {
@@ -154,10 +158,15 @@ public class HarnessTests
     public void Dropped_box_settles_at_11_hz()
     {
         Summary m = Run("drop").Summary;
-        Assert.InRange(m.TimeToRest, 1.0, 1.2);             // 1.091 s after the release
+        // 1.818 s after the release (1.091 s before the bounce). The 5 m fall takes sqrt(2 x 5 / g) = 1.01 s and arrives at 9.9 m/s.
+        // Wood on land combines to 0.275 under the shipped averaging: it leaves at 2.7 m/s (a flight of 0.55 s), arrives again at
+        // 2.7 m/s, leaves at 0.75 m/s (0.15 s), and that arrival is under the engine's 1 m/s bounce cutoff: at rest at 1.01 + 0.55 +
+        // 0.15 = 1.71 s, seen at the next 11 Hz sample, the 20th, 1.82 s.
+        Assert.InRange(m.TimeToRest, 1.7, 1.9);
         Assert.InRange(m.End.Z, 25.45f, 25.52f);            // 25.480; rests 2 cm low at 11 Hz, 25.500 at 22.5 Hz and up
     }
 
+    [PinnedMaterials]
     [Fact]
     public void Boat_balloon_and_airplane_at_11_hz()
     {
@@ -176,6 +185,7 @@ public class HarnessTests
         Assert.InRange(plane.End.Z, 25f, 26f);
     }
 
+    [PinnedMaterials]
     [Fact]
     public void Sled_runs_at_11_hz()
     {
@@ -190,6 +200,7 @@ public class HarnessTests
         Assert.InRange(bottom.Speed, 16.2f, 16.8f);                             // 16.52 m/s
     }
 
+    [PinnedMaterials]
     [Fact]
     public void A_run_that_leaves_the_region_reports_no_sleep_time()
     {

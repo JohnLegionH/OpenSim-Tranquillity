@@ -25,6 +25,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// Set ANGULAR_TARGET_OUT to a file to have the figures runs append their rows to it.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[PinnedMaterials]
 public class AngularTargetTests
 {
     private readonly ITestOutputHelper _output;
@@ -62,7 +63,7 @@ public class AngularTargetTests
                 act?.Invoke(r, r.PhysicsTime);
             },
         };
-        Harness.Harness.Run(sc, new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsHz });
+        Harness.Harness.Run(sc, new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsHz, Jolt = { ["PrimLinearDamping"] = "0.05", ["PrimAngularDamping"] = "0.05" } });
         return trace;
     }
 

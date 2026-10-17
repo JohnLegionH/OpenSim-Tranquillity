@@ -92,13 +92,34 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             (0.6f, 0.5f),   // light
         };
 
-        // The linear and angular damping of a physical prim that is not a vehicle, per second: [Jolt] PrimLinearDamping and
-        // PrimAngularDamping, 0.05 by default (Jolt's own). The SL wiki gives no figure (llSetPhysicsMaterial notes that two
+        // The same two numbers under [Jolt] BasicForcesBehaviour = InWorldz (the default): InWorldz's own preset table, from
+        // Halcyon's InWorldz.PhysxPhysics/Material.cs (BuiltinMaterialInit, the first value of each CreateMaterial call; PhysX
+        // has a static and a dynamic friction, Jolt one, so the static one is used). PRIM_MATERIAL_LIGHT is mapped to wood there
+        // ("which makes no sense is remapped to wood").
+        internal static readonly (float Friction, float Restitution)[] InWorldzMaterialTable =
+        {
+            (0.5f, 0.05f),  // stone, made "mostly like ground" for navigable roads
+            (0.3f, 0.4f),   // metal
+            (0.2f, 0.7f),   // glass
+            (0.6f, 0.5f),   // wood
+            (0.9f, 0.3f),   // flesh
+            (0.4f, 0.7f),   // plastic
+            (0.9f, 0.9f),   // rubber
+            (0.6f, 0.5f),   // light, as wood
+        };
+
+        /// <summary>The preset table <paramref name="behaviour"/> selects.</summary>
+        internal static (float Friction, float Restitution)[] MaterialTableFor(JoltConfig.BasicForces behaviour)
+            => behaviour == JoltConfig.BasicForces.SecondLife ? MaterialTable : InWorldzMaterialTable;
+
+        // The linear and angular damping of a physical prim, vehicles included, per second: [Jolt] PrimLinearDamping and
+        // PrimAngularDamping, 0.02 and 0.05 by default (Halcyon's, PhysxActorFactory.cs DEFAULT_LINEAR_DAMPING and
+        // DEFAULT_ANGULAR_DAMPING, applied to every physical actor). The SL wiki gives no figure (llSetPhysicsMaterial notes that two
         // objects of restitution 1.0 still do not bounce perfectly, because the engine damps; llSetAngularVelocity, that a
         // spun cube with gravity 0 slows down; wiki.secondlife.com). ubODE's, as a rate, are 0.1001 and 0.0250
         // (ODEPrim: dBodySetDamping(Body, .002f, .0005f), which ODE applies as v x (1 - scale) every 0.020 s step). Jolt
-        // applies v x (1 - rate x step) each step, the same decay per second at any step rate. A vehicle has none (its
-        // controller does its own friction).
+        // applies v x (1 - rate x step) each step, the same decay per second at any step rate. A vehicle's controller
+        // does its own friction on top.
         private float PrimLinearDamping => _module.PrimLinearDamping;
         private float PrimAngularDamping => _module.PrimAngularDamping;
 
@@ -1149,8 +1170,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         // llSetPhysicsMaterial FRICTION and RESTITUTION, and PRIM_MATERIAL (SetMaterial). Each prim of a linkset has its own
         // (SL wiki, Physics Material Settings test: "Can individual prims in a linked set have different Physics settings?
-        // Yes."); a contact uses the struck prim's. Two touching surfaces combine as ubODE combines them, friction
-        // sqrt(f1 x f2) and restitution r1 x r2 (JoltPhysicsBackend.CombineMaterials); the SL wiki gives no rule.
+        // Yes."); a contact uses the struck prim's. Two touching surfaces combine by [Jolt] FrictionCombine and
+        // RestitutionCombine (JoltPhysicsBackend.CombineMaterials); the SL wiki gives no rule.
         public override float Friction
         {
             get => _friction;
@@ -1178,7 +1199,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             if (material < 0 || material >= MaterialTable.Length)
                 return;
-            SetContactMaterial(MaterialTable[material].Friction, MaterialTable[material].Restitution);
+            (float friction, float restitution) = MaterialTableFor(_module.BasicForcesBehaviour)[material];
+            SetContactMaterial(friction, restitution);
         }
 
         private void SetContactMaterial(float friction, float restitution)
@@ -1187,11 +1209,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 return;
             _friction = friction;
             _restitution = restitution;
-            // A vehicle sets its own contact friction and restitution (ApplyVehicleBodyParams); these come back when it
-            // stops being one.
             JoltPrim root = _linkRoot ?? this;
-            if (!root._body.IsValid || (root._vehicle != null && root._vehicle.IsActive))
+            if (!root._body.IsValid)
                 return;
+            if (root._vehicle != null && root._vehicle.IsActive)
+            {
+                // A vehicle keeps its parts' materials (unless a friction override is set), so the new one reaches the body.
+                root.ApplyVehicleContactMaterial();
+                return;
+            }
             _backend.SetBodyPartMaterial(root._body, LocalID, friction, restitution);
             root.WakeBody();
             // What rests on a non-physical prim now touches a different surface: wake it, as when the prim is moved.
@@ -2383,10 +2409,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _backend.ActivateBody(_body);
         }
 
-        // The BulletSim vehicle body setup (BSDynamics.SetPhysicalParameters), translated:
-        // the vehicle controls its own friction/damping (BSParam.VehicleFriction/Restitution/
-        // AngularDamping all default 0; Jolt's default 0.05 damping would fight the motor math),
-        // decides the vehicle's gravity itself (engine gravity off until its first step sets the vehicle's share).
+        // The BulletSim vehicle body setup (BSDynamics.SetPhysicalParameters), translated: the vehicle decides its own
+        // gravity itself (engine gravity off until its first step sets the vehicle's share).
         // It starts unable to sleep (BulletSim's DISABLE_DEACTIVATION); StepVehicle lets it sleep while nothing in the
         // vehicle would move it.
         // It has continuous collision detection: a car at 18 m/s moves 1.6 m in an 11 Hz step, more than its own height,
@@ -2398,15 +2422,34 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             if (_vehicle == null || !_vehicle.IsActive || !_isPhysical || !_body.IsValid)
                 return;
-            _backend.SetBodyFriction(_body, _vehicle.Settings.ContactFriction);
-            _backend.SetBodyRestitution(_body, 0f);
-            _backend.SetBodyDamping(_body, 0f, 0f);
+            ApplyVehicleContactMaterial();
+            _backend.SetBodyDamping(_body, PrimLinearDamping, PrimAngularDamping);
             _backend.SetBodyGravityFactor(_body, 0f);
             _backend.SetBodyAllowSleeping(_body, false);
             _backend.SetBodyContinuousCollision(_body, ContinuousCollision.On);
             _vehicleMaySleep = false;
             _backend.ActivateBody(_body);
             EnsureVehicleStepProvider();
+        }
+
+        // Contact friction and restitution of an active vehicle's body: each part keeps its own material's (Havok 4 and later,
+        // and Halcyon for every vehicle type but the sled, VehicleDynamics.cs SetVehicleDefaultActions), so while the vehicle
+        // slides in contact its friction is the material's plus the controller's friction timescales, and airborne only the
+        // timescales act. [Jolt] VehicleContactFriction replaces every part's friction when set; a sled's parts all take
+        // [Jolt] SledContactFriction (0 by default). Halcyon's sled zeroes the root's material and gives each child the
+        // stone preset (Material.Duplicate), so only a single-prim sled was frictionless there; here every part is, and
+        // each keeps its own restitution. Called again whenever the type or a part's material changes, so a vehicle
+        // changed from a sled to another type gets its material friction back.
+        private void ApplyVehicleContactMaterial()
+        {
+            _backend.SetBodyFriction(_body, _friction);
+            _backend.SetBodyRestitution(_body, _restitution);
+            if (_compoundShape.IsValid && _linkChildren != null)
+                foreach (JoltPrim c in _linkChildren)
+                    _backend.SetBodyPartMaterial(_body, c.LocalID, c._friction, c._restitution);
+            float? friction = _vehicle!.Type == Vehicles.Vehicle.TYPE_SLED ? _vehicle.Settings.SledContactFriction : _vehicle.Settings.ContactFriction;
+            if (friction.HasValue)
+                _backend.SetBodyFriction(_body, friction.Value);   // every part's friction; restitutions stay
         }
 
         private void RestoreVehicleBodyParams()

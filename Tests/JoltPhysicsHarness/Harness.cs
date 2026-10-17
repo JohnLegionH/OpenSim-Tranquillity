@@ -29,6 +29,47 @@ using SOPVehicle = OpenSim.Region.Framework.Scenes.SOPVehicle;
 namespace OpenSim.Region.PhysicsModules.Jolt.Harness;
 
 /// <summary>What to run. Unset values take the scenario's defaults.</summary>
+/// <summary>
+/// [Jolt] material keys a test assembly may pin to the values the module had before vehicles kept their parts' materials
+/// and the combine rules, terrain, damping and preset defaults changed: a vehicle with no contact friction, no damping, the
+/// geometric-mean and product combine rules, terrain 0.6 / 0 and the Second Life preset table. The tests of a controller's
+/// laws (a friction timescale's decay, a motor's ramp, a rest rule) need a vehicle that only its controller acts on, and a
+/// test class asks for the pins with <see cref="Enabled"/> (for the test being run). Every other run, and the harness
+/// program and the baselines, use the module's shipped defaults.
+/// </summary>
+public static class MaterialPins
+{
+    private static readonly AsyncLocal<bool> EnabledHere = new();
+
+    /// <summary>Whether the runs of the test now executing are pinned. Per test, so classes that do not ask run in parallel unpinned.</summary>
+    public static bool Enabled
+    {
+        get => EnabledHere.Value;
+        set => EnabledHere.Value = value;
+    }
+    private static readonly (string Key, string Value)[] Pins =
+    {
+        ("VehicleContactFriction", "0"), ("PrimLinearDamping", "0"), ("PrimAngularDamping", "0"),
+        ("FrictionCombine", "GeometricMean"), ("RestitutionCombine", "Multiply"),
+        ("TerrainFriction", "0.6"), ("TerrainRestitution", "0"), ("BasicForcesBehaviour", "SecondLife"),
+    };
+
+    /// <summary>A vehicle that bounces off what it hits only through its material: its restitution 0, as a vehicle's was.</summary>
+    public static void PinVehicle(OpenSim.Region.PhysicsModules.SharedBase.PhysicsActor vehicle, bool pinned)
+    {
+        if (pinned)
+            vehicle.Restitution = 0f;
+    }
+
+    public static void Apply(Nini.Config.IConfig jolt)
+    {
+        if (!Enabled)
+            return;
+        foreach ((string key, string value) in Pins)
+            jolt.Set(key, value);
+    }
+}
+
 public sealed class HarnessOptions
 {
     /// <summary>The environment variable that sets <see cref="PhysicsRateHz"/>'s default, so a whole test run can
@@ -120,6 +161,8 @@ public sealed class HarnessOptions
     /// <summary>Start from the [Jolt] section of RegionServerDefaults.ini, which every simulator reads before its own ini,
     /// instead of from no keys. On by default.</summary>
     public bool ShippedConfig = true;
+    /// <summary>Run with the module's own material defaults even where <see cref="MaterialPins"/> holds the earlier ones.</summary>
+    public bool UseDefaults;
     /// <summary>Restore the scenario's vehicle from its record by this route when its setup is done, before the first
     /// heartbeat, instead of leaving it as its script set it up (<see cref="VehicleRestore"/>). Every route but the
     /// physics switch removes the actor and builds a new one from the record at the same place, as the simulator's
@@ -630,11 +673,15 @@ public sealed class Run
     /// <see cref="HarnessOptions.VehicleScriptAgain"/>.</summary>
     internal readonly List<Action<PhysicsActor>> VehicleCalls = new();
 
+    /// <summary>The run takes the earlier material keys (see <see cref="MaterialPins"/>).</summary>
+    public bool Pinned => MaterialPins.Enabled && !Options.UseDefaults;
+
     public void MakeVehicle(Vehicle type)
     {
         VehiclePart ??= VehicleRestore.NewRecord(Actor);
         VehiclePart.SetVehicleType((int)type);
-        VehicleCalls.Add(a => a.VehicleType = (int)type);
+        bool pinned = Pinned;
+        VehicleCalls.Add(a => { MaterialPins.PinVehicle(a, pinned); a.VehicleType = (int)type; });
     }
 
     public void SetFloat(Vehicle code, float v)
@@ -1474,6 +1521,7 @@ public static class Harness
             {
                 SetupCrashCar(r);
                 r.AddOtherBox(CarSize, new Vector3(CrashStartX + 60f, 85f, Course.Ground + CarSize.Z * 0.5f + 0.02f), West, true);
+                MaterialPins.PinVehicle(r.Other, r.Pinned);
                 r.Other.VehicleType = (int)Vehicle.TYPE_CAR;
                 r.AlsoDriven.Add(r.Other);
             },
@@ -1713,6 +1761,8 @@ public static class Harness
                 jolt.Set(key, ShippedJolt().Get(key));
         // 0 is one step per heartbeat, set as such: the module's own default is 45 Hz. A --jolt key overrides it.
         jolt.Set("PhysicsStepRate", "0");
+        if (!o.UseDefaults)
+            MaterialPins.Apply(jolt);
         foreach (KeyValuePair<string, string> kv in o.Jolt)
             jolt.Set(kv.Key, kv.Value);
         if (o.PhysicsRateHz > 0)
@@ -2024,6 +2074,20 @@ public static class Harness
     private static void SummariseCollision(Run r, Scenario sc, List<Sample> samples, Summary m)
     {
         int impact = samples.FindIndex(s => sc.Gap(r, s) < ContactGap);
+        // A sample is read after its step. A hard hit in the middle of a step can leave the two objects further apart than
+        // ContactGap again by the end of it (the second one thrown ahead faster than the first follows), so no sample ever
+        // reads as touching. The step also counts as the impact when, at the speed they had at its start, the objects
+        // would have met within it.
+        for (int i = 1; i < samples.Count && (impact < 0 || i < impact); i++)
+        {
+            Sample before = samples[i - 1];
+            float closing = (before.Velocity - before.OtherVelocity).Length();
+            if (sc.Gap(r, before) >= ContactGap && sc.Gap(r, before) < closing * (samples[i].T - before.T))
+            {
+                impact = i;
+                break;
+            }
+        }
         if (impact < 0)
             return;
         double t0 = samples[impact].T;

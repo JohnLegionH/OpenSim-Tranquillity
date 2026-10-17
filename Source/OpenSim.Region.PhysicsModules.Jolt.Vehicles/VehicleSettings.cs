@@ -118,10 +118,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         public const float DefaultSledAssist = 0.045f;
 
         /// <summary>
-        /// The contact friction of a vehicle body. 0, BulletSim's VehicleFriction default, leaves the vehicle's own
-        /// friction timescales as the only friction on it.
+        /// An override for the contact friction of every part of a vehicle body. Null, the default, leaves each part its
+        /// own material's friction, which adds to the vehicle's friction timescales while it slides in contact (Havok 4
+        /// and later, and Halcyon for every type but the sled); a number replaces the material's.
         /// </summary>
-        public float ContactFriction { get; init; } = 0f;
+        public float? ContactFriction { get; init; }
+
+        /// <summary>
+        /// The contact friction of every part of a sled, whatever its material. 0 by default: Halcyon meant the whole sled to
+        /// be frictionless (VehicleDynamics.cs, the sled case of SetVehicleDefaultActions). It wins over
+        /// <see cref="ContactFriction"/> for a sled. Each part keeps its own restitution, density and gravity multiplier.
+        /// </summary>
+        public float SledContactFriction { get; init; } = 0f;
 
         /// <summary>
         /// The rest speed (m/s) of the rest rule (<see cref="VehicleController.HoldsAtRest"/>): a vehicle with no motor

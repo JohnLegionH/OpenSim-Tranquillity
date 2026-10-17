@@ -673,7 +673,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Diagnostics
 
             SceneObjectGroup ramp = RezTestPrim("box", rampPos, SledSlideScenario.RampSize);
             ramp.UpdateGroupRotationR(tilt);
-            if (ramp.RootPart.PhysActor != null) ramp.RootPart.PhysActor.Orientation = tilt;
+            if (ramp.RootPart.PhysActor != null)
+            {
+                ramp.RootPart.PhysActor.Orientation = tilt;
+                ramp.RootPart.PhysActor.Friction = 0f;   // see SledSlideScenario.Speeds: the sled's 0 averages with the ramp's
+            }
 
             var (sled, pa, jp, id) = RezSled(sledPos.X, sledPos.Y, sledPos.Z, tilt);
             if (pa == null)

@@ -169,6 +169,10 @@ public class LinksetHitOnStandingAvatarTests
         // Measured 0.85 to 1.15 of one push's fade (push x 0.25 m) for the 8 m/s throws. A 100 kg linkset at 3 m/s keeps
         // striking the light avatar as it slows, so it carries it with the linkset (measured 2.10 m, 2.9 of the fade).
         float most = kg100AndSlow ? 3.2f : 1.25f;
+        // The linkset's wood (0.5) against the avatar's body (no restitution set, so 0) now averages to 0.25 where the product
+        // was 0, so a heavy linkset sends the avatar off at (1 + 0.25) x its own speed instead of 1 x: the carry is 1.25 times
+        // as far. Measured 1.31 times for the 8 m/s throw (2.57 m against 1.96 m).
+        most *= 1.25f;
         Assert.InRange(hit.Carried, 0.3f * push * PushFade, most * push * PushFade);
         Assert.True(hit.FrontMinusAvatarX > 0f, $"the linkset went through the avatar (front part {hit.FrontMinusAvatarX:0.000} m east of its middle)");
     }

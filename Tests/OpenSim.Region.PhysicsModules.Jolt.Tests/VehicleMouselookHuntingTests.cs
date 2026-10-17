@@ -19,6 +19,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// camera's own shake, and the overshoot and the settling of the 90 degree turn. Serial with the other native tests.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[PinnedMaterials]
 public class VehicleMouselookHuntingTests
 {
     private readonly ITestOutputHelper _out;

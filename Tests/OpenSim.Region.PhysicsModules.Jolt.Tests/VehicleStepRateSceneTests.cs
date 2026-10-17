@@ -11,6 +11,7 @@ using OpenMetaverse;
 using OpenSim.Framework;
 using OpenSim.Region.PhysicsModules.Jolt.Harness;
 using OpenSim.Region.PhysicsModules.Jolt.Vehicles;
+using OpenSim.Region.PhysicsModules.Jolt.Harness;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -25,6 +26,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// collision steps. The figures are written to the test output. Serial with the other native tests.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[PinnedMaterials]
 public class VehicleStepRateSceneTests
 {
     private readonly ITestOutputHelper _out;
@@ -59,6 +61,7 @@ public class VehicleStepRateSceneTests
             IConfig jolt = config.AddConfig("Jolt");
             jolt.Set("PhysicsStepRate", rate.ToString(CultureInfo.InvariantCulture));
             jolt.Set("PhysicsStepCollisionSteps", collisionSteps.ToString(CultureInfo.InvariantCulture));
+            MaterialPins.Apply(jolt);
             more?.Invoke(jolt);
             Scene = new JoltScene();
             Scene.Initialise(config);

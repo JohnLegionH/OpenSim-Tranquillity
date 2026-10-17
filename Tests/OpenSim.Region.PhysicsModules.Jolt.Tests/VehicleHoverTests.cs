@@ -17,6 +17,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// hover height) at the four rates. Serial with the other native tests: real backends on the shared pool.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[PinnedMaterials]
 public class VehicleHoverTests
 {
     private const float Height = 5f;

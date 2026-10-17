@@ -263,6 +263,7 @@ public class VehicleMouselookTests
 /// PhysicsStepRate 45 (11 Hz heartbeats). Serial with the other native tests.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[PinnedMaterials]
 public class VehicleBankingAndMouselookHarnessTests
 {
     private static RunResult Run(string scenario, double physicsRate, Action<HarnessOptions> more = null)

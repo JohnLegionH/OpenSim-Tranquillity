@@ -56,7 +56,7 @@ public class FlyingSeatedAndFastLinksetAvatarTests
     private static RunResult Run(Scenario sc, double physicsHz, bool pinned = false)
         => Harness.Harness.Run(sc, new HarnessOptions
         {
-            RateHz = 11.0, PhysicsRateHz = physicsHz, Jolt = { ["AvatarPushMaxSpeed"] = "10" },
+            RateHz = 11.0, PhysicsRateHz = physicsHz, Jolt = { ["AvatarPushMaxSpeed"] = "10", ["PrimLinearDamping"] = "0.05", ["PrimAngularDamping"] = "0.05" },
             SimulatorAvatars = pinned ? HarnessPins.EarlierAvatar : true,
         });
 
@@ -185,8 +185,11 @@ public class FlyingSeatedAndFastLinksetAvatarTests
         // A 0.6 x 0.6 x 2.2 m post standing on the ground 8 m ahead (fixed when kg is 0), the avatar flying east at its
         // middle, 0.6 m above where it would stand. The avatar pushes with up to 2000 N ([Jolt] AvatarObjectPushMaxForce),
         // which tips a tall post over (the avatar then flies on over it) and moves anything under about 340 in mass. So the
-        // heavy case is a 1.2 m cube of the greatest density, 10000 asked and the density limit giving it about 380.
-        var size = kg >= 100f ? new Vector3(1.2f, 1.2f, 1.2f) : new Vector3(0.6f, 0.6f, 2.2f);
+        // heavy case is a cube of the greatest density, 10000 asked and the density limit giving 220 kg a cubic metre. It holds
+        // against the push only if the ground's friction on it is at least 2000 N: wood (0.6) on land (0.4) averages to 0.5 now,
+        // where the geometric mean was 0.6, so it needs more than 2000 / (0.5 x 9.81) = 408 kg: a 1.2 m cube (380 kg) slid on
+        // under the 130 N left over, 1.7 m in the run, and a 1.3 m cube (483 kg, friction 2370 N) holds.
+        var size = kg >= 100f ? new Vector3(1.3f, 1.3f, 1.3f) : new Vector3(0.6f, 0.6f, 2.2f);
         PhysicsActor post = null;
         CollisionWatch avatarWatch = null, postWatch = null;
         var trace = new List<(double T, Vector3 P)>();

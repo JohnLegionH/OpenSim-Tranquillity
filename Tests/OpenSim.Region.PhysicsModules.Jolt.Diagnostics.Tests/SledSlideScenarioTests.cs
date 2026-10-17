@@ -120,7 +120,8 @@ public class SledSlideScenarioTests
         {
             float rampZ = Ground + SledSlideScenario.RampHalfDrop() + 6f;
             var (rampPos, sledPos, tilt) = SledSlideScenario.Layout(128f, 128f, rampZ);
-            scene.AddPrimShape("ramp", PrimitiveBaseShape.CreateBox(), rampPos, SledSlideScenario.RampSize, tilt, false, 901u);
+            // As the console test rezzes it: friction 0, which averages with the sled's 0 (SledSlideScenario.Speeds).
+            scene.AddPrimShape("ramp", PrimitiveBaseShape.CreateBox(), rampPos, SledSlideScenario.RampSize, tilt, false, 901u).Friction = 0f;
             var sled = Assert.IsType<JoltPrim>(scene.AddPrimShape("sled", PrimitiveBaseShape.CreateBox(), sledPos, SledSlideScenario.SledSize, tilt, true, 902u));
             sled.VehicleType = (int)Vehicle.TYPE_SLED;
 

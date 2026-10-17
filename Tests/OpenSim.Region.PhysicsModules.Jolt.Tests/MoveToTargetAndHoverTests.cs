@@ -55,7 +55,7 @@ public class MoveToTargetAndHoverTests
         };
         if (world != null)
             sc.World = world;
-        Harness.Harness.Run(sc, new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsHz });
+        Harness.Harness.Run(sc, new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsHz, Jolt = { ["PrimLinearDamping"] = "0.05", ["PrimAngularDamping"] = "0.05" } });
         return trace;
     }
 

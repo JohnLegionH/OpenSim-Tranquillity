@@ -26,7 +26,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Harness;
 
 public static class ContactScenarios
 {
-    public const float LiftAt = 5f;
+    public const float LiftAt = 7f;
     public static readonly Vector3 BoxSize = new(0.5f, 0.5f, 0.5f);
     public const float PlatformHeight = 3f;   // the platform's top, above the ground
 
@@ -79,7 +79,7 @@ public static class ContactScenarios
         {
             Name = name,
             Description = description,
-            DefaultDuration = _ => 8f,
+            DefaultDuration = _ => 10f,
             Setup = setup,
             Input = r =>
             {
@@ -91,7 +91,7 @@ public static class ContactScenarios
     public static readonly IReadOnlyList<Scenario> All = new List<Scenario>
     {
         Resting("rest-platform",
-            "A 0.5 m box falls 1 m onto a fixed 3 x 3 m platform 3 m up and rests there until it is thrown off at 5 s (4 m/s east, 4 m/s up).",
+            "A 0.5 m box falls 1 m onto a fixed 3 x 3 m platform 3 m up and rests there until it is thrown off at 7 s (4 m/s east, 4 m/s up).",
             r =>
             {
                 float ground = r.GroundAt(128f, 128f);
@@ -101,11 +101,11 @@ public static class ContactScenarios
             },
             new Vector3(4f, 0f, 4f)),
         Resting("rest-ground",
-            "A 0.5 m box falls 1 m onto the ground and rests there until it is thrown up at 5 s (4 m/s), lands and rests again.",
+            "A 0.5 m box falls 1 m onto the ground and rests there until it is thrown up at 7 s (4 m/s), lands and rests again.",
             r => DropBox(r, 128f, 128f, r.GroundAt(128f, 128f) + 1f),
             new Vector3(0f, 0f, 4f)),
         Resting("rest-vd",
-            "A 0.5 m box falls into a fixed 3 x 3 x 2 m volume-detect box standing on a fixed 4 x 4 m platform 3 m up, rests on the platform inside it, and is thrown out at 5 s (6 m/s east, 3 m/s up).",
+            "A 0.5 m box falls into a fixed 3 x 3 x 2 m volume-detect box standing on a fixed 4 x 4 m platform 3 m up, rests on the platform inside it, and is thrown out at 7 s (6 m/s east, 3 m/s up).",
             r =>
             {
                 float ground = r.GroundAt(128f, 128f);

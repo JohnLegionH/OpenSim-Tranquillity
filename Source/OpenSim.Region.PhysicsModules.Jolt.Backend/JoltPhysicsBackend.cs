@@ -1392,9 +1392,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
         // WORKER-THREAD context, inside the step (which holds _simLock, so no setter changes a record meanwhile). The
         // friction and restitution of the two touching parts, each a linkset child's own where the body is a compound,
-        // combined as ubODE combines them (ODEScene's near callback: friction sqrt(f1 x f2), restitution r1 x r2; the
-        // SL wiki gives no rule for two surfaces). Jolt's own rule, with which it fills `settings`, is the same for
-        // friction but takes the larger restitution. A pair with an avatar's query marker is left as Jolt made it.
+        // combined by [Jolt] FrictionCombine and RestitutionCombine (average by default, which is what PhysX does when no
+        // combine mode is set, as in Halcyon's tree; the SL wiki gives no rule for two surfaces). Jolt's own rules, with
+        // which it fills `settings`, are the geometric mean for friction and the larger value for restitution. A pair with
+        // an avatar's query marker is left as Jolt made it.
         private void CombineMaterials(in Body body1, in Body body2, in ContactManifold manifold, ref ContactSettings settings)
         {
             _joltToRecord.TryGetValue(body1.ID.ID, out JoltBodyRecord? ra);
@@ -1403,9 +1404,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 return;
             PartMaterial(ra, manifold.SubShapeID1.Value, out float f1, out float r1);
             PartMaterial(rb, manifold.SubShapeID2.Value, out float f2, out float r2);
-            settings.CombinedFriction = MathF.Sqrt(f1 * f2);
-            settings.CombinedRestitution = BounceFromTheSurface(in body1, in body2, ra, rb, in manifold, r1 * r2);
+            settings.CombinedFriction = Combine(_settings.FrictionCombine, f1, f2);
+            settings.CombinedRestitution = BounceFromTheSurface(in body1, in body2, ra, rb, in manifold,
+                                                                Combine(_settings.RestitutionCombine, r1, r2));
         }
+
+        /// <summary>The value two surfaces' <paramref name="a"/> and <paramref name="b"/> give a contact under <paramref name="rule"/>.</summary>
+        internal static float Combine(MaterialCombine rule, float a, float b) => rule switch
+        {
+            MaterialCombine.GeometricMean => MathF.Sqrt(a * b),
+            MaterialCombine.Multiply => a * b,
+            MaterialCombine.Min => MathF.Min(a, b),
+            MaterialCombine.Max => MathF.Max(a, b),
+            _ => (a + b) * 0.5f,
+        };
 
         // The length of one solver step of the current Update (the step's time over its collision steps). Written under
         // _simLock before the Update, read by the contact callbacks inside it.
@@ -4452,7 +4464,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 shapeRec.NativeShape, position, Quaternion.Identity, MotionType.Static, objectLayer);
             try
             {
-                bcs.Friction = 0.6f;
+                bcs.Friction = _settings.TerrainFriction;
+                bcs.Restitution = _settings.TerrainRestitution;
                 BodyID joltId = _bodyInterface.CreateAndAddBody(bcs, Activation.DontActivate);
 
                 // CreateBody's invalid-id policy. At MaxBodies there is no terrain body:

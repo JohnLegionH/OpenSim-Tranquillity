@@ -36,6 +36,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// Serial with the other native tests: every run steps a real backend on the shared job pool.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[PinnedMaterials]
 public class LeavingTheRegionTests
 {
     private readonly ITestOutputHelper _out;
@@ -64,6 +65,7 @@ public class LeavingTheRegionTests
             startup.Set("meshing", "Meshmerizer");
             IConfig jolt = config.AddConfig("Jolt");
             jolt.Set("PhysicsStepRate", physicsHz.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            OpenSim.Region.PhysicsModules.Jolt.Harness.MaterialPins.Apply(jolt);
             Scene = new JoltScene();
             Scene.Initialise(config);
             Scene.VehicleClock = () => new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddTicks((long)Math.Round(Now * TimeSpan.TicksPerSecond));

@@ -61,7 +61,9 @@ public class SubstepHarnessTests
     [InlineData("drop", 0f, "endz", 25.500f, 0.1f)]
     public void Steps_at_45_hz_inside_11_hz_heartbeats_match_a_45_hz_heartbeat(string scenario, float slope, string figure, float expected, float percent)
     {
-        // The expected figures were measured with the legacy presets, and the avatar walking at the speed asked.
+        // The expected figures were measured with the legacy presets, and the avatar walking at the speed asked. The vehicle rows
+        // check a controller's equations (as VehicleMotorDriveTests does), so they keep the earlier material keys.
+        MaterialPins.Enabled = scenario is not ("drop" or "avatar-walk" or "avatar-jump");
         float got = Figure(Run(scenario, slope, 11.0, 45.0, ("VehiclePresets", "legacy"), ("AvatarWalkSpeedFactor", "1")), figure);
         float tol = Math.Abs(expected) * percent / 100f;
         Assert.InRange(got, expected - tol, expected + tol);

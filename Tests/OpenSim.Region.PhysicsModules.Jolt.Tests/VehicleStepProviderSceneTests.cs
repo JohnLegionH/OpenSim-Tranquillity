@@ -22,6 +22,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// never faults. Serial with the other native tests.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[PinnedMaterials]
 public class VehicleStepProviderSceneTests
 {
     private const float Heartbeat = 1f / 11f;
@@ -39,6 +40,7 @@ public class VehicleStepProviderSceneTests
         IConfig jolt = config.AddConfig("Jolt");
         jolt.Set("PhysicsStepRate", rate.ToString(CultureInfo.InvariantCulture));
         jolt.Set("PhysicsStepCollisionSteps", collisionSteps.ToString(CultureInfo.InvariantCulture));
+        OpenSim.Region.PhysicsModules.Jolt.Harness.MaterialPins.Apply(jolt);
         var scene = new JoltScene();
         scene.Initialise(config);
         var heights = new float[Size * Size];
