@@ -81,16 +81,25 @@ public class JoltNativeTests
     {
         JoltNativeInfo info = JoltNative.EnsureLoaded(allowUnrecorded: false);
 
-        string expectedRid = OperatingSystem.IsWindows() ? "win-x64" : OperatingSystem.IsLinux() ? "linux-x64" : null;
-        Assert.NotNull(expectedRid);   // the suite runs on win-x64 and linux-x64
+        string os = OperatingSystem.IsWindows() ? "win" : OperatingSystem.IsLinux() ? "linux" : OperatingSystem.IsMacOS() ? "osx" : null;
+        string arch = RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.X64 => "x64",
+            Architecture.Arm64 => "arm64",
+            _ => null,
+        };
+        Assert.NotNull(os);     // the suite runs on Windows, Linux and macOS, on x64 and Arm64
+        Assert.NotNull(arch);
+        string expectedRid = os + "-" + arch;
         Assert.Equal(expectedRid, info.Rid);
         Assert.Equal(JoltNative.PathFor(JoltNative.DefaultBaseDirectory(), expectedRid), info.Path);
-        Assert.Equal(OperatingSystem.IsWindows() ? "joltc.dll" : "libjoltc.so", Path.GetFileName(info.Path));
+        Assert.Equal(os == "win" ? "joltc.dll" : os == "linux" ? "libjoltc.so" : "libjoltc.dylib", Path.GetFileName(info.Path));
         Assert.True(info.Recorded);
         Assert.Same(StockFor(expectedRid), info.Build);
         Assert.Equal(StockFor(expectedRid).Sha256, info.Sha256);
         Assert.False(info.SafeForMultiplePools);
-        Assert.Null(info.UntestedNotice);
+        // A platform the record marks as tested logs no notice; an untested one logs it.
+        Assert.Equal(!info.Build.TestedByProject, info.UntestedNotice != null);
         Assert.Contains(info.Path, info.Describe());
         Assert.Contains(info.Sha256, info.Describe());
         Assert.Contains($"stock JoltPhysics.Native {JoltNative.PackageVersion}; one job pool", info.Describe());
@@ -98,6 +107,7 @@ public class JoltNativeTests
         // Nothing at the output root: the file under runtimes/ is the only one.
         Assert.False(File.Exists(Path.Combine(JoltNative.DefaultBaseDirectory(), "joltc.dll")));
         Assert.False(File.Exists(Path.Combine(JoltNative.DefaultBaseDirectory(), "libjoltc.so")));
+        Assert.False(File.Exists(Path.Combine(JoltNative.DefaultBaseDirectory(), "libjoltc.dylib")));
     }
 
     [Fact]

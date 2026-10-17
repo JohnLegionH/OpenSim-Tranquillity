@@ -70,6 +70,7 @@ jobs:
           --results-directory "$RUNNER_TEMP/jolt-results"
 
       - name: Run the Jolt diagnostics suite
+        if: ${{ !cancelled() }}
         run: >
           dotnet test Tests/OpenSim.Region.PhysicsModules.Jolt.Diagnostics.Tests -c ${{ matrix.configuration }} --no-build
           --logger "console;verbosity=normal" --logger "trx;LogFileName=jolt-diagnostics.trx"
