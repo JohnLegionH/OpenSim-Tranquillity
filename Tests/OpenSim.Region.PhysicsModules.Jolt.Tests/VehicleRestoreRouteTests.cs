@@ -169,7 +169,7 @@ public class VehicleRestoreRouteTests
     internal static Outcome RunRoute(SharedVehicle type, VehicleRoute route, Vector3? motor = null, double physicsRate = 0.0,
                                      Vector3 handBackVelocity = default, Action<Run> moreScriptCalls = null, string behaviour = null,
                                      Action<Run, SharedVehicle> setup = null,
-                                     Action<HarnessOptions> configure = null)
+                                     Action<HarnessOptions> configure = null, int readAt = ReadAt)
     {
         var o = new Outcome();
         SOPVehicle saved = null;
@@ -213,7 +213,7 @@ public class VehicleRestoreRouteTests
                 o.ScriptSet = State(r.Actor);
                 if (route == VehicleRoute.RegionStart)
                     HandBack(r);
-                r.StopAt = (ReadAt + 1) / 45.0;
+                r.StopAt = (readAt + 1) / 45.0;
             },
             Input = r =>
             {
@@ -251,7 +251,7 @@ public class VehicleRestoreRouteTests
                         r.VehiclePart.PhysActor = r.Actor;
                     }
                 }
-                else if (k == ReadAt)
+                else if (k == readAt)
                 {
                     o.Restored = State(r.Actor);
                     o.EndedAt = r.Actor.Position;

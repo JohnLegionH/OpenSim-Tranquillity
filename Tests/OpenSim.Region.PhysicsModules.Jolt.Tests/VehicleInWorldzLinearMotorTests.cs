@@ -16,7 +16,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// run), written out here a second time in doubles as the reference the controller is compared with. A vehicle whose frame
 /// is the world's, with friction and deflection off, and a linear motor only: each step computes the velocity the motor
 /// wants from the velocity at the start of the step and the motor's target, blends it in by the decay, and adds the
-/// difference as a change of velocity, after the up-motor gravity rule; the body's own gravity follows.
+/// difference as a change of velocity, after the up-motor gravity rule; the body's own gravity follows. Halcyon runs its
+/// motor once in each of its physics steps of 15 ms, so here the motor is stepped on a clock of carried time: for every 15 ms
+/// that goes by in the steps the caller takes (of any length), one motor step of 15 ms, reading the velocity the one before
+/// left; friction and gravity are integrated over each step the caller takes.
 /// </summary>
 internal sealed class HalcyonLinearReference
 {
@@ -29,6 +32,11 @@ internal sealed class HalcyonLinearReference
     /// <summary>The linear friction timescales; 1000 s and over is off. Friction takes the share 1 - e^(-h / T) of the velocity
     /// at the start of the step away, as a change of its own beside the motor's.</summary>
     public double[] Friction = { 1000, 1000, 1000 };
+
+    /// <summary>Whether the target replaces a lower velocity on an axis the motor never had a direction on (Halcyon's code as written;
+    /// the controller's default leaves such an axis its velocity, see VehicleSettings.MotorTargetOnUndrivenAxes).</summary>
+    public bool TargetOnUndrivenAxes;
+    private readonly bool[] _driven = new bool[3];   // the axes the motor has had a direction on: the rule goes on acting on them
 
     public HalcyonLinearReference(double[] direction, double[] timescale, double[] decay, double maxSpeed = 200.0)
     {
@@ -84,58 +92,85 @@ internal sealed class HalcyonLinearReference
         return elog / steps;
     }
 
+    public const double HalcyonStep = 0.015;
+    private double _carry;
+
     /// <summary>One step of h seconds. gravityZ is the body's own (negative) gravity, buoyancy the vehicle's.</summary>
     public void Step(double h, double gravityZ = 0.0, double buoyancy = 0.0)
     {
-        double[] g = new double[3];
         double[] friction = new double[3];
         for (int i = 0; i < 3; i++)
-        {
-            g[i] = Decay(Index, _td[i]);
             friction[i] = Friction[i] >= 1000 ? 0.0 : V[i] * (Math.Exp(-h / Friction[i]) - 1.0);
+
+        // The motor steps that fall due: each covers the 15 ms that has just gone by, so its clock reads what it read at the
+        // start of that interval, and each works from the velocity the one before left.
+        double carried = _carry;
+        _carry += h;
+        int due = (int)Math.Floor(_carry / HalcyonStep + 1e-6);
+        if (due > 0)
+            _carry = Math.Max(0.0, _carry - due * HalcyonStep);
+        double start = Index;
+        double[] v = (double[])V.Clone();
+        double[] motor = new double[3];
+        for (int k = 0; k < due; k++)
+        {
+            double[] delta = Fire(start - carried + k * HalcyonStep, v, gravityZ, buoyancy);
+            for (int i = 0; i < 3; i++)
+            {
+                v[i] += delta[i];
+                motor[i] += delta[i];
+            }
         }
-        Index += h;
+        Index = start + h;
+        for (int i = 0; i < 3; i++) V[i] += motor[i] + friction[i];
+        V[2] += gravityZ * h;
+    }
+
+    // One of Halcyon's motor steps (15 ms) from the velocity v, with the decay clock reading `index`.
+    private double[] Fire(double index, double[] v, double gravityZ, double buoyancy)
+    {
+        double[] g = new double[3];
+        for (int i = 0; i < 3; i++)
+            g[i] = Decay(index, _td[i]);
         double[] motor = new double[3];
         if (g[0] == 0 && g[1] == 0 && g[2] == 0)
         {
-            for (int i = 0; i < 3; i++) Target[i] = V[i];
+            for (int i = 0; i < 3; i++) Target[i] = v[i];
+            return motor;
         }
-        else
+        double[] nv = new double[3];
+        double[] ramp = new double[3];
+        for (int i = 0; i < 3; i++)
         {
-            double[] nv = new double[3];
-            double[] ramp = new double[3];
-            for (int i = 0; i < 3; i++)
-            {
-                double sign = _dir[i] < 0 ? -1.0 : 1.0;
-                double adj = V[i];
-                if (sign * (Target[i] - adj) >= 0) adj = Target[i];
-                ramp[i] = Growth(adj, _dir[i], Math.Max(_ts[i] / h, 1.0));
-                nv[i] = adj + adj * ramp[i];
-                if (Math.Abs(ramp[i] - -2.010203) < 1e-9) ramp[i] = -ramp[i];
-                if (ramp[i] > 0 && _dir[i] != 0 && Math.Abs(nv[i]) < 0.005) nv[i] = sign * 0.005 * 8;
-                if (_dir[i] * nv[i] < 0 || ramp[i] < 0) Target[i] = nv[i];
-                else Target[i] = Math.Clamp(nv[i], -Math.Abs(_dir[i]), Math.Abs(_dir[i]));
-                nv[i] = Math.Clamp(nv[i], -_maxSpeed, _maxSpeed);
-                if (Target[i] == 0 && _dir[i] == 0) nv[i] = V[i];
-                if (ramp[i] >= 0 && sign * (V[i] - nv[i]) > 0) g[i] = 0;
-            }
-            double[] w = new double[3];
-            for (int i = 0; i < 3; i++)
-                w[i] = nv[i] * g[i] + V[i] * (1.0 - g[i]);
-            if (Math.Abs(w[0]) >= 0.005 || Math.Abs(w[1]) >= 0.005 || Math.Abs(w[2]) >= 0.005)
-            {
-                double[] delta = { w[0] - V[0], w[1] - V[1], w[2] - V[2] };
-                // "Gravity check. Any up Z-forces less than the effective gravity are nulled."
-                if (delta[2] > 0)
-                {
-                    delta[2] += gravityZ * (1.0 - buoyancy);
-                    if (delta[2] < 0) delta[2] = 0;
-                }
-                for (int i = 0; i < 3; i++) motor[i] = delta[i];
-            }
+            double sign = _dir[i] < 0 ? -1.0 : 1.0;
+            double adj = v[i];
+            if (_dir[i] != 0) _driven[i] = true;
+            if (sign * (Target[i] - adj) >= 0 && (_dir[i] != 0 || TargetOnUndrivenAxes || _driven[i])) adj = Target[i];
+            ramp[i] = Growth(adj, _dir[i], Math.Max(_ts[i] / HalcyonStep, 1.0));
+            nv[i] = adj + adj * ramp[i];
+            if (Math.Abs(ramp[i] - -2.010203) < 1e-9) ramp[i] = -ramp[i];
+            if (ramp[i] > 0 && _dir[i] != 0 && Math.Abs(nv[i]) < 0.005) nv[i] = sign * 0.005 * 8;
+            if (_dir[i] * nv[i] < 0 || ramp[i] < 0) Target[i] = nv[i];
+            else Target[i] = Math.Clamp(nv[i], -Math.Abs(_dir[i]), Math.Abs(_dir[i]));
+            nv[i] = Math.Clamp(nv[i], -_maxSpeed, _maxSpeed);
+            if (Target[i] == 0 && _dir[i] == 0) nv[i] = v[i];
+            if (ramp[i] >= 0 && sign * (v[i] - nv[i]) > 0) g[i] = 0;
         }
-        for (int i = 0; i < 3; i++) V[i] += motor[i] + friction[i];
-        V[2] += gravityZ * h;
+        double[] w = new double[3];
+        for (int i = 0; i < 3; i++)
+            w[i] = nv[i] * g[i] + v[i] * (1.0 - g[i]);
+        if (Math.Abs(w[0]) >= 0.005 || Math.Abs(w[1]) >= 0.005 || Math.Abs(w[2]) >= 0.005)
+        {
+            double[] delta = { w[0] - v[0], w[1] - v[1], w[2] - v[2] };
+            // "Gravity check. Any up Z-forces less than the effective gravity are nulled."
+            if (delta[2] > 0)
+            {
+                delta[2] += gravityZ * (1.0 - buoyancy);
+                if (delta[2] < 0) delta[2] = 0;
+            }
+            for (int i = 0; i < 3; i++) motor[i] = delta[i];
+        }
+        return motor;
     }
 }
 
@@ -193,8 +228,11 @@ public class VehicleInWorldzLinearMotorTests
     }
 
     // The ramp is "an exponential fit between two velocity points in TAU time": ln(v / M) = ln(v0 / M) e^(-t / Tm), the
-    // closed form of v' = v ln(M / v) / Tm, from the stiction start v0 = 0.04 m/s, to within the step's own error (each step
-    // is Euler's, a share ln(M / v) / (Tm / h) of the velocity, so the run is taken in short steps).
+    // closed form of v' = v ln(M / v) / Tm, from the stiction start v0 = 0.04 m/s. Halcyon's motor takes the ramp in steps of
+    // 15 ms, each Euler's, a share ln(M / v) / (Tm / 0.015) of the velocity, and takes its first step 15 ms after it is set (the
+    // first of the clock's steps to fall due). For a timescale of 2 s and over the step's own error is within the tolerance and
+    // the curve is the closed form, started 15 ms after the set; for a quick motor (0.5 s: a share of 16 % in the first step) the
+    // step's error is more than the tolerance, so the curve is the stepwise recursion, worked out here by itself.
     [Theory]
     [InlineData(0.5f)]
     [InlineData(2f)]
@@ -204,13 +242,21 @@ public class VehicleInWorldzLinearMotorTests
         var rig = Car(InWorldz, tm, 1000f, new Vector3(8f, 0f, 0f));
         double h = 1.0 / 360;
         double v0 = 0.04, m = 8.0;
+        double stepwise = 0.0;   // the recursion's velocity after the fires that have fallen due
+        double carry = 0.0;
         for (int i = 1; i <= (int)(5.0 / h); i++)
         {
             rig.Step(h);
+            carry += h;
+            while (carry >= 0.015 - 1e-9)
+            {
+                carry -= 0.015;
+                stepwise = stepwise == 0.0 ? v0 : stepwise * (1.0 + Math.Log(m / stepwise) / (tm / 0.015));
+            }
             if (i % 180 == 0)
             {
                 double t = i * h;
-                double expected = m * Math.Exp(Math.Log(v0 / m) * Math.Exp(-t / tm));
+                double expected = tm < 2f ? stepwise : m * Math.Exp(Math.Log(v0 / m) * Math.Exp(-(t - 0.015) / tm));
                 Near(expected, rig.Body.LinearVelocity.X, 0.03, 0.02, $"t = {t:0.00} s");
             }
         }

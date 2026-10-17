@@ -29,7 +29,13 @@ internal sealed class BehaviourBody : IVehicleBody
     /// <summary>The body's gravity multiplier (llSetPhysicsMaterial GRAVITY_MULTIPLIER).</summary>
     public float GravityMultiplier { get; set; } = 1f;
     public void SetGravityFactor(float factor) => GravityFactor = factor;
-    public bool HasCollision => false;
+    public bool HasCollision => !float.IsNaN(ContactMu);
+
+    /// <summary>A plane under the body, tilted <see cref="SlopeRad"/> about y (down the way the body's x axis points), that holds
+    /// it and rubs against its motion with a constant deceleration of mu times the normal part of gravity, to a stop at most;
+    /// NaN (the default) is no plane and no contact.</summary>
+    public float ContactMu { get; set; } = float.NaN;
+    public double SlopeRad { get; set; }
     public void AddForce(Vector3 force) { }
     public void AddTorque(Vector3 torque) { }
     public void KeepAwake() { }
@@ -87,6 +93,17 @@ internal sealed class BehaviourBody : IVehicleBody
     public void Advance(double h)
     {
         LinearVelocity += Gravity * (GravityFactor * (float)h);
+        if (!float.IsNaN(ContactMu))
+        {
+            var normal = new Vector3((float)Math.Sin(SlopeRad), 0f, (float)Math.Cos(SlopeRad));
+            LinearVelocity -= normal * Vector3.Dot(LinearVelocity, normal);
+            float along = LinearVelocity.Length();
+            if (along > 0f)
+            {
+                float slow = (float)(ContactMu * -Gravity.Z * Math.Cos(SlopeRad) * h);
+                LinearVelocity *= Math.Max(0f, along - slow) / along;
+            }
+        }
         Position += LinearVelocity * (float)h;
         Vector3 w = AngularVelocity;
         float speed = w.Length();

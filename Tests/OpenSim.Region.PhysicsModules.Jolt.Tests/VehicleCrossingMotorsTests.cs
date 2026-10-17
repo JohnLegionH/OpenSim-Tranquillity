@@ -29,10 +29,14 @@ public class VehicleCrossingMotorsTests
     private readonly ITestOutputHelper _out;
     public VehicleCrossingMotorsTests(ITestOutputHelper output) => _out = output;
 
-    private static VehicleRestoreRouteTests.Outcome Cross(VehicleRoute route, string behaviour)
-        => VehicleRestoreRouteTests.RunRoute(SharedVehicle.TYPE_CAR, route, motor: new Vector3(8f, 0f, 0f), behaviour: behaviour);
+    // Under InWorldz the motor is Halcyon's, which starts from 0.04 m/s and takes the first tenth of a second to beat the
+    // ground's friction, so the vehicle is read 40 heartbeats in.
+    private const int ReadAt = 40;
 
-    // The vehicle's motor is set at the start; the record is handed back 0.04 s later and the vehicle read 0.14 s after that.
+    private static VehicleRestoreRouteTests.Outcome Cross(VehicleRoute route, string behaviour)
+        => VehicleRestoreRouteTests.RunRoute(SharedVehicle.TYPE_CAR, route, motor: new Vector3(8f, 0f, 0f), behaviour: behaviour, readAt: ReadAt);
+
+    // The vehicle's motor is set at the start; the record is handed back 0.04 s later and the vehicle read 0.8 s after that.
     [Theory]
     [InlineData("InWorldz")]
     [InlineData("SecondLife")]

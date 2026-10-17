@@ -967,6 +967,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             {
                 d.LinearDirection = HeldLinearMotor(l.Direction);
                 d.LinearTargetVelocity = HeldLinearMotor(l.Target);
+                // An axis with a direction or a target running down has been driven.
+                _linearAxesDriven = new Vector3(
+                    d.LinearDirection.X != 0f || d.LinearTargetVelocity.X != 0f ? 1f : 0f,
+                    d.LinearDirection.Y != 0f || d.LinearTargetVelocity.Y != 0f ? 1f : 0f,
+                    d.LinearDirection.Z != 0f || d.LinearTargetVelocity.Z != 0f ? 1f : 0f);
                 d.LinearDecayIndex = l.Age;
                 d.TargetLinearDelta = Vector3.Zero;
             }
@@ -1533,7 +1538,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             _timeAboveHeight = 0f;
             _motorsOffByHeight = false;
 
-            // Motors off: no set to decay from
+            // Motors off: no set to decay from, no axis driven, no time carried toward a step of Halcyon's
+            _linearAxesDriven = Vector3.Zero;
+            _linearMotorCarry = 0.0;
+            _angularMotorCarry = 0.0;
             _props.Dynamics.LinearDecayIndex = float.PositiveInfinity;
             _props.Dynamics.AngularDecayIndex = float.PositiveInfinity;
             _props.Dynamics.LinearTargetVelocity = Vector3.Zero;
@@ -2538,7 +2546,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// <see cref="VehicleMotorSolver"/>). The velocity after the step is the exact solution of that equation over
         /// it, so the result does not depend on the step rate. Friction acts on every axis all the time; the motor's
         /// pull fades with its decay and is never cut off. Under InWorldz the motor is Halcyon's instead
-        /// (<see cref="HalcyonLinearMotorChange"/>), a change on top of friction's.
+        /// (<see cref="HalcyonLinearMotorOnItsClock"/>), a change on top of friction's.
         ///
         /// The engine applies the gravity itself over the step (<see cref="ApplyGravity"/>); the change written here
         /// is the exact solution less that gravity, so the two together end the step on the exact velocity.
@@ -2566,7 +2574,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             Vector3 motorChange;
             if (InWorldz)
             {
-                motorChange = HalcyonLinearMotorChange(h, v0, motor, motorTs, decayTs);
+                motorChange = HalcyonLinearMotorOnItsClock(h, v0, motor, motorTs, decayTs);
             }
             else
             {
@@ -2597,36 +2605,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             }
 
             // VEHICLE_FLAG_LIMIT_MOTOR_UP / LIMIT_MOTOR_DOWN: the motor does not push up (down) in world terms.
-            // Friction's share is left whole.
-            if ((_sp.Flags & ExtendedVehicleFlags.LimitMotorUp) != 0 && motorChange.Z > 0)
-                motorChange.Z = 0;
-            if ((_sp.Flags & ExtendedVehicleFlags.LimitMotorDown) != 0 && motorChange.Z < 0)
-                motorChange.Z = 0;
-
-            bool hoverFights = false;
-            if (InWorldz)
+            // Friction's share is left whole. Under InWorldz each of Halcyon's motor steps has these applied to its own change
+            // (HalcyonLinearMotorOnItsClock).
+            if (!InWorldz)
             {
-                // "Gravity check. Any up Z-forces less than the effective gravity are nulled" (VehicleDynamics.cs:2707-2712,
-                // read, not run): the motor's upward change of velocity this step has gravity times the share of it not
-                // carried by buoyancy added to it (gravity is negative), and is dropped if that leaves it below zero. It is
-                // compared as a change of velocity against an acceleration, as there.
-                if (motorChange.Z > 0f)
-                {
-                    motorChange.Z += _body.Gravity.Z * (1f - _sp.GetFloat(VehFloatParam.Buoyancy, 0f)) * _stepShare;
-                    if (motorChange.Z < 0f)
-                        motorChange.Z = 0f;
-                }
-
-                // "Hover moderation. If hover is present, accelerate the motor decay" (2714-2720): a motor that still moves the
-                // vehicle up or down while a hover flag is set and the hover is on has its decay clock put on ten seconds.
-                hoverFights = Math.Abs(motorChange.Z) > VehicleLimits.ThresholdLinearMotorDeltaV * _stepShare
-                    && (_sp.Flags & (ExtendedVehicleFlags.HoverGlobalHeight | ExtendedVehicleFlags.HoverTerrainOnly | ExtendedVehicleFlags.HoverWaterOnly)) != 0
-                    && _sp.GetFloat(VehFloatParam.HoverTimescale, 1000f) < S.MaxHoverTimescale;
+                if ((_sp.Flags & ExtendedVehicleFlags.LimitMotorUp) != 0 && motorChange.Z > 0)
+                    motorChange.Z = 0;
+                if ((_sp.Flags & ExtendedVehicleFlags.LimitMotorDown) != 0 && motorChange.Z < 0)
+                    motorChange.Z = 0;
             }
 
             _sp.Dynamics.LinearDecayIndex += h;
-            if (hoverFights)
-                _sp.Dynamics.LinearDecayIndex += HoverModerationSeconds * _stepShare;
 
             // InWorldz's motor-height rule: the motor is not applied while it holds (the clock above still runs).
             if (_motorsOffByHeight)
@@ -2638,33 +2627,116 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             _motorTorqueVelChange += MotorOffsetTurn(InWorldz ? frictionChange + motorChange : motorChange);
         }
 
-        /// <summary>
-        /// The change of world velocity InWorldz's linear motor makes in one step of h seconds (VehicleDynamics.cs:2576-2725,
-        /// read, not run), in place of the documented equation: the ramp toward the direction with the motor's target velocity
-        /// and the decay blend (<see cref="HalcyonVehicleLaws.LinearMotor"/>), from the velocity at the start of the step, as a
-        /// change on top of friction's, which is worked out from the same start velocity. Nothing is applied when the new
-        /// velocity is under 0.005 m/s on every world axis ("let the vehicle eventually sleep"), or when the motor has
-        /// nothing left to add. The limit-motor flags, the gravity check and the hover moderation act on the change in the
-        /// caller, as they do on Halcyon's.
-        /// </summary>
-        private Vector3 HalcyonLinearMotorChange(float h, Vector3 lastvel, Vector3 motor, Vector3 motorTs, Vector3 decayTs)
+        // InWorldz's motors are Halcyon's, and Halcyon runs them once in each of its physics steps of 15 ms: a motor step reads the
+        // velocity the last step and the friction left, sets it toward the motor's target (the ramp, the decay, and the rule that
+        // the target replaces a lower velocity: VehicleDynamics.cs:2587-2589), and the engine then takes 15 ms of contact
+        // friction from it. That cadence is part of the law: the replacement is how a car gets going against friction, and the
+        // distance a car loses to friction between two motor steps depends on how long they are apart. The controller runs in
+        // every collision step of the engine, which is shorter or longer than 15 ms, so each motor keeps a clock of the time
+        // carried since its last step, and runs one of Halcyon's steps (always of 15 ms) for each 15 ms that has gone by, at
+        // the start of the collision step in which it falls due. A collision step shorter than 15 ms then runs none, as often
+        // as not; one longer than 15 ms runs several, one after the other on the velocity the one before left. Friction, the
+        // attractor, banking and the rest are integrated in every collision step as before.
+        private double _linearMotorCarry;
+        private double _angularMotorCarry;
+
+        // The axes of the vehicle's frame the linear motor has had a direction on (1) since the vehicle was made a vehicle: the
+        // rule that the target replaces a lower velocity keeps acting on them after the key goes up (the glide to a stop), and
+        // not on an axis it never had a direction on (VehicleSettings.MotorTargetOnUndrivenAxes).
+        private Vector3 _linearAxesDriven;
+
+        /// <summary>The number of Halcyon steps (of <see cref="HalcyonStep"/>) that fall due when <paramref name="h"/> seconds are
+        /// added to the time <paramref name="carry"/> carries; the carry keeps the remainder.</summary>
+        internal static int StepsDue(ref double carry, double h)
         {
-            float index = _sp.Dynamics.LinearDecayIndex;
-            Vector3 target = _sp.Dynamics.LinearTargetVelocity;
-            Vector3 local = HalcyonVehicleLaws.LinearMotor(h, lastvel, motor, motorTs, decayTs, ref index, ref target,
-                S.MaxLinearSpeed, IsLinearMotorStalled);
-            _sp.Dynamics.LinearDecayIndex = index;
-            _sp.Dynamics.LinearTargetVelocity = target;
-            if (local == lastvel)
+            carry += h;
+            // The small allowance keeps three steps of exactly 5 ms from being one rounding error short of a step.
+            int due = (int)Math.Floor(carry / HalcyonStep + 1e-6);
+            if (due > 0)
+                carry = Math.Max(0.0, carry - due * HalcyonStep);
+            return due;
+        }
+
+        /// <summary>
+        /// The change of world velocity InWorldz's linear motor makes in a collision step of h seconds (VehicleDynamics.cs:2576-2725,
+        /// read, not run): the sum over the steps of Halcyon's that fall due in it (<see cref="StepsDue"/>), each worked out from
+        /// the velocity the one before leaves, as a change on top of friction's, which is worked out from the same start
+        /// velocity. Each step is the ramp toward the direction with the motor's target velocity and the decay blend
+        /// (<see cref="HalcyonVehicleLaws.LinearMotor"/>, at 15 ms); nothing is applied when the new velocity is under
+        /// 0.005 m/s on every world axis ("let the vehicle eventually sleep"), or when the motor has nothing left to add. The
+        /// limit-motor flags, the gravity check and the hover moderation act on each step's change, as they do on Halcyon's.
+        /// </summary>
+        private Vector3 HalcyonLinearMotorOnItsClock(float h, Vector3 lastvel, Vector3 motor, Vector3 motorTs, Vector3 decayTs)
+        {
+            double carried = _linearMotorCarry;
+            int due = StepsDue(ref _linearMotorCarry, h);
+            if (due == 0)
                 return Vector3.Zero;
 
-            Vector3 world = local * _rotation;
-            if (Math.Abs(world.X) < VehicleLimits.ThresholdLinearMotorDeltaV &&
-                Math.Abs(world.Y) < VehicleLimits.ThresholdLinearMotorDeltaV &&
-                Math.Abs(world.Z) < VehicleLimits.ThresholdLinearMotorDeltaV)
-                return Vector3.Zero;
+            VehicleDynamicsState d = _sp.Dynamics;
+            // Each step covers the 15 ms that has just gone by, so its clock reads what it read at the start of that interval.
+            float intervalStart = d.LinearDecayIndex - (float)carried;
+            float moderation = 0f;
+            Quaternion inverse = Quaternion.Inverse(_rotation);
+            Vector3 world = _rawWorldLinearVel;
+            Vector3 local = lastvel;
+            Vector3 total = Vector3.Zero;
+            for (int i = 0; i < due; i++)
+            {
+                float read = intervalStart + i * (float)HalcyonStep + moderation;
+                float index = read;
+                Vector3 target = d.LinearTargetVelocity;
+                Vector3 next = HalcyonVehicleLaws.LinearMotor((float)HalcyonStep, local, motor, motorTs, decayTs, ref index, ref target,
+                    S.MaxLinearSpeed, IsLinearMotorStalled, S.MotorTargetOnUndrivenAxes, _linearAxesDriven);
+                if (motor.X != 0f) _linearAxesDriven.X = 1f;
+                if (motor.Y != 0f) _linearAxesDriven.Y = 1f;
+                if (motor.Z != 0f) _linearAxesDriven.Z = 1f;
+                d.LinearTargetVelocity = target;
+                if (index != read)
+                    d.LinearDecayIndex = index;   // stalled: the clock is put far past any decay
 
-            return world - _rawWorldLinearVel;
+                Vector3 change = Vector3.Zero;
+                Vector3 newWorld = next * _rotation;
+                if (next != local
+                    && (Math.Abs(newWorld.X) >= VehicleLimits.ThresholdLinearMotorDeltaV
+                        || Math.Abs(newWorld.Y) >= VehicleLimits.ThresholdLinearMotorDeltaV
+                        || Math.Abs(newWorld.Z) >= VehicleLimits.ThresholdLinearMotorDeltaV))
+                {
+                    change = newWorld - world;
+
+                    // VEHICLE_FLAG_LIMIT_MOTOR_UP / _DOWN (VehicleDynamics.cs:2695-2705).
+                    if ((_sp.Flags & ExtendedVehicleFlags.LimitMotorUp) != 0 && change.Z > 0)
+                        change.Z = 0;
+                    if ((_sp.Flags & ExtendedVehicleFlags.LimitMotorDown) != 0 && change.Z < 0)
+                        change.Z = 0;
+
+                    // "Gravity check. Any up Z-forces less than the effective gravity are nulled" (2707-2712): the step's upward
+                    // change of velocity has gravity times the share of it not carried by buoyancy added to it (gravity is
+                    // negative), and is dropped if that leaves it below zero. It is compared as a change of velocity against an
+                    // acceleration, as there.
+                    if (change.Z > 0f)
+                    {
+                        change.Z += _body.Gravity.Z * (1f - _sp.GetFloat(VehFloatParam.Buoyancy, 0f));
+                        if (change.Z < 0f)
+                            change.Z = 0f;
+                    }
+
+                    // "Hover moderation. If hover is present, accelerate the motor decay" (2714-2720): a motor that still moves
+                    // the vehicle up or down while a hover flag is set and the hover is on has its decay clock put on ten seconds.
+                    if (Math.Abs(change.Z) > VehicleLimits.ThresholdLinearMotorDeltaV
+                        && (_sp.Flags & (ExtendedVehicleFlags.HoverGlobalHeight | ExtendedVehicleFlags.HoverTerrainOnly | ExtendedVehicleFlags.HoverWaterOnly)) != 0
+                        && _sp.GetFloat(VehFloatParam.HoverTimescale, 1000f) < S.MaxHoverTimescale)
+                    {
+                        moderation += HoverModerationSeconds;
+                        d.LinearDecayIndex += HoverModerationSeconds;
+                    }
+                }
+
+                total += change;
+                world += change;
+                local = world * inverse;
+            }
+            return total;
         }
 
         /// <summary>
@@ -2891,26 +2963,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         private float SimulateAngularMotorAndFrictionInWorldz(float h, Vector3 v0, Vector3 motor, Vector3 motorTs, Vector3 decayTs,
                                                               Vector3 frictionTs, bool torqueWorldZ)
         {
-            Vector3 motorChange = HalcyonAngularMotor(h, v0, motor, motorTs, decayTs);
             Vector3 frictionChange = new Vector3(
                 (float)VehicleMotorSolver.FrictionStep(v0.X, frictionTs.X, h) - v0.X,
                 (float)VehicleMotorSolver.FrictionStep(v0.Y, frictionTs.Y, h) - v0.Y,
                 (float)VehicleMotorSolver.FrictionStep(v0.Z, frictionTs.Z, h) - v0.Z);
 
-            Vector3 motorWorld = ChangeToWorld(motorChange, torqueWorldZ);
-            if (_motorsOffByHeight)
-            {
-                // The motor-height rule: no motor, and no target velocity to carry forward (VehicleDynamics.cs:2746-2749).
-                motorWorld = Vector3.Zero;
-                _sp.Dynamics.AngularTargetVelocity = Vector3.Zero;
-            }
+            Vector3 motorWorld = HalcyonAngularMotorOnItsClock(h, v0, motor, motorTs, decayTs, torqueWorldZ);
             Vector3 frictionWorld = ChangeToWorld(frictionChange, torqueWorldZ);
-            float least = VehicleLimits.ThresholdAngularMotorDeltaV * _stepShare;
-            if (Math.Abs(motorWorld.X) < least && Math.Abs(motorWorld.Y) < least)
-            {
-                motorWorld.X = 0f;
-                motorWorld.Y = 0f;
-            }
 
             _sp.Dynamics.AngularDecayIndex += h;
 
@@ -2926,6 +2985,64 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // y and the world's z) as a change of world angular velocity.
         private Vector3 ChangeToWorld(Vector3 change, bool torqueWorldZ)
             => torqueWorldZ ? new Vector3(change.X, change.Y, 0f) * _rotation + new Vector3(0f, 0f, change.Z) : change * _rotation;
+
+        /// <summary>
+        /// The change of world angular velocity InWorldz's angular motor makes in a collision step of h seconds: the sum over the
+        /// steps of Halcyon's that fall due in it (<see cref="StepsDue"/>, the same clock as the linear motor's; see the note
+        /// above <see cref="HalcyonLinearMotorOnItsClock"/>), each worked out from the velocity the one before leaves
+        /// (<see cref="HalcyonAngularMotor"/>, at 15 ms). A step's change is kept only when it is at least pi / 512 about the
+        /// world's x or y axis, and its turn about the world's z only when it is at least that (VehicleDynamics.cs:2936-2944 and
+        /// 3029-3038: "if the force drops below the threshold, do nothing to let the vehicle eventually sleep"). While the
+        /// motor-height rule holds the motors off there is no change, and no target velocity to carry forward (2746-2749).
+        /// </summary>
+        private Vector3 HalcyonAngularMotorOnItsClock(float h, Vector3 v0, Vector3 motor, Vector3 motorTs, Vector3 decayTs, bool torqueWorldZ)
+        {
+            double carried = _angularMotorCarry;
+            int due = StepsDue(ref _angularMotorCarry, h);
+            if (due == 0)
+                return Vector3.Zero;
+
+            VehicleDynamicsState d = _sp.Dynamics;
+            if (_motorsOffByHeight)
+            {
+                d.AngularTargetVelocity = Vector3.Zero;
+                return Vector3.Zero;
+            }
+
+            float start = d.AngularDecayIndex;
+            float intervalStart = start - (float)carried;
+            Vector3 local = v0;
+            Vector3 total = Vector3.Zero;
+            for (int i = 0; i < due; i++)
+            {
+                float read = intervalStart + i * (float)HalcyonStep;
+                d.AngularDecayIndex = read;
+                Vector3 change = HalcyonAngularMotor((float)HalcyonStep, local, motor, motorTs, decayTs);
+                // Put the clock back where this collision step found it, unless the stall check put it far past any decay.
+                if (d.AngularDecayIndex == read)
+                    d.AngularDecayIndex = start;
+                else
+                    start = d.AngularDecayIndex;
+
+                Vector3 world = ChangeToWorld(change, torqueWorldZ);
+                if (Math.Abs(world.X) < VehicleLimits.ThresholdAngularMotorDeltaV && Math.Abs(world.Y) < VehicleLimits.ThresholdAngularMotorDeltaV)
+                {
+                    world.X = 0f;
+                    world.Y = 0f;
+                    change = new Vector3(0f, 0f, change.Z);
+                }
+                // The turn about the world's z is kept only when it is at least as big (VehicleDynamics.cs:3029-3038: the motor's
+                // and the banking turn's blend; banking, integrated in every collision step, is not part of the sum here).
+                if (Math.Abs(world.Z) < VehicleLimits.ThresholdAngularMotorDeltaV)
+                {
+                    world.Z = 0f;
+                    change = new Vector3(change.X, change.Y, 0f);
+                }
+                total += world;
+                local += change;
+            }
+            return total;
+        }
 
         /// <summary>
         /// The change of angular velocity InWorldz's angular motor makes in one step of h seconds, in the motor's frame, from
