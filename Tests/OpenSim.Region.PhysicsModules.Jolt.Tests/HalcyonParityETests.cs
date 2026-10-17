@@ -272,10 +272,17 @@ public class HalcyonParityETests
             _out.WriteLine($"{name,-20} 63% at {F(TimeToShare(trace, target, 0.632))} s, 90% at {F(TimeToShare(trace, target, 0.9))} s; rate at 0.5, 1, 2, 4, 8, 20 s: "
                 + string.Join(", ", new[] { 0.5, 1, 2, 4, 8, 20 }.Select(t => F(At(trace, t)))));
         // Halcyon's turn builds from a first kick of 8 pi / 512 rad/s and grows by the log of the ratio to the target, so it reaches
-        // the target later than the exponential approach does and ends at it (to the dead band of pi / 512).
+        // the target later than an exponential approach would and ends at it (to the dead band of pi / 512). Under InWorldz the
+        // module runs that turn on Halcyon's 15 ms clock, so it reaches 63% and 90% when Halcyon's does, at either rate.
         Assert.InRange(Math.Abs(At(a, 20.0) - target), 0.0, 0.01);
         Assert.InRange(Math.Abs(At(c45, 20.0) - target), 0.0, 0.01);
-        Assert.True(TimeToShare(a, target, 0.9) > TimeToShare(c45, target, 0.9), "Halcyon's turn reaches 90% later than the module's");
+        Assert.InRange(Math.Abs(At(c11, 20.0) - target), 0.0, 0.01);
+        foreach (double share in new[] { 0.632, 0.9 })
+        {
+            double reference = TimeToShare(a, target, share), slack = Math.Max(0.1, 0.02 * reference);
+            Assert.InRange(Math.Abs(TimeToShare(c45, target, share) - reference), 0.0, slack);
+            Assert.InRange(Math.Abs(TimeToShare(c11, target, share) - reference), 0.0, slack);
+        }
     }
 
     [Fact]

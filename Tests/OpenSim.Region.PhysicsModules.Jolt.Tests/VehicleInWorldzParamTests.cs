@@ -165,7 +165,7 @@ public class VehicleInWorldzParamTests
 
     // The yaw rate banking adds in one step to a vehicle rolled 0.3 rad: the rate with banking on, less the rate with it
     // off (the attractor's own part is the same in both).
-    private static float BankingYaw(VehicleBehaviour b, Vehicle type, double rollDegrees, Action<VehicleController> setup)
+    private static float BankingYaw(VehicleBehaviour b, Vehicle type, double rollDegrees, Action<VehicleController> setup, int steps = 1)
     {
         float Run(float efficiency)
         {
@@ -177,7 +177,8 @@ public class VehicleInWorldzParamTests
             rig.Car.ProcessFloatVehicleParam(Vehicle.BANKING_EFFICIENCY, efficiency);
             setup(rig.Car);
             rig.Tilt(rollDegrees, 0);
-            rig.Step(1.0 / 45);
+            for (int i = 0; i < steps; i++)
+                rig.Step(1.0 / 45);
             return rig.Body.AngularVelocity.Z;
         }
         return Run(1f) - Run(0f);
@@ -186,10 +187,13 @@ public class VehicleInWorldzParamTests
     [Fact]
     public void A_wider_banking_azimuth_banks_less_under_InWorldz()
     {
-        float preset = BankingYaw(VehicleBehaviour.InWorldz, Vehicle.TYPE_CAR, 17, _ => { });
-        float wide = BankingYaw(VehicleBehaviour.InWorldz, Vehicle.TYPE_CAR, 17, c => c.ProcessFloatVehicleParam((Vehicle)11003, Pi));
+        // Halcyon's turn starts at pi / 64 whatever the rate banking asks for and ramps toward it, so the range shows after some steps.
+        float preset = BankingYaw(VehicleBehaviour.InWorldz, Vehicle.TYPE_CAR, 17, _ => { }, steps: 30);
+        float wide = BankingYaw(VehicleBehaviour.InWorldz, Vehicle.TYPE_CAR, 17, c => c.ProcessFloatVehicleParam((Vehicle)11003, Pi), steps: 30);
         Assert.True(Math.Abs(preset) > 1e-4f);
-        Assert.Equal(preset * 0.5f, wide, 4);   // the roll counts as a share of the range: pi / 2 over pi
+        Assert.True(Math.Abs(wide) > 1e-4f);
+        Assert.Equal(Math.Sign(preset), Math.Sign(wide));
+        Assert.True(Math.Abs(wide) < Math.Abs(preset), $"preset {preset}, wide {wide}");   // the roll counts as a share of the range
     }
 
     [Fact]
@@ -207,12 +211,14 @@ public class VehicleInWorldzParamTests
     [Fact]
     public void An_inverted_airplane_banks_by_the_modifier_under_InWorldz()
     {
-        float one = BankingYaw(VehicleBehaviour.InWorldz, Vehicle.TYPE_AIRPLANE, 170, c => c.ProcessFloatVehicleParam((Vehicle)11006, 1f));
-        float minus = BankingYaw(VehicleBehaviour.InWorldz, Vehicle.TYPE_AIRPLANE, 170, c => c.ProcessFloatVehicleParam((Vehicle)11006, -1f));
-        float half = BankingYaw(VehicleBehaviour.InWorldz, Vehicle.TYPE_AIRPLANE, 170, c => c.ProcessFloatVehicleParam((Vehicle)11006, 0.5f));
+        // Halcyon's turn starts at pi / 64 whatever the rate banking asks for and ramps toward it, so the modifier shows after some steps.
+        float one = BankingYaw(VehicleBehaviour.InWorldz, Vehicle.TYPE_AIRPLANE, 170, c => c.ProcessFloatVehicleParam((Vehicle)11006, 1f), steps: 30);
+        float minus = BankingYaw(VehicleBehaviour.InWorldz, Vehicle.TYPE_AIRPLANE, 170, c => c.ProcessFloatVehicleParam((Vehicle)11006, -1f), steps: 30);
+        float half = BankingYaw(VehicleBehaviour.InWorldz, Vehicle.TYPE_AIRPLANE, 170, c => c.ProcessFloatVehicleParam((Vehicle)11006, 0.5f), steps: 30);
         Assert.True(Math.Abs(one) > 1e-4f);
-        Assert.Equal(-one, minus, 4);
-        Assert.Equal(one * 0.5f, half, 4);
+        Assert.Equal(-Math.Sign(one), Math.Sign(minus));
+        Assert.Equal(Math.Sign(one), Math.Sign(half));
+        Assert.True(Math.Abs(half) < Math.Abs(one), $"one {one}, half {half}");
     }
 
     [Fact]

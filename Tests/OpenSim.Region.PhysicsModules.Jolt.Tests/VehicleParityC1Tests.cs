@@ -239,7 +239,12 @@ public class VehicleParityC1Tests
         var rig = BankingCar(InWorldz, 1000f);
         RunFor(rig, rate, n, 1.0);
         double target = -Math.Sin(60.0 * Math.PI / 180.0) * Math.PI;
-        Near(rig.Body.AngularVelocity.Z, target * (1.0 - Math.Exp(-1.0)), Math.Abs(target), "yaw rate banked by the sine", rate, n);
+        // The turn is Halcyon's banking motor (a log-growth ramp toward the rate banking asks for, VehicleDynamics.cs:2949-3040),
+        // one step of 15 ms for each 15 ms: 66 of them in a second.
+        float yaw = 0f, ramp = 0f;
+        for (int i = 0; i < 66; i++)
+            yaw += HalcyonVehicleLaws.BankingTurnChange(yaw, (float)target, ref ramp, 1f / 0.015f, InWorldz.MaxAngularSpeed, false, false);
+        Near(rig.Body.AngularVelocity.Z, yaw, Math.Abs(target), "yaw rate banked by the sine", rate, n);
     }
 
     [Theory]

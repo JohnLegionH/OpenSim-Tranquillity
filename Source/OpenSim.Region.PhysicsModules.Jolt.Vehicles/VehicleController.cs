@@ -1188,8 +1188,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             // Motors and friction, linear and angular, then the banking turn motor. They are stepped over the
             // step the engine is about to take (h), not the smoothed one: each is the exact solution over that step.
             SimulateLinearMotorAndFriction(h, S.DoMotors, S.DoLinearFriction);
+            // InWorldz: the rate banking asks for is set before the angular motor, which adds the banking turn to its own change
+            // about z (SimulateBanking, HalcyonAngularMotorOnItsClock).
+            if (InWorldz)
+                SimulateBanking(h, tilt, regionAllowsBanking: S.DoVerticalAttractor);
             float angularz = SimulateAngularMotorAndFriction(h, S.DoMotors, S.DoAngularFriction);
-            float banking = S.DoVerticalAttractor ? SimulateBanking(h, tilt) : 0f;
+            float banking = !InWorldz && S.DoVerticalAttractor ? SimulateBanking(h, tilt) : 0f;
             _motorTorqueVelChange += new Vector3(0f, 0f, angularz + banking);
 
             // Apply gravity manually (same pattern as BSDynamics)
@@ -1542,6 +1546,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             _linearAxesDriven = Vector3.Zero;
             _linearMotorCarry = 0.0;
             _angularMotorCarry = 0.0;
+            _hoverStepCarry = 0.0;
             _props.Dynamics.LinearDecayIndex = float.PositiveInfinity;
             _props.Dynamics.AngularDecayIndex = float.PositiveInfinity;
             _props.Dynamics.LinearTargetVelocity = Vector3.Zero;
@@ -1992,6 +1997,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             }
             float timescale = _sp.GetFloat(VehFloatParam.HoverTimescale, 1000f);
             float efficiency = _sp.GetFloat(VehFloatParam.HoverEfficiency, 0f);
+            if (InWorldz)
+            {
+                SimulateHoverInWorldz(h, targetZ, upOnly, timescale, efficiency);
+                return;
+            }
             double e0 = _body.Position.Z - targetZ;
             if (upOnly && e0 >= 0)
             {
@@ -2029,6 +2039,37 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             _hoverCarry = carry;
             ApplyLinearVelocityChange(new Vector3(0f, 0f, (float)change));
         }
+
+        /// <summary>
+        /// InWorldz: Halcyon's hover force law (PhysxPrim.pid.cs:207-336, DoHoverTarget, DoHover and DoHoverDamping; a vehicle's
+        /// hover goes through it, VehicleDynamics.cs:1552-1604), in place of the documented spring. It is a change of vertical
+        /// velocity per step of 15 ms (<see cref="HalcyonVehicleLaws.HoverVelocityChange"/>), so a collision step runs the
+        /// steps of Halcyon's that fall due in it (<see cref="StepsDue"/>), each from the velocity and height the one before
+        /// leaves, and a step shorter than 15 ms waits for its turn. Gravity is off while it acts (<see cref="HoverTurnsGravityOff"/>).
+        /// A timescale under two physics steps (<see cref="HalcyonVehicleLaws.HoverMinTimescale"/>) leaves the vehicle alone.
+        /// </summary>
+        private void SimulateHoverInWorldz(float h, float targetZ, bool upOnly, float timescale, float efficiency)
+        {
+            if (timescale < HalcyonVehicleLaws.HoverMinTimescale)
+                return;
+            int due = StepsDue(ref _hoverStepCarry, h);
+            if (due == 0)
+                return;
+
+            float read = _rawWorldLinearVel.Z;
+            float velocity = read;
+            float z = _body.Position.Z;
+            for (int i = 0; i < due; i++)
+            {
+                float diff = targetZ - z;
+                velocity += HalcyonVehicleLaws.HoverVelocityChange(diff, velocity, timescale, efficiency, !upOnly, (float)HalcyonStep);
+                z += velocity * (float)HalcyonStep;
+            }
+            ApplyLinearVelocityChange(new Vector3(0f, 0f, velocity - read));
+        }
+
+        // The time toward the next step of Halcyon's hover that earlier collision steps have already covered.
+        private double _hoverStepCarry;
 
         /// <summary>
         /// HOVER_UP_ONLY, a step that starts above the height: the vehicle falls freely (with the gravity buoyancy no
@@ -2466,12 +2507,23 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// The vertical attractor must be on ("must be enabled in order for the banking behavior to function"); off
         /// at a banking timescale of 500 s or more; under ThresholdBankAngle of roll banking leaves the yaw alone.
         /// Returns the change to the angular velocity about world z.
+        ///
+        /// Under InWorldz the turn is Halcyon's: this only works out the rate banking asks for from the roll (BankingDirection,
+        /// VehicleDynamics.cs:1338-1401, SimulateBankingToYaw; zero when banking is off, the vertical attractor is off for the
+        /// region (<paramref name="regionAllowsBanking"/> false) or the roll is under the threshold) and returns 0. The turn itself is
+        /// Halcyon's banking turn motor, a stepwise log-growth ramp toward that rate, run on Halcyon's 15 ms clock inside
+        /// <see cref="HalcyonAngularMotorOnItsClock"/> and added to the angular motor's change about z before the
+        /// pi / 512 threshold (VehicleDynamics.cs:2949-3040).
         /// </summary>
-        private float SimulateBanking(float h, float tilt)
+        private float SimulateBanking(float h, float tilt, bool regionAllowsBanking = true)
         {
             // The time in the air at the start of this step, for LIMIT_MOTOR_UP's fade; kept whether banking acts or not.
             double airTime = _bankingAirTime;
             _bankingAirTime = _body.HasCollision ? 0 : _bankingAirTime + h;
+            if (InWorldz)
+                _sp.Dynamics.BankingDirection = 0f;
+            if (!regionAllowsBanking)
+                return 0f;
 
             float timescale = _sp.GetFloat(VehFloatParam.BankingTimescale, 1000f);
             float efficiency = _sp.GetFloat(VehFloatParam.BankingEfficiency, 0f);
@@ -2515,6 +2567,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 efficiency *= _sp.GetFloat(VehFloatParam.InvertedBankingModifier, 1f);
 
             float target = -roll * attitude * efficiency * (float)Math.PI * ((1f - mix) + mix * speedShare);
+            if (InWorldz)
+            {
+                // The legacy speed limit with the angular motor engaged and the angular speed limit are Halcyon's turn motor's
+                // (HalcyonVehicleLaws.BankingTurnChange). LIMIT_MOTOR_UP's fade in the air stays, as a share of the rate asked for.
+                float strength = (_sp.Flags & ExtendedVehicleFlags.LimitMotorUp) != 0 && !_body.HasCollision
+                    ? (float)Math.Exp(-airTime / timescale)
+                    : 1f;
+                _sp.Dynamics.BankingDirection = target * strength;
+                return 0f;
+            }
             // With the angular motor engaged, banking turns no faster than the legacy angular speed.
             if (_sp.Dynamics.AngularDecayIndex < VehicleLimits.ThresholdAngularMotorEngaged)
                 target = Utils.Clamp(target, -VehicleLimits.MaxLegacyAngularVelocity, VehicleLimits.MaxLegacyAngularVelocity);
@@ -3006,13 +3068,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             => torqueWorldZ ? new Vector3(change.X, change.Y, 0f) * _rotation + new Vector3(0f, 0f, change.Z) : change * _rotation;
 
         /// <summary>
-        /// The change of world angular velocity InWorldz's angular motor makes in a collision step of h seconds: the sum over the
-        /// steps of Halcyon's that fall due in it (<see cref="StepsDue"/>, the same clock as the linear motor's; see the note
-        /// above <see cref="HalcyonLinearMotorOnItsClock"/>), each worked out from the velocity the one before leaves
-        /// (<see cref="HalcyonAngularMotor"/>, at 15 ms). A step's change is kept only when it is at least pi / 512 about the
-        /// world's x or y axis, and its turn about the world's z only when it is at least that (VehicleDynamics.cs:2936-2944 and
-        /// 3029-3038: "if the force drops below the threshold, do nothing to let the vehicle eventually sleep"). While the
-        /// motor-height rule holds the motors off there is no change, and no target velocity to carry forward (2746-2749).
+        /// The change of world angular velocity InWorldz's angular motor and banking turn make in a collision step of h seconds:
+        /// the sum over the steps of Halcyon's that fall due in it (<see cref="StepsDue"/>, the same clock as the linear motor's;
+        /// see the note above <see cref="HalcyonLinearMotorOnItsClock"/>), each worked out from the velocity the one before
+        /// leaves (<see cref="HalcyonAngularMotor"/>, at 15 ms). A step's change is kept only when it is at least pi / 512 about
+        /// the world's x or y axis; about the world's z the motor's change and the banking turn's
+        /// (<see cref="HalcyonVehicleLaws.BankingTurnChange"/>, toward the rate banking asks for) are added and the sum is kept
+        /// only when it is at least that (VehicleDynamics.cs:2936-2944 and 3029-3038: "Blend angular Z and banking forces" and
+        /// "if the force drops below the threshold, do nothing to let the vehicle eventually sleep"). While the motor-height rule
+        /// holds the motors off there is no motor change and no target velocity to carry forward (2746-2749); banking goes on.
         /// </summary>
         private Vector3 HalcyonAngularMotorOnItsClock(float h, Vector3 v0, Vector3 motor, Vector3 motorTs, Vector3 decayTs, bool torqueWorldZ)
         {
@@ -3022,45 +3086,75 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 return Vector3.Zero;
 
             VehicleDynamicsState d = _sp.Dynamics;
-            if (_motorsOffByHeight)
-            {
+            bool motorsOff = _motorsOffByHeight;
+            if (motorsOff)
                 d.AngularTargetVelocity = Vector3.Zero;
-                return Vector3.Zero;
-            }
 
             float start = d.AngularDecayIndex;
             float intervalStart = start - (float)carried;
             Vector3 local = v0;
             Vector3 total = Vector3.Zero;
+            float turnRate = _rawWorldAngularVel.Z;   // the yaw rate the banking turn reads, carried from one step to the next
             for (int i = 0; i < due; i++)
             {
                 float read = intervalStart + i * (float)HalcyonStep;
-                d.AngularDecayIndex = read;
-                Vector3 change = HalcyonAngularMotor((float)HalcyonStep, local, motor, motorTs, decayTs);
-                // Put the clock back where this collision step found it, unless the stall check put it far past any decay.
-                if (d.AngularDecayIndex == read)
-                    d.AngularDecayIndex = start;
-                else
-                    start = d.AngularDecayIndex;
-
-                Vector3 world = ChangeToWorld(change, torqueWorldZ);
-                if (Math.Abs(world.X) < VehicleLimits.ThresholdAngularMotorDeltaV && Math.Abs(world.Y) < VehicleLimits.ThresholdAngularMotorDeltaV)
+                Vector3 change = Vector3.Zero;
+                Vector3 world = Vector3.Zero;
+                if (!motorsOff)
                 {
-                    world.X = 0f;
-                    world.Y = 0f;
-                    change = new Vector3(0f, 0f, change.Z);
+                    d.AngularDecayIndex = read;
+                    change = HalcyonAngularMotor((float)HalcyonStep, local, motor, motorTs, decayTs);
+                    // Put the clock back where this collision step found it, unless the stall check put it far past any decay.
+                    if (d.AngularDecayIndex == read)
+                        d.AngularDecayIndex = start;
+                    else
+                        start = d.AngularDecayIndex;
+
+                    world = ChangeToWorld(change, torqueWorldZ);
+                    if (Math.Abs(world.X) < VehicleLimits.ThresholdAngularMotorDeltaV && Math.Abs(world.Y) < VehicleLimits.ThresholdAngularMotorDeltaV)
+                    {
+                        world.X = 0f;
+                        world.Y = 0f;
+                        change = new Vector3(0f, 0f, change.Z);
+                    }
                 }
-                // The turn about the world's z is kept only when it is at least as big (VehicleDynamics.cs:3029-3038: the motor's
-                // and the banking turn's blend; banking, integrated in every collision step, is not part of the sum here).
-                if (Math.Abs(world.Z) < VehicleLimits.ThresholdAngularMotorDeltaV)
+
+                // The banking turn's change, from the yaw rate this step starts at; the motor's clock has moved on by the step.
+                float bank = HalcyonBankingTurn(turnRate, Math.Max(read + (float)HalcyonStep, start));
+                if (Math.Abs(world.Z + bank) < VehicleLimits.ThresholdAngularMotorDeltaV)
                 {
                     world.Z = 0f;
                     change = new Vector3(change.X, change.Y, 0f);
                 }
+                else
+                {
+                    world.Z += bank;
+                }
                 total += world;
                 local += change;
+                turnRate += world.Z;
             }
             return total;
+        }
+
+        // Halcyon's banking turn motor for one of its steps (VehicleDynamics.cs:2949-3040): the change of yaw rate toward the
+        // rate banking asks for, from the yaw rate the step starts at. clock is the angular motor's decay clock at the end of the
+        // step: with the motor engaged (a clock under the threshold) the turn is held to the legacy angular speed.
+        private float HalcyonBankingTurn(float lastRate, float clock)
+        {
+            VehicleDynamicsState d = _sp.Dynamics;
+            float timescale = _sp.GetFloat(VehFloatParam.BankingTimescale, 1000f);
+            if (d.BankingDirection == 0f || timescale >= S.MaxTimescale)
+            {
+                d.BankingTargetVelocity = 0f;
+                return 0f;
+            }
+            float target = d.BankingTargetVelocity;
+            float change = HalcyonVehicleLaws.BankingTurnChange(lastRate, d.BankingDirection, ref target,
+                Math.Max(timescale / (float)HalcyonStep, 1f), S.MaxAngularSpeed,
+                clock < VehicleLimits.ThresholdAngularMotorEngaged, IsLinearMotorStalled());
+            d.BankingTargetVelocity = target;
+            return change;
         }
 
         /// <summary>
