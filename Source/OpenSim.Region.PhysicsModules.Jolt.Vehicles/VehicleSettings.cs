@@ -141,6 +141,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         public const float DefaultRestSpeed = 0.1f;
 
+        /// <summary>
+        /// Under <see cref="VehicleBehaviour.InWorldz"/>, whether the linear motor's rule that its target replaces a lower velocity
+        /// ("the target ensures forward progress", VehicleDynamics.cs:2585-2589) also acts on an axis the motor has never had a
+        /// direction on. False, the default, leaves such an axis its own velocity: the rule is there to get a driven axis going
+        /// against friction (and it goes on acting on an axis that was driven, after the key goes up, which is how a car glides to
+        /// a stop). On an axis never driven it is a one-sided pull (the sign of a zero direction is positive, so a velocity below
+        /// the target is pulled up to it and one above is only braked) toward whatever velocity the ramp last saw there, a bounce,
+        /// say, which pushed a car that had left a crest down the slope to twice the motor's speed. True is Halcyon's code as written.
+        /// </summary>
+        public bool MotorTargetOnUndrivenAxes { get; init; } = false;
+
         // Enablement switches, useful for debugging specific features. A region's settings, so that switching one off
         // in one region does not change the vehicles of another. All are true in production.
         public bool DoAngularDeflection { get; init; } = true;

@@ -79,6 +79,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public float VehicleMinHoverHeight = VehicleLimits.MinRegionHeight;         // m
         public float VehicleMaxHoverHeight = VehicleLimits.MaxRegionHeight;         // m
         public float VehicleSledAssist = VehicleSettings.DefaultSledAssist;         // share of gravity
+        public bool VehicleMotorTargetOnUndrivenAxes = false;                       // InWorldz: the motor's target also replaces a lower velocity on an axis it has no direction on
         public float? VehicleContactFriction;                                       // contact friction of every part of a vehicle body; null = each part's material
         public float SledContactFriction = 0f;                                      // contact friction of every part of a sled
         public BasicForces BasicForcesBehaviour = BasicForces.InWorldz;             // which preset table llSetPhysicsMaterial's materials use
@@ -226,6 +227,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 c.VehicleMaxHoverHeight = VehicleLimits.MaxRegionHeight;
             }
             c.VehicleSledAssist = F(cfg, "VehicleSledAssist", c.VehicleSledAssist, 0f, 10f, warnings);
+            c.VehicleMotorTargetOnUndrivenAxes = B(cfg, "VehicleMotorTargetOnUndrivenAxes", c.VehicleMotorTargetOnUndrivenAxes, warnings);
             // Unset (or empty) leaves each part of a vehicle its material's friction; a number replaces it.
             string contactFriction = cfg.GetString("VehicleContactFriction", null);
             if (!string.IsNullOrWhiteSpace(contactFriction))
@@ -300,6 +302,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             MinHoverHeight = VehicleMinHoverHeight,
             MaxHoverHeight = VehicleMaxHoverHeight,
             SledAssist = VehicleSledAssist,
+            MotorTargetOnUndrivenAxes = VehicleMotorTargetOnUndrivenAxes,
             ContactFriction = VehicleContactFriction,
             SledContactFriction = SledContactFriction,
             RestSpeed = VehicleRestSpeed,

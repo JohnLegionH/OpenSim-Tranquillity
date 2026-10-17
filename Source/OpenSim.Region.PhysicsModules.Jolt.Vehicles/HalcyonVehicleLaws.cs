@@ -202,7 +202,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// direction was set: result = next g + v (1 - g). The grip is dropped (the motor adds nothing) on an axis where the
         /// velocity is already past the motor's, and on every axis while the motor is stalled against something
         /// (<paramref name="stalled"/>), which also ends the motor (the clock is put far past any decay and the target
-        /// cleared). Once every axis has decayed away nothing is computed: the target follows the velocity.
+        /// cleared). Once every axis has decayed away nothing is computed: the target follows the velocity. With
+        /// <paramref name="targetOnUndrivenAxes"/> false the target replaces a lower velocity only on an axis the motor has a
+        /// direction on or has had one on (<paramref name="drivenAxes"/>, non-zero on an axis it has: the target it runs down
+        /// after the key goes up is what lets a car glide to a stop; <see cref="VehicleSettings.MotorTargetOnUndrivenAxes"/>).
         ///
         /// The ramp's timescale is held to at least the step (steps per timescale at least 1): Halcyon's step never exceeded
         /// its shortest timescale, so a step longer than a quick motor's timescale must not overshoot the direction. The
@@ -210,7 +213,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// flags, gravity, hover).
         /// </summary>
         public static Vector3 LinearMotor(float step, Vector3 lastvel, Vector3 direction, Vector3 motorTimescale,
-            Vector3 decayTimescale, ref float decayIndex, ref Vector3 targetVelocity, float maxSpeed, Func<bool> stalled)
+            Vector3 decayTimescale, ref float decayIndex, ref Vector3 targetVelocity, float maxSpeed, Func<bool> stalled,
+            bool targetOnUndrivenAxes = true, Vector3 drivenAxes = default)
         {
             float[] last = { lastvel.X, lastvel.Y, lastvel.Z };
             float[] dir = { direction.X, direction.Y, direction.Z };
@@ -219,6 +223,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                               MovementExpDecay(decayIndex, decayTimescale.Y),
                               MovementExpDecay(decayIndex, decayTimescale.Z) };
             float[] target = { targetVelocity.X, targetVelocity.Y, targetVelocity.Z };
+            float[] driven = { drivenAxes.X, drivenAxes.Y, drivenAxes.Z };
 
             // If the decay hits maximum entropy no further computations are required.
             if (decay[0] == 0 && decay[1] == 0 && decay[2] == 0)
@@ -242,7 +247,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 // its path. There a shorter step takes its share of the gap (a longer one the whole), so the push over a
                 // second does not grow with the number of steps.
                 float adjvel = last[i];
-                if (dirsign * (target[i] - adjvel) >= 0)
+                if (dirsign * (target[i] - adjvel) >= 0 && (dir[i] != 0 || targetOnUndrivenAxes || driven[i] != 0))
                     adjvel = dir[i] != 0 || share >= 1f ? target[i] : adjvel + (target[i] - adjvel) * share;
 
                 ramp[i] = GrowthRate(adjvel, dir[i], Math.Max(ts[i] / step, 1f));
