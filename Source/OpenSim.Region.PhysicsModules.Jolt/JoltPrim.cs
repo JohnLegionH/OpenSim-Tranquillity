@@ -302,6 +302,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // end of building. Never inside the shape lock: core's answer takes the object out of physics.
         private void CheckComplexity()
         {
+            CheckPhysicalSize();
             int limit = _module.MaxPhysicalComplexity;
             if (limit <= 0 || IsRemoved)
                 return;
@@ -311,6 +312,30 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             int total = ObjectComplexity();
             if (total > limit)
                 root.RaiseComplexityError(string.Format(System.Globalization.CultureInfo.InvariantCulture, "({0} of {1} convex hulls)", total, limit));
+        }
+
+        // Under [Jolt] BasicForcesBehaviour = InWorldz, Halcyon's limits on how small or large a physical object may be
+        // (HalcyonPhysicalLimits; PhysxPrim.stability.cs DynamicsPostcheck): checked at the same moments as the complexity,
+        // on the box that holds the whole object, lined up with the region's axes. Halcyon leaves the object inert with its
+        // physical flag still set and tells nobody; here core is told, which alerts the owner and clears the flag.
+        private void CheckPhysicalSize()
+        {
+            if (_module.BasicForcesBehaviour != JoltConfig.BasicForces.InWorldz || IsRemoved)
+                return;
+            JoltPrim root = _linkRoot ?? this;
+            if (!root._isPhysical || root._building)
+                return;
+            var min = new SVector3(float.PositiveInfinity);
+            var max = new SVector3(float.NegativeInfinity);
+            HalcyonPhysicalLimits.Include(ToS(root.Position), Unit(root.Orientation), ToS(root._size), ref min, ref max);
+            System.Collections.Generic.List<JoltPrim> parts = root._linkChildren;
+            if (parts != null)
+                for (int i = 0; i < parts.Count; i++)
+                    HalcyonPhysicalLimits.Include(ToS(parts[i].Position), Unit(parts[i].Orientation), ToS(parts[i]._size), ref min, ref max);
+            SVector3 extent = max - min;
+            HalcyonPhysicalLimits.Verdict verdict = HalcyonPhysicalLimits.Check(extent.X, extent.Y, extent.Z);
+            if (verdict != HalcyonPhysicalLimits.Verdict.Ok)
+                root.RaisePhysicalSizeError(HalcyonPhysicalLimits.Message(verdict));
         }
 
         // The real volume (m^3, at the prim's size) a physical concave prim weighs when it is cooked as cells: the volume of the
