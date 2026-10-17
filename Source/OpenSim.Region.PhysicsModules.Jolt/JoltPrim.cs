@@ -1729,6 +1729,44 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             SetKeptStill(true);
         }
 
+        // The hold ends after `heldSeconds`. Under InWorldz basic forces the object first goes on by what it would have travelled
+        // in that time (Halcyon: PhysxPrim.DoResumeInterpolation): its velocity times the time, lifted onto the ground if that ends
+        // under it, and left where it was held if that ends inside another body. Core caps the time. Under SecondLife it only lets go.
+        public override void ReleaseHold(float heldSeconds)
+        {
+            if (_held && heldSeconds > 0f && float.IsFinite(heldSeconds) && !_userSelected && _isPhysical && _linkRoot == null
+                && _body.IsValid && InWorldzBasicForces)
+                MoveOnAfterHold(heldSeconds);
+            ReleaseHold();
+        }
+
+        private bool InWorldzBasicForces => _module.BasicForcesBehaviour == JoltConfig.BasicForces.InWorldz;
+
+        // How far into another body the object may end up and still count as not in it: a body resting on another is touching it.
+        private const float ResumePenetrationTolerance = 0.02f;
+
+        private void MoveOnAfterHold(float heldSeconds)
+        {
+            Vector3 held = _position;
+            Vector3 target = held + _heldVelocity * heldSeconds;
+            if (_module.TryUnburyPhysicalLoad(target, _size, out Vector3 lifted))
+                target = lifted;
+            if (target == held)
+                return;
+
+            _backend.SetBodyTransform(_body, ToS(target), BodyOrientationOf(_orientation), activate: false);
+            if (_backend.BodyPenetratesOthers(_body, ResumePenetrationTolerance))
+            {
+                _backend.SetBodyTransform(_body, ToS(held), BodyOrientationOf(_orientation), activate: false);
+                return;
+            }
+            _position = target;
+        }
+
+        // Whether an object that crossed in with riders is kept from crossing out again at once (Halcyon: SceneObjectGroup.cs,
+        // TestForAndBeginCrossing). The Second Life pages say nothing of it, so SecondLife keeps the old behaviour.
+        public override bool WaitsBeforeCrossingBack => InWorldzBasicForces;
+
         // The hold ends: dynamic again with the velocity it was held with. An object that is selected stays still (it gets no
         // velocity), and falls from rest when it is let go.
         public override void ReleaseHold()
