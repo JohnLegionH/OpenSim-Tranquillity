@@ -2546,7 +2546,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// <see cref="VehicleMotorSolver"/>). The velocity after the step is the exact solution of that equation over
         /// it, so the result does not depend on the step rate. Friction acts on every axis all the time; the motor's
         /// pull fades with its decay and is never cut off. Under InWorldz the motor is Halcyon's instead
-        /// (<see cref="HalcyonLinearMotorChange"/>), a change on top of friction's.
+        /// (<see cref="HalcyonLinearMotorOnItsClock"/>), a change on top of friction's.
         ///
         /// The engine applies the gravity itself over the step (<see cref="ApplyGravity"/>); the change written here
         /// is the exact solution less that gravity, so the two together end the step on the exact velocity.
