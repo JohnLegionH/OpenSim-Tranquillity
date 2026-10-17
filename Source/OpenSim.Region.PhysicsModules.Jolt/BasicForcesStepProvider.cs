@@ -90,6 +90,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         internal bool InWorldz;
         internal bool Move, Hover, Angular;
+        internal bool Grab;   // the move target is a mouse drag's: Halcyon also takes the spin away (InWorldz only)
 
         internal SVector3 MoveTarget;
         internal float MoveTau;
@@ -251,6 +252,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             SVector3 dv = SVector3.Zero;
             bool gravityOn = true;
             bool approaching = false;
+
+            if (Move && Grab)
+            {
+                // DoGrabTarget: a drag takes 90% of the spin away in a step, then goes to its target like a move target.
+                SVector3 spin = body.AngularVelocity;
+                if (spin != SVector3.Zero)
+                    body.SetAngularVelocity(spin * HalcyonBasicForces.GrabAngularKept(h));
+            }
 
             if (Move)
             {

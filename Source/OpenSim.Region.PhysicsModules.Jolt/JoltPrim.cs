@@ -1640,7 +1640,34 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public override bool IsColliding { get; set; }
         public override bool CollidingGround { get; set; }
         public override bool CollidingObj { get; set; }
-        public override bool Grabbed { set { } }
+        // A mouse drag of the object (core's SteerGrab tells the root's actor: before it switches its move target on, after it
+        // switches it off). The drag's target is the move target; what the actor learns from this is that the target is a
+        // drag's, for InWorldz's rules for a grab (PhysxPrim.pid.cs DoGrabTarget, VehicleDynamics.Simulate): a vehicle's own
+        // controller does not run, a hover does not act, and the spin is taken away. Under SecondLife nothing is done with it.
+        private volatile bool _grabbed;
+
+        public override bool Grabbed
+        {
+            set
+            {
+                if (_linkRoot != null) { _linkRoot.Grabbed = value; return; }
+                if (_grabbed == value) return;
+                _grabbed = value;
+                lock (_targetLock) _targetsChanged = true;
+                _module.SetTargeted(this, true);   // the Update-rate path takes up the change, also when the drag ends
+            }
+        }
+
+        /// <summary>A mouse drag of a vehicle is allowed under <c>[Jolt] VehicleBehaviour = InWorldz</c>, as Halcyon allows it.
+        /// Under SecondLife core refuses it (Second Life's pages do not say what a drag of a vehicle does).</summary>
+        public override bool AllowsVehicleGrab => _module.VehicleSettings.Behaviour == VehicleBehaviour.InWorldz;
+
+        /// <summary>Setting a vehicle type from a script ends the object's look-at and move-to target under
+        /// <c>VehicleBehaviour = InWorldz</c> (VehicleDynamics.VehicleTypeChanged: "StopRotLookAt(); SetMoveToTarget(0, 0)").</summary>
+        public override bool VehicleTypeStopsTargets => _module.VehicleSettings.Behaviour == VehicleBehaviour.InWorldz;
+
+        // The drag of a vehicle runs the drag's target in place of the vehicle controller.
+        private bool GrabOverridesVehicle => _grabbed && _module.VehicleSettings.Behaviour == VehicleBehaviour.InWorldz;
 
         // Selection in the build tool. Core hands the same value to the root's actor and every part's
         // (SceneObjectGroup.IsSelected). A selected physical object stops where it is and stays: no gravity, no drift, no
@@ -2302,6 +2329,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             _vehicleStepProvider?.Disarm();   // armed for one Update at a time, and only by the branch below that steps the vehicle
             if (_vehicle == null || !_vehicle.IsActive || !_isPhysical || !_body.IsValid || _selected)
+                return;
+            // InWorldz: a drag overrides the vehicle, "otherwise severe squirming and tossing will happen" (VehicleDynamics.Simulate,
+            // GrabTargetTau != 0 returns before anything else). The controller's clock does not run, so a drag of more than a second
+            // ends with the motors reset, as a vehicle that has not been stepped for that long always is (CheckResetMotors).
+            if (GrabOverridesVehicle)
                 return;
             // Assert buoyancy on restart: re-assert the vehicle body params on the step-thread steps
             // of the first ReassertVehicleSeconds after (re)activation, so the gravity-cancellation that the load-path restore

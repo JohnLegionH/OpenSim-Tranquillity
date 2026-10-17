@@ -59,6 +59,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         /// <summary>Halcyon's physics step (PhysxScene.TIMESTEP_IN_SECONDS, 15 ms).</summary>
         public const float StepSeconds = 0.015f;
 
+        /// <summary>A mouse drag takes this share of the object's angular velocity away in each of Halcyon's steps
+        /// (PhysxPrim.pid.cs DoGrabTarget: <c>AddTorque(-angularVelocity * 0.9f, VelocityChange)</c>).</summary>
+        public const float GrabAngularDamping = 0.9f;
+
+        /// <summary>The share of its angular velocity a dragged object keeps over a step of <paramref name="h"/> seconds: what
+        /// Halcyon's 0.1 a 15 ms step leaves, made the same at every step length.</summary>
+        public static float GrabAngularKept(float h) => MathF.Pow(1f - GrabAngularDamping, h / StepSeconds);
+
         /// <summary>A move-to-target or hover tau at or under this does nothing (PhysxPrim.MIN_TAU: two steps).</summary>
         public const float MinTau = StepSeconds * 2f;
 
