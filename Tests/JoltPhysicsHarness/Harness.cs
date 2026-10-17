@@ -344,7 +344,7 @@ public sealed class RunResult
     /// physics steps are on.</summary>
     public string Label => PhysicsRateHz > 0 ? $"{Scenario}{Variant}/p{Fmt(PhysicsRateHz, "0.#")}" : Scenario + Variant;
 
-    public const string CsvHeader = "t,x,y,z,vx,vy,vz,speed,hspeed,tilt_deg,height,touching,active,ox,oy,oz,ospeed,wx,wy,wz";
+    public const string CsvHeader = "t,x,y,z,vx,vy,vz,speed,hspeed,tilt_deg,height,touching,active,ox,oy,oz,ospeed,wx,wy,wz,ovx,ovy,ovz";
 
     /// <summary>The trace as CSV: one line per heartbeat, invariant culture, fixed decimals.</summary>
     public string ToCsv()
@@ -361,7 +361,8 @@ public sealed class RunResult
               .Append(s.Touching ? '1' : '0').Append(',').Append(s.Active.ToString(CultureInfo.InvariantCulture)).Append(',')
               .Append(Fmt(s.Other.X, "0.0000")).Append(',').Append(Fmt(s.Other.Y, "0.0000")).Append(',').Append(Fmt(s.Other.Z, "0.0000")).Append(',')
               .Append(Fmt(s.OtherSpeed, "0.0000")).Append(',')
-              .Append(Fmt(s.AngularVelocity.X, "0.0000")).Append(',').Append(Fmt(s.AngularVelocity.Y, "0.0000")).Append(',').Append(Fmt(s.AngularVelocity.Z, "0.0000")).Append('\n');
+              .Append(Fmt(s.AngularVelocity.X, "0.0000")).Append(',').Append(Fmt(s.AngularVelocity.Y, "0.0000")).Append(',').Append(Fmt(s.AngularVelocity.Z, "0.0000")).Append(',')
+              .Append(Fmt(s.OtherVelocity.X, "0.0000")).Append(',').Append(Fmt(s.OtherVelocity.Y, "0.0000")).Append(',').Append(Fmt(s.OtherVelocity.Z, "0.0000")).Append('\n');
         }
         return sb.ToString();
     }
