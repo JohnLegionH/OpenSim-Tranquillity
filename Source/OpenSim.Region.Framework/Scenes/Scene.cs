@@ -3062,13 +3062,42 @@ public partial class Scene : SceneBase
             return false;
         }
 
-        if (!EntityTransferModule.HandleIncomingSceneObject(newObject, newPosition))
+        bool taken;
+        try
+        {
+            taken = EntityTransferModule.HandleIncomingSceneObject(newObject, newPosition);
+        }
+        catch (Exception e)
+        {
+            // The object may be in the region already, half taken in. The sending region keeps its original when this
+            // answers false, so the copy here goes: two copies of one object must not be left.
+            m_log.LogError(e, $"[INTERREGION]: Taking in {newObject.Name} {newObject.UUID} failed with {e.GetType().Name}: {e.Message}");
+            DiscardIncomingObject(newObject);
+            return false;
+        }
+
+        if (!taken)
             return false;
 
         // Do this as late as possible so that listeners have full access to the incoming object
         EventManager.TriggerOnIncomingSceneObject(newObject);
 
         return true;
+    }
+
+    /// <summary>Removes an incoming object whose arrival failed half way, if this region holds that very object.</summary>
+    private void DiscardIncomingObject(SceneObjectGroup newObject)
+    {
+        try
+        {
+            newObject.HeldForRiders = false;
+            if (ReferenceEquals(GetSceneObjectGroup(newObject.UUID), newObject))
+                DeleteSceneObject(newObject, false, true);
+        }
+        catch (Exception e)
+        {
+            m_log.LogError(e, $"[INTERREGION]: Removing the half-taken {newObject.Name} {newObject.UUID} failed with {e.GetType().Name}: {e.Message}");
+        }
     }
 
     public bool IncomingAttechments(ScenePresence sp, List<SceneObjectGroup> attachments)
@@ -3172,7 +3201,8 @@ public partial class Scene : SceneBase
                 m_log.LogError("[SCENE]: Owner ID for non-attachment {0} was zero", sceneObject.UUID);
                 return false;
             }
-            AddRestoredSceneObject(sceneObject, true, false);
+            // false when an object with this id is already here: the caller must not go on as if this one had been added
+            return AddRestoredSceneObject(sceneObject, true, false);
         }
 
         return true;

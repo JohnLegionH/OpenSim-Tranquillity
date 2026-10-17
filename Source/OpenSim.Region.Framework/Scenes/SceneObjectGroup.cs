@@ -800,6 +800,13 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
 
         // the other region took the object: whatever else fails, it is no longer ours to put back
         public bool Committed;
+
+        // set while the object is being handed to the other region (until its answer is in), so that a failure inside
+        // the hand-over can ask that region to give back a copy it may already have taken in
+        public bool Sending;
+        public bool SendHeld;
+        public OpenSim.Services.Interfaces.GridRegion SendDestination;
+        public IEntityTransferModule SendTransfer;
     }
 
     private delegate SceneObjectGroup SOGCrossDelegate(SceneObjectGroup sog,Vector3 pos, TeleportObjectData tpData);
@@ -940,7 +947,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         }
         catch (Exception e)
         {
-            m_log.LogError(e, $"[SCENE OBJECT]: Crossing of {sog.Name} {sog.UUID} failed with an exception");
+            m_log.LogError(e, $"[SCENE OBJECT]: Crossing of {sog.Name} {sog.UUID} failed with {e.GetType().Name} in step '{sog.m_crossStep}': {e.Message}");
             return sog.RollBackCrossing(state);
         }
         finally
@@ -953,8 +960,12 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
     private System.Diagnostics.Stopwatch m_crossWatch;
     private string m_crossDestinationName;
 
+    // the step a crossing is in, for the log line of a crossing that fails
+    private string m_crossStep = "start";
+
     private void CrossStep(string label)
     {
+        m_crossStep = label;
         if (m_crossWatch is not null)
             m_log.LogDebug($"[SCENE OBJECT]: Crossing {Name} from {m_scene?.Name} to {m_crossDestinationName}: {label} at {m_crossWatch.ElapsedMilliseconds} ms");
         m_scene?.CrossingStepHook?.Invoke(this, label);
@@ -970,6 +981,15 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         Vector3 curPos = m_rootPart.GroupPosition;
         try
         {
+            if (state.Sending && !state.Committed)
+            {
+                // The failure came while the object was being handed over, so the other region may have taken it in
+                // before it failed: it is asked to give that copy back, so that exactly one copy is left.
+                state.Sending = false;
+                if (!RecallAfterFailedSend(state))
+                    m_log.LogWarning($"[SCENE OBJECT]: The region ahead would not give back {Name} {UUID} after the failed crossing; it keeps its copy");
+            }
+
             if (!state.Committed)
             {
                 ReleaseStandingRiders(state.Riders, curPos);
@@ -1005,10 +1025,30 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         }
         catch (Exception e)
         {
-            m_log.LogError(e, $"[SCENE OBJECT]: Putting back after the failed crossing of {Name} {UUID} failed");
+            m_log.LogError(e, $"[SCENE OBJECT]: Putting back after the failed crossing of {Name} {UUID} failed with {e.GetType().Name} in step '{m_crossStep}': {e.Message}");
         }
 
         return state.Committed ? null : this;
+    }
+
+    /// <summary>
+    /// Asks the region a failed hand-over was made to for the object back. True when it holds no copy any longer, so
+    /// that the original here is the only one.
+    /// </summary>
+    private bool RecallAfterFailedSend(CrossState state)
+    {
+        if (!state.SendHeld || state.SendTransfer is null || state.SendDestination is null)
+            return true;
+
+        try
+        {
+            return state.SendTransfer.RecallCrossingObject(state.SendDestination, this);
+        }
+        catch (Exception e)
+        {
+            m_log.LogError(e, $"[SCENE OBJECT]: Asking the region ahead for {Name} {UUID} back after the failed crossing failed with {e.GetType().Name}: {e.Message}");
+            return false;
+        }
     }
 
     private SceneObjectGroup CrossAsyncCore(SceneObjectGroup sog, Vector3 val, TeleportObjectData tpdata, CrossState state)
@@ -1027,9 +1067,9 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
                     sog.StandSittersUpInsideRegion();
                     sogScene.DeleteSceneObject(sog, false);
                 }
-                catch (Exception)
+                catch (Exception e)
                 {
-                    m_log.LogWarning("[SCENE]: exception when trying to remove the prim that crossed the border.");
+                    m_log.LogWarning(e, $"[SCENE]: exception when trying to remove the prim that crossed the border: {e.GetType().Name}: {e.Message}");
                 }
                 return sog;
             }
@@ -1045,9 +1085,9 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
                         "Returned at region cross");
                     sogScene.DeRezObjects(null, localIDs, UUID.Zero, DeRezAction.Return, UUID.Zero, false);
                 }
-                catch (Exception)
+                catch (Exception e)
                 {
-                    m_log.LogWarning("[SCENE]: exception when trying to return the prim that crossed the border.");
+                    m_log.LogWarning(e, $"[SCENE]: exception when trying to return the prim that crossed the border: {e.GetType().Name}: {e.Message}");
                 }
                 return sog;
             }
@@ -1110,9 +1150,9 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
                     sog.StandSittersUpInsideRegion();
                     sogScene.DeleteSceneObject(sog, false);
                 }
-                catch (Exception)
+                catch (Exception e)
                 {
-                    m_log.LogWarning("[SCENE]: exception when trying to remove the prim that went off world.");
+                    m_log.LogWarning(e, $"[SCENE]: exception when trying to remove the prim that went off world: {e.GetType().Name}: {e.Message}");
                 }
             }
             return sog;
@@ -1266,6 +1306,11 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
 
         sog.CrossStep("before-send");
 
+        state.SendDestination = destination;
+        state.SendTransfer = entityTransfer;
+        state.SendHeld = held;
+        state.Sending = true;
+
         bool sent = held
             ? entityTransfer.CrossPrimGroupIntoNewRegionHeld(destination, newpos, sog,
                 new OpenSim.Services.Interfaces.CrossingHoldRequest
@@ -1274,6 +1319,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
                     ExpectedRiders = expectedRiders
                 })
             : entityTransfer.CrossPrimGroupIntoNewRegion(destination, newpos, sog, true, false);
+        state.Sending = false;
 
         if (sent)
         {
