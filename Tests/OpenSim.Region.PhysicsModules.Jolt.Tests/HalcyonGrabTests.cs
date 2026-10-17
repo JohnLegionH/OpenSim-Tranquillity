@@ -132,6 +132,48 @@ public class HalcyonGrabTests
         Assert.InRange(box.Position.Y, 137.8f, 138.2f);   // weightless (buoyancy 1) and at rest where it was let go
     }
 
+    [Fact]
+    public void A_drag_overrides_a_rotation_target_and_it_acts_again_when_the_drag_ends_under_InWorldz()
+    {
+        using Rig rig = Make(45, 2);
+        JoltPrim box = rig.AddBox(new Vector3(1f, 1f, 1f), new Vector3(100f, 128f, 100f), vehicle: false);
+        box.APIDTarget = Quaternion.CreateFromAxisAngle(Vector3.UnitZ, MathF.PI / 2f);
+        box.APIDStrength = 1f;
+        box.APIDDamping = 1f;
+        box.APIDActive = true;
+        Drag(box, new Vector3(100f, 128f, 100f));         // the target is where it is: only the override is tested
+        rig.RunTo(2.0);
+        double turnedDragged = TurnDegrees(box);
+        Release(box);
+        rig.RunTo(6.0);
+        double turnedAfter = TurnDegrees(box);
+        Say($"HALCYON-GRAB look-at: turned {turnedDragged:0.00} degrees during the drag, {turnedAfter:0.0} after it");
+        Assert.True(turnedDragged < 1.0, $"the look-at turned a dragged object {turnedDragged} degrees");
+        Assert.InRange(turnedAfter, 88.0, 92.0);
+    }
+
+    [Fact]
+    public void Under_SecondLife_a_drag_does_not_override_a_rotation_target()
+    {
+        using Rig rig = Make(45, 2, basic: "SecondLife");
+        JoltPrim box = rig.AddBox(new Vector3(1f, 1f, 1f), new Vector3(100f, 128f, 100f), vehicle: false);
+        box.APIDTarget = Quaternion.CreateFromAxisAngle(Vector3.UnitZ, MathF.PI / 2f);
+        box.APIDStrength = 1f;
+        box.APIDDamping = 1f;
+        box.APIDActive = true;
+        Drag(box, new Vector3(100f, 128f, 100f));
+        rig.RunTo(6.0);
+        double turned = TurnDegrees(box);
+        Say($"HALCYON-GRAB SecondLife look-at during a drag: turned {turned:0.0} degrees");
+        Assert.InRange(turned, 85.0, 95.0);
+    }
+
+    private static double TurnDegrees(JoltPrim box)
+    {
+        Quaternion q = box.Orientation;
+        return 2.0 * Math.Acos(Math.Min(1.0, Math.Abs(q.W))) * 180.0 / Math.PI;
+    }
+
     // ------------------------------------------------------------------ a vehicle
 
     [Theory]

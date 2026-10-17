@@ -162,6 +162,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 return active;
             }
 
+            // InWorldz: a mouse drag overrides the rotation target (PhysxPrim.pid.cs DoRotLookTarget: "Grab overrides rot
+            // target"). The request is kept and acts again when the drag ends; the drag takes the spin away itself.
+            if (plan.InWorldz && _grabbed)
+            {
+                AngularLetGo(false, keepVelocity: true);
+                return true;
+            }
+
             // Selected in the build tool the object is held still and the target does not act (as the move to target); the
             // request is kept, and a change made meanwhile is kept for then.
             if (_selected)
