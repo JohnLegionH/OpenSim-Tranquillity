@@ -74,10 +74,9 @@
  * behaviour: it is carried over from the InWorldz Halcyon sled movement (SledAssist). The frame
  * structure, the parameter routing and the legacy type presets come from the InWorldz Halcyon
  * vehicle code, as OpenSim's BulletSim vehicle code expresses it; the legacy values are kept
- * behind VehiclePresets = legacy (VehicleSettings). Six behaviours of the Halcyon code that differ from the documented
- * model (the pitch righting kept under LIMIT_ROLL_ONLY, hover up only acting with buoyancy, friction that would push up
- * dropped, a quick motor's delayed decay, the stronger and escalating self-righting, and the buoyancy adjustment) are
- * on only where the region chooses VehicleSettings.Behaviour = InWorldz.
+ * behind VehiclePresets = legacy (VehicleSettings). The behaviours of the Halcyon code that differ from the documented
+ * model are on only where the region chooses VehicleSettings.Behaviour = InWorldz; the description of
+ * [Jolt] VehicleBehaviour in RegionServerDefaults.ini lists them.
  * The physics engine is reached only through IVehicleBody, per this table (BulletSim's names
  * on the left):
  *
@@ -318,8 +317,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         public VehicleSettings Settings { get; set; } = VehicleSettings.Default;
         private VehicleSettings S => Settings;
 
-        // The region follows InWorldz's vehicle behaviour in six places (VehicleSettings.Behaviour). Each is written so
-        // that with Second Life's behaviour, the default, the arithmetic is what it was without the choice.
+        // The region follows InWorldz's vehicle behaviour where [Jolt] VehicleBehaviour says (VehicleSettings.Behaviour; the
+        // places are listed in the description of that key in RegionServerDefaults.ini). Each is written so that with Second
+        // Life's behaviour the arithmetic is what it was without the choice.
         private bool InWorldz => S.Behaviour == VehicleBehaviour.InWorldz;
 
         // =====================================================================

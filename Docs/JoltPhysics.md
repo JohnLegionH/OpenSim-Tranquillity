@@ -1497,7 +1497,7 @@ the motor decay cap, which is Second Life's documented 120 s under `SecondLife` 
 | `VehicleSledAssist` | 0.045 | The sled's slope assist: a sled with its nose down is pushed along it at this share of g times the square root of the sine of its pitch (a tenth of it, back down the slope, nose up). 0.045 is what the InWorldz sled code gave at its 15 ms step; it is now the same at any step rate. 0 turns it off. |
 | `VehicleContactFriction` | unset | Left unset, each part of a vehicle keeps its own material's friction, which adds to the vehicle's friction timescales while it slides in contact. A number (0 to 10) replaces every part's friction; 0 leaves the timescales as the only friction on a vehicle in contact. |
 | `SledContactFriction` | 0 | The contact friction of every part of a sled, whatever its material (0 to 10). |
-| `BasicForcesBehaviour` | InWorldz | `InWorldz` or `SecondLife`: which preset table `PRIM_MATERIAL` uses (see "Physics material on objects"). |
+| `BasicForcesBehaviour` | InWorldz | `InWorldz` or `SecondLife`: whose behaviour the basic forces follow (the `PRIM_MATERIAL` preset table, hover, move to target, ground repel and look-at, mouse drags, physical size limits, the 0.977 buoyancy rule and targets across a region border; the list is in the description of the key in `RegionServerDefaults.ini`). |
 | `FrictionCombine`, `RestitutionCombine` | Average, Average | How two surfaces combine: `Average`, `GeometricMean`, `Multiply`, `Min` or `Max`. |
 | `TerrainFriction`, `TerrainRestitution` | 0.4, 0.05 | The terrain's friction (0 to 255) and restitution (0 to 1). |
 | `VehicleRestSpeed` | 0.1 | The rest rule (m/s), see "Parked vehicles sleep" below. 0 turns it off. |
