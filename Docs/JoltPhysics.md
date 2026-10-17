@@ -204,7 +204,8 @@ What changes at 45: vehicles and avatars integrate in 1/45 s steps, so anything 
 still depends on the step changes. The vehicle motors, friction, gravity, hover, the vertical
 attractor, banking and deflection, a jump's rise and walking speed do not: each is stepped exactly
 (see "Vehicle motors and friction" and the sections after it), so in the harness the test car on level ground leaves the key at 3.79 m/s
-either way and an avatar jump rises 0.82 m. So does the sled's slope assist.
+either way and an avatar jump rises 0.82 m (under `[Jolt] VehicleBehaviour = SecondLife`; under `InWorldz` the two motors run on Halcyon's 15 ms
+clock, which gives the same speed at every step rate, see "Vehicle behaviour"). So does the sled's slope assist.
 Position updates to viewers, timers and sensors stay at the heartbeat rate. Physics costs more:
 in the harness the test car takes about 1.5 times the step time of one step per heartbeat
 (`jolt metrics` shows each region's step time).
@@ -1446,11 +1447,22 @@ tests. Two things are the module's own: the self-righting factor stops at 10 whe
 of time (Halcyon's step) instead of per step, so it does not depend on the step rate. Halcyon's buoyancy adjustment also covers
 `llSetBuoyancy` on an ordinary object; here it is applied to a vehicle's buoyancy only.
 
-The angular motor's ramp and the deflection push depend on the step the engine takes, as Halcyon's did on its own (its step was never
-longer than its shortest timescale, 0.0156 s, so the ramp's steps per timescale are held to at least 1 here: at 45 Hz a quicker motor
-does not overshoot its direction). Left out of the angular motor: the clamp that reduces a motor speed against the vertical attractor
-(`VehicleDynamics.cs:2809-2856`). The linear motor keeps the documented equation under both behaviours; Halcyon's linear ramp
-(`VehicleDynamics.cs:2576-2725`) is built the same way as its angular one and differs from the documented equation in the same way, but is not built here.
+Under `InWorldz` both motors are Halcyon's (`VehicleDynamics.cs:2576-2945`), and Halcyon ran them once in each physics step of 15 ms
+(`PhysxScene.cs`, `TIMESTEP`): a motor step reads the velocity the last step and the contact friction left, sets it toward the motor's
+target (the ramp, the decay, and the rule that the target replaces a lower velocity: `VehicleDynamics.cs:2587-2589` for the linear motor,
+`2778-2780` for the angular one), and the engine then takes 15 ms of friction from it. The 15 ms is part of the law: the replacement is how
+a car gets going against friction, and the distance it loses between two sets of the motor depends on how long they are apart. The
+controller runs in every collision step of the engine, which is shorter or longer than 15 ms, so each motor keeps a clock of the time
+carried since its last step and runs one of Halcyon's steps (always of 15 ms) for every 15 ms that has gone by, at the start of the
+collision step in which it falls due: a collision step shorter than 15 ms runs it on some of its steps only, one longer than 15 ms
+runs several, one after the other on the velocity the one before left. Friction, the attractor, banking, deflection and gravity are
+integrated in every collision step as before. A vehicle then drives at the same speed at every step rate, and agrees with Halcyon's
+motor stepped at 15 ms against contact friction taken as a constant deceleration (the test model `HalcyonMotorModel`): within 2.5 % of its
+speed for collision steps up to 31 ms, and about 4 % low at 45 ms and 10 % low at 91 ms, because the engine's step cannot be split to put
+the motor's steps between its friction (the ground takes a whole step's worth between two sets of the motor). The angular motor's
+clamp against the vertical attractor (`VehicleDynamics.cs:2809-2856`) is part of it, and so is the dead band of its turn about the
+world's z: a change under pi / 512 rad/s in a step of 15 ms is not made (`VehicleDynamics.cs:3029-3038`), so a gentle turn keeps
+the rate it had when the key went up. The linear motor keeps the documented equation under `SecondLife`.
 A per-axis timescale or a decay above 120 s set by a script acts at once, but the region's saved record of a vehicle (`SOPVehicle`)
 holds one float for each and keeps a decay at 120 s at most, so after the vehicle is rezzed, copied, loaded with the region or crosses into
 another region the motor comes back with one value on all three axes.
@@ -1489,6 +1501,7 @@ the motor decay cap, which is Second Life's documented 120 s under `SecondLife` 
 | `FrictionCombine`, `RestitutionCombine` | Average, Average | How two surfaces combine: `Average`, `GeometricMean`, `Multiply`, `Min` or `Max`. |
 | `TerrainFriction`, `TerrainRestitution` | 0.4, 0.05 | The terrain's friction (0 to 255) and restitution (0 to 1). |
 | `VehicleRestSpeed` | 0.1 | The rest rule (m/s), see "Parked vehicles sleep" below. 0 turns it off. |
+| `VehicleMotorTargetOnUndrivenAxes` | false | `InWorldz` only. Halcyon's linear motor has a rule that its target replaces a lower velocity ("the target ensures forward progress", `VehicleDynamics.cs:2585-2589`), there to get a driven axis going against friction. With the key up (or on an axis it never had a direction on) the sign of the direction is taken as positive, so on such an axis a velocity below the target is pulled up to it and one above is only braked. By default the rule acts on an axis the motor has a direction on, and on one it has had a direction on (which is how a car glides to a stop after the key goes up), and not on an axis it never had one on, where it pulled a car that had left a crest down the slope to twice the motor's speed. `true` is Halcyon's code as written. |
 | `BodyMaxLinearSpeed`, `BodyMaxAngularSpeed` | 500, 47.12389 | The physics engine's own cap on every moving body, vehicle or not (Jolt's defaults). Keep it above `VehicleMaxLinearSpeed`. |
 
 **The angular rate limiter** (under both behaviours). When a script sets `VEHICLE_ANGULAR_MOTOR_DIRECTION`, the direction the
