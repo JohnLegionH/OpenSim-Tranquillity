@@ -8,8 +8,7 @@
 // The sled's slide test (jolt sledtest slide): a documented sled (VEHICLE_TYPE_SLED, its presets, no motor) at rest on a
 // 15 degree slope, let go there and not dropped onto it, so no landing can toss a coin: a drop from a metre up lands the
 // sled on an edge, and a millimetre of start decides whether it slides or stops. The sled's speed is read at fixed times of
-// physics time and compared with the controller-level sled scenario (the same sled let go at rest on a 15 degree slope in
-// the harness) within 2%. This file is the layout and the pass line, which have no scene in them, so a test can run the
+// physics time and compared with the exact solution of the controller's equation along the nose within 2%. This file is the layout and the pass line, which have no scene in them, so a test can run the
 // same numbers against a scene without a region.
 
 using System;
@@ -40,17 +39,35 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Diagnostics
         /// <summary>Physics seconds after the sled is let go at which its speed is read.</summary>
         public static readonly double[] Times = { 1.0, 2.0, 3.0, 4.0 };
 
+        /// <summary>The documented sled's friction timescale along its nose (s).</summary>
+        public const double NoseFrictionSeconds = 30.0;
+
+        /// <summary>The prim damping the sled has on the module's shipped defaults, per second ([Jolt] PrimLinearDamping).</summary>
+        public const double PrimLinearDamping = 0.02;
+
         /// <summary>
-        /// The sled's speed (m/s) at <see cref="Times"/>: the harness's sled scenario at 45 Hz with 2 collision steps, the
-        /// documented sled let go at rest on its 15 degree slope on the module's shipped defaults, with the ground's friction
-        /// at 0 (2.741 5.291 7.709 10.001), whose figures agree at every rate within 0.1%. Before the prim damping of 0.02 the
-        /// figures were 2.772 5.400 7.943 10.402 (this build; 2.766 5.395 7.938 10.397 when first recorded). The damping alone
-        /// accounts for the difference: the same acceleration as before, less 0.02 x the speed (dv/dt = a(t) - 0.02 v, solved over
-        /// the earlier run's accelerations) gives 2.740 5.289 7.701 9.984, within 0.2% of the run. The ramp the console test
-        /// rezzes has friction 0: a sled's contact friction is 0, and two surfaces now combine as their average, so a ramp of the
-        /// prim default (wood, 0.6) would hold a sled that a 15 degree slope (tan 0.27) cannot move against 0.3.
+        /// The sled's speed (m/s) a time <paramref name="t"/> after it is let go at rest on the slope: the exact solution of the
+        /// controller's equation along the nose with the prim damping, v' = a - v / T - c v, with a = g (sin slope + k sqrt(sin
+        /// slope)) (gravity along the slope and the sled's slope assist k, 0.045), T the nose friction timescale and c the prim
+        /// damping. With T' = 1 / (1 / T + c) it is a T' (1 - e^(-t / T')): 2.690 5.241 7.659 9.951 at <see cref="Times"/>.
         /// </summary>
-        public static readonly double[] Speeds = { 2.741, 5.291, 7.709, 10.001 };
+        public static double Ideal(double t)
+        {
+            double sin = Math.Sin(SlopeDegrees * Math.PI / 180.0);
+            double a = 9.80665 * (sin + 0.045 * Math.Sqrt(sin));
+            double tau = 1.0 / (1.0 / NoseFrictionSeconds + PrimLinearDamping);
+            return a * tau * (1.0 - Math.Exp(-t / tau));
+        }
+
+        /// <summary>
+        /// The speeds the readings are compared with. They were the harness sled scenario's, which drops the sled from half a
+        /// metre onto the slope and so carries about 0.05 m/s of the landing in every reading (2.741 5.291 7.709 10.001 with the
+        /// prim damping); the sled let go at rest on the ramp follows the exact solution (<see cref="Ideal"/>) to 0.1% at 45 Hz
+        /// with 2 collision steps, 64 Hz with 2 and 32 Hz with 4. The ramp the console test rezzes has friction 0: a sled's
+        /// contact friction is 0, and two surfaces combine as their average, so a ramp of the prim default (wood, 0.6) would
+        /// hold a sled that a 15 degree slope (tan 0.27) cannot move against 0.3.
+        /// </summary>
+        public static readonly double[] Speeds = { Ideal(Times[0]), Ideal(Times[1]), Ideal(Times[2]), Ideal(Times[3]) };
 
         /// <summary>The pass line: the largest error of a reading, as a percent of the figure it is read against.</summary>
         public const double TolerancePercent = 2.0;

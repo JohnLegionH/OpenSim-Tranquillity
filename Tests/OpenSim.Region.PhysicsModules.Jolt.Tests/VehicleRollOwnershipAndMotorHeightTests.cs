@@ -58,7 +58,10 @@ public class VehicleRollOwnershipAndMotorHeightTests
             rig.Run(Step, 45);
             worst = Math.Max(worst, Math.Abs(BehaviourRig.RollAndPitch(rig.Body.Orientation).pitch / Deg));
         }
-        Assert.True(worst <= 2.0, $"the pitch went {worst:0.0} degrees off level (limit 2)");
+        // The limit was 2 degrees until the InWorldz attractor's damping took its share per 15 ms of time instead of per
+        // Update: at 45 Hz it now takes 1.48 times what it did per step, as Halcyon's does per frame, and the airplane's
+        // pitch reaches 2.2 degrees. The leak this guards (roll rate turned into pitch by banking) was tens of degrees.
+        Assert.True(worst <= 2.5, $"the pitch went {worst:0.0} degrees off level (limit 2.5)");
     }
 
     [Fact]
@@ -125,11 +128,11 @@ public class VehicleRollOwnershipAndMotorHeightTests
     {
         BehaviourRig high = HighCar(VehicleBehaviour.InWorldz, onTheFloor: false);
         BehaviourRig low = HighCar(VehicleBehaviour.InWorldz, onTheFloor: true);
-        high.Run(Step, 6);               // 0.13 s: the height is first measured at the 8th step, so the motor is still on
-        low.Run(Step, 6);
+        high.Run(Step, 5);               // 0.11 s: the height is first measured at 0.12 s, so the motor is still on
+        low.Run(Step, 5);
         Assert.Equal(low.Body.LinearVelocity.X, high.Body.LinearVelocity.X, 3);
-        high.Run(Step, 45 * 3 - 6);      // 3 s: Halcyon's clock runs eight steps' time on every step, so the 2 s has run out in about 0.3 s
-        low.Run(Step, 45 * 3 - 6);
+        high.Run(Step, 45 * 3 - 5);      // 3 s: Halcyon's clock runs eight steps' time on every step, so the 2 s has run out in about 0.3 s
+        low.Run(Step, 45 * 3 - 5);
         float held = high.Body.LinearVelocity.X;
         high.Run(Step, 45);
         low.Run(Step, 45);
@@ -153,13 +156,13 @@ public class VehicleRollOwnershipAndMotorHeightTests
     }
 
     [Fact]
-    public void The_down_ray_is_cast_once_in_eight_steps_and_not_at_all_under_Second_Life()
+    public void The_down_ray_is_cast_every_eight_of_Halcyons_steps_and_not_at_all_under_Second_Life()
     {
         BehaviourRig iw = HighCar(VehicleBehaviour.InWorldz, onTheFloor: false);
         BehaviourRig sl = HighCar(VehicleBehaviour.SecondLife, onTheFloor: false);
         iw.Run(Step, 64);
         sl.Run(Step, 64);
-        Assert.InRange(iw.Body.RaysCast, 8, 16);       // one ray when the left edge finds nothing near, a second from the right: 8 frames in 64
+        Assert.InRange(iw.Body.RaysCast, 22, 24);      // 64 Updates at 45 Hz are 1.42 s: 11 casts of 0.12 s, two rays each (left edge finds nothing near, then the right)
         Assert.Equal(0, sl.Body.RaysCast);
     }
 

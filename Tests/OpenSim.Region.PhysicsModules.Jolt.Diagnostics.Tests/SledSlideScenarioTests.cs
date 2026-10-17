@@ -139,6 +139,12 @@ public class SledSlideScenarioTests
             foreach (string line in lines)
                 _out.WriteLine($"[sled-slide] {rate} Hz x {collisionSteps} | {line}");
             Assert.True(pass, string.Join("; ", lines));
+            // The sled let go at rest keeps to the exact solution far closer than the pass line.
+            for (int i = 0; i < SledSlideScenario.Times.Length; i++)
+            {
+                double got = SledSlideScenario.SpeedAt(samples, SledSlideScenario.Times[i]);
+                Assert.InRange(Math.Abs(got - SledSlideScenario.Speeds[i]) / SledSlideScenario.Speeds[i] * 100.0, 0.0, 0.3);
+            }
         }
         finally { scene.Dispose(); }
     }
