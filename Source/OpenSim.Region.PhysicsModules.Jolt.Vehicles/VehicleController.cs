@@ -1172,9 +1172,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             // Read current state from physics engine
             ReadState();
 
-            // InWorldz: Halcyon's cut of a spike the engine's contacts put into the vehicle's velocity (it is kept
+            // Halcyon's cut (on under InWorldz by default, [Jolt] VehicleSpikeMitigation) of a spike the engine's contacts put into the vehicle's velocity (it is kept
             // from PhysX; the tests PhysxSpikeTests show Jolt makes the same spikes on rough ground and across seams).
-            if (InWorldz && MitigatePhysxSpikes && MitigatePhysxSpiking(h))
+            if (S.SpikeMitigationOn && MitigatePhysxSpikes && MitigatePhysxSpiking(h))
                 ReadState();
 
             TorqueInit();
@@ -1236,7 +1236,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             RememberVelocitiesForSpikeCheck();
         }
 
-        #region Spike mitigation (InWorldz)
+        #region Spike mitigation
 
         // Halcyon's MitigatePhysxSpiking (InWorldz.PhysxPhysics/Vehicle/VehicleDynamics.cs:996-1035), whose comment reads
         // "PhysX can induce severe angular Y-axis forces and severe Z-axis up forces on rough terrain or across prim edges.

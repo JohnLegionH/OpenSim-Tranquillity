@@ -152,6 +152,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         public bool MotorTargetOnUndrivenAxes { get; init; } = false;
 
+        /// <summary>
+        /// Whether a vehicle's step cuts the velocity spikes the engine's contacts put into it (the cut Halcyon's vehicle code
+        /// made, see the "Spike mitigation" region of VehicleController). Null, the default, follows the behaviour: on under
+        /// <see cref="VehicleBehaviour.InWorldz"/>, off under <see cref="VehicleBehaviour.SecondLife"/>. True or false forces it.
+        /// </summary>
+        public bool? SpikeMitigation { get; init; } = null;
+
+        /// <summary>True when the spike cut acts in this region's vehicles.</summary>
+        public bool SpikeMitigationOn => SpikeMitigation ?? Behaviour == VehicleBehaviour.InWorldz;
+
         // Enablement switches, useful for debugging specific features. A region's settings, so that switching one off
         // in one region does not change the vehicles of another. All are true in production.
         public bool DoAngularDeflection { get; init; } = true;

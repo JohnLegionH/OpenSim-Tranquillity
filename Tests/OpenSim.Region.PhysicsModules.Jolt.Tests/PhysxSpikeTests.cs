@@ -28,7 +28,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// output with the prefix [physx]. Serial with the other native tests.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
-public class PhysxSpikeTests
+public partial class PhysxSpikeTests
 {
     private readonly ITestOutputHelper _out;
     public PhysxSpikeTests(ITestOutputHelper output) { _out = output; }
@@ -70,9 +70,14 @@ public class PhysxSpikeTests
     // vehicle, its motor's speed), and crosses the seam at x = 128. With `seam` null the two prims are one long prim (the
     // control). `spec` is [Jolt] SpeculativeContactDistance (null: the default).
     private SpikeMetrics DriveOverSeam(double rate, int n, bool edgeRemoval, Seam? seam, float nudge, double force, double v0, out double decel,
-                                       bool vehicle = false, float? spec = null, bool mitigate = true)
+                                       bool vehicle = false, float? spec = null, bool mitigate = true, string behaviour = null, bool? cutSetting = null)
     {
-        using var p = new SpikeProbe(rate, n, jolt => jolt.Set("BodyEnhancedEdgeRemoval", edgeRemoval ? "true" : "false"), null, spec);
+        using var p = new SpikeProbe(rate, n, jolt =>
+        {
+            jolt.Set("BodyEnhancedEdgeRemoval", edgeRemoval ? "true" : "false");
+            if (behaviour != null) jolt.Set("VehicleBehaviour", behaviour);
+            if (cutSetting is bool cut) jolt.Set("VehicleSpikeMitigation", cut ? "true" : "false");
+        }, null, spec);
         if (seam is Seam s)
         {
             p.Static(new Omv.Vector3(10f, 10f, 1f), new Omv.Vector3(123f, 128f, 25.5f));
@@ -208,9 +213,14 @@ public class PhysxSpikeTests
     private const double VehicleLimitsWindow = 0.0156;
 
     private SpikeMetrics DriveOverGround(double rate, int n, bool rough, bool edgeRemoval, Omv.Vector3 size, double speed, float nudge,
-                                         float? spec = null, bool vehicle = false, bool mitigate = true, string behaviour = null)
+                                         float? spec = null, bool vehicle = false, bool mitigate = true, string behaviour = null, bool? cutSetting = null)
     {
-        using var p = new SpikeProbe(rate, n, jolt => { jolt.Set("BodyEnhancedEdgeRemoval", edgeRemoval ? "true" : "false"); if (behaviour != null) jolt.Set("VehicleBehaviour", behaviour); }, Ground(rough), spec);
+        using var p = new SpikeProbe(rate, n, jolt =>
+        {
+            jolt.Set("BodyEnhancedEdgeRemoval", edgeRemoval ? "true" : "false");
+            if (behaviour != null) jolt.Set("VehicleBehaviour", behaviour);
+            if (cutSetting is bool cut) jolt.Set("VehicleSpikeMitigation", cut ? "true" : "false");
+        }, Ground(rough), spec);
         float x0 = 40f, y = 128f + nudge;
         float z = Height(40, 128, rough) + size.Z * 0.5f + 0.3f;
         JoltPrim box = vehicle ? p.MakeVehicle(size, new Omv.Vector3(x0, y, z)) : p.Box(size, new Omv.Vector3(x0, y, z));
