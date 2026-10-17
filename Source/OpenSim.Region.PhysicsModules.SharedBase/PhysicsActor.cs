@@ -305,6 +305,20 @@ public abstract class PhysicsActor
     /// <summary>Ends <see cref="HoldStill"/>: the object moves on from where it is with the velocity it was held with.</summary>
     public virtual void ReleaseHold() { }
 
+    /// <summary>
+    /// Ends <see cref="HoldStill"/> for an object that was held for <paramref name="heldSeconds"/>. An engine that keeps the
+    /// object's travel across the wait moves it on by its velocity times that time (above the ground, and not into another
+    /// body) before it lets go; the default only lets go, so the object resumes from where it was held.
+    /// </summary>
+    public virtual void ReleaseHold(float heldSeconds) { ReleaseHold(); }
+
+    /// <summary>
+    /// Whether an object that has just crossed into the region with avatars is kept from crossing out again for a short
+    /// time (<c>RideOnLimits.RecrossWaitMs</c>), so that the avatars that are still arriving are not carried out again. The
+    /// default is false: such an object may cross at once.
+    /// </summary>
+    public virtual bool WaitsBeforeCrossingBack => false;
+
     public abstract void link(PhysicsActor obj);
 
     public abstract void delink();

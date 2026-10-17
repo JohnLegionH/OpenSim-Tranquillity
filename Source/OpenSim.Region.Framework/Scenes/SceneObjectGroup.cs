@@ -783,6 +783,13 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
     public bool HeldForRiders { get; set; }
 
     /// <summary>
+    /// The time (the receiving region's crossing clock, ms) at which this object arrived in the region with riders to wait
+    /// for; NaN when it did not. An engine that asks for it (<see cref="PhysicsActor.WaitsBeforeCrossingBack"/>) keeps the
+    /// object from crossing out again for <see cref="RideOnLimits.RecrossWaitMs"/> after that.
+    /// </summary>
+    public double ArrivedWithRidersAtMs { get; set; } = double.NaN;
+
+    /// <summary>
     /// Set on the frozen original of an object this region sent to another region, from the moment that region took it
     /// until it reports the crossing complete (the object is then deleted) or gives it back (see <see cref="ShowToViewers"/>):
     /// the viewers of this region are not shown it, since they would see it twice.
@@ -1051,6 +1058,17 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         }
     }
 
+    /// <summary>
+    /// True while this object, which crossed into the region with riders, is within the short time after that in which its
+    /// engine does not let it cross out again.
+    /// </summary>
+    private bool IsWaitingBeforeCrossingBack(Scene scene)
+    {
+        if (double.IsNaN(ArrivedWithRidersAtMs) || m_rootPart.PhysActor is not { WaitsBeforeCrossingBack: true })
+            return false;
+        return scene.CrossingClock() - ArrivedWithRidersAtMs < RideOnLimits.RecrossWaitMs;
+    }
+
     private SceneObjectGroup CrossAsyncCore(SceneObjectGroup sog, Vector3 val, TeleportObjectData tpdata, CrossState state)
     {
         Scene sogScene = sog.m_scene;
@@ -1106,6 +1124,16 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         // engine, and with it the ground under them
         if (entityTransfer is not null)
             destination = entityTransfer.GetObjectDestination(sog, val, out newpos);
+
+        if (destination is not null && !isTeleport && sog.IsWaitingBeforeCrossingBack(sogScene))
+        {
+            // It crossed in with riders a moment ago, and its engine keeps such an object from crossing out again at once
+            // (Halcyon: SceneObjectGroup.cs, TestForAndBeginCrossing). It stays: nothing has been frozen yet, so the body is
+            // taken out of the engine as for any crossing and the caller puts it back inside the border, at rest.
+            root.KeyframeMotion?.StartCrossingCheck();
+            root.PhysActor?.CrossingStart();
+            return sog;
+        }
 
         string reason = string.Empty;
         EntityTransferContext ctx = new();
