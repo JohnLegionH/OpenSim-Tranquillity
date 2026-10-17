@@ -60,6 +60,7 @@
  * InWorldz Halcyon code, under the Halcyon notice above: OpenSim/Region/Physics/Manager/Vehicle/FloatParams.cs and
  * VehicleFlags.cs (Halcyon commit 3125cc15fc).
  * Adapted 2026 by Legion Builds
+ * This change adds the wind efficiency codes 12001 and 12002 and the per-axis motor timescale fields (Halcyon VectorParams.cs:53-60), and the optional running-state fields of the two motors (m_linearMotorRunAge, m_linearMotorRunDirection, m_linearMotorRunTarget and the three angular ones) that a region crossing fills.
  */
 
 using OpenMetaverse;
