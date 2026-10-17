@@ -36,6 +36,9 @@ internal sealed class BehaviourBody : IVehicleBody
     public float GetTerrainHeight(Vector3 pos) => 0f;
     public float GetWaterLevel(Vector3 pos) => WaterLevel;
 
+    /// <summary>True: the body moves but does not turn, whatever its angular velocity (a vehicle held at its attitude).</summary>
+    public bool HoldOrientation { get; set; }
+
     /// <summary>The water's height (far below the body by default).</summary>
     public float WaterLevel { get; set; } = -100f;
 
@@ -88,6 +91,8 @@ internal sealed class BehaviourBody : IVehicleBody
     {
         LinearVelocity += Gravity * (GravityFactor * (float)h);
         Position += LinearVelocity * (float)h;
+        if (HoldOrientation)
+            return;
         Vector3 w = AngularVelocity;
         float speed = w.Length();
         if (speed <= 0f)

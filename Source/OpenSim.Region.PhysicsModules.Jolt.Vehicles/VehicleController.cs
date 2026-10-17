@@ -1,4 +1,36 @@
 /*
+ * Copyright (c) Contributors, http://opensimulator.org/
+ * See CONTRIBUTORS.TXT for a full list of copyright holders.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *     * Redistributions of source code must retain the above copyright
+ *       notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright
+ *       notice, this list of conditions and the following disclaimer in the
+ *       documentation and/or other materials provided with the distribution.
+ *     * Neither the name of the OpenSimulator Project nor the
+ *       names of its contributors may be used to endorse or promote products
+ *       derived from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE DEVELOPERS ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE CONTRIBUTORS BE LIABLE FOR ANY
+ * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * The quotations from http://wiki.secondlife.com/wiki/Linden_Vehicle_Tutorial
+ * are Copyright (c) 2009 Linden Research, Inc and are used under their license
+ * of Creative Commons Attribution-Share Alike 3.0
+ * (http://creativecommons.org/licenses/by-sa/3.0/).
+ */
+
+/*
  * Copyright (c) 2015, InWorldz Halcyon Developers
  * All rights reserved.
  * 
@@ -1820,9 +1852,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             else
                 change = HorizontalDeflection(_rawWorldLinearVel, forward, share);
             // InWorldz applies the push only if some part of it is more than 0.005 m/s in a step (VehicleDynamics.cs:1204-1208), which
-            // keeps a vehicle at rest from being pushed about by a nose a fraction of a degree off its velocity; a collision step
-            // takes its share of that.
-            float least = VehicleLimits.ThresholdLinearMotorDeltaV * _stepShare;
+            // keeps a vehicle at rest from being pushed about by a nose a fraction of a degree off its velocity. The 0.005 is per
+            // 15 ms step, an acceleration of 0.33 m/s^2, so a step of h seconds takes h / 15 ms of it.
+            float least = VehicleLimits.ThresholdLinearMotorDeltaV * (float)(h / HalcyonStep);
             if (InWorldz && Math.Abs(change.X) <= least && Math.Abs(change.Y) <= least && Math.Abs(change.Z) <= least)
                 change = Vector3.Zero;
             if (change != Vector3.Zero)
@@ -2182,7 +2214,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             float timescale = _sp.GetFloat(VehFloatParam.VerticalAttractionTimescale, 1000f);
             float efficiency = _sp.GetFloat(VehFloatParam.VerticalAttractionEfficiency, 0f);
             Vector3 x = Vector3.UnitX * _rotation, y = Vector3.UnitY * _rotation, z = Vector3.UnitZ * _rotation;
-            angle = (float)Math.Acos(Utils.Clamp(z.Z, -1f, 1f));
+            // InWorldz measures the tilt as the angle of the rotation that keeps the roll and pitch and drops the yaw
+            // (VehicleDynamics.cs:1233-1236); the documented attractor uses the angle between the z axis and up.
+            angle = InWorldz ? HalcyonVehicleLaws.TiltAngle(_rotation) : (float)Math.Acos(Utils.Clamp(z.Z, -1f, 1f));
             inverted = false;
             if (timescale >= S.MaxAttractTimescale)
             {
@@ -2319,8 +2353,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         //     do not depend on the step rate here.
         //   - Halcyon has no limit on the growth (its PhysX body's angular speed limit bounds the effect); here the factor
         //     stops at MaxAttractorEscalation, the cap the documented-spring form of this attractor needed and this one keeps.
-        // The tilt is the angle between the vehicle's z axis and up; Halcyon takes it from the Euler roll and pitch,
-        // which agree for the tilts of a vehicle that is righting itself.
+        // The tilt is Halcyon's: the angle of the rotation made of the Euler roll and pitch alone (HalcyonVehicleLaws.TiltAngle),
+        // which is larger than the angle between the z axis and up when the vehicle is rolled and pitched at once.
 
         /// <summary>InWorldz's strength factor for a tilt of <paramref name="tilt"/> radians: 1 + (1 + tilt / pi)^4.</summary>
         internal static float InWorldzAttractorBoost(float tilt)
@@ -2371,10 +2405,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 pitchShare = _sp.Type == VehicleType.Airplane || _sp.Type == VehicleType.Balloon ? 0f : (float)RollOnlyPitchShare;
 
             (float rollPush, float pitchPush) = HalcyonVehicleLaws.AttractorPush(y.Z, x.Z, efficiency, timescale, h, strength, pitchShare);
-            // The share is Halcyon's per step; a collision step takes its share of the step's, compounded.
+            // The share is Halcyon's per step of its 15 ms (VehicleDynamics.cs:1306-1308); a step of h seconds takes it
+            // h / 15 ms times over, compounded, so the damping a second does not depend on the step.
             float damping = HalcyonVehicleLaws.AttractorDampingShare(efficiency);
-            if (_stepShare < 1f)
-                damping = 1f - (float)Math.Pow(1.0 - damping, _stepShare);
+            damping = 1f - (float)Math.Pow(1.0 - damping, h / HalcyonStep);
             float rollRate = Vector3.Dot(worldAngularVel, x);
             float pitchRate = Vector3.Dot(worldAngularVel, y);
 
@@ -2574,18 +2608,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             {
                 // "Gravity check. Any up Z-forces less than the effective gravity are nulled" (VehicleDynamics.cs:2707-2712,
                 // read, not run): the motor's upward change of velocity this step has gravity times the share of it not
-                // carried by buoyancy added to it (gravity is negative), and is dropped if that leaves it below zero. It is
-                // compared as a change of velocity against an acceleration, as there.
-                if (motorChange.Z > 0f)
-                {
-                    motorChange.Z += _body.Gravity.Z * (1f - _sp.GetFloat(VehFloatParam.Buoyancy, 0f)) * _stepShare;
-                    if (motorChange.Z < 0f)
-                        motorChange.Z = 0f;
-                }
+                // carried by buoyancy added to it (gravity is negative), and is dropped if that leaves it below zero.
+                // Halcyon adds the acceleration (m/s^2) to the change of velocity of one 15 ms step (m/s) without
+                // multiplying it by the step, so a push has to gain more than 9.8 m/s in a step to survive. The motor closes
+                // its gap to the target in one step, so the limit is held as a speed at every step length
+                // (HalcyonVehicleLaws.UpwardMotorChange).
+                motorChange.Z = HalcyonVehicleLaws.UpwardMotorChange(motorChange.Z, _body.Gravity.Z,
+                    _sp.GetFloat(VehFloatParam.Buoyancy, 0f));
 
                 // "Hover moderation. If hover is present, accelerate the motor decay" (2714-2720): a motor that still moves the
                 // vehicle up or down while a hover flag is set and the hover is on has its decay clock put on ten seconds.
-                hoverFights = Math.Abs(motorChange.Z) > VehicleLimits.ThresholdLinearMotorDeltaV * _stepShare
+                hoverFights = Math.Abs(motorChange.Z) > VehicleLimits.ThresholdLinearMotorDeltaV * (float)(h / HalcyonStep)
                     && (_sp.Flags & (ExtendedVehicleFlags.HoverGlobalHeight | ExtendedVehicleFlags.HoverTerrainOnly | ExtendedVehicleFlags.HoverWaterOnly)) != 0
                     && _sp.GetFloat(VehFloatParam.HoverTimescale, 1000f) < S.MaxHoverTimescale;
             }
@@ -2725,6 +2758,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         private float _heightAbove;
         private float _timeAboveHeight;
         private bool _motorsOffByHeight;
+        private double _heightRayClock;
+
+        /// <summary>True while the motor-height rule has the motors off. For tests.</summary>
+        internal bool MotorsOffByHeight => _motorsOffByHeight;
 
         /// <summary>
         /// InWorldz's motor-height rule (VehicleDynamics.cs:2494-2573, read, not run): a vehicle that has been more than
@@ -2733,7 +2770,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// drive while it flies. The legacy car has 0.75 m and 2.5 s, the legacy sled and boat their own; the airplane and
         /// the rest have 0, which is off. The rule is off for a vehicle that hovers (the hover timescale below its maximum),
         /// has positive buoyancy, or moves slower than <see cref="HalcyonVehicleLaws.MotorHeightMinSpeed"/>, and it is
-        /// measured once in eight steps: a ray from the lower left edge of the vehicle's box, and if that finds nothing near
+        /// measured once in eight of Halcyon's 15 ms steps (0.12 s, kept in time): a ray from the lower left edge of the vehicle's box, and if that finds nothing near
         /// from the lower right edge, each starting a metre up the vehicle's own axis and going down it for three times the
         /// limit; the height is the distance less that metre, or the limit plus one metre when nothing is hit. The vehicle's own
         /// parts are not hit. The delay's clock runs as Halcyon's does, eight steps' time on every step
@@ -2755,7 +2792,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 limit = 0f;
             }
 
-            if (limit > 0f && m_frameNum % HalcyonVehicleLaws.MotorHeightRayInterval == 0
+            // Halcyon casts on every eighth frame of its 15 ms timer (VehicleDynamics.cs:2517, frameNum % 8); here the
+            // time since the last cast is carried, so the casts come every 0.12 s at any Update rate (the remainder
+            // stays, so the average does not drift).
+            bool rayDue = false;
+            _heightRayClock += h;
+            if (_heightRayClock >= HalcyonVehicleLaws.MotorHeightRaySeconds)
+            {
+                _heightRayClock -= HalcyonVehicleLaws.MotorHeightRaySeconds;
+                if (_heightRayClock >= HalcyonVehicleLaws.MotorHeightRaySeconds)
+                    _heightRayClock = 0.0;
+                rayDue = true;
+            }
+
+            if (limit > 0f && rayDue
                 && _body.TryGetBounds(out Vector3 center, out Vector3 half))
             {
                 Quaternion rot = _body.Orientation;

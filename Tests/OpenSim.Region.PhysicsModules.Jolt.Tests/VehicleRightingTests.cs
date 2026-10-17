@@ -100,7 +100,8 @@ public class VehicleRightingTests
     private static double[] Halcyon(double rate, double timescale, double efficiency, double friction)
     {
         double h = 1.0 / rate, e = StartTilt * Deg, w = 0;
-        double share = Math.Clamp(Math.Exp(efficiency / Math.E) - 1.0, 0, 1);
+        // Halcyon's damping share is per 15 ms frame; a step of h takes it h / 15 ms times over, compounded.
+        double share = 1.0 - Math.Pow(1.0 - Math.Clamp(Math.Exp(efficiency / Math.E) - 1.0, 0, 1), h / 0.015);
         double frictionChange = friction >= 1000 ? 0 : Math.Exp(-h / friction) - 1.0;
         double push = Math.PI * Math.Exp(3 * efficiency) * h / Math.Max(timescale, h);
         var result = new double[Marks.Length];
@@ -119,12 +120,12 @@ public class VehicleRightingTests
     }
 
     // Within 20% of the expected tilt, or within `floor` degrees of it (the expected tilt is near zero by 3 s).
-    private static void Within(double[] expected, double[] actual, string what, double floor = 0.5)
+    private static void Within(double[] expected, double[] actual, string what, double floor = 0.5, double fraction = 0.2)
     {
         for (int i = 0; i < Marks.Length; i++)
         {
             double tilt = Math.Abs(expected[i]);     // the tilt is an angle from up, so an overshoot past it is still a tilt
-            Assert.True(Math.Abs(actual[i] - tilt) <= Math.Max(0.2 * tilt, floor),
+            Assert.True(Math.Abs(actual[i] - tilt) <= Math.Max(fraction * tilt, floor),
                 $"{what}, {Marks[i]} s: {actual[i]:0.00} degrees against {tilt:0.00} (measured {string.Join(" ", actual.Select(a => a.ToString("0.00")))}; expected {string.Join(" ", expected.Select(a => a.ToString("0.00")))})");
         }
     }
@@ -186,15 +187,20 @@ public class VehicleRightingTests
     {
         var s = Settings(VehicleBehaviour.InWorldz, VehiclePresetSet.Legacy);
         double[] measured = Measure(Airplane(s, new Vector3((float)rollFriction, 1000f, 1000f)), 45.0);
+        // The reference is Halcyon's step by step law at 45 Hz with its damping share taken per 15 ms of time, and Halcyon at
+        // its own 15 ms step beside it, which the 45 Hz run follows to within the difference between two first-order steps.
         double[] expected = Halcyon(45.0, 2.0, 0.9, rollFriction);
+        double[] atHalcyonsStep = Halcyon(1.0 / 0.015, 2.0, 0.9, rollFriction);
+        Within(atHalcyonsStep, measured, $"friction {rollFriction} against Halcyon at 15 ms", floor: 1.3, fraction: 0.3);
         // The attractor goes dormant once the tilt moves under 0.7 degree a step (VehicleDynamics.cs:1255-1264), which the step
         // by step figures do not model, so it may rest that far from upright.
         Within(expected, measured, $"friction {rollFriction}", floor: 0.7);
         if (rollFriction >= 1000)
         {
-            // Halcyon's attractor at 45 Hz with nothing else: 7.9, 1.9, 0.5 and 0 degrees at 1, 2, 3 and 5 s.
-            Assert.InRange(expected[0], 7.8, 8.0);
-            Assert.InRange(expected[1], 1.8, 2.0);
+            // Halcyon's attractor at 45 Hz with nothing else: about 11, 4 and 1.4 degrees at 1, 2 and 3 s.
+            Assert.InRange(expected[0], 10.5, 12.0);
+            Assert.InRange(expected[1], 3.5, 4.5);
+            Assert.InRange(atHalcyonsStep[0], 11.5, 13.0);
         }
     }
 

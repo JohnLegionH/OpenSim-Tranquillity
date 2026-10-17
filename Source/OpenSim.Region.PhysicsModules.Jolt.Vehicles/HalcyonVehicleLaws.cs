@@ -54,8 +54,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
     /// </summary>
     public static class HalcyonVehicleLaws
     {
-        /// <summary>Steps between two down ray casts of the motor-height rule (VehicleDynamics.cs:63, NumTimeStepsPerRayCast).</summary>
+        /// <summary>Halcyon steps between two down ray casts of the motor-height rule (VehicleDynamics.cs:63, NumTimeStepsPerRayCast).</summary>
         public const int MotorHeightRayInterval = 8;
+
+        /// <summary>
+        /// The time between two down ray casts of the motor-height rule: eight of Halcyon's steps of
+        /// <see cref="VehicleController.HalcyonStep"/> (15 ms), 0.12 s. Halcyon counted frames of its own timer; counting
+        /// engine Updates instead made the interval 0.18 s at 45 Hz and 0.125 s at 64 Hz, so the rule is kept in time.
+        /// </summary>
+        public const double MotorHeightRaySeconds = MotorHeightRayInterval * VehicleController.HalcyonStep;
 
         /// <summary>A vehicle slower than this (m/s) has the motor-height rule off (VehicleDynamics.cs:2509).</summary>
         public const float MotorHeightMinSpeed = 0.5f;
@@ -449,6 +456,39 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             double z = Math.Atan2(v.Y, v.X);
 
             return new Vector3((float)x, (float)y, (float)z);
+        }
+
+        /// <summary>
+        /// The gravity check on the linear motor's upward change of velocity (VehicleDynamics.cs:2707-2712, "Any up Z-forces
+        /// less than the effective gravity are nulled"). Halcyon adds the gravity, an acceleration, to the change of velocity
+        /// of one 15 ms step without multiplying it by the step: a push of <paramref name="dvz"/> m/s has to be over
+        /// g (1 - buoyancy) m/s (9.8 for a car) to be kept at all, and what is kept is the part over it. Its motor closes the
+        /// gap to its target velocity in one step, a change that does not shrink with the step, so the limit is a speed and is
+        /// held at every step length: a vehicle falling at 4 m/s under an up motor aimed at 1 m/s is not lifted at 15 ms, nor
+        /// at 4 ms, where scaling the limit by the step would have lifted it. What this gives up: a motor that ramps harder
+        /// than g / 15 ms (650 m/s^2), which Halcyon let through, is dropped at steps under 15 ms, as the ramp's change per
+        /// step is then under the limit.
+        /// </summary>
+        public static float UpwardMotorChange(float dvz, float gravityZ, float buoyancy)
+        {
+            if (dvz <= 0f)
+                return dvz;
+            dvz += gravityZ * (1f - buoyancy);
+            return dvz < 0f ? 0f : dvz;
+        }
+
+        /// <summary>
+        /// The tilt the InWorldz vertical attractor reads (VehicleDynamics.cs:1230-1236, SimulateVerticalAttractor): the rotation
+        /// angle of the Euler roll and pitch of <paramref name="rotation"/> with the yaw set to 0 (PhysUtil.cs: Rot2Euler,
+        /// Euler2Rot, Rot2Angle). For a pure roll or a pure pitch it is the angle between the z axis and up; rolled and pitched
+        /// together it is a little larger (45 and 45 degrees give 62.8 degrees where the z axis is 60 degrees off).
+        /// </summary>
+        public static float TiltAngle(Quaternion rotation)
+        {
+            Vector3 e = Rot2Euler(rotation);
+            // Halcyon builds Euler2Rot(roll, pitch, 0) and reads Rot2Angle; with the yaw 0 its w is cos(roll/2) cos(pitch/2).
+            double w = Math.Cos(e.X / 2.0) * Math.Cos(e.Y / 2.0);
+            return (float)Math.Abs(2.0 * Math.Acos(Math.Clamp(w, -1.0, 1.0)));
         }
 
         /// <summary>The decay clock that switches a linear motor off (VehicleDynamics.cs:1062, MaxDecayTimescale x 10).</summary>
