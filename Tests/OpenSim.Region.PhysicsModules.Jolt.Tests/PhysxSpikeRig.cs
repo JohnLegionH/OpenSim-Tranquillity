@@ -128,6 +128,24 @@ internal sealed class SpikeProbe : IDisposable
     private static readonly FieldInfo SystemField = typeof(JoltPhysicsBackend).GetField("_system", BindingFlags.NonPublic | BindingFlags.Instance);
     private static readonly FieldInfo RecordsField = typeof(JoltPhysicsBackend).GetField("_joltToRecord", BindingFlags.NonPublic | BindingFlags.Instance);
 
+    // The speculative contact distances the seam, rough-ground, tunnelling, overlap and gravity tests run with. PHYSX_SPECS="0;0.01" (the word "default" is the engine's own)
+    // runs them with other values, to measure a candidate default; unset it is the configured default (null, 0.02), 0.0025 and 0.
+    public static readonly float?[] Specs = ReadSpecs();
+
+    /// <summary>The one value PHYSX_SPECS names (null if it names none or several): what the rough-ground drives run with.</summary>
+    public static float? EnvSpec => Specs.Length == 1 ? Specs[0] : null;
+
+    /// <summary>What the rough-ground drives run with: the configured default, which their bounds were set at, and 0.0025.</summary>
+    public static float?[] T2Specs => Specs.Where(s => s != 0f).ToArray();
+
+    private static float?[] ReadSpecs()
+    {
+        string env = Environment.GetEnvironmentVariable("PHYSX_SPECS");
+        if (string.IsNullOrWhiteSpace(env)) return new float?[] { null, 0.0025f, 0f };
+        return env.Split(';', StringSplitOptions.RemoveEmptyEntries)
+                  .Select(t => t.Trim() == "default" ? (float?)null : float.Parse(t, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+    }
+
     public readonly StepRateRig Rig;
     private readonly List<StepTrace> _traces = new();
     private uint _nextId = 1000;

@@ -117,8 +117,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public bool AvatarEnhancedEdgeRemoval = false;
 
         // Jolt's speculative contact distance in metres (PhysicsSettings mSpeculativeContactDistance; the engine's own value is
-        // 0.02). A box sliding across two abutted prims can be stopped and tipped at the seam by the next prim's end face seen
-        // from within this distance; 0 removes that. See "Seams between prims" in Docs/JoltPhysics.md.
+        // 0.02, which is the default). A box sliding across two abutted prims can be stopped and tipped at the seam by the next
+        // prim's end face seen from within this distance; 0.0025 and less remove that, 0.005 and more do not, and every value
+        // under 0.02 also changes how other contacts settle. See "Seams between prims" in Docs/JoltPhysics.md.
         public float SpeculativeContactDistance = 0.02f;
 
         // true: avatars and physical objects standing on a prim that keyframed motion (llSetKeyframedMotion) is moving are

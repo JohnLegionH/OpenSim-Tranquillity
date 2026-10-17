@@ -83,8 +83,9 @@ public partial class PhysxSpikeTests
         Assert.True(inFlight == 0, $"{rate} Hz x {n}: the cut acted {inFlight} times while the airplane was more than 3 m above the ground");
     }
 
-    // [Jolt] VehicleSpikeMitigation under Second Life behaviour: the T1 vehicle across the seams and the T2 vehicle over rough
-    // ground with the cut forced on and forced off (the behaviour's own choice there is off, and is asserted by the T2 test).
+    // [Jolt] VehicleSpikeMitigation under Second Life behaviour: the vehicle across the seams and the vehicle over rough
+    // ground with the cut forced on and forced off (the behaviour's own choice there is off, and is asserted by the
+    // rough-ground vehicle test).
     // The figures are recorded; what is asserted is that the setting does what it says.
     [Theory]
     [MemberData(nameof(Cells))]
