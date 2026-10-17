@@ -132,6 +132,24 @@ public class VehicleBugRowsRateTests
         Assert.True(Vz(SecondLife) > fall + 0.5, $"Second Life's up motor held the car up ({Vz(SecondLife):0.000} against {fall:0.000})");
     }
 
+    // ---- HP-13: the first step ---------------------------------------------------------------------------------------
+
+    // Halcyon's first call integrates 0.2 of the step (the smoothed step starts from a Timestep of 0). The controller smooths
+    // nothing: the first Update of a new vehicle moves it as far as any other, so a motor's first step is the exact one.
+    [Theory]
+    [MemberData(nameof(Grid))]
+    public void The_first_update_of_a_new_vehicle_is_a_whole_step(double rate, int n)
+    {
+        var rig = new BehaviourRig(SecondLife, Vehicle.TYPE_CAR, gravity: false);
+        rig.Car.ProcessFloatVehicleParam(Vehicle.LINEAR_MOTOR_TIMESCALE, 2f);
+        rig.Car.ProcessFloatVehicleParam(Vehicle.LINEAR_MOTOR_DECAY_TIMESCALE, 120f);
+        rig.Car.ProcessVectorVehicleParam(Vehicle.LINEAR_MOTOR_DIRECTION, new Vector3(8f, 0f, 0f));
+        rig.StepUpdate(1.0 / rate, n);
+        double t = 1.0 / rate, td = 120.0;
+        double expected = 8 * (1.0 - Math.Exp(-td * (1.0 - Math.Exp(-t / td)) / 2.0));
+        Near(rig.Body.LinearVelocity.X, expected, expected, "speed after the first update", rate, n, 1.0);
+    }
+
     // ---- HP-22: the deflection's 0.005 m/s threshold ---------------------------------------------------------------
 
     private static double DeflectedAngle(double startDegrees, double rate, int n, double seconds)
