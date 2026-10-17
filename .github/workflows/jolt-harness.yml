@@ -107,7 +107,7 @@ jobs:
           case "$rc" in
             0) ;;
             3) echo "::notice title=Harness baseline skipped::$(head -n 1 "$out/baseline-check.txt")" ;;
-            *) exit "$rc" ;;
+            *) echo "::error title=Harness baseline check failed::$(head -c 1500 "$out/baseline-check.txt" | tr '\n' ' ')"; exit "$rc" ;;
           esac
 
       # Under traced/, which the check above does not read: these runs have no baseline.
