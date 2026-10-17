@@ -198,18 +198,16 @@ public class VehicleBugRowsRateTests
         Assert.Equal(180.0, HalcyonVehicleLaws.TiltAngle(Tilt(180, 0, 0)) / Deg, 2);
     }
 
-    // ---- HP-23 and HP-33: the sled's slope assist ---------------------------------------------------------------------
+    // ---- HP-23: the sled's slope assist (regression, the grid it was not on) ------------------------------------------
 
-    // The speed the assist adds along the nose in 1 s on a 15 degree slope, held at that pitch (the same sled with the
-    // assist at 0 is the reference, so gravity and friction cancel).
-    private static double SledGain(double rate, int n, VehicleBehaviour behaviour, bool zeroOffset)
+    private static double SledGain(double rate, int n, Vector3? offset = null)
     {
         double Speed(float assist)
         {
-            var rig = new BehaviourRig(new VehicleSettings { Behaviour = behaviour, SledAssist = assist, Presets = behaviour == VehicleBehaviour.InWorldz ? VehiclePresetSet.Legacy : VehiclePresetSet.Documented }, Vehicle.TYPE_SLED, gravity: true);
+            var rig = new BehaviourRig(new VehicleSettings { Behaviour = VehicleBehaviour.InWorldz, SledAssist = assist }, Vehicle.TYPE_SLED, gravity: true);
             rig.Car.ProcessVectorVehicleParam(Vehicle.LINEAR_FRICTION_TIMESCALE, new Vector3(30f, 1000f, 1000f));
-            if (zeroOffset)
-                rig.Car.ProcessVectorVehicleParam(Vehicle.LINEAR_MOTOR_OFFSET, Vector3.Zero);
+            if (offset.HasValue)
+                rig.Car.ProcessVectorVehicleParam(Vehicle.LINEAR_MOTOR_OFFSET, offset.Value);
             rig.Body.Orientation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, (float)(15 * Deg));
             rig.Body.HoldOrientation = true;   // held at its pitch
             int updates = (int)Math.Round(rate);
@@ -220,26 +218,26 @@ public class VehicleBugRowsRateTests
         return Speed(VehicleSettings.DefaultSledAssist) - Speed(0f);
     }
 
-    // The assist as an acceleration, k g sqrt(sin pitch), through the nose friction of 30 s, for 1 s.
-    private static double SledExpected(double k)
-        => k * 9.80665 * Math.Sqrt(Math.Sin(15 * Deg)) * 30.0 * (1 - Math.Exp(-1.0 / 30.0));
-
     [Theory]
     [MemberData(nameof(Grid))]
-    public void The_sleds_assist_is_the_weak_one_without_an_offset_and_under_Second_Life(double rate, int n)
+    public void The_sleds_assist_gives_the_same_speed_at_every_rate(double rate, int n)
     {
-        Near(SledGain(rate, n, VehicleBehaviour.InWorldz, zeroOffset: true), SledExpected(0.045), SledExpected(0.045), "sled assist, no offset, InWorldz", rate, n, 1.0);
-        // Second Life's sled with an offset set by the script gets the weak assist too.
-        Near(SledGain(rate, n, VehicleBehaviour.SecondLife, zeroOffset: false), SledExpected(0.045), SledExpected(0.045), "sled assist, Second Life", rate, n, 1.0);
+        double a = 3 * HalcyonStep * 9.80665 * Math.Sqrt(Math.Sin(15 * Deg));
+        double expected = a * 30.0 * (1 - Math.Exp(-1.0 / 30.0));
+        Near(SledGain(rate, n), expected, expected, "sled assist gain after 1 s", rate, n, 1.0);
     }
 
     [Theory]
     [MemberData(nameof(Grid))]
-    public void A_sled_with_an_offset_gets_Halcyons_66_times_assist_under_InWorldz_at_every_rate(double rate, int n)
+    public void A_sleds_assist_is_the_same_with_and_without_a_linear_motor_offset(double rate, int n)
     {
-        // The default InWorldz sled has the offset <0, 0, -0.1>: Halcyon's assist for it is an impulse of the force, 3 g
-        // sqrt(sin pitch) as an acceleration (0.045 g sqrt(sin pitch) is the same force as a Force, 1 / 15 ms times less).
-        Near(SledGain(rate, n, VehicleBehaviour.InWorldz, zeroOffset: false), SledExpected(3.0), SledExpected(3.0), "sled assist with the default offset, InWorldz", rate, n, 1.0);
+        // Halcyon applies the assist as a force at the offset as an impulse, which is 1 / 15 ms times the force the same
+        // code applies without an offset; the result is a unit slip about 66 times too large (a default sled would reach about
+        // 70 m/s within 4 s on a 15 degree slope), so the assist is not copied. It is the rate-independent 0.045 g
+        // sqrt(|sin pitch|) with the offset the default sled has, and without one.
+        double expected = 0.045 * 9.80665 * Math.Sqrt(Math.Sin(15 * Deg)) * 30.0 * (1 - Math.Exp(-1.0 / 30.0));
+        Near(SledGain(rate, n, new Vector3(0f, 0f, -0.1f)), expected, expected, "sled assist, default offset", rate, n, 1.0);
+        Near(SledGain(rate, n, Vector3.Zero), expected, expected, "sled assist, no offset", rate, n, 1.0);
     }
 
     // ---- HP-25, HP-26, HP-27: the attractor (regression on the grid) ------------------------------------------------
