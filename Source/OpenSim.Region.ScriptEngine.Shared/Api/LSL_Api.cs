@@ -8316,7 +8316,7 @@ public void llDetachFromAvatar()
                 height += ground;
             }
 
-            m_host.SetHoverHeight((float)height, hoverType, (float)tau);
+            m_host.SetHoverHeight((float)height, hoverType, (float)tau, repel: true);
         }
     }
 

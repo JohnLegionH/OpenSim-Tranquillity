@@ -3510,7 +3510,7 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
     /// <param name="height">Height to hover.  Height of zero disables hover.</param>
     /// <param name="hoverType">Determines what the height is relative to </param>
     /// <param name="tau">Number of seconds over which to reach target</param>
-    public void SetHoverHeight(float height, PIDHoverType hoverType, float tau)
+    public void SetHoverHeight(float height, PIDHoverType hoverType, float tau, bool repel = false)
     {
         if (IsAttachment)
         {
@@ -3535,6 +3535,7 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
                         m_scriptHoverHeight = height;
                         m_scriptHoverType = hoverType;
                         m_scriptHoverTau = tau;
+                        m_scriptHoverRepel = repel;
                     }
                     if (m_grabbed)
                         return;
@@ -3545,6 +3546,7 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
                     pa.PIDHoverHeight = height;
                     pa.PIDHoverType = hoverType;
                     pa.PIDHoverTau = tau;
+                    pa.PIDHoverRepel = repel;
                     pa.PIDHoverActive = true;
                 }
                 else
@@ -4512,6 +4514,7 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
     private float m_scriptHoverHeight;
     private float m_scriptHoverTau;
     private PIDHoverType m_scriptHoverType;
+    private bool m_scriptHoverRepel;
 
     /// <summary>
     /// If object is physical, steer it to the cursor with the physics actor's move-to-target
@@ -4689,6 +4692,7 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
                 pa.PIDHoverHeight = m_scriptHoverHeight;
                 pa.PIDHoverType = m_scriptHoverType;
                 pa.PIDHoverTau = m_scriptHoverTau;
+                pa.PIDHoverRepel = m_scriptHoverRepel;
                 pa.PIDHoverActive = true;
             }
         }

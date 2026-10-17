@@ -48,6 +48,12 @@
 // is kept instead (core gives a script's llTargetOmega back when a rotate-drag ends, just after it switches the target off).
 //
 // A body that has settled at its target may sleep; a new target, or a body found asleep away from its target, wakes it.
+//
+// This file is the Update-rate half. The spring is worked out in every collision step by BasicForcesStepProvider (which also
+// holds the virtual rotation and the loss estimate), over the step's own length, so the motion is the same at every
+// physics rate and number of collision steps. Under [Jolt] BasicForcesBehaviour = InWorldz (the default) the rotation target
+// is Halcyon's (HalcyonBasicForces.RotLook, PhysxPrim.pid.cs DoRotLookTarget), the same spring and drag in a form that is
+// stable at any step length.
 
 using System;
 using System.Threading;
@@ -75,10 +81,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal const float HoldAngle = 0.0035f;
 
         // A turn to make (rad) under which no allowance is made for what the engine takes from the command: the body is there.
-        private const float MinLossTurn = 0.0005f;
+        internal const float MinLossTurn = 0.0005f;
 
         // A spin (rad/s) under which a body at its target has settled there.
-        private const float SettledAngularSpeed = 0.01f;
+        internal const float SettledAngularSpeed = 0.01f;
 
         private SQuaternion _apidTarget = SQuaternion.Identity;   // _targetLock
         private float _apidStrength;                              // _targetLock
@@ -87,16 +93,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private bool _apidChanged;                                // _targetLock: wake the body
         private int _apidSpunByScript;                            // set by RotationalVelocity, read by the step
 
-        // Step thread only.
+        // Update-rate path only (the spring itself lives in BasicForcesStepProvider).
         private bool _angActing;           // the controller set the body's angular velocity in the last step
-        private bool _angHaveVirtual;
-        private SQuaternion _angQ;         // the spring's rotation
-        private SVector3 _angW;            // the spring's angular velocity
-        private bool _angHavePrev;         // a command was given in the last step, from _angPrevQ
-        private SQuaternion _angPrevQ;     // the body's rotation before it
-        private SVector3 _angPrevCmd;      // the velocity set then
-        private float _angPrevScale;       // the rotation that velocity gives over the step, per unit of it (step x damping mean)
-        private float _angLoss;            // what the engine took from the commanded velocity in the last steps (rad/s)
 
         public override Quaternion APIDTarget
         {
@@ -140,10 +138,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         /// <summary>
-        /// Called before every backend step (from <see cref="StepTargets"/>). Returns false once the target is off and the
-        /// body has been let go.
+        /// The Update-rate half of the rotation target (from <see cref="StepTargets"/>): reads the request, wakes or lets go of
+        /// the body, and fills in the plan that BasicForcesStepProvider carries out in every collision step. Returns false once
+        /// the target is off and the body has been let go.
         /// </summary>
-        private bool StepAngularTarget(float h)
+        private bool PrepareAngularTarget(BasicForcesStepProvider plan)
         {
             SQuaternion target;
             float strength, damping;
@@ -167,107 +166,47 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // request is kept, and a change made meanwhile is kept for then.
             if (_selected)
             {
-                _angHaveVirtual = false;
+                plan.ResetAngularState();
                 if (changed)
                     lock (_targetLock) _apidChanged = true;
                 return true;
             }
 
-            // "The minimum value for strength seems to be 0.0445 for the function to have any effect": under it the
-            // request is kept and nothing acts.
-            if (!(strength >= MinLookAtStrength))
+            // Second Life: "The minimum value for strength seems to be 0.0445 for the function to have any effect": under it
+            // the request is kept and nothing acts. Halcyon holds the strength to 0.1..1 and the damping to 0.1..100 and acts
+            // on whatever it is given (SetRotLookAtTarget).
+            if (!plan.InWorldz && !(strength >= MinLookAtStrength))
             {
                 AngularLetGo(false);
                 return true;
             }
-            float timescale = MathF.Max(strength, Math.Clamp(damping, 0f, MaxLookAtDamping));
 
             SQuaternion goal = SQuaternion.Normalize(BodyOrientationOf(new Quaternion(target.X, target.Y, target.Z, target.W)));
             SQuaternion q = SQuaternion.Normalize(s.Orientation);
-            SVector3 w = s.AngularVelocity;
             bool awake = (s.Flags & BodyStateFlags.Active) != 0;
+            bool fresh = !_angActing || spun;
             if (!awake)
             {
                 if (!changed && !spun && AngleBetween(q, goal) < HoldAngle)
                     return true;   // asleep at its target
                 _backend.ActivateBody(_body);
-                w = SVector3.Zero;
-                _angHaveVirtual = false;
+                fresh = true;
             }
-
-            if (!_angActing || spun || !_angHaveVirtual || AngleBetween(_angQ, q) > ResyncAngle)
+            if (fresh)
             {
-                _angQ = q;
-                _angW = w;
-                _angHaveVirtual = true;
-                _angHavePrev = false;
-                _angLoss = 0f;
+                plan.ResetAngular = true;
+                plan.AngularApproaching = true;
             }
             _angActing = true;
 
-            // The prim's axes that are locked (STATUS_ROTATE_*) as region axes: the spring acts on the rest.
-            SVector3 lockA = SVector3.Zero, lockB = SVector3.Zero, lockC = SVector3.Zero;
-            int locks = 0;
-            if (_bodyLockX) lockA = SVector3.Transform(SVector3.UnitX, q);
-            if (_bodyLockY) lockB = SVector3.Transform(SVector3.UnitY, q);
-            if (_bodyLockZ) lockC = SVector3.Transform(SVector3.UnitZ, q);
-            if (_bodyLockX || _bodyLockY || _bodyLockZ) locks = 1;
-            SVector3 Free(SVector3 v)
-            {
-                if (locks == 0) return v;
-                if (_bodyLockX) v -= SVector3.Dot(v, lockA) * lockA;
-                if (_bodyLockY) v -= SVector3.Dot(v, lockB) * lockB;
-                if (_bodyLockZ) v -= SVector3.Dot(v, lockC) * lockC;
-                return v;
-            }
-
-            // The spring over this step, on the rotation vector from the target to the spring's rotation.
-            SVector3 r = Free(RotationVector(SQuaternion.Normalize(SQuaternion.Multiply(_angQ, SQuaternion.Conjugate(goal)))));
-            SVector3 v0 = Free(_angW);
-            (double mx, double cx) = VehicleSpring.MoveOver(r.X, v0.X, timescale, 1.0, h);
-            (double my, double cy) = VehicleSpring.MoveOver(r.Y, v0.Y, timescale, 1.0, h);
-            (double mz, double cz) = VehicleSpring.MoveOver(r.Z, v0.Z, timescale, 1.0, h);
-            var move = new SVector3((float)mx, (float)my, (float)mz);          // the error's mean rate over the step
-            var springEnd = new SVector3((float)(mx + cx), (float)(my + cy), (float)(mz + cz));
-            SQuaternion next = SQuaternion.Normalize(SQuaternion.Multiply(FromRotationVector(move * h), _angQ));
-
-            // The angular velocity that takes the body from where it is to the spring's rotation at the end of the step,
-            // through the engine's angular damping.
-            SVector3 turn = Free(RotationVector(SQuaternion.Normalize(SQuaternion.Multiply(next, SQuaternion.Conjugate(q)))));
-            Damping d = DampingFor(_module.PrimAngularDamping, h);
-            float scale = h * d.Mean;
-
-            // What the last command gave: the turn it was meant to make and the turn the body made.
-            if (_angHavePrev && _angPrevCmd.LengthSquared() > 1e-12f)
-            {
-                SVector3 u = SVector3.Normalize(_angPrevCmd);
-                SVector3 made = RotationVector(SQuaternion.Normalize(SQuaternion.Multiply(q, SQuaternion.Conjugate(_angPrevQ))));
-                float missing = (_angPrevCmd.Length() * _angPrevScale - SVector3.Dot(made, u)) / _angPrevScale;
-                _angLoss = missing > 0f ? missing : _angLoss * 0.5f;
-            }
-            else
-                _angLoss *= 0.5f;
-
-            SVector3 cmd = turn / scale;
-            float turnLen = turn.Length();
-            if (turnLen > MinLossTurn && _angLoss > 0f)
-                cmd += turn * (_angLoss / turnLen);
-            float max = _module.BodyMaxAngularSpeed;
-            float len = cmd.Length();
-            if (len > max)
-            {
-                cmd *= max / len;
-                _angHaveVirtual = false;   // the body cannot keep up: the spring starts again from it
-            }
-            _angQ = next;
-            _angW = Free(springEnd);
-            _angHavePrev = true;
-            _angPrevQ = q;
-            _angPrevCmd = cmd;
-            _angPrevScale = scale;
-            _backend.SetBodyAngularVelocity(_body, cmd);
-
-            _angApproaching = r.Length() >= HoldAngle || v0.Length() > SettledAngularSpeed;
+            plan.Angular = true;
+            plan.Goal = goal;
+            plan.Strength = strength;
+            plan.Damping = damping;
+            plan.LockX = _bodyLockX;
+            plan.LockY = _bodyLockY;
+            plan.LockZ = _bodyLockZ;
+            _angApproaching = plan.AngularApproaching;
             ApplySleepRule();
             return true;
         }
@@ -279,7 +218,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // let go, right after it switches the target off) is the one the body keeps.
         private void AngularLetGo(bool vehicle, bool keepVelocity = false)
         {
-            _angHaveVirtual = false;
+            _basicForces?.ResetAngularState();
             if (!_angActing)
                 return;
             _angActing = false;
@@ -295,30 +234,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         /// <summary>The angle (rad) between two rotations, the short way.</summary>
-        private static float AngleBetween(SQuaternion a, SQuaternion b)
+        internal static float AngleBetween(SQuaternion a, SQuaternion b)
         {
             float dot = MathF.Min(1f, MathF.Abs(a.X * b.X + a.Y * b.Y + a.Z * b.Z + a.W * b.W));
             return 2f * MathF.Acos(dot);
-        }
-
-        /// <summary>The rotation as axis x angle, the angle in [0, pi].</summary>
-        private static SVector3 RotationVector(SQuaternion q)
-        {
-            if (q.W < 0f)
-                q = new SQuaternion(-q.X, -q.Y, -q.Z, -q.W);
-            var v = new SVector3(q.X, q.Y, q.Z);
-            float s = v.Length();
-            if (s < 1e-7f)
-                return v * 2f;
-            return v * (2f * MathF.Atan2(s, q.W) / s);
-        }
-
-        private static SQuaternion FromRotationVector(SVector3 r)
-        {
-            float angle = r.Length();
-            if (angle < 1e-9f)
-                return SQuaternion.Identity;
-            return SQuaternion.CreateFromAxisAngle(r / angle, angle);
         }
     }
 }
