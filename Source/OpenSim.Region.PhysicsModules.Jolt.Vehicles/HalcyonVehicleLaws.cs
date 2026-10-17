@@ -229,14 +229,21 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
             float[] newvel = new float[3];
             float[] ramp = new float[3];
+            float share = Math.Min(1f, step / (float)VehicleController.HalcyonStep);
             for (int i = 0; i < 3; i++)
             {
                 float dirsign = VehicleMath.PosNeg(dir[i]);
 
-                // The target is used where the velocity is lower: "The target ensures forward progress."
+                // The target is used where the velocity is lower: "The target ensures forward progress." (VehicleDynamics.cs:
+                // 2596-2598.) Halcyon takes the whole gap once per step of 15 ms. On the motor's own axes that is how a vehicle
+                // gets going against the friction that eats each step's gain, and it is kept whole. On an axis the motor has no
+                // direction on it is a change of velocity per step that something else can keep opening: the motor-up limit
+                // drops the vertical part of the push that closes the gap, and on a tilted car the part left over points along
+                // its path. There a shorter step takes its share of the gap (a longer one the whole), so the push over a
+                // second does not grow with the number of steps.
                 float adjvel = last[i];
                 if (dirsign * (target[i] - adjvel) >= 0)
-                    adjvel = target[i];
+                    adjvel = dir[i] != 0 || share >= 1f ? target[i] : adjvel + (target[i] - adjvel) * share;
 
                 ramp[i] = GrowthRate(adjvel, dir[i], Math.Max(ts[i] / step, 1f));
                 newvel[i] = adjvel + adjvel * ramp[i];
