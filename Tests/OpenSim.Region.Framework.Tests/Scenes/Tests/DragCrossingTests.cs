@@ -10,6 +10,7 @@ using Nini.Config;
 using OpenMetaverse;
 using OpenSim.Framework;
 using OpenSim.Region.Framework.Interfaces;
+using OpenSim.Region.Framework.Scenes.Serialization;
 using OpenSim.Region.PhysicsModules.BasicPhysics;
 using OpenSim.Region.PhysicsModules.SharedBase;
 using OpenSim.Tests.Common;
@@ -33,7 +34,9 @@ public class DragCrossingTests : HeldCrossingFixture
 
     private DragPhysics m_physicsA;
     private DragPhysics m_physicsB;
-    private ScenePresence m_dragger;
+    private ScenePresence m_bystander;
+    private IClientAPI m_dragClient;
+    private UUID m_dragId;
 
     // coordinates no other test class uses: the grid data is shared between classes
     protected virtual uint RegionCell => 6400;
@@ -48,9 +51,22 @@ public class DragCrossingTests : HeldCrossingFixture
         Assert.NotNull(m_platform.RootPart.PhysActor);
         Assert.True(m_platform.RootPart.PhysActor.IsPhysical);
 
-        m_dragger = AddAvatar(0x11, Start + new Vector3(0.5f, 0f, 0.1f));
-        if (draggerKnownInSecondRegion && m_sceneB.GetScenePresence(m_dragger.UUID) is null)
-            SceneHelpers.AddChildScenePresence(m_sceneB, m_dragger.UUID);
+        m_bystander = AddAvatar(0x13, Start + new Vector3(-0.5f, 0f, 0.1f));
+        if (draggerKnownInSecondRegion)
+        {
+            ScenePresence dragger = AddAvatar(0x11, Start + new Vector3(0.5f, 0f, 0.1f));
+            m_dragClient = dragger.ControllingClient;
+            if (m_sceneB.GetScenePresence(dragger.UUID) is null)
+                SceneHelpers.AddChildScenePresence(m_sceneB, dragger.UUID);
+        }
+        else
+        {
+            // an agent that neither region has a presence for: the viewer of a dragger who has moved on
+            AgentCircuitData acd = SceneHelpers.GenerateAgentData(TestHelpers.ParseTail(0x14));
+            acd.circuitcode = 1014;
+            m_dragClient = new TestClient(acd, m_sceneA);
+        }
+        m_dragId = m_dragClient.AgentId;
     }
 
     private static DragPhysics NewPhysics(Scene scene, bool carries)
@@ -69,7 +85,7 @@ public class DragCrossingTests : HeldCrossingFixture
     private DragPrim ActorA => m_actorA ??= (DragPrim)m_platform.RootPart.PhysActor;
 
     private void Drag(SceneObjectGroup group, Vector3 point)
-        => group.GrabMovement(group.RootPart.UUID, Vector3.Zero, point, m_dragger.ControllingClient);
+        => group.GrabMovement(group.RootPart.UUID, Vector3.Zero, point, m_dragClient);
 
     private void DragAcrossTheBorder(ScenePresence mover = null)
     {
@@ -78,7 +94,7 @@ public class DragCrossingTests : HeldCrossingFixture
         Assert.True(ActorA.IsGrabbed);
         Assert.True(ActorA.PidOn);
         Assert.Equal(DragBeyondTheEdge + Anchor, ActorA.Target);
-        Cross(mover ?? m_dragger);
+        Cross(mover ?? m_bystander);
     }
 
     private DragPrim Arrived()
@@ -168,7 +184,7 @@ public class DragCrossingTests : HeldCrossingFixture
         Assert.True(arrived.IsGrabbed);
         SceneObjectGroup there = m_sceneB.GetSceneObjectGroup(m_platform.UUID);
 
-        m_sceneB.ProcessObjectDeGrab(there.RootPart.LocalId, m_dragger.ControllingClient, null);
+        m_sceneB.ProcessObjectDeGrab(there.RootPart.LocalId, m_dragClient, null);
 
         Assert.False(arrived.IsGrabbed);
         Assert.False(arrived.PidOn);
@@ -219,7 +235,7 @@ public class DragCrossingTests : HeldCrossingFixture
         SceneObjectGroup there = m_sceneB.GetSceneObjectGroup(m_platform.UUID);
         Assert.Equal(0.25f, arrived.Tau);
 
-        there.ReleaseGrab(m_dragger.UUID);
+        there.ReleaseGrab(m_dragId);
 
         Assert.False(arrived.IsGrabbed);
         Assert.True(arrived.PidOn);
@@ -253,7 +269,7 @@ public class DragCrossingTests : HeldCrossingFixture
         Assert.True(ActorA.IsGrabbed);
 
         SceneObjectGroup copy = m_platform.Copy(false);
-        copy.ReleaseGrab(m_dragger.UUID);
+        copy.ReleaseGrab(m_dragId);
 
         Assert.True(ActorA.IsGrabbed);
         Assert.True(ActorA.PidOn);
@@ -268,10 +284,10 @@ public class DragCrossingTests : HeldCrossingFixture
         TestHelpers.InMethod();
         Setup();
         Drag(m_platform, DragStart);
-        m_platform.ReleaseGrab(m_dragger.UUID);
+        m_platform.ReleaseGrab(m_dragId);
         Assert.False(ActorA.IsGrabbed);
 
-        Cross(m_dragger);
+        Cross(m_bystander);
 
         DragPrim arrived = Arrived();
         Assert.False(arrived.IsGrabbed);
@@ -285,7 +301,7 @@ public class DragCrossingTests : HeldCrossingFixture
         TestHelpers.InMethod();
         Setup();
 
-        Cross(m_dragger);
+        Cross(m_bystander);
 
         DragPrim arrived = Arrived();
         Assert.False(arrived.IsGrabbed);
@@ -315,7 +331,7 @@ public class DragCrossingTests : HeldCrossingFixture
     {
         TestHelpers.InMethod();
         Setup(draggerKnownInSecondRegion: false);
-        Assert.Null(m_sceneB.GetScenePresence(m_dragger.UUID));
+        Assert.Null(m_sceneB.GetScenePresence(m_dragId));
 
         DragAcrossTheBorder();
 
@@ -340,7 +356,7 @@ public class DragCrossingTests : HeldCrossingFixture
         Assert.Null(m_sceneB.GetSceneObjectGroup(m_platform.UUID));
         Assert.True(ActorA.IsGrabbed);
         Assert.True(ActorA.PidOn);
-        m_platform.ReleaseGrab(m_dragger.UUID);
+        m_platform.ReleaseGrab(m_dragId);
         Assert.False(ActorA.IsGrabbed);
         Assert.False(ActorA.PidOn);
     }
@@ -402,4 +418,40 @@ public class DragCrossingOverTheWireTests : DragCrossingTests
     protected override uint RegionCell => 6420;
 
     protected override FaultyConnector NewConnector() => new RemoteHeldCrossingTests.WireConnector();
+}
+
+/// <summary>The drag a crossing carries is written into the saved object as optional elements and read back.</summary>
+public class DragCrossingRecordTests : OpenSimTestCase
+{
+    [Fact]
+    public void The_drag_survives_the_saved_object()
+    {
+        TestHelpers.InMethod();
+        UUID agent = TestHelpers.ParseTail(0x31);
+        SceneObjectGroup sog = SceneHelpers.CreateSceneObject(1, TestHelpers.ParseTail(0x1), "dragged", 0x80);
+        sog.RootPart.CrossingTargets = new CrossingTargets
+        {
+            DragAgent = agent, DragAnchor = new Vector3(0.5f, -1.25f, 0.75f), DragTarget = new Vector3(100f, 236.5f, 9f),
+        };
+
+        string xml = SceneObjectSerializer.ToOriginalXmlFormat(sog);
+        CrossingTargets back = SceneObjectSerializer.FromOriginalXmlFormat(xml).RootPart.CrossingTargets;
+
+        Assert.NotNull(back);
+        Assert.True(back.HasDrag);
+        Assert.Equal(agent, back.DragAgent);
+        Assert.Equal(new Vector3(0.5f, -1.25f, 0.75f), back.DragAnchor);
+        Assert.Equal(new Vector3(100f, 236.5f, 9f), back.DragTarget);
+        Assert.False(back.HasMove);
+    }
+
+    [Fact]
+    public void An_object_that_is_not_dragged_writes_no_drag_element()
+    {
+        TestHelpers.InMethod();
+        SceneObjectGroup sog = SceneHelpers.CreateSceneObject(1, TestHelpers.ParseTail(0x1), "plain", 0x81);
+        sog.RootPart.CrossingTargets = new CrossingTargets { MoveTarget = new Vector3(1f, 2f, 3f), MoveTau = 1f };
+
+        Assert.DoesNotContain("CTDrag", SceneObjectSerializer.ToOriginalXmlFormat(sog));
+    }
 }

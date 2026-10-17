@@ -515,6 +515,9 @@ public class SceneObjectSerializer
         {"CTLookTarget", ProcessCTLookTarget },
         {"CTLookStrength", ProcessCTLookStrength },
         {"CTLookDamping", ProcessCTLookDamping },
+        {"CTDragAgent", ProcessCTDragAgent },
+        {"CTDragAnchor", ProcessCTDragAnchor },
+        {"CTDragTarget", ProcessCTDragTarget },
         {"PhysicsShapeType", ProcessPhysicsShapeType },
         {"Density", ProcessDensity },
         {"Friction", ProcessFriction },
@@ -813,6 +816,21 @@ public class SceneObjectSerializer
     private static void ProcessCTLookDamping(SceneObjectPart obj, XmlReader reader)
     {
         TargetsOf(obj).LookDamping = reader.ReadElementContentAsFloat("CTLookDamping", string.Empty);
+    }
+
+    private static void ProcessCTDragAgent(SceneObjectPart obj, XmlReader reader)
+    {
+        TargetsOf(obj).DragAgent = Util.ReadUUID(reader, "CTDragAgent");
+    }
+
+    private static void ProcessCTDragAnchor(SceneObjectPart obj, XmlReader reader)
+    {
+        TargetsOf(obj).DragAnchor = Util.ReadVector(reader, "CTDragAnchor");
+    }
+
+    private static void ProcessCTDragTarget(SceneObjectPart obj, XmlReader reader)
+    {
+        TargetsOf(obj).DragTarget = Util.ReadVector(reader, "CTDragTarget");
     }
 
     private static void ProcessRotationAxisLocks(SceneObjectPart obj, XmlReader reader)
@@ -1767,6 +1785,12 @@ public class SceneObjectSerializer
                 WriteQuaternion(writer, "CTLookTarget", ct.LookTarget.Value);
                 writer.WriteElementString("CTLookStrength", ct.LookStrength.Value.ToString(Culture.FormatProvider));
                 writer.WriteElementString("CTLookDamping", ct.LookDamping.Value.ToString(Culture.FormatProvider));
+            }
+            if (ct.HasDrag)
+            {
+                WriteUUID(writer, "CTDragAgent", ct.DragAgent.Value, options);
+                WriteVector(writer, "CTDragAnchor", ct.DragAnchor.Value);
+                WriteVector(writer, "CTDragTarget", ct.DragTarget.Value);
             }
         }
         writer.WriteElementString("PhysicsShapeType", sop.PhysicsShapeType.ToString().ToLower());
