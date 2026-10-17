@@ -11,6 +11,7 @@ using OpenSim.Region.PhysicsModules.SharedBase;
 using Xunit;
 using Xunit.Abstractions;
 using static OpenSim.Region.PhysicsModules.Jolt.Tests.MeshShapesTodayTests;
+using static OpenSim.Region.PhysicsModules.Jolt.Tests.PrimHullProbeTests;
 
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
@@ -153,6 +154,27 @@ public class PhysicalSizeLimitTests
             Assert.Empty(heard.Messages);          // static: no limit (core's own scene limits apply)
             idle.IsPhysical = true;
             Assert.Equal(new[] { HalcyonPhysicalLimits.Message(HalcyonPhysicalLimits.Verdict.TooLarge) }, heard.Messages);
+        }
+        finally { scene.Dispose(); }
+    }
+
+    [Fact]
+    public void An_object_that_is_too_complex_and_too_large_is_reported_for_its_complexity_only()
+    {
+        // Halcyon checks the complexity before it builds the actor and the sizes after it, so the first reason is the one given.
+        JoltScene scene = NewScene(Scratch(), ("BasicForcesBehaviour", "InWorldz"), ("MaxPhysicalComplexity", "2"));
+        try
+        {
+            PrimitiveBaseShape hollow = Shapes().Single(s => s.Name == "hollow box 0.5").Build();   // 4 hulls
+            var prim = (JoltPrim)scene.AddPrimShape("prim", hollow, new Vector3(CentreX, CentreY, Ground + 3f), new Vector3(300f, 1f, 1f),
+                                                    Quaternion.Identity, true, false, (byte)PhysShapeType.prim, _id++);
+            var size = new Heard(prim);
+            var complexity = new List<string>();
+            prim.OnComplexityError += d => complexity.Add(d);
+            prim.Building = false;
+            Say($"PRIM-SIZE too complex and too large: complexity [{string.Join("|", complexity)}], size [{string.Join("|", size.Messages)}]");
+            Assert.Equal(new[] { "(4 of 2 convex hulls)" }, complexity);
+            Assert.Empty(size.Messages);
         }
         finally { scene.Dispose(); }
     }

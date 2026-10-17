@@ -302,16 +302,26 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // end of building. Never inside the shape lock: core's answer takes the object out of physics.
         private void CheckComplexity()
         {
-            CheckPhysicalSize();
+            // Halcyon checks the complexity before it builds the actor (DynamicsPrecheck) and the sizes after (DynamicsPostcheck):
+            // an object refused for its complexity is not checked for its size, so the owner is told one reason.
+            if (!CheckComplexityLimit())
+                CheckPhysicalSize();
+        }
+
+        // True when the object was reported as too complex.
+        private bool CheckComplexityLimit()
+        {
             int limit = _module.MaxPhysicalComplexity;
             if (limit <= 0 || IsRemoved)
-                return;
+                return false;
             JoltPrim root = _linkRoot ?? this;
             if (!root._isPhysical || root._building)
-                return;
+                return false;
             int total = ObjectComplexity();
-            if (total > limit)
-                root.RaiseComplexityError(string.Format(System.Globalization.CultureInfo.InvariantCulture, "({0} of {1} convex hulls)", total, limit));
+            if (total <= limit)
+                return false;
+            root.RaiseComplexityError(string.Format(System.Globalization.CultureInfo.InvariantCulture, "({0} of {1} convex hulls)", total, limit));
+            return true;
         }
 
         // Under [Jolt] BasicForcesBehaviour = InWorldz, Halcyon's limits on how small or large a physical object may be
