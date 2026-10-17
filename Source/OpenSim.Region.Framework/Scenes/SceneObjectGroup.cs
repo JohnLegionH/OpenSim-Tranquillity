@@ -1162,6 +1162,10 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         if (root.VehicleParams is not null && root.PhysActor is not null)
             root.PhysActor.CaptureVehicleRunningState(ref root.VehicleParams.vd);
 
+        // the physical object's move-to, hover and look-at go on in the next region, for an engine that keeps them
+        if (!isTeleport)
+            sog.CaptureCrossingTargets(new Vector3(sogScene.RegionInfo.WorldLocX - destination.RegionLocX, sogScene.RegionInfo.WorldLocY - destination.RegionLocY, 0f));
+
         sog.CrossStep("motion-stopped");
 
         if (sog.m_sittingAvatars.Count == 0 && riders is null)
@@ -1711,6 +1715,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         sog.m_rootPart.KeyframeMotion?.CrossingFailure();
         sog.RootPart.PhysActor?.CrossingFailure();
         sog.RootPart.VehicleParams?.ClearRunningState();
+        sog.RootPart.CrossingTargets = null;
 
         sog.inTransit = false;
         sog.ShowToViewers();
@@ -3495,6 +3500,81 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
             }
 
             RootPart.ScheduleTerseUpdate(); // send a stop information
+        }
+    }
+
+    /// <summary>
+    /// Core calls this as it starts to cross a physical object into another region: what the object's scripts have asked
+    /// of its engine (move-to, hover, look-at) is written into the root part, so that the saved object carries it. Only for
+    /// an actor that wants this (<see cref="PhysicsActor.CarriesTargetsAcrossCrossing"/>). The move-to target is a point in
+    /// this region's coordinates, so it is moved by the crossing's shift (where the object arrives less where it left).
+    /// </summary>
+    internal void CaptureCrossingTargets(Vector3 regionShift)
+    {
+        SceneObjectPart root = m_rootPart;
+        root.CrossingTargets = null;
+
+        PhysicsActor pa = root.PhysActor;
+        if (IsAttachment || pa is null || !pa.IsPhysical || !pa.CarriesTargetsAcrossCrossing)
+            return;
+
+        CrossingTargets carried = new();
+        lock (m_grabLock)
+        {
+            // a drag holds the actor's own target; what the script set is what is kept
+            if (m_scriptMoveActive && (m_grabbed || pa.PIDActive))
+            {
+                carried.MoveTarget = m_scriptMoveTarget + regionShift;
+                carried.MoveTau = m_scriptMoveTau;
+            }
+
+            if (m_scriptHoverActive && (m_grabbed || pa.PIDHoverActive))
+            {
+                carried.HoverHeight = m_scriptHoverHeight;
+                carried.HoverType = (int)m_scriptHoverType;
+                carried.HoverTau = m_scriptHoverTau;
+                carried.HoverRepel = m_scriptHoverRepel;
+            }
+        }
+
+        if (root.TryGetLookAt(out Quaternion lookTarget, out float lookStrength, out float lookDamping))
+        {
+            carried.LookTarget = lookTarget;
+            carried.LookStrength = lookStrength;
+            carried.LookDamping = lookDamping;
+        }
+
+        if (!carried.IsEmpty)
+            root.CrossingTargets = carried;
+    }
+
+    /// <summary>
+    /// The root's new actor takes up the targets a crossing carried in: through the same calls a script's llMoveToTarget,
+    /// llSetHoverHeight and llRotLookAt make. The record is cleared, so a saved or copied object does not start them again.
+    /// </summary>
+    internal void TakeUpCrossingTargets()
+    {
+        SceneObjectPart root = m_rootPart;
+        CrossingTargets carried = root?.CrossingTargets;
+        if (carried is null)
+            return;
+        root.CrossingTargets = null;
+
+        if (IsAttachment || root.PhysActor is null)
+            return;
+
+        try
+        {
+            if (carried.HasMove)
+                MoveToTarget(carried.MoveTarget.Value, carried.MoveTau.Value);
+            if (carried.HasHover)
+                SetHoverHeight(carried.HoverHeight.Value, (PIDHoverType)carried.HoverType.Value, carried.HoverTau.Value, carried.HoverRepel ?? false);
+            if (carried.HasLook)
+                RotLookAt(carried.LookTarget.Value, carried.LookStrength.Value, carried.LookDamping.Value);
+        }
+        catch (Exception e)
+        {
+            m_log.LogWarning(e, $"[SCENE OBJECT]: Taking up the targets that crossed with {Name} {UUID} failed: {e.GetType().Name}: {e.Message}");
         }
     }
 
