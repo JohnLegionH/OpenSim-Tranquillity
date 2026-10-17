@@ -18,7 +18,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// PhysicsActor from them (PIDTarget, PIDTau, PIDActive; PIDHoverHeight, PIDHoverType, PIDHoverTau, PIDHoverActive), set
 /// as SceneObjectGroup.MoveToTarget and SetHoverHeight set them. The Second Life wiki says each "critically damps" to
 /// its target "in tau seconds"; the rule tested is the critically damped spring with tau as its timescale, from rest
-/// e(t) = e0 (1 + t / tau) e^(-t / tau), which never passes its target. Serial with the other native tests: every run
+/// e(t) = e0 (1 + t / tau) e^(-t / tau), which never passes its target. These are the closed-form laws of the Second
+/// Life page, so every run pins [Jolt] BasicForcesBehaviour to SecondLife (the shipped default is InWorldz). Serial with the other native tests: every run
 /// steps a real backend on the shared job pool.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
@@ -55,7 +56,7 @@ public class MoveToTargetAndHoverTests
         };
         if (world != null)
             sc.World = world;
-        Harness.Harness.Run(sc, new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsHz, Jolt = { ["PrimLinearDamping"] = "0.05", ["PrimAngularDamping"] = "0.05" } });
+        Harness.Harness.Run(sc, new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsHz, Jolt = { ["PrimLinearDamping"] = "0.05", ["PrimAngularDamping"] = "0.05", ["BasicForcesBehaviour"] = "SecondLife" } });
         return trace;
     }
 

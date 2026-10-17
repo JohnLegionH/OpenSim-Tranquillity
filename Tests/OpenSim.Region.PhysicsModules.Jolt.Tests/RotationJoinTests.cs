@@ -25,10 +25,12 @@ public class RotationJoinTests
     private readonly ITestOutputHelper _output;
     public RotationJoinTests(ITestOutputHelper output) => _output = output;
 
+    // llRotLookAt's target is Second Life's documented one; the shipped default, BasicForcesBehaviour = InWorldz, aims by
+    // its own law, so this run pins the choice.
     private static SpinMeasure Run(string scenario, double physicsHz)
     {
         Scenario sc = Harness.Harness.Find(scenario);
-        RunResult res = Harness.Harness.Run(sc, new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsHz });
+        RunResult res = Harness.Harness.Run(sc, new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsHz, Jolt = { ["BasicForcesBehaviour"] = "SecondLife" } });
         return SpinScenarios.Measure(res);
     }
 
