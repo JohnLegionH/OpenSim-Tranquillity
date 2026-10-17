@@ -43,6 +43,16 @@ public partial class PhysxSpikeTests
     private const double TripDvz = 50.0, TripDwy = 100.0, FloorDvz = 0.5, FloorDwy = 1.0;
     // Four starts per case, nudged by a fraction of a millimetre in the direction across the motion.
     private static readonly float[] Nudges = { 0f, 0.37e-3f, 0.74e-3f, 1.11e-3f };
+    // The vehicle on rough ground at 15 m/s is judged across 30 starts, -1.45 mm to +1.45 mm in 0.1 mm steps: one run of a
+    // chaotic path says little about the path next to it, the distribution over nudged starts does.
+    private static readonly float[] WideNudges = Enumerable.Range(0, 30).Select(i => (i - 14.5f) * 1.0e-4f).ToArray();
+
+    // The value at the given fraction of the sorted values (nearest rank).
+    private static double Percentile(IEnumerable<double> v, double fraction)
+    {
+        double[] s = v.OrderBy(x => x).ToArray();
+        return s[Math.Max(0, (int)Math.Ceiling(fraction * s.Length) - 1)];
+    }
 
     private static double Median(IEnumerable<double> v)
     {
@@ -279,8 +289,8 @@ public partial class PhysxSpikeTests
     }
 
     // A vehicle (the bare car type, a 2 x 1 x 0.5 box) on the same ground, with and without the spike cut. With edge removal on
-    // at 5 m/s it stays under the trip points and within 30 degrees either way. At 15 m/s the cut lowers the worst upward
-    // and angular acceleration over the cells (it never raises them).
+    // at 5 m/s it stays under the trip points and within 30 degrees either way. At 15 m/s the cut lowers the distribution of
+    // the worst upward and angular acceleration over 30 nudged starts (it never raises it).
     [Theory]
     [MemberData(nameof(Cells))]
     public void T2_a_vehicle_driven_over_rough_ground_with_and_without_the_spike_cut(double rate, int n)
@@ -291,26 +301,37 @@ public partial class PhysxSpikeTests
         foreach (bool edge in new[] { false, true })
             foreach (double speed in new[] { 5.0, 15.0 })
             {
-                var on = Nudges.Select(k => { var m = DriveOverGround(rate, n, true, edge, size, speed, k, spec, true, true); return (m, cuts: LastCuts); }).ToList();
-                var off = Nudges.Select(k => DriveOverGround(rate, n, true, edge, size, speed, k, spec, true, false)).ToList();
+                // The default distance at 15 m/s is judged over the wide set of starts; every other case keeps the four.
+                bool wide = speed == 15.0 && spec == null;
+                float[] starts = wide ? WideNudges : Nudges;
+                var on = starts.Select(k => { var m = DriveOverGround(rate, n, true, edge, size, speed, k, spec, true, true); return (m, cuts: LastCuts); }).ToList();
+                var off = starts.Select(k => DriveOverGround(rate, n, true, edge, size, speed, k, spec, true, false)).ToList();
                 double upOn = on.Max(r => r.m.MaxUp15), wyOn = on.Max(r => r.m.MaxDwy15), tiltOn = on.Max(r => r.m.MaxTiltDegrees);
                 double upOff = off.Max(m => m.MaxUp15), wyOff = off.Max(m => m.MaxDwy15), tiltOff = off.Max(m => m.MaxTiltDegrees);
-                Say($"[physx] T2 vehicle {speed} m/s | speculative {spec?.ToString("0.###") ?? "default"} | edge removal {edge} | {rate} Hz x {n} | with the cut: up15 {upOn:0.0} dwy15 {wyOn:0.0} tilt {tiltOn:0} deg, cuts {on.Sum(r => r.cuts)} | without: up15 {upOff:0.0} dwy15 {wyOff:0.0} tilt {tiltOff:0} deg");
+                Say($"[physx] T2 vehicle {speed} m/s | speculative {spec?.ToString("0.###") ?? "default"} | edge removal {edge} | {rate} Hz x {n} | {starts.Length} starts | with the cut: up15 {upOn:0.0} dwy15 {wyOn:0.0} tilt {tiltOn:0} deg, cuts {on.Sum(r => r.cuts)} | without: up15 {upOff:0.0} dwy15 {wyOff:0.0} tilt {tiltOff:0} deg");
                 if (edge && speed == 5.0)
                 {
                     if (!(upOn < TripDvz && wyOn < TripDwy && tiltOn <= 30.0)) failures.Add($"5 m/s, edge removal on, with the cut: up15 {upOn:0.0} dwy15 {wyOn:0.0} tilt {tiltOn:0}");
                     if (!(upOff < TripDvz && wyOff < TripDwy && tiltOff <= 30.0)) failures.Add($"5 m/s, edge removal on, without the cut: up15 {upOff:0.0} dwy15 {wyOff:0.0} tilt {tiltOff:0}");
                 }
-                // Where the run without the cut is over a trip point the cut must bring it down; elsewhere it may differ by the
-                // run-to-run scatter of a chaotic path (10% and 5 m/s^2 or rad/s^2). Judged with the default distance, which these
-                // bounds were set at; with 0.0025 the same cells differ in some cells by more than that scatter
-                // (45 Hz x 2: dwy15 247 with the cut against 83 without), so the figures are recorded and not judged per cell.
-                if (speed == 15.0 && spec == null)
+                // At 15 m/s the path is chaotic: a start nudged by a tenth of a millimetre goes elsewhere, so the cut is judged
+                // by the distribution over the starts, not by one run against another. The 90th percentile and the number of
+                // starts over a trip point, with the cut against without it, at the tolerance the single-run comparison had
+                // (10% and 5 m/s^2 or rad/s^2). Judged with the default distance, which these bounds were set at; with 0.0025
+                // the figures are recorded and not judged.
+                if (wide)
                 {
-                    if (upOn > upOff * 1.1 + 5.0 || wyOn > wyOff * 1.1 + 5.0)
-                        failures.Add($"15 m/s, edge removal {edge}: the cut made it worse (up15 {upOn:0.0} against {upOff:0.0}, dwy15 {wyOn:0.0} against {wyOff:0.0})");
-                    if ((upOff >= 1.25 * TripDvz && upOn >= upOff * 0.9) || (wyOff >= 1.25 * TripDwy && wyOn >= wyOff * 0.9))
-                        failures.Add($"15 m/s, edge removal {edge}: well over a trip point without the cut and not brought down by it (up15 {upOn:0.0} against {upOff:0.0}, dwy15 {wyOn:0.0} against {wyOff:0.0})");
+                    double upP90On = Percentile(on.Select(r => r.m.MaxUp15), 0.9), upP90Off = Percentile(off.Select(m => m.MaxUp15), 0.9);
+                    double wyP90On = Percentile(on.Select(r => r.m.MaxDwy15), 0.9), wyP90Off = Percentile(off.Select(m => m.MaxDwy15), 0.9);
+                    int overOn = on.Count(r => r.m.MaxUp15 >= TripDvz || r.m.MaxDwy15 >= TripDwy);
+                    int overOff = off.Count(m => m.MaxUp15 >= TripDvz || m.MaxDwy15 >= TripDwy);
+                    Say($"[physx] T2 vehicle 15 m/s distribution | edge removal {edge} | {rate} Hz x {n} | {starts.Length} starts | with the cut: p90 up15 {upP90On:0.0} dwy15 {wyP90On:0.0}, over a trip point {overOn} | without: p90 up15 {upP90Off:0.0} dwy15 {wyP90Off:0.0}, over a trip point {overOff}");
+                    if (upP90On > upP90Off * 1.1 + 5.0 || wyP90On > wyP90Off * 1.1 + 5.0)
+                        failures.Add($"15 m/s, edge removal {edge}: the cut made the distribution worse (p90 up15 {upP90On:0.0} against {upP90Off:0.0}, dwy15 {wyP90On:0.0} against {wyP90Off:0.0})");
+                    if (overOn > overOff)
+                        failures.Add($"15 m/s, edge removal {edge}: more starts over a trip point with the cut ({overOn} of {starts.Length}) than without ({overOff})");
+                    if ((upP90Off >= 1.25 * TripDvz && upP90On >= upP90Off * 0.9) || (wyP90Off >= 1.25 * TripDwy && wyP90On >= wyP90Off * 0.9))
+                        failures.Add($"15 m/s, edge removal {edge}: well over a trip point without the cut and not brought down by it at the 90th percentile (up15 {upP90On:0.0} against {upP90Off:0.0}, dwy15 {wyP90On:0.0} against {wyP90Off:0.0})");
                 }
             }
         // The cut is Halcyon's, so it belongs to InWorldz behaviour: with SecondLife behaviour it never acts, and with
