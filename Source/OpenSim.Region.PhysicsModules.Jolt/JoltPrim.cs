@@ -2236,6 +2236,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             WakeVehicle();
         }
 
+        // A physical object's move-to target, hover and look-at go on in the next region (core carries them in the saved object)
+        // under InWorldz basic forces: Halcyon keeps them across a crossing (PhysxPrim.cs:3131-3185, SuspendPhysicsSync). The Second
+        // Life pages for llMoveToTarget, llSetHoverHeight and llRotLookAt say nothing of a crossing, so SecondLife keeps the old
+        // behaviour: they end at the border.
+        public override bool CarriesTargetsAcrossCrossing => _module.BasicForcesBehaviour == JoltConfig.BasicForces.InWorldz;
+
         // Core calls this as it starts to cross a vehicle into another region: the motors' running state goes into the record
         // that is sent, so that the vehicle goes on driving on the other side (SetVehicle takes it up). A motor that is off
         // writes nothing.

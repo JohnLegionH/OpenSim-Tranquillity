@@ -383,6 +383,12 @@ public abstract class PhysicsActor
     {
     }
 
+    // Whether this engine wants the move-to target, the hover and the look-at of a physical object to go on in the next region
+    // when core crosses the object. Core writes them into the saved object only for an actor that answers true, and hands
+    // them back through the usual setters once the neighbour has made the object's actor. The default is false: they stop at
+    // the border, as they always did.
+    public virtual bool CarriesTargetsAcrossCrossing => false;
+
     // This is an overridable version of SetVehicle() that works for all physics engines.
     // This is VERY inefficient. It behoves any physics engine to override this and
     //     implement a more efficient setting of all the vehicle parameters.
