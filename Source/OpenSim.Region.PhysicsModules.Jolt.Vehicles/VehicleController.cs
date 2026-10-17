@@ -1909,6 +1909,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             if (Math.Abs(noseDown) <= VehicleLimits.ThresholdDeflectionAngle || IsLinearMotorStalled())
                 return Vector3.Zero;
             float accel = S.SledAssist * Math.Abs(_body.Gravity.Z) * (float)Math.Sqrt(Math.Abs(noseDown));
+            // Under InWorldz a sled with a linear motor offset (every default sled has <0, 0, -0.1>) gets its assist 1 / 15 ms
+            // times as large: Halcyon turns the assist into a force at the offset and applies it as an impulse, so the change of
+            // velocity of a step is the force's value without the step's second factor (VehicleDynamics.cs:1075-1110, 2376-2398).
+            // At its 15 ms step that is 3 g sqrt(|sin pitch|) as an acceleration instead of 0.045 g sqrt(|sin pitch|); it is held
+            // as that acceleration at every step. A sled with no offset got the weak assist, as does Second Life's.
+            if (InWorldz && _sp.GetVec(VehVectorParam.LinearMotorOffset) != Vector3.Zero)
+                accel /= (float)HalcyonStep;
             if (noseDown < 0f)
                 accel *= -SledUphillShare;
             return new Vector3(accel, 0f, 0f);
