@@ -72,6 +72,11 @@ public partial class Scene
         if (hold is null || hold.ExpectedRiders.Count == 0 || sog is not SceneObjectGroup newObject)
             return IncomingCreateObject(newPosition, sog);
 
+        // A copy of this object that an earlier try left here, with no rider arrived, is the same object: the new
+        // arrival replaces it, so that a retried crossing never meets its own leftover.
+        if (HoldsArrival(newObject.UUID))
+            RecallHeldObject(newObject.UUID);
+
         newObject.HeldForRiders = true;
         if (!IncomingCreateObject(newPosition, sog))
         {

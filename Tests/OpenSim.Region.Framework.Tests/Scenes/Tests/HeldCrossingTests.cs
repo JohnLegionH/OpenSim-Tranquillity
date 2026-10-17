@@ -181,6 +181,9 @@ public abstract class HeldCrossingFixture : OpenSimTestCase
 
         public bool RefuseObject { get; set; }
         public bool ThrowOnObject { get; set; }
+
+        /// <summary>The destination takes the object in, and the send throws afterwards (an answer lost on the way).</summary>
+        public bool ThrowAfterObject { get; set; }
         public bool RefuseRecall { get; set; }
 
         /// <summary>False: the destination answers the access question as a region from before carried riders does.</summary>
@@ -233,7 +236,10 @@ public abstract class HeldCrossingFixture : OpenSimTestCase
                 throw new InvalidOperationException("the send failed");
             if (RefuseObject)
                 return false;
-            return CreateObject(destination, newPosition, sog, isLocalCall, hold);
+            bool taken = CreateObject(destination, newPosition, sog, isLocalCall, hold);
+            if (ThrowAfterObject)
+                throw new InvalidOperationException("the answer was lost");
+            return taken;
         }
 
         protected virtual bool SendRecall(GridRegion destination, UUID objectID)
