@@ -113,6 +113,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public bool BodyEnhancedEdgeRemoval = false;
         public bool AvatarEnhancedEdgeRemoval = false;
 
+        // Jolt's speculative contact distance in metres (PhysicsSettings mSpeculativeContactDistance; the engine's own value is
+        // 0.02). A box sliding across two abutted prims can be stopped and tipped at the seam by the next prim's end face seen
+        // from within this distance; 0 removes that. See "Seams between prims" in Docs/JoltPhysics.md.
+        public float SpeculativeContactDistance = 0.02f;
+
         // true: avatars and physical objects standing on a prim that keyframed motion (llSetKeyframedMotion) is moving are
         // carried with it, as Second Life does. false: the prim is a fixed body that is set to each new place, and what
         // stands on it is left behind.
@@ -186,6 +191,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.HonourConvexMesh = B(cfg, "HonourConvexMesh", c.HonourConvexMesh, warnings);
             c.BodyEnhancedEdgeRemoval = B(cfg, "BodyEnhancedEdgeRemoval", c.BodyEnhancedEdgeRemoval, warnings);
             c.AvatarEnhancedEdgeRemoval = B(cfg, "AvatarEnhancedEdgeRemoval", c.AvatarEnhancedEdgeRemoval, warnings);
+            c.SpeculativeContactDistance = F(cfg, "SpeculativeContactDistance", c.SpeculativeContactDistance, 0f, 0.5f, warnings);
             c.KeyframedMotionCarriesRiders = B(cfg, "KeyframedMotionCarriesRiders", c.KeyframedMotionCarriesRiders, warnings);
             c.MovedPrimsCarryRiders = B(cfg, "MovedPrimsCarryRiders", c.MovedPrimsCarryRiders, warnings);
             c.BodyUpdateBufferMax = I(cfg, "BodyUpdateBufferMax", c.BodyUpdateBufferMax, 1, 8_388_607, warnings);
@@ -392,6 +398,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             s.MaxBodyAngularSpeed = BodyMaxAngularSpeed;
             s.BodyInternalEdgeRemoval = BodyEnhancedEdgeRemoval;
             s.AvatarInternalEdgeRemoval = AvatarEnhancedEdgeRemoval;
+            s.SpeculativeContactDistance = SpeculativeContactDistance;
             s.RayCastBudgetMs = RayCastBudgetMs;
             s.RayCastSimulatorBudgetMs = RayCastSimulatorBudgetMs;
             s.RayCastMaxTestedHits = RayCastMaxTestedHits;

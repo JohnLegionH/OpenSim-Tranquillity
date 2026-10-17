@@ -295,6 +295,9 @@ public class MaterialsTests
                     a.VehicleType = (int)Vehicle.TYPE_CAR;
                     a.VehicleVectorParam((int)Vehicle.LINEAR_FRICTION_TIMESCALE, new Vector3(1000f, 1000f, 1000f));
                     a.VehicleFloatParam((int)Vehicle.LINEAR_DEFLECTION_EFFICIENCY, 0f);
+                    // This is about the material reaching a vehicle. Under InWorldz a 7.7 m/s landing is an upward spike that
+                    // Halcyon's cut takes the vertical speed off, so the cut is off for the comparison.
+                    ((JoltPrim)a).VehicleControl.MitigatePhysxSpikes = false;
                 }
             }, null, NoDamping, NoAngularDamping);
             int up = trace.FindIndex(p => p.Velocity.Z > 0.5f);

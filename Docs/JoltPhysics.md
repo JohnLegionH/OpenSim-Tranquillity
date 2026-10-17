@@ -653,6 +653,7 @@ mesher decodes, unless it has already decoded and cached that map.
 | Key | Default | What it sets |
 |---|---|---|
 | `BodyEnhancedEdgeRemoval` | `false` | `true`: Jolt's enhanced internal edge removal for every body that moves under physics (a physical prim, a vehicle): the contacts with the shared edges inside a triangle mesh or a heightfield that can push a body off its path are removed. Costs more per contact with a mesh or the terrain. Off, nothing changes. See "Seams in triangle meshes and terrain". |
+| `SpeculativeContactDistance` | `0.02` | How near two shapes must come, in metres, for the engine to start stopping them closing (Jolt's own value is 0.02). A box that rests a few millimetres into a prim and slides across the seam to the next prim sees that prim's end face as a wall inside this distance and can be stopped and tipped. `0` removes that: contacts then begin only on overlap. Changes how resting and bouncing contacts settle. See "Seams between prims". |
 | `AvatarEnhancedEdgeRemoval` | `false` | `true`: the same for avatars. Off, nothing changes. |
 | `HonourConvexMesh` | `false` | `true`: a non-physical mesh whose `PRIM_PHYSICS_SHAPE_TYPE` is `PRIM_PHYSICS_SHAPE_CONVEX` collides as one convex hull of its points, not its triangle mesh. The simulator gives every mesh that shape type unless the upload sets another, so with this on a hollow mesh without a physics model becomes solid. Off, nothing changes. |
 | `MaxPhysicalComplexity` | `0` | The most collision shapes one physical object may have: a plain box, sphere or cylinder counts 1, any other prim its convex hulls, a prim of shape type NONE 0. An object over it is not made physical and its owner is told "Object was too complex to be made physical: (N of M convex hulls)". `0` is no limit. See "Limiting how complex a physical object may be". |
@@ -807,6 +808,29 @@ With `BodyEnhancedEdgeRemoval` on, 11 of the 13 recorded harness baselines move 
 a heightfield, so every body on the ground meets the removal); with `AvatarEnhancedEdgeRemoval` on none does. Both stay
 off by default for that reason and for the extra cost per contact, which was not measured.
 
+
+## Seams between prims
+
+Two prims that touch (a floor made of boxes, a road of slabs) are two separate bodies, and Jolt's enhanced internal edge
+removal does not join them: it removes contacts with the shared edges inside one mesh or heightfield. A box that rests a few
+millimetres into the top of one prim (the engine lets a resting body sink as far as its penetration slop, 0.02 m) and slides
+on to the next prim sees the next prim's end face, within the speculative contact distance (0.02 m), as a wall in its path.
+The contact stops the box's leading edge and tips it. In a test (a 1 m cube pushed at 5 m/s across a 10 m slab and the next
+one, flush, with a 1 mm gap, with a 1 mm step or with the surface bent 0.1 degree at the seam) the cube turned over about
+the y axis in 7 of the 10 step-rate cells (32, 45 and 64 Hz with 1 to 4 collision steps) with the default setting, and in
+none with `[Jolt] SpeculativeContactDistance = 0`. It is a setting rather than the default because it also changes how
+resting and bouncing contacts settle (for example a box at gravity multiplier 28 landing on the terrain bounced at 32 Hz with
+3 collision steps with the setting at 0, and not with the default), and the recorded harness baselines were not run with it.
+
+The tests are `PhysxSpikeTests` (seams, rough ground, walls, tunnelling, overlap, gravity multiplier) and
+`PhysxVoidEdgeTests` (an object driven into the edge of a region with no neighbour).
+
+Under `[Jolt] VehicleBehaviour = InWorldz` a vehicle's step also cuts the spikes that Halcyon's vehicle code cut
+(`VehicleDynamics.MitigatePhysxSpiking`): an angular acceleration about the vehicle's y axis over 100 rad/s^2 takes off the
+angular velocity about x and y, an upward acceleration over 50 m/s^2 takes off the vertical velocity and half the sideways
+one. Both are measured over the engine's change in the last 15.6 ms, whatever the step rate. On rough ground at 15 m/s it
+lowers the vehicle's worst upward and angular accelerations (in one cell from 944 to 124 rad/s^2), and it does not stop a
+body that the engine's position solver turns over, which is what a seam does.
 
 ## Mass: what a script reads and where it comes from
 
