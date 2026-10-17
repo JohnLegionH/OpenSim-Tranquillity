@@ -107,6 +107,11 @@ internal sealed class HalcyonMotorModel
     public float LinearDecayIndex = MaxDecayTimescale * 10.0f, AngularDecayIndex = MaxDecayTimescale * 10.0f;
     public Vector3 LastPosition, ShortTermPositionDelta;
 
+    /// <summary>True (Halcyon as written): the rule that the motor's target replaces a lower velocity acts on every axis. False: it
+    /// acts only on an axis the motor has been given a direction on at some time.</summary>
+    public bool ReplaceOnUndrivenAxes = true;
+    private bool drivenX, drivenY, drivenZ;
+
     // The velocities and rotation the step reads (VehicleMotor.MetricsInit).
     private Quaternion rotation = Quaternion.Identity;
     private Vector3 worldLinearVel, worldAngularVel, localLinearVel, localAngularVel;
@@ -183,6 +188,7 @@ internal sealed class HalcyonMotorModel
         LinearDecayIndex = MinPhysicsTimestep * (1.0f - moahfubar) - ThresholdDelayFubar * moahfubar;
 
         LinearDirection = direction;
+        drivenX |= direction.X != 0; drivenY |= direction.Y != 0; drivenZ |= direction.Z != 0;
     }
 
     /// <summary>VehicleMotor.MoveAngular (3080-3122), the script's angular motor direction.</summary>
@@ -293,9 +299,9 @@ internal sealed class HalcyonMotorModel
         dirsign.Z = PosNeg(LinearDirection.Z);
 
         // "The target ensures forward progress." (2585-2589)
-        if (dirsign.X * (LinearTargetVelocity.X - adjvel.X) >= 0) adjvel.X = LinearTargetVelocity.X;
-        if (dirsign.Y * (LinearTargetVelocity.Y - adjvel.Y) >= 0) adjvel.Y = LinearTargetVelocity.Y;
-        if (dirsign.Z * (LinearTargetVelocity.Z - adjvel.Z) >= 0) adjvel.Z = LinearTargetVelocity.Z;
+        if (dirsign.X * (LinearTargetVelocity.X - adjvel.X) >= 0 && (ReplaceOnUndrivenAxes || drivenX)) adjvel.X = LinearTargetVelocity.X;
+        if (dirsign.Y * (LinearTargetVelocity.Y - adjvel.Y) >= 0 && (ReplaceOnUndrivenAxes || drivenY)) adjvel.Y = LinearTargetVelocity.Y;
+        if (dirsign.Z * (LinearTargetVelocity.Z - adjvel.Z) >= 0 && (ReplaceOnUndrivenAxes || drivenZ)) adjvel.Z = LinearTargetVelocity.Z;
 
         timescale = LinearMotorTimescale;
         rfactor.X = GetGrowthRate(adjvel.X, LinearDirection.X, timescale.X / timeStep);

@@ -33,7 +33,8 @@
  * attractor itself and the angular deflection ported from InWorldz Halcyon
  * (InWorldz.PhysxPhysics/Vehicle/VehicleDynamics.cs: MovementExpDecay, GetGrowthRate, the linear motor of Simulate(),
  * the attractor clamp of the angular motor, SimulateAngularDeflection, SimulateVerticalAttractor, the motor-height clock,
- * SimulateWindForces, SimulateBoatGroundDrag;
+ * SimulateWindForces, SimulateBoatGroundDrag, the banking turn motor of Simulate();
+ * InWorldz.PhysxPhysics/PhysxPrim.pid.cs: DoHoverTarget, DoHover, DoHoverDamping;
  * InWorldz.PhysxPhysics/PhysUtil.cs: AngleBetween, RotBetween, Rot2Euler).
  * Adapted 2026 by Legion Builds
  */
@@ -501,6 +502,112 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             // Halcyon builds Euler2Rot(roll, pitch, 0) and reads Rot2Angle; with the yaw 0 its w is cos(roll/2) cos(pitch/2).
             double w = Math.Cos(e.X / 2.0) * Math.Cos(e.Y / 2.0);
             return (float)Math.Abs(2.0 * Math.Acos(Math.Clamp(w, -1.0, 1.0)));
+        }
+
+        /// <summary>The smallest hover timescale Halcyon's hover acts at (PhysxPrim.pid.cs:47, MIN_TAU: two physics steps); below
+        /// it the actor is left alone and its gravity is back on.</summary>
+        public const float HoverMinTimescale = 0.03f;
+
+        /// <summary>The tolerance of the hover butter zone (PhysxPrim.pid.cs:77, AT_HOVER_HEIGHT_TOLERANCE), times the efficiency.</summary>
+        private const float AtHoverHeightTolerance = 0.05f;
+
+        private const float MinHoverDampingVelocityBeforeZeroing = 0.01f;
+        private const float HoverDampingMultiplier = 2.0f;
+        private const float MinPhysxForce = 0.001f;
+
+        /// <summary>
+        /// The change of vertical velocity Halcyon's hover makes in one of its steps (PhysxPrim.pid.cs:207-336, DoHoverTarget,
+        /// DoHoverDamping and DoHover, read, not run; a vehicle's hover goes through them, VehicleDynamics.cs:1552-1604). Gravity
+        /// is off whenever it acts (see VehicleController). <paramref name="diff"/> is the hover height minus the height above
+        /// what the vehicle hovers over, <paramref name="velocity"/> its vertical velocity at the start of the step,
+        /// <paramref name="timescale"/> and <paramref name="efficiency"/> the hover's, and <paramref name="step"/> the step
+        /// (<see cref="VehicleController.HalcyonStep"/>). Within <c>0.05 x efficiency</c> of the height only the damping acts.
+        /// Elsewhere: a movement away from the target is cancelled (the whole velocity with efficiency over 0.75, else the share
+        /// <c>step</c> of it); then, unless the hover only pushes up and the vehicle is above its height
+        /// (<paramref name="pushDown"/> false), a push of <c>diff / timescale x step</c> and the damping. The damping is
+        /// <c>-v x 2 x efficiency x step</c>, or <c>-v x efficiency</c> at a speed under <c>0.01 x efficiency</c>. A force under
+        /// 0.001 is taken as 0.001 of its sign, as there ("Stay above PhysX NOP limits").
+        /// </summary>
+        public static float HoverVelocityChange(float diff, float velocity, float timescale, float efficiency, bool pushDown, float step)
+        {
+            if (Math.Abs(diff) < AtHoverHeightTolerance * efficiency)
+                return HoverDamping(velocity, efficiency, step);
+
+            float dv = 0f;
+            float zforce = velocity;
+            if (Math.Abs(zforce) < MinPhysxForce)
+                zforce = Math.Sign(zforce) * MinPhysxForce;
+            if (Math.Sign(velocity) != Math.Sign(diff))
+                dv += efficiency > 0.75f ? -zforce : -zforce * step;
+
+            if (pushDown || diff > 0f)
+            {
+                zforce = diff * (1.0f / timescale) * step;
+                if (Math.Abs(zforce) < MinPhysxForce)
+                    zforce = Math.Sign(zforce) * MinPhysxForce;
+                dv += zforce;
+                dv += HoverDamping(velocity, efficiency, step);
+            }
+            return dv;
+        }
+
+        private static float HoverDamping(float velocity, float efficiency, float step)
+        {
+            if (velocity == 0f)
+                return 0f;
+            if (Math.Abs(velocity) <= MinHoverDampingVelocityBeforeZeroing * efficiency)
+                return -velocity * efficiency;
+            return -velocity * step * HoverDampingMultiplier * efficiency;
+        }
+
+        /// <summary>
+        /// The change of yaw rate (about the world's z) Halcyon's banking turn motor makes in one of its steps
+        /// (VehicleDynamics.cs:2949-3040, read, not run). The motor ramps the turn toward <paramref name="direction"/> (the
+        /// rate banking asks for, from the roll) by <see cref="GrowthRate"/>, "an exponential fit between two velocity points
+        /// in TAU time", from <paramref name="lastVelocity"/>, or from the motor's <paramref name="target"/> when that is
+        /// further along (so friction at low speed cannot hold the turn down); a turn that starts under pi / 512 starts at
+        /// eight times that. With the angular motor engaged the turn is held to the legacy angular speed. The new target is the
+        /// new rate while the turn ramps toward zero, else the rate held to the direction. Where the turn is already faster than
+        /// the new rate the motor adds nothing, and while the linear motor is stalled it is cleared. The caller adds this to the
+        /// angular motor's change about z and applies the sum only if it is at least
+        /// <see cref="VehicleLimits.ThresholdAngularMotorDeltaV"/>.
+        /// </summary>
+        public static float BankingTurnChange(float lastVelocity, float direction, ref float target, float stepsPerTimescale,
+            float maxAngularSpeed, bool angularMotorEngaged, bool stalled)
+        {
+            float dirsign = VehicleMath.PosNeg(direction);
+            float adjvel = lastVelocity;
+            if (dirsign * (target - adjvel) > 0)
+                adjvel = target;
+
+            float factor = GrowthRate(adjvel, direction, stepsPerTimescale);
+            float newvel = adjvel + adjvel * factor;
+
+            if (angularMotorEngaged && Math.Abs(newvel) > VehicleLimits.MaxLegacyAngularVelocity)
+                newvel = VehicleLimits.MaxLegacyAngularVelocity * VehicleMath.PosNeg(newvel);
+
+            if (factor == VehicleLimits.ThresholdInverseCrossover)
+                factor = -factor;
+
+            if (factor > 0 && Math.Abs(newvel) < VehicleLimits.ThresholdAngularMotorDeltaV)
+                newvel = dirsign * VehicleLimits.ThresholdAngularMotorDeltaV * 8;
+
+            if (direction * newvel < 0 || factor < 0)
+                target = newvel;
+            else
+                target = Utils.Clamp(newvel, -Math.Abs(direction), Math.Abs(direction));
+
+            newvel = Utils.Clamp(newvel, -maxAngularSpeed, maxAngularSpeed);
+
+            if (factor >= 0 && dirsign * (lastVelocity - newvel) > 0)
+                newvel = lastVelocity;
+
+            if (stalled)
+            {
+                target = 0f;
+                newvel = lastVelocity;
+            }
+            return newvel - lastVelocity;
         }
 
         /// <summary>The decay clock that switches a linear motor off (VehicleDynamics.cs:1062, MaxDecayTimescale x 10).</summary>

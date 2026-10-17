@@ -142,11 +142,11 @@ public class VehicleInWorldzTests
         Assert.InRange(withFlag[10], 5f, 8f);   // pulled toward 5 m, not falling to 3.4 m as Second Life's does
     }
 
-    // The figure: from rest 3 m above the height, the first step's velocity is the spring's move over the step
-    // (timescale 2 s, efficiency 0.8), buoyancy 1 leaving the engine no gravity.
+    // The figure: from rest 3 m above the height, the first step's velocity is what Halcyon's hover makes over the 15 ms steps
+    // that fall due in it (timescale 2 s, efficiency 0.8), buoyancy 1 leaving the engine no gravity.
     [Theory]
     [MemberData(nameof(RateData))]
-    public void The_first_step_of_a_buoyant_up_only_hover_is_the_springs_move(double rate)
+    public void The_first_step_of_a_buoyant_up_only_hover_is_Halcyons_hover_law(double rate)
     {
         double h = 1.0 / rate;
         var rig = new BehaviourRig(InWorldz, Vehicle.TYPE_BALLOON);
@@ -158,9 +158,16 @@ public class VehicleInWorldzTests
         rig.Flag(ExtendedVehicleFlags.HoverUpOnly, true);
         rig.Body.Position = new Vector3(128f, 128f, 8f);
         rig.Step(h);
-        (double move, _) = VehicleSpring.MoveOver(3.0, 0.0, 2.0, 0.8, h);
-        Near(move, rig.Body.LinearVelocity.Z, 1e-4, 1e-6, $"{rate} Hz: first step's velocity");
-        Assert.True(move < 0);
+        // Halcyon's hover law (PhysxPrim.pid.cs DoHover), one step of 15 ms for each 15 ms the collision step covers.
+        int due = (int)Math.Floor(h / 0.015 + 1e-6);
+        float velocity = 0f, z = 8f;
+        for (int i = 0; i < due; i++)
+        {
+            velocity += HalcyonVehicleLaws.HoverVelocityChange(5f - z, velocity, 2f, 0.8f, true, 0.015f);
+            z += velocity * 0.015f;
+        }
+        Near(velocity, rig.Body.LinearVelocity.Z, 1e-4, 1e-6, $"{rate} Hz: first step's velocity");
+        Assert.True(due == 0 || velocity < 0);
     }
 
     private static float[] BalloonHover(VehicleSettings s, bool upOnly, float buoyancy, float startZ)

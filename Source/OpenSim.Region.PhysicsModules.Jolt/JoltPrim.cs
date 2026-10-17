@@ -327,7 +327,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // Under [Jolt] BasicForcesBehaviour = InWorldz, Halcyon's limits on how small or large a physical object may be
         // (HalcyonPhysicalLimits; PhysxPrim.stability.cs DynamicsPostcheck): checked at the same moments as the complexity,
         // on the box that holds the whole object, lined up with the region's axes. Halcyon leaves the object inert with its
-        // physical flag still set and tells nobody; here core is told, which alerts the owner and clears the flag.
+        // physical flag still set and tells nobody; so does this.
         private void CheckPhysicalSize()
         {
             if (_module.BasicForcesBehaviour != JoltConfig.BasicForces.InWorldz || IsRemoved)
@@ -344,8 +344,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     HalcyonPhysicalLimits.Include(ToS(parts[i].Position), Unit(parts[i].Orientation), ToS(parts[i]._size), ref min, ref max);
             SVector3 extent = max - min;
             HalcyonPhysicalLimits.Verdict verdict = HalcyonPhysicalLimits.Check(extent.X, extent.Y, extent.Z);
-            if (verdict != HalcyonPhysicalLimits.Verdict.Ok)
-                root.RaisePhysicalSizeError(HalcyonPhysicalLimits.Message(verdict));
+            // Halcyon makes the actor kinematic, tells nobody and leaves the physical flag set (PhysxPrim.stability.cs,
+            // EnforceMinimumDynamicDimensions and EnforceMaximumDynamicDimensions): the object is held where it is, like a
+            // selected one, until a resize brings it inside the limits.
+            bool refused = verdict != HalcyonPhysicalLimits.Verdict.Ok;
+            if (refused != root._sizeHeld)
+            {
+                root._sizeHeld = refused;
+                root.SetKeptStill(root._userSelected || root._held || refused);
+            }
         }
 
         // The real volume (m^3, at the prim's size) a physical concave prim weighs when it is cooked as cells: the volume of the
@@ -1691,6 +1698,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private volatile bool _selected;
         private bool _userSelected;
         private bool _held;
+        // Set under BasicForcesBehaviour = InWorldz while the object is outside Halcyon's size limits (CheckPhysicalSize).
+        private bool _sizeHeld;
+        internal bool IsHeldBySizeLimit => _sizeHeld;
         private Vector3 _heldVelocity;
         private Vector3 _heldRotationalVelocity;
 
@@ -1699,7 +1709,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             set
             {
                 _userSelected = value;
-                SetKeptStill(value || _held);
+                SetKeptStill(value || _held || _sizeHeld);
             }
         }
 
@@ -1737,8 +1747,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 return;
 
             _held = false;
-            SetKeptStill(_userSelected);
-            if (_userSelected || !_body.IsValid || !_isPhysical)
+            SetKeptStill(_userSelected || _sizeHeld);
+            if (_userSelected || _sizeHeld || !_body.IsValid || !_isPhysical)
                 return;
 
             _velocity = _heldVelocity;
