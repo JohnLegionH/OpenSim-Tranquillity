@@ -25,6 +25,9 @@ internal sealed class BehaviourBody : IVehicleBody
     public Vector3 InertiaDiagonal => new(200f, 400f, 500f);
     public Vector3 Gravity { get; set; } = new(0f, 0f, -9.80665f);
     public float GravityFactor { get; private set; } = 1f;
+
+    /// <summary>The body's gravity multiplier (llSetPhysicsMaterial GRAVITY_MULTIPLIER).</summary>
+    public float GravityMultiplier { get; set; } = 1f;
     public void SetGravityFactor(float factor) => GravityFactor = factor;
     public bool HasCollision => false;
     public void AddForce(Vector3 force) { }

@@ -175,7 +175,7 @@ public class VehiclePresetTests
         // The boat scenario (5 s under its motor), to rest: it ends at its preset's hover height over the water. (The
         // documented boat, set down 0.5 m over its height, falls under the water first: HOVER_UP_ONLY takes its
         // buoyancy away above the height, and its vertical friction of 2 s brings it back up slowly.)
-        var o = new HarnessOptions { RateHz = 11.0 };
+        var o = new HarnessOptions { RateHz = 11.0 }.SecondLife();
         if (presets != null)
             o.Jolt["VehiclePresets"] = presets;
         RunResult r = Harness.Harness.Run(Harness.Harness.Find("boat"), o);

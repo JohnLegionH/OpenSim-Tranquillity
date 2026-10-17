@@ -20,7 +20,7 @@ public class SubstepHarnessTests
 {
     private static Summary Run(string scenario, float? slope, double heartbeatHz, double physicsHz, params (string key, string value)[] jolt)
     {
-        var o = new HarnessOptions { RateHz = heartbeatHz, SlopeDeg = slope, PhysicsRateHz = physicsHz };
+        var o = new HarnessOptions { RateHz = heartbeatHz, SlopeDeg = slope, PhysicsRateHz = physicsHz }.SecondLife();
         foreach (var (k, v) in jolt)
             o.Jolt[k] = v;
         return Harness.Harness.Run(Harness.Harness.Find(scenario), o).Summary;
@@ -79,8 +79,8 @@ public class SubstepHarnessTests
     [InlineData("boat", 0f)]
     public void One_step_per_heartbeat_through_the_substep_path_is_the_single_step_path(string scenario, float slope)
     {
-        var single = new HarnessOptions { RateHz = 45.0, SlopeDeg = slope, PhysicsRateHz = 0 };
-        var stepped = new HarnessOptions { RateHz = 45.0, SlopeDeg = slope, PhysicsRateHz = 45.0 };
+        var single = new HarnessOptions { RateHz = 45.0, SlopeDeg = slope, PhysicsRateHz = 0 }.SecondLife();
+        var stepped = new HarnessOptions { RateHz = 45.0, SlopeDeg = slope, PhysicsRateHz = 45.0 }.SecondLife();
         stepped.Jolt["PhysicsStepCollisionSteps"] = "6";
         Scenario sc = Harness.Harness.Find(scenario);
         RunResult a = Harness.Harness.Run(sc, single), b = Harness.Harness.Run(sc, stepped);
@@ -90,11 +90,11 @@ public class SubstepHarnessTests
     [Fact]
     public void A_rate_below_the_heartbeat_runs_and_reports_as_one_step_per_heartbeat()
     {
-        var o = new HarnessOptions { RateHz = 45.0, PhysicsRateHz = 11.0 };
+        var o = new HarnessOptions { RateHz = 45.0, PhysicsRateHz = 11.0 }.SecondLife();
         RunResult r = Harness.Harness.Run(Harness.Harness.Find("drop"), o);
         Assert.Equal(0, r.PhysicsRateHz);
         Assert.Equal("drop", r.Label);
-        RunResult single = Harness.Harness.Run(Harness.Harness.Find("drop"), new HarnessOptions { RateHz = 45.0, PhysicsRateHz = 0 });
+        RunResult single = Harness.Harness.Run(Harness.Harness.Find("drop"), new HarnessOptions { RateHz = 45.0, PhysicsRateHz = 0 }.SecondLife());
         Assert.Equal(single.ToCsv(), r.ToCsv());
     }
 
@@ -126,7 +126,7 @@ public class SubstepHarnessTests
             r.Actor = box.Actor;
             r.ActorSize = ContactScenarios.BoxSize;
         };
-        Harness.Harness.Run(sc, new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsHz });
+        Harness.Harness.Run(sc, new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsHz }.SecondLife());
         Assert.Equal(collisionSteps, seen);
         double physicsStep = physicsHz > 0 ? 1.0 / physicsHz : 1.0 / 11.0;
         Assert.Equal(physicsStep / collisionSteps, stepSeconds, 1e-6);
@@ -135,7 +135,7 @@ public class SubstepHarnessTests
     [Fact]
     public void The_summary_names_the_physics_rate()
     {
-        RunResult r = Harness.Harness.Run(Harness.Harness.Find("drop"), new HarnessOptions { RateHz = 11.0, PhysicsRateHz = 45.0 });
+        RunResult r = Harness.Harness.Run(Harness.Harness.Find("drop"), new HarnessOptions { RateHz = 11.0, PhysicsRateHz = 45.0 }.SecondLife());
         Assert.StartsWith("drop/p45,0,11,", r.SummaryLine());
         Assert.Equal("drop-s0-r11-p45", r.Name);
     }

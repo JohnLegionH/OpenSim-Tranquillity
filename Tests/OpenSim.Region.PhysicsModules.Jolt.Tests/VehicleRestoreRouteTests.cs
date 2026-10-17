@@ -179,6 +179,13 @@ public class VehicleRestoreRouteTests
         void HandBack(Run r)
         {
             PhysicsActor old = r.Actor;
+            if (route == VehicleRoute.Crossing)
+            {
+                // Core starts the crossing and has the engine write the motors' running state into the record it sends
+                // (SceneObjectGroup.CrossAsync).
+                old.CrossingStart();
+                old.CaptureVehicleRunningState(ref r.VehiclePart.VehicleParams.vd);
+            }
             saved = VehicleRestore.Saved(r.VehiclePart, route);
             o.Saved = saved.vd;
             Vector3 pos = old.Position;
@@ -252,7 +259,7 @@ public class VehicleRestoreRouteTests
                 }
             },
         };
-        var options = new HarnessOptions { RateHz = 45.0, PhysicsRateHz = physicsRate, SimulatorDefaults = true };
+        var options = new HarnessOptions { RateHz = 45.0, PhysicsRateHz = physicsRate, SimulatorDefaults = true }.SecondLife();
         if (behaviour != null)
             options.Jolt["VehicleBehaviour"] = behaviour;
         configure?.Invoke(options);
@@ -270,7 +277,7 @@ public class VehicleRestoreRouteTests
                 o.FreshType = State(r.Actor);
             },
         };
-        var freshOptions = new HarnessOptions { RateHz = 45.0, PhysicsRateHz = physicsRate };
+        var freshOptions = new HarnessOptions { RateHz = 45.0, PhysicsRateHz = physicsRate }.SecondLife();
         if (behaviour != null)
             freshOptions.Jolt["VehicleBehaviour"] = behaviour;
         configure?.Invoke(freshOptions);
@@ -379,7 +386,7 @@ public class VehicleRestoreRouteTests
                 record = r.VehiclePart.VehicleParams.vd;
             },
         };
-        Harness.Harness.Run(sc, new HarnessOptions { RateHz = 45.0, PhysicsRateHz = 0 });
+        Harness.Harness.Run(sc, new HarnessOptions { RateHz = 45.0, PhysicsRateHz = 0 }.SecondLife());
         List<string> diff = Diff(Expected(record, engine, heldToLimits: false), engine);
         foreach (string line in diff)
             _out.WriteLine(line);

@@ -542,25 +542,26 @@ public class VehicleInWorldzTests
     }
 
     [Fact]
-    public void With_no_key_the_choice_is_Second_Life_and_nothing_changes()
+    public void With_no_key_the_choice_is_InWorldz()
     {
         (VehicleSettings s, List<string> warnings) = Read();
         Assert.Empty(warnings);
-        Assert.Equal(VehicleBehaviour.SecondLife, s.Behaviour);
-        Assert.Equal(VehiclePresetSet.Documented, s.Presets);
+        Assert.Equal(VehicleBehaviour.InWorldz, s.Behaviour);
+        Assert.Equal(VehiclePresetSet.Legacy, s.Presets);
+        Assert.Equal(VehicleBehaviour.InWorldz, JoltConfig.FromConfig(null, null).ToVehicleSettings().Behaviour);
+        // A controller given no settings at all keeps the documented behaviour: only a region's configuration chooses InWorldz.
         Assert.Equal(VehicleBehaviour.SecondLife, VehicleSettings.Default.Behaviour);
-        Assert.Equal(VehicleBehaviour.SecondLife, JoltConfig.FromConfig(null, null).ToVehicleSettings().Behaviour);
     }
 
     // The rule: VehiclePresets, where it is set, chooses the preset values; where it is not, VehicleBehaviour does
     // (InWorldz: the InWorldz values, Second Life: the documented ones).
     [Theory]
-    [InlineData(null, null, VehicleBehaviour.SecondLife, VehiclePresetSet.Documented)]
+    [InlineData(null, null, VehicleBehaviour.InWorldz, VehiclePresetSet.Legacy)]
     [InlineData("SecondLife", null, VehicleBehaviour.SecondLife, VehiclePresetSet.Documented)]
     [InlineData("InWorldz", null, VehicleBehaviour.InWorldz, VehiclePresetSet.Legacy)]
     [InlineData("inworldz", null, VehicleBehaviour.InWorldz, VehiclePresetSet.Legacy)]
-    [InlineData(null, "legacy", VehicleBehaviour.SecondLife, VehiclePresetSet.Legacy)]
-    [InlineData(null, "documented", VehicleBehaviour.SecondLife, VehiclePresetSet.Documented)]
+    [InlineData(null, "legacy", VehicleBehaviour.InWorldz, VehiclePresetSet.Legacy)]
+    [InlineData(null, "documented", VehicleBehaviour.InWorldz, VehiclePresetSet.Documented)]
     [InlineData("SecondLife", "legacy", VehicleBehaviour.SecondLife, VehiclePresetSet.Legacy)]
     [InlineData("InWorldz", "documented", VehicleBehaviour.InWorldz, VehiclePresetSet.Documented)]
     [InlineData("InWorldz", "legacy", VehicleBehaviour.InWorldz, VehiclePresetSet.Legacy)]
@@ -581,15 +582,15 @@ public class VehicleInWorldzTests
     [InlineData("Halcyon")]
     [InlineData("1")]
     [InlineData("")]
-    public void An_unknown_value_is_refused_naming_the_allowed_values_and_Second_Life_is_used(string value)
+    public void An_unknown_value_is_refused_naming_the_allowed_values_and_InWorldz_is_used(string value)
     {
         (VehicleSettings s, List<string> warnings) = Read(("VehicleBehaviour", value));
-        Assert.Equal(VehicleBehaviour.SecondLife, s.Behaviour);
-        Assert.Equal(VehiclePresetSet.Documented, s.Presets);
+        Assert.Equal(VehicleBehaviour.InWorldz, s.Behaviour);
+        Assert.Equal(VehiclePresetSet.Legacy, s.Presets);
         string warning = Assert.Single(warnings);
         Assert.Contains("VehicleBehaviour", warning);
         Assert.Contains("SecondLife, InWorldz", warning);
-        Assert.Contains("using the default SecondLife", warning);
+        Assert.Contains("using the default InWorldz", warning);
     }
 
     // A refused VehiclePresets does not count as set: the presets follow the behaviour.

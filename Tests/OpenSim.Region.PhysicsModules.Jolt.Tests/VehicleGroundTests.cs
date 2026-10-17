@@ -20,7 +20,7 @@ public class VehicleGroundTests
 {
     private static RunResult Run(string scenario, float slope, double rate = 11.0, string groundGravity = null, float? hold = null)
     {
-        var o = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Hold = hold };
+        var o = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Hold = hold }.SecondLife();
         if (groundGravity != null)
             o.Jolt["VehicleGroundGravityFactor"] = groundGravity;
         return Harness.Harness.Run(Harness.Harness.Find(scenario), o);

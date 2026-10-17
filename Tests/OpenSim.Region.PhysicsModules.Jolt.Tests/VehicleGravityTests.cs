@@ -133,7 +133,7 @@ public class VehicleGravityTests
             var speeds = new List<double>();
             for (int start = 0; start < 5; start++)
             {
-                var o = new HarnessOptions { RateHz = rate, SlopeDeg = slope, StartOffsetY = start * 0.001f, Jolt = { ["VehiclePresets"] = presets } };
+                var o = new HarnessOptions { RateHz = rate, SlopeDeg = slope, StartOffsetY = start * 0.001f, Jolt = { ["VehiclePresets"] = presets } }.SecondLife();
                 if (rate > 45.0)
                     o.Jolt["CollisionSteps"] = "3";
                 speeds.Add(Harness.Harness.Run(Harness.Harness.Find(scenario), o).Summary.SteadySpeed);

@@ -204,7 +204,11 @@ public class JoltConfigTests
     {
         JoltConfig d = JoltConfig.FromConfig(new IniConfigSource(), null);
         Assert.Equal(Vehicles.VehiclePresetSet.Documented, d.VehiclePresets);
-        Assert.Equal(Vehicles.VehiclePresetSet.Documented, d.ToVehicleSettings().Presets);
+        // Where the key is not set the presets follow the behaviour, and the behaviour defaults to InWorldz: its legacy values.
+        Assert.Equal(Vehicles.VehicleBehaviour.InWorldz, d.VehicleBehaviour);
+        Assert.Equal(Vehicles.VehiclePresetSet.Legacy, d.ToVehicleSettings().Presets);
+        Assert.Equal(Vehicles.VehiclePresetSet.Documented,
+            JoltConfig.FromConfig(Source(("VehicleBehaviour", "SecondLife")), null).ToVehicleSettings().Presets);
 
         var warnings = new List<string>();
         foreach ((string text, Vehicles.VehiclePresetSet set) in new[] { ("legacy", Vehicles.VehiclePresetSet.Legacy), ("Legacy", Vehicles.VehiclePresetSet.Legacy), ("documented", Vehicles.VehiclePresetSet.Documented) })

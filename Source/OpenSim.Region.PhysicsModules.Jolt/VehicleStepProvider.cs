@@ -43,6 +43,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private float _mass;
         private Vector3 _inertia;
         private bool _hasCollision;
+        private float _gravityMultiplier = 1f;
         private float _appliedGravityFactor = float.NaN;
         private IWindModule _wind;   // the region's wind module, taken in Arm; OnStep never looks it up
 
@@ -70,6 +71,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _mass = mass;
             _inertia = inertiaDiagonal;
             _hasCollision = hasCollision;
+            _gravityMultiplier = _prim.GravModifier;
             _wind = _module.WindModule;
             _appliedGravityFactor = float.NaN;   // the first step sets the vehicle's share, whatever the host set before
             _armed = true;
@@ -144,6 +146,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         public bool HasCollision => _hasCollision;
+        public float GravityMultiplier => _gravityMultiplier;
 
         // A force over the collision step is the velocity change it makes over it.
         public void AddForce(Vector3 force)

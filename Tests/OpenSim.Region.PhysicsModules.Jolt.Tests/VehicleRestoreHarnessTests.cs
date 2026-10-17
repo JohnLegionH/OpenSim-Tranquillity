@@ -81,7 +81,7 @@ public class VehicleRestoreHarnessTests
     private static RunResult Drive(string scenario, double physicsRate, VehicleRoute route, string settings, bool scriptAgain = false, bool warmUp = true)
     {
         var o = new HarnessOptions { RateHz = Heartbeat, PhysicsRateHz = physicsRate, VehicleRoute = route, VehicleScriptAgain = scriptAgain,
-                                     WarmUpStep = warmUp };
+                                     WarmUpStep = warmUp }.SecondLife();
         (List<VehicleParamSetting> p, List<VehicleFlagSetting> f) = Settings(scenario, settings);
         o.VehicleParams.AddRange(p);
         o.VehicleFlags.AddRange(f);
@@ -179,7 +179,7 @@ public class VehicleRestoreHarnessTests
                 seen = (uint)((JoltPrim)r.Actor).VehicleControl.Flags;
             },
         };
-        Harness.Harness.Run(sc, new HarnessOptions { RateHz = Heartbeat, PhysicsRateHz = physicsRate });
+        Harness.Harness.Run(sc, new HarnessOptions { RateHz = Heartbeat, PhysicsRateHz = physicsRate }.SecondLife());
         return seen;
     }
 
@@ -202,7 +202,7 @@ public class VehicleRestoreHarnessTests
 
     private static RunResult DriveWithFlags(double physicsRate, params (int flags, bool remove)[] calls)
     {
-        var o = new HarnessOptions { RateHz = Heartbeat, PhysicsRateHz = physicsRate };
+        var o = new HarnessOptions { RateHz = Heartbeat, PhysicsRateHz = physicsRate }.SecondLife();
         foreach ((int flags, bool remove) in calls)
             o.VehicleFlags.Add(new VehicleFlagSetting(flags, remove));
         return Harness.Harness.Run(Harness.Harness.Find("carturn"), o);
@@ -232,6 +232,6 @@ public class VehicleRestoreHarnessTests
     [Fact]
     public void The_option_is_off_by_default()
     {
-        Assert.Equal(VehicleRoute.None, new HarnessOptions().VehicleRoute);
+        Assert.Equal(VehicleRoute.None, new HarnessOptions().SecondLife().VehicleRoute);
     }
 }

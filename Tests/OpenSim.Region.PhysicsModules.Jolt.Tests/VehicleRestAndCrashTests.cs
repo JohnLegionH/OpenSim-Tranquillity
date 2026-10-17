@@ -19,7 +19,7 @@ public class VehicleRestAndCrashTests
 {
     private static RunResult Run(string scenario, double rate, string presets = null)
     {
-        var o = new HarnessOptions { RateHz = rate };
+        var o = new HarnessOptions { RateHz = rate }.SecondLife();
         if (presets != null)
             o.Jolt["VehiclePresets"] = presets;
         return Harness.Harness.Run(Harness.Harness.Find(scenario), o);
@@ -112,7 +112,7 @@ public class VehicleRestAndCrashTests
             foreach (float offset in new[] { -0.2f, 0.2f })
                 foreach (float angle in new[] { -1f, 1f })
                 {
-                    var o = new HarnessOptions { RateHz = rate, CrashSpeed = speed, CrashOffset = offset, CrashAngle = angle };
+                    var o = new HarnessOptions { RateHz = rate, CrashSpeed = speed, CrashOffset = offset, CrashAngle = angle }.SecondLife();
                     RunResult r = Harness.Harness.Run(Harness.Harness.Find(scenario), o);
                     Summary m = r.Summary;
                     Assert.Equal(0, m.NonFinite);
@@ -167,7 +167,7 @@ public class VehicleRestAndCrashTests
     [InlineData(45.0)]
     public void A_car_pushing_on_a_wall_stays_put(double rate)
     {
-        RunResult r = Harness.Harness.Run(Harness.Harness.Find("crash-wall"), new HarnessOptions { RateHz = rate, Duration = PushSeconds });
+        RunResult r = Harness.Harness.Run(Harness.Harness.Find("crash-wall"), new HarnessOptions { RateHz = rate, Duration = PushSeconds }.SecondLife());
         Summary m = r.Summary;
         Assert.False(double.IsNaN(m.ImpactT), $"{r.Name}: no impact");
         double end = r.Samples[^1].T, from = m.ImpactT + 2.0;

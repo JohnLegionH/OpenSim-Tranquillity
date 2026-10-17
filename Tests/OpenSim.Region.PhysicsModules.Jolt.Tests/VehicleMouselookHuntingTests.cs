@@ -29,7 +29,7 @@ public class VehicleMouselookHuntingTests
 
     private static RunResult Run(string scenario, double physicsRate, float noiseDegrees, double cameraRate, Action<HarnessOptions> more = null)
     {
-        var o = new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsRate, CameraNoiseDegrees = noiseDegrees, CameraRateHz = cameraRate };
+        var o = new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsRate, CameraNoiseDegrees = noiseDegrees, CameraRateHz = cameraRate }.SecondLife();
         more?.Invoke(o);
         return Harness.Harness.Run(Harness.Harness.Find(scenario), o);
     }

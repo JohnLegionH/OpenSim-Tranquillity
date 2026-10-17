@@ -110,6 +110,7 @@ public class SledSlideScenarioTests
         IConfig jolt = config.AddConfig("Jolt");
         jolt.Set("PhysicsStepRate", rate.ToString(CultureInfo.InvariantCulture));
         jolt.Set("PhysicsStepCollisionSteps", collisionSteps.ToString(CultureInfo.InvariantCulture));
+        jolt.Set("VehicleBehaviour", "SecondLife");   // the documented sled; the default is InWorldz
         var scene = new JoltScene();
         scene.Initialise(config);
         var heights = new float[Size * Size];

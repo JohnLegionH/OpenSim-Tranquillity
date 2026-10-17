@@ -56,7 +56,7 @@ public class PhysicsMaterialTests
                 act?.Invoke(r, r.PhysicsTime);
             },
         };
-        var o = new HarnessOptions { RateHz = Heartbeat, PhysicsRateHz = physicsHz };
+        var o = new HarnessOptions { RateHz = Heartbeat, PhysicsRateHz = physicsHz }.SecondLife();
         // The module's shipped defaults, damping included.
         o.Jolt["PrimLinearDamping"] = JoltConfig.DefaultPrimLinearDamping.ToString(CultureInfo.InvariantCulture);
         o.Jolt["PrimAngularDamping"] = JoltConfig.DefaultPrimAngularDamping.ToString(CultureInfo.InvariantCulture);
@@ -621,7 +621,7 @@ public class PhysicsMaterialTests
                         r.Actor.GravModifier = 2f;
                 },
             };
-            var o = new HarnessOptions { RateHz = Heartbeat, PhysicsRateHz = physicsHz };
+            var o = new HarnessOptions { RateHz = Heartbeat, PhysicsRateHz = physicsHz }.SecondLife();
             return Harness.Harness.Run(wrapped, o);
         }
         RunResult plain = Once(false), changedRun = Once(true);
