@@ -1781,6 +1781,16 @@ These documented behaviours are not simulated:
   bits), and its wind code has no shield. Its push-blocking half belongs in core's push path and is not built.
 - Wind and water currents under Second Life's behaviour: Second Life has none. `InWorldz` has them ("Wind and water currents").
 
+### A vehicle found under the ground
+
+A physical vehicle whose centre is more than 0.5 m under the terrain (edited down while physical, or pushed through) is lifted
+back to it by its step. The lift is a speed of 1 m/s plus 3 m/s for each metre it is still under the ground, at most 10 m/s;
+it goes on until the centre is at the ground, where it ends and takes off the upward speed it gave. A vehicle that was
+rising faster is left as it is. Halcyon's vehicle code adds a velocity change of 1 + 3 |vz| m/s at every update while the
+vehicle is under (`VehicleDynamics.cs:668-678`), which feeds on itself (about fourfold per update) and throws a vehicle that
+was edited 2 m under the ground past 340 m; the bounded lift is the one change from it. In the test a vehicle edited 2 m under
+the terrain comes to rest on it, within 0.1 m, at 32, 45 and 64 Hz with 1 to 4 collision steps.
+
 ### Parked vehicles sleep
 
 A vehicle's body may sleep, as any other body does, while nothing in the vehicle would move it: no

@@ -395,8 +395,12 @@ public class PhysxSpikeTests
             box.Position = new Omv.Vector3(128f, 128f, 23f);
             float highest = 0f;
             p.RunTo(5.0, _ => highest = Math.Max(highest, box.Position.Z));
+            float restSpeed = box.Velocity.Length();
             Say($"[physx] T4 vehicle edited 2 m under the ground | speculative {(spec is float sp ? sp.ToString("0.###") : "default")} | {rate} Hz x {n} | 4 s after lowering: z {box.Position.Z:0.000} (ground 25), highest {highest:0.0}, physical {box.IsPhysical}");
-            if (!(box.IsPhysical && box.Position.Z - 0.5f > 25f - 0.5f)) failures.Add($"vehicle edit case: z {box.Position.Z:0.00} physical {box.IsPhysical}");
+            // Lifted to the surface and not launched: it comes to rest on the ground, within 0.1 m, and never rose more than a
+            // metre above the place it rests at.
+            if (!(box.IsPhysical && Math.Abs(box.Position.Z - 0.5f - 25f) <= 0.1f && highest < 26.5f && restSpeed < 0.5f))
+                failures.Add($"vehicle edit case: z {box.Position.Z:0.00} highest {highest:0.0} speed {restSpeed:0.00} physical {box.IsPhysical}");
         }
         }
         Assert.True(failures.Count == 0, $"{rate} Hz x {n}: " + string.Join("; ", failures));

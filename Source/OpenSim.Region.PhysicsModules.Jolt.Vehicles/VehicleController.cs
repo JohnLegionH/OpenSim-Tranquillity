@@ -322,6 +322,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // that with Second Life's behaviour, the default, the arithmetic is what it was without the choice.
         private bool InWorldz => S.Behaviour == VehicleBehaviour.InWorldz;
 
+        // The lift that brings a vehicle found under the ground back up: m/s, m/s per metre under the ground, and the most.
+        private const float GroundLiftBase = 1f, GroundLiftPerMetre = 3f, GroundLiftMax = 10f;
+        private bool _groundLifting;
+
         // =====================================================================
         // Ephemeral per-frame computed values (not persisted)
         // =====================================================================
@@ -1046,13 +1050,32 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 SimulateMouselookInput();
 
             // -------------------------------------------------------
-            // Ground penetration fix
+            // Ground penetration fix: a vehicle whose centre is more than 0.5 m under the ground (edited down while physical, or
+            // pushed through) is lifted back. Halcyon adds a velocity change of 1 + 3 |vz| m/s at every Update while it is under
+            // (VehicleDynamics.cs:668-678); each lift raises |vz| and so the next lift, about fourfold per Update, and a vehicle
+            // edited 2 m under the ground leaves the region's height. Here the lift is a speed that is bounded (1 m/s and 3 m/s
+            // for each metre the centre is still under the ground, at most 10 m/s) and goes on until the centre is at the ground,
+            // where it ends and takes the vertical speed it gave back off, so the vehicle comes to the ground and stays there.
+            // A vehicle already rising faster than the lift speed is left as it is.
             float groundHeight = _body.GetTerrainHeight(_body.Position);
-            if (_body.Position.Z - groundHeight < VehicleLimits.MaxGroundPenetration)
+            float aboveGround = _body.Position.Z - groundHeight;
+            if (aboveGround < VehicleLimits.MaxGroundPenetration)
+                _groundLifting = true;
+            if (_groundLifting)
             {
-                Vector3 zforce = Vector3.Zero;
-                zforce.Z = 1.0f + Math.Abs(_localLinearVel.Z * 3.0f);
-                ApplyLinearVelocityChange(zforce);
+                float rising = _body.LinearVelocity.Z;
+                if (aboveGround >= 0f)
+                {
+                    _groundLifting = false;
+                    if (rising > 0f)
+                        ApplyLinearVelocityChange(new Vector3(0f, 0f, -rising));
+                }
+                else
+                {
+                    float liftSpeed = Math.Min(GroundLiftBase + GroundLiftPerMetre * -aboveGround, GroundLiftMax);
+                    if (rising < liftSpeed)
+                        ApplyLinearVelocityChange(new Vector3(0f, 0f, liftSpeed - rising));
+                }
             }
 
             // -------------------------------------------------------
