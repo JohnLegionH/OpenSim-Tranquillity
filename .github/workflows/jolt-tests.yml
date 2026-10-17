@@ -14,6 +14,7 @@ on:
     branches:
       - develop
       - lane/jolt
+      - side/ci-platforms
   pull_request:
     branches:
       - develop
@@ -34,7 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2022, ubuntu-22.04]
+        os: [windows-2022, ubuntu-22.04, ubuntu-22.04-arm, macos-14, windows-11-arm]
         configuration: [Debug, Release]
     defaults:
       run:
