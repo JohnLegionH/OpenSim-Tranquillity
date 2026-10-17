@@ -3293,12 +3293,22 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
     /// </summary>
     /// <param name="detail">What the engine counted, for example "(300 of 256 convex hulls)".</param>
     public void PhysicsTooComplex(string detail)
+        => PhysicsRefused("Object was too complex to be made physical: " + detail);
+
+    /// <summary>
+    /// The physics engine refuses to simulate this object as a physical one: it is too complex, or outside the sizes the
+    /// engine allows (see <see cref="PhysicsActor.OnComplexityError"/> and <see cref="PhysicsActor.OnPhysicalSizeError"/>).
+    /// The owner is sent <paramref name="message"/> and the object is made non-physical, as llSetStatus(STATUS_PHYSICS, FALSE)
+    /// would: when the operation that is making it physical has finished, or at once when none is running. An engine that
+    /// checks as the parts arrive reports again as the object grows; the owner is told the last message.
+    /// </summary>
+    public void PhysicsRefused(string message)
     {
         if (m_scene is null || IsDeleted || !UsesPhysics)
             return;
 
         m_physicsTooComplex = true;
-        m_physicsTooComplexDetail = detail;
+        m_physicsTooComplexDetail = message;
 
         if (m_physicsApplyDepth == 0)
             EndPhysicsRefusal();
@@ -3326,7 +3336,7 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
         if (!m_physicsTooComplex)
             return;
         m_physicsTooComplex = false;
-        m_scene?.RequestModuleInterface<IDialogModule>()?.SendAlertToUser(OwnerID, "Object was too complex to be made physical: " + m_physicsTooComplexDetail);
+        m_scene?.RequestModuleInterface<IDialogModule>()?.SendAlertToUser(OwnerID, m_physicsTooComplexDetail);
         ScriptSetPhysicsStatus(false);
         m_physicsTooComplexTold = true;   // after it: making the object non-physical clears the mark for the next change
     }
@@ -4549,7 +4559,7 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
 
             if (pa is not null && pa.IsPhysical)
             {
-                if (IsPhysicalDragRefused())
+                if (IsPhysicalDragRefused(pa.AllowsVehicleGrab))
                 {
                     EndGrab();
                     return;
@@ -4587,11 +4597,12 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
 
     /// <summary>
     /// Whether a drag or a turn of the physical root body is refused, for the mouse drag and the rotate-drag alike.
-    /// A drag moves the root's body, so the root's block applies whichever part was grabbed.
+    /// A drag moves the root's body, so the root's block applies whichever part was grabbed. A vehicle is refused unless the
+    /// engine says it runs a drag of a vehicle (<see cref="PhysicsActor.AllowsVehicleGrab"/>); the rotate-drag never does.
     /// </summary>
-    private bool IsPhysicalDragRefused()
+    private bool IsPhysicalDragRefused(bool allowVehicle = false)
         => m_rootPart.BlockGrab || IsSelected || IsAttachment
-            || m_rootPart.VehicleType != (int)Vehicle.TYPE_NONE || GetSittingAvatarsCount() > 0;
+            || (!allowVehicle && m_rootPart.VehicleType != (int)Vehicle.TYPE_NONE) || GetSittingAvatarsCount() > 0;
 
     /// <summary>
     /// Point the root actor's move-to-target at the dragged point. The first update of a drag also takes the target
@@ -4629,6 +4640,7 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
             if (m_scriptMoveActive)
                 pa.PIDActive = false; // so an engine that reads tau when the target is switched on takes the drag's
 
+            pa.Grabbed = true; // before the target is switched on: the engine reads it when the target starts to act
             pa.PIDTau = GrabTau;
             pa.PIDTarget = target;
             pa.PIDActive = true;
@@ -4686,6 +4698,7 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
             }
             else
                 pa.PIDActive = false;
+            pa.Grabbed = false;
 
             if (m_scriptHoverActive)
             {

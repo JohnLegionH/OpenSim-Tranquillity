@@ -77,6 +77,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         // Step thread only.
         private bool _heldByTarget;     // a controller acted in the last step (the body's gravity is off)
+        private bool _vehicleDragged;   // a drag has been running this vehicle's body in place of its controller
         private bool _lastWasMove;
         private BodyId _noSleepBody = BodyId.Invalid;   // the body a controller has told the engine not to put to sleep
         private bool _linApproaching;   // move to target or hover is still bringing the object in
@@ -179,7 +180,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             _basicForces ??= new BasicForcesStepProvider(_module, this, _backend);
             BasicForcesStepProvider plan = _basicForces;
-            plan.Move = plan.Hover = plan.Angular = false;
+            plan.Move = plan.Hover = plan.Angular = plan.Grab = false;
             plan.InWorldz = _module.BasicForcesBehaviour == JoltConfig.BasicForces.InWorldz;
             bool angular = PrepareAngularTarget(plan);
             bool linear = PrepareLinearTargets(plan);
@@ -221,6 +222,19 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // persist after physics is turned off (wiki.secondlife.com/wiki/LlMoveToTarget). Nothing acts on an active vehicle
             // (the page says not to use it with vehicles; ubODE hands a vehicle to its own controller before either of these).
             bool vehicle = _vehicle != null && _vehicle.IsActive;
+            // InWorldz: a drag of a vehicle is run by the drag's target, not the vehicle's controller (see GrabOverridesVehicle).
+            // When the drag ends the vehicle's gravity and sleep rule, which the drag changed, are set again.
+            if (vehicle && GrabOverridesVehicle)
+            {
+                vehicle = false;
+                _vehicleDragged = true;
+            }
+            else if (vehicle && _vehicleDragged)
+            {
+                _vehicleDragged = false;
+                if (_body.IsValid && _isPhysical)
+                    ApplyVehicleBodyParams();
+            }
             if (!_isPhysical || !_body.IsValid || vehicle || !_backend.TryGetBodyState(_body, out BodyState s))
             {
                 LetGo(vehicle);
@@ -251,7 +265,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (plan.InWorldz)
             {
                 moving = move && tau > HalcyonBasicForces.MinTau;
-                hovering = hover && hoverTau >= HalcyonBasicForces.MinTau && height != 0f;
+                // A drag overrides the hover (DoHoverTarget: "Grab overrides hover/repel").
+                hovering = hover && hoverTau >= HalcyonBasicForces.MinTau && height != 0f && !_grabbed;
+                plan.Grab = _grabbed && moving;
             }
             else
             {

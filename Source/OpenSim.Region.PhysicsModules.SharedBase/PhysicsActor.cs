@@ -174,6 +174,7 @@ public abstract class PhysicsActor
     public delegate void CollisionUpdate(EventArgs e);
     public delegate void OutOfBounds(Vector3 pos);
     public delegate void ComplexityError(string detail);
+    public delegate void PhysicalSizeError(string message);
     public delegate CameraData GetCameraData();
 
     // disable warning: public events
@@ -199,6 +200,13 @@ public abstract class PhysicsActor
     /// non-physical. Only the root part's actor is listened to, as for <see cref="OnOutOfBounds"/>.
     /// </summary>
     public event ComplexityError OnComplexityError;
+
+    /// <summary>
+    /// Raised by an engine that allows a physical object only within certain sizes, when the object this actor belongs to
+    /// is outside them. The argument is the whole message for the owner. The scene alerts the owner and makes the object
+    /// non-physical. Only the root part's actor is listened to, as for <see cref="OnComplexityError"/>.
+    /// </summary>
+    public event PhysicalSizeError OnPhysicalSizeError;
 #pragma warning restore 67
 
 
@@ -316,6 +324,25 @@ public abstract class PhysicsActor
     public virtual void RaiseComplexityError(string detail)
     {
         OnComplexityError?.Invoke(detail);
+    }
+
+    /// <summary>
+    /// Whether the engine lets a physical vehicle (an object with a vehicle type set) be dragged with the mouse. When it
+    /// does, it runs the object's grab target in place of the vehicle's own controller while the drag lasts (see
+    /// <see cref="Grabbed"/>). The default is false, so core refuses the drag, as it does for an engine that never reads a
+    /// vehicle's targets.
+    /// </summary>
+    public virtual bool AllowsVehicleGrab => false;
+
+    /// <summary>
+    /// Whether setting a vehicle type from a script also stops the object's rotation look-at (llRotLookAt) and move-to
+    /// target (llMoveToTarget), as InWorldz did. The default is false: a type change leaves them as they are.
+    /// </summary>
+    public virtual bool VehicleTypeStopsTargets => false;
+
+    public virtual void RaisePhysicalSizeError(string message)
+    {
+        OnPhysicalSizeError?.Invoke(message);
     }
 
     public virtual void SendCollisionUpdate(EventArgs e)

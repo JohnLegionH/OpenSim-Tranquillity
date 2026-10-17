@@ -2511,6 +2511,7 @@ public class SceneObjectPart : EntityBase, IDisposable
                         pa.OnRequestTerseUpdate -= PhysicsRequestingTerseUpdate;
                         pa.OnOutOfBounds -= PhysicsOutOfBounds;
                         pa.OnComplexityError -= PhysicsComplexityError;
+                        pa.OnPhysicalSizeError -= PhysicsSizeError;
                         pa.delink();
                     }
                 }
@@ -2520,6 +2521,8 @@ public class SceneObjectPart : EntityBase, IDisposable
                     // before the actor is made physical: an engine that limits complexity says so as it is
                     pa.OnComplexityError -= PhysicsComplexityError;
                     pa.OnComplexityError += PhysicsComplexityError;
+                    pa.OnPhysicalSizeError -= PhysicsSizeError;
+                    pa.OnPhysicalSizeError += PhysicsSizeError;
                 }
 
                 if (pa.IsPhysical != UsePhysics)
@@ -3163,6 +3166,16 @@ public class SceneObjectPart : EntityBase, IDisposable
     public void PhysicsComplexityError(string detail)
     {
         ParentGroup?.PhysicsTooComplex(detail);
+    }
+
+    /// <summary>
+    /// The physics engine says the object's size is outside what it allows for a physical object. The owner is told and
+    /// the object is made non-physical, as for <see cref="PhysicsComplexityError"/>. <paramref name="message"/> is the
+    /// whole text for the owner.
+    /// </summary>
+    public void PhysicsSizeError(string message)
+    {
+        ParentGroup?.PhysicsRefused(message);
     }
 
     public void PhysicsRequestingTerseUpdate()
@@ -3863,15 +3876,34 @@ public class SceneObjectPart : EntityBase, IDisposable
         if (type == (int)Vehicle.TYPE_NONE)
         {
             if (_parentID == 0 && PhysActor != null)
+            {
                 PhysActor.VehicleType = (int)Vehicle.TYPE_NONE;
+                StopTargetsForVehicleType();
+            }
             return;
         }
         m_vehicleParams = new SOPVehicle();
         m_vehicleParams.ProcessTypeChange((Vehicle)type);
         {
             if (_parentID == 0 && PhysActor != null)
+            {
                 PhysActor.VehicleType = type;
+                StopTargetsForVehicleType();
+            }
             return;
+        }
+    }
+
+    /// <summary>
+    /// An engine that follows InWorldz (<see cref="PhysicsActor.VehicleTypeStopsTargets"/>) ends the object's llRotLookAt
+    /// and llMoveToTarget when a script sets its vehicle type, whatever the type.
+    /// </summary>
+    private void StopTargetsForVehicleType()
+    {
+        if (PhysActor is { VehicleTypeStopsTargets: true } && ParentGroup is not null)
+        {
+            ParentGroup.StopMoveToTarget();
+            ParentGroup.StopLookAt();
         }
     }
 
@@ -5083,6 +5115,7 @@ public class SceneObjectPart : EntityBase, IDisposable
                 pa.OnRequestTerseUpdate += PhysicsRequestingTerseUpdate;
                 pa.OnOutOfBounds += PhysicsOutOfBounds;
                 pa.OnComplexityError += PhysicsComplexityError;
+                pa.OnPhysicalSizeError += PhysicsSizeError;
 
                 if (_parentID != 0 && _parentID != LocalId)
                 {
@@ -5134,6 +5167,7 @@ public class SceneObjectPart : EntityBase, IDisposable
             pa.OnRequestTerseUpdate -= PhysicsRequestingTerseUpdate;
             pa.OnOutOfBounds -= PhysicsOutOfBounds;
             pa.OnComplexityError -= PhysicsComplexityError;
+            pa.OnPhysicalSizeError -= PhysicsSizeError;
 
             ParentGroup.Scene.PhysicsScene.RemovePrim(pa);
 

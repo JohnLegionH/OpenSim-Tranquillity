@@ -239,6 +239,38 @@ namespace OpenSim.Region.Framework.Scenes.Tests
         }
 
         [Fact]
+        public void AnEnginesSizeRefusalTellsTheOwnerItsOwnMessageAndMakesEveryPartNonPhysical()
+        {
+            TestHelpers.InMethod();
+            const string Text = "Object was too small to be made physical: two or more sides are under 0.009 m";
+            (TestScene scene, SceneObjectGroup so, Alerts alerts) = NewObject(3, () => new Body());
+            so.ScriptSetPhysicsStatus(true);
+            PhysicsActor pa = so.RootPart.PhysActor;
+            Assert.NotNull(Handlers(pa, "OnPhysicalSizeError"));
+            int physical = scene.SceneGraph.GetActiveObjectsCount();
+
+            pa.RaisePhysicalSizeError(Text);
+
+            Assert.Equal(new[] { (so.OwnerID, Text) }, alerts.Sent);
+            Assert.False(so.UsesPhysics);
+            Assert.All(so.Parts, p => Assert.False(p.PhysActor.IsPhysical));
+            Assert.Equal(physical - 3, scene.SceneGraph.GetActiveObjectsCount());
+            Assert.Null(Handlers(pa, "OnPhysicalSizeError"));   // the part stops listening once it is non-physical
+        }
+
+        [Fact]
+        public void ASizeRefusalOfAnObjectThatIsNotPhysicalIsNotToldAbout()
+        {
+            TestHelpers.InMethod();
+            (TestScene scene, SceneObjectGroup so, Alerts alerts) = NewObject(2, () => new Body());
+
+            so.RootPart.PhysActor.RaisePhysicalSizeError("Object was too large to be made physical");
+
+            Assert.Empty(alerts.Sent);
+            Assert.False(so.UsesPhysics);
+        }
+
+        [Fact]
         public void AnEnginesShapeCountIsReportedAsItIsAndAWeightIsScaledBySizeWhilePhysical()
         {
             TestHelpers.InMethod();
