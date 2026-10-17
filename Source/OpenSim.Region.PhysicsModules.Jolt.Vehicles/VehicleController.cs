@@ -322,6 +322,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // that with Second Life's behaviour, the default, the arithmetic is what it was without the choice.
         private bool InWorldz => S.Behaviour == VehicleBehaviour.InWorldz;
 
+        // The lift that brings a vehicle found under the ground back up: m/s, m/s per metre under the ground, and the most.
+        private const float GroundLiftBase = 1f, GroundLiftPerMetre = 3f, GroundLiftMax = 10f;
+        private bool _groundLifting;
+
         // =====================================================================
         // Ephemeral per-frame computed values (not persisted)
         // =====================================================================
@@ -1017,6 +1021,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         {
             if (!IsActive) return;
             RefreshSnapshot();
+            Vector3 linearBefore = _hostBody.LinearVelocity, angularBefore = _hostBody.AngularVelocity;
 
             m_frameNum++;
             m_vehicleMass = _hostBody.Mass;
@@ -1045,13 +1050,32 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 SimulateMouselookInput();
 
             // -------------------------------------------------------
-            // Ground penetration fix
+            // Ground penetration fix: a vehicle whose centre is more than 0.5 m under the ground (edited down while physical, or
+            // pushed through) is lifted back. Halcyon adds a velocity change of 1 + 3 |vz| m/s at every Update while it is under
+            // (VehicleDynamics.cs:668-678); each lift raises |vz| and so the next lift, about fourfold per Update, and a vehicle
+            // edited 2 m under the ground leaves the region's height. Here the lift is a speed that is bounded (1 m/s and 3 m/s
+            // for each metre the centre is still under the ground, at most 10 m/s) and goes on until the centre is at the ground,
+            // where it ends and takes the vertical speed it gave back off, so the vehicle comes to the ground and stays there.
+            // A vehicle already rising faster than the lift speed is left as it is.
             float groundHeight = _body.GetTerrainHeight(_body.Position);
-            if (_body.Position.Z - groundHeight < VehicleLimits.MaxGroundPenetration)
+            float aboveGround = _body.Position.Z - groundHeight;
+            if (aboveGround < VehicleLimits.MaxGroundPenetration)
+                _groundLifting = true;
+            if (_groundLifting)
             {
-                Vector3 zforce = Vector3.Zero;
-                zforce.Z = 1.0f + Math.Abs(_localLinearVel.Z * 3.0f);
-                ApplyLinearVelocityChange(zforce);
+                float rising = _body.LinearVelocity.Z;
+                if (aboveGround >= 0f)
+                {
+                    _groundLifting = false;
+                    if (rising > 0f)
+                        ApplyLinearVelocityChange(new Vector3(0f, 0f, -rising));
+                }
+                else
+                {
+                    float liftSpeed = Math.Min(GroundLiftBase + GroundLiftPerMetre * -aboveGround, GroundLiftMax);
+                    if (rising < liftSpeed)
+                        ApplyLinearVelocityChange(new Vector3(0f, 0f, liftSpeed - rising));
+                }
             }
 
             // -------------------------------------------------------
@@ -1077,6 +1101,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             // Save state for next frame
             _sp.Dynamics.LastPosition = _body.Position;
             _sp.Dynamics.Timestep = timeStep;
+            // What this method changed is not the engine's: the engine's last step stays in the difference.
+            _spikeLeftLinear += _hostBody.LinearVelocity - linearBefore;
+            _spikeLeftAngular += _hostBody.AngularVelocity - angularBefore;
         }
 
         /// <summary>
@@ -1145,6 +1172,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             // Read current state from physics engine
             ReadState();
 
+            // Halcyon's cut (on under InWorldz by default, [Jolt] VehicleSpikeMitigation) of a spike the engine's contacts put into the vehicle's velocity (it is kept
+            // from PhysX; the tests PhysxSpikeTests show Jolt makes the same spikes on rough ground and across seams).
+            if (S.SpikeMitigationOn && MitigatePhysxSpikes && MitigatePhysxSpiking(h))
+                ReadState();
+
             TorqueInit();
 
             // -------------------------------------------------------
@@ -1201,7 +1233,102 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             // Save state for next frame
             _sp.Dynamics.LocalLinearVelocity = _localLinearVel;
             _sp.Dynamics.LocalAngularVelocity = _localAngularVel;
+            RememberVelocitiesForSpikeCheck();
         }
+
+        #region Spike mitigation
+
+        // Halcyon's MitigatePhysxSpiking (InWorldz.PhysxPhysics/Vehicle/VehicleDynamics.cs:996-1035), whose comment reads
+        // "PhysX can induce severe angular Y-axis forces and severe Z-axis up forces on rough terrain or across prim edges.
+        // When these strong impulses are detected they will be compressed." It compares the vehicle's velocity with the
+        // one it left the previous step with:
+        //   - an angular acceleration about the local Y axis over 100 rad/s^2 (scaled by (pi - tilt) / pi, where tilt is how
+        //     far the vehicle has tipped from level) takes off the angular velocity about local X and Y;
+        //   - an upward local Z acceleration over 50 m/s^2 takes off the local Z velocity and half the local Y.
+        // Halcyon's two numbers are accelerations over one of its physics steps, 15.6 ms (VehicleLimits.MinPhysicsTimestep);
+        // here they are taken over the engine's changes in the last 15.6 ms, however many collision steps those are, so a
+        // spike is judged by the same size at every step rate. The change counted is the engine's alone: the velocity the
+        // controller left at the end of the previous step is subtracted from the velocity the engine hands back.
+        private const int SpikeHistory = 16;
+        private const float SpikeLinearLimit = 50f, SpikeAngularLimit = 100f;
+        private readonly float[] _spikeSeconds = new float[SpikeHistory];
+        private readonly float[] _spikeDvz = new float[SpikeHistory];
+        private readonly float[] _spikeDwy = new float[SpikeHistory];
+        private int _spikeNewest, _spikeCount;
+        private Vector3 _spikeLeftLinear, _spikeLeftAngular;
+        private bool _spikeLeftValid;
+
+        /// <summary>False turns the spike cut off (a test compares a run with and without it). Under InWorldz it is on.</summary>
+        public bool MitigatePhysxSpikes { get; set; } = true;
+
+        /// <summary>How many times the angular half of the spike cut has acted (tests read it).</summary>
+        public int SpikeAngularCuts { get; private set; }
+
+        /// <summary>How many times the upward half of the spike cut has acted (tests read it).</summary>
+        public int SpikeLinearCuts { get; private set; }
+
+        private void RememberVelocitiesForSpikeCheck()
+        {
+            _spikeLeftLinear = _body.LinearVelocity;
+            _spikeLeftAngular = _body.AngularVelocity;
+            _spikeLeftValid = true;
+        }
+
+        // True if it changed the body's velocities (the caller reads the state again).
+        private bool MitigatePhysxSpiking(float h)
+        {
+            if (!_spikeLeftValid || h <= 0f)
+                return false;
+            Quaternion inverse = Quaternion.Inverse(_rotation);
+            Vector3 engineLinear = (_worldLinearVel - _spikeLeftLinear) * inverse;
+            Vector3 engineAngular = (_worldAngularVel - _spikeLeftAngular) * inverse;
+
+            _spikeNewest = (_spikeNewest + 1) % SpikeHistory;
+            _spikeSeconds[_spikeNewest] = h;
+            _spikeDvz[_spikeNewest] = engineLinear.Z;
+            _spikeDwy[_spikeNewest] = engineAngular.Y;
+            if (_spikeCount < SpikeHistory) _spikeCount++;
+
+            // The engine's change over the last 15.6 ms (at least the newest step).
+            float span = 0f, dvz = 0f, dwy = 0f;
+            for (int i = 0; i < _spikeCount && span < VehicleLimits.MinPhysicsTimestep; i++)
+            {
+                int k = (_spikeNewest - i + SpikeHistory) % SpikeHistory;
+                span += _spikeSeconds[k];
+                dvz += _spikeDvz[k];
+                dwy += _spikeDwy[k];
+            }
+
+            // How far the vehicle has tipped from level: the angle between its up axis and the world's.
+            float upZ = Math.Clamp((Vector3.UnitZ * _rotation).Z, -1f, 1f);
+            float tilt = (float)Math.Acos(upZ);
+            float angularAccel = dwy / span * (float)((Math.PI - tilt) / Math.PI);
+            float linearAccel = dvz / span;
+
+            bool changed = false;
+            if (Math.Abs(angularAccel) > SpikeAngularLimit)
+            {
+                Vector3 local = _worldAngularVel * inverse;
+                local.Z = 0f;
+                _body.AngularVelocity = _body.AngularVelocity - local * _rotation;
+                SpikeAngularCuts++;
+                changed = true;
+            }
+            if (linearAccel > SpikeLinearLimit)
+            {
+                Vector3 local = _worldLinearVel * inverse;
+                local.X = 0f;
+                local.Y *= 0.5f;
+                _body.LinearVelocity = _body.LinearVelocity - local * _rotation;
+                SpikeLinearCuts++;
+                changed = true;
+            }
+            if (changed)
+                _spikeCount = 0;   // the history spoke of a velocity that is gone
+            return changed;
+        }
+
+        #endregion // Spike mitigation
 
         /// <summary>
         /// True when nothing in the vehicle would move a vehicle at rest: on every axis the motor's pull toward its

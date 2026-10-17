@@ -37,6 +37,7 @@ public class JoltConfigTests
         s.MaxBodies = (int)(65536L * Math.Max((long)sx * sy, 256L * 256L) / (256L * 256L));
         s.CollisionSteps = 6;
         s.VelocityIterations = 20;
+        s.SpeculativeContactDistance = 0.02f;   // Jolt's own value, set explicitly
         return s;
     }
 

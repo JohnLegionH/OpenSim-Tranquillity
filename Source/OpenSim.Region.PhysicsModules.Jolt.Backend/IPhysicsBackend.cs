@@ -1052,6 +1052,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public bool BodyInternalEdgeRemoval;
         public bool AvatarInternalEdgeRemoval;
 
+        /// <summary>
+        /// How far apart two shapes can be, in metres, and still make a contact that stops them closing (Jolt's
+        /// PhysicsSettings mSpeculativeContactDistance). Null (an unset struct) leaves the engine's own value, 0.02. A body that
+        /// rests a few millimetres into a surface sees the end face of the next prim along as a wall within this distance, which
+        /// is how a box sliding across two abutted prims can be stopped and tipped at the seam; 0 turns the speculative contacts
+        /// off, at the cost of contacts that begin only on overlap.
+        /// </summary>
+        public float? SpeculativeContactDistance;
+
         public const float JoltMaxLinearSpeed = 500f;
         public const float JoltMaxAngularSpeed = 0.25f * MathF.PI * 60f;
 

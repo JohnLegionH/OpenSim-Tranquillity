@@ -653,6 +653,7 @@ mesher decodes, unless it has already decoded and cached that map.
 | Key | Default | What it sets |
 |---|---|---|
 | `BodyEnhancedEdgeRemoval` | `false` | `true`: Jolt's enhanced internal edge removal for every body that moves under physics (a physical prim, a vehicle): the contacts with the shared edges inside a triangle mesh or a heightfield that can push a body off its path are removed. Costs more per contact with a mesh or the terrain. Off, nothing changes. See "Seams in triangle meshes and terrain". |
+| `SpeculativeContactDistance` | `0.02` | How near two shapes must come, in metres, for the engine to start stopping them closing (the default is Jolt's own value). A box that rests a few millimetres into a prim and slides across the seam to the next prim sees that prim's end face as a wall inside this distance and can be stopped and tipped; 0.0025 and less remove that, 0.005 and more do not. Every value under 0.02 also changes how other contacts settle, so it is not the default. `0` makes contacts begin only on overlap. See "Seams between prims". |
 | `AvatarEnhancedEdgeRemoval` | `false` | `true`: the same for avatars. Off, nothing changes. |
 | `HonourConvexMesh` | `false` | `true`: a non-physical mesh whose `PRIM_PHYSICS_SHAPE_TYPE` is `PRIM_PHYSICS_SHAPE_CONVEX` collides as one convex hull of its points, not its triangle mesh. The simulator gives every mesh that shape type unless the upload sets another, so with this on a hollow mesh without a physics model becomes solid. Off, nothing changes. |
 | `MaxPhysicalComplexity` | `0` | The most collision shapes one physical object may have: a plain box, sphere or cylinder counts 1, any other prim its convex hulls, a prim of shape type NONE 0. An object over it is not made physical and its owner is told "Object was too complex to be made physical: (N of M convex hulls)". `0` is no limit. See "Limiting how complex a physical object may be". |
@@ -807,6 +808,39 @@ With `BodyEnhancedEdgeRemoval` on, 11 of the 13 recorded harness baselines move 
 a heightfield, so every body on the ground meets the removal); with `AvatarEnhancedEdgeRemoval` on none does. Both stay
 off by default for that reason and for the extra cost per contact, which was not measured.
 
+
+## Seams between prims
+
+Two prims that touch (a floor made of boxes, a road of slabs) are two separate bodies, and Jolt's enhanced internal edge
+removal does not join them: it removes contacts with the shared edges inside one mesh or heightfield. A box that rests a few
+millimetres into the top of one prim and slides on to the next prim sees the next prim's end face, within the speculative
+contact distance, as a wall in its path. The contact stops the box's leading edge and tips it. In a test (a 1 m cube pushed
+at 5 m/s across a 10 m slab and the next one, flush, with a 1 mm gap, with a 1 mm step or with the surface bent 0.1 degree at
+the seam, four starts nudged by up to 1.1 mm, at 32, 45 and 64 Hz with 1 to 4 collision steps) the cube turned over about the
+y axis in 28 of the 40 seam cells with the engine's own distance, 0.02, and in 16, 1 and 0 with 0.01, 0.005 and 0.0025 (and
+with 0.001 and 0). A vehicle driven across the same seams did the same (without the spike cut below: 28, 16, 2 and 0 of 40).
+
+`[Jolt] SpeculativeContactDistance` is nevertheless left at 0.02. Every smaller value changes how other contacts settle, and
+tests of existing behaviour fail with it: with 0.0025 ten of them (the sphere dropped into a physical bowl ends 5.6 cm off where the test allows 5; a ring dropped over a standing cylinder rests lower than the test allows; a cube in a tipped hollow box slides out 4 cm where the test needs 30; the tests of a physical box falling through a volume-detect prim and through a phantom prim count 3 where they expect 2; a sled sliding down a 15 degree slope is 2.8 % slower at one step rate; an airplane's steady speed at 11 Hz is 3.4 % lower; a vehicle with a seated avatar driven off a region edge is still moving at the end; the 90 degree mouselook turn settles later; and a fast linkset is through an avatar it should push); with 0.005 five; with 0.01 six; with 0, ten. Its other costs, measured on the same seam and landing
+tests: a box dropped on the terrain at 20 m/s dips a little deeper before it is stopped (0.28 m under the surface at 0.005
+and below, 0.13 m at 0.01 and above; it never passes through the terrain or a 5 cm plate at 20 to 200 m/s at any value), and 0
+leaves a box at gravity multiplier 28 still bouncing at 5.98 m/s 0.3 s after it lands on the terrain at 32 Hz with 3 collision
+steps, which no other value does. An operator whose regions have floors or roads built of many prims can set 0.0025 and accept
+those differences.
+
+The tests are `PhysxSpikeTests` (seams, rough ground, walls, tunnelling, overlap, gravity multiplier) and
+`PhysxVoidEdgeTests` (an object driven into the edge of a region with no neighbour).
+
+Under `[Jolt] VehicleBehaviour = InWorldz` a vehicle's step also cuts the spikes that Halcyon's vehicle code cut
+(`VehicleDynamics.MitigatePhysxSpiking`): an angular acceleration about the vehicle's y axis over 100 rad/s^2 takes off the
+angular velocity about x and y, an upward acceleration over 50 m/s^2 takes off the vertical velocity and half the sideways
+one. Both are measured over the engine's change in the last 15.6 ms, whatever the step rate, and only over what the engine
+did: the velocity changes the vehicle's own step made are taken out, so the cut acts on contacts (a hard landing, rough
+ground, an edge) and never in free flight. `[Jolt] VehicleSpikeMitigation` sets it: left out, it follows the behaviour (on
+under `InWorldz`, off under `SecondLife`); `true` or `false` forces it. On rough ground at 15 m/s it lowers the vehicle's
+worst upward and angular accelerations and keeps it upright (a car type driven over the test ground tipped past 90 degrees
+in 4 of 10 step-rate cells without the cut under `SecondLife` behaviour, and in none with it), and a vehicle that lands hard
+no longer bounces. It does not stop a body that the engine's position solver turns over, which is what a seam does.
 
 ## Mass: what a script reads and where it comes from
 
@@ -1502,6 +1536,7 @@ the motor decay cap, which is Second Life's documented 120 s under `SecondLife` 
 | `TerrainFriction`, `TerrainRestitution` | 0.4, 0.05 | The terrain's friction (0 to 255) and restitution (0 to 1). |
 | `VehicleRestSpeed` | 0.1 | The rest rule (m/s), see "Parked vehicles sleep" below. 0 turns it off. |
 | `VehicleMotorTargetOnUndrivenAxes` | false | `InWorldz` only. Halcyon's linear motor has a rule that its target replaces a lower velocity ("the target ensures forward progress", `VehicleDynamics.cs:2585-2589`), there to get a driven axis going against friction. With the key up (or on an axis it never had a direction on) the sign of the direction is taken as positive, so on such an axis a velocity below the target is pulled up to it and one above is only braked. By default the rule acts on an axis the motor has a direction on, and on one it has had a direction on (which is how a car glides to a stop after the key goes up), and not on an axis it never had one on, where it pulled a car that had left a crest down the slope to twice the motor's speed. `true` is Halcyon's code as written. |
+| `VehicleSpikeMitigation` | unset | Whether a vehicle's step cuts the velocity spikes the engine's contacts put into it, as Halcyon's vehicle code did (see "Seams between prims"). Unset: on under `InWorldz`, off under `SecondLife`. `true` or `false` forces it. |
 | `BodyMaxLinearSpeed`, `BodyMaxAngularSpeed` | 500, 47.12389 | The physics engine's own cap on every moving body, vehicle or not (Jolt's defaults). Keep it above `VehicleMaxLinearSpeed`. |
 
 **The angular rate limiter** (under both behaviours). When a script sets `VEHICLE_ANGULAR_MOTOR_DIRECTION`, the direction the
@@ -1756,6 +1791,16 @@ These documented behaviours are not simulated:
   implement it either: neither Halcyon tree has the flag or the name at all (`VehicleFlags.cs` ends at 0x200 and the InWorldz
   bits), and its wind code has no shield. Its push-blocking half belongs in core's push path and is not built.
 - Wind and water currents under Second Life's behaviour: Second Life has none. `InWorldz` has them ("Wind and water currents").
+
+### A vehicle found under the ground
+
+A physical vehicle whose centre is more than 0.5 m under the terrain (edited down while physical, or pushed through) is lifted
+back to it by its step. The lift is a speed of 1 m/s plus 3 m/s for each metre it is still under the ground, at most 10 m/s;
+it goes on until the centre is at the ground, where it ends and takes off the upward speed it gave. A vehicle that was
+rising faster is left as it is. Halcyon's vehicle code adds a velocity change of 1 + 3 |vz| m/s at every update while the
+vehicle is under (`VehicleDynamics.cs:668-678`), which feeds on itself (about fourfold per update) and throws a vehicle that
+was edited 2 m under the ground past 340 m; the bounded lift is the one change from it. In the test a vehicle edited 2 m under
+the terrain comes to rest on it, within 0.1 m, at 32, 45 and 64 Hz with 1 to 4 collision steps.
 
 ### Parked vehicles sleep
 
