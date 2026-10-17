@@ -8,8 +8,7 @@
 // The sled's slide test (jolt sledtest slide): a documented sled (VEHICLE_TYPE_SLED, its presets, no motor) at rest on a
 // 15 degree slope, let go there and not dropped onto it, so no landing can toss a coin: a drop from a metre up lands the
 // sled on an edge, and a millimetre of start decides whether it slides or stops. The sled's speed is read at fixed times of
-// physics time and compared with the controller-level sled scenario (the same sled let go at rest on a 15 degree slope in
-// the harness) within 2%. This file is the layout and the pass line, which have no scene in them, so a test can run the
+// physics time and compared with the exact solution of the controller's equation along the nose within 2%. This file is the layout and the pass line, which have no scene in them, so a test can run the
 // same numbers against a scene without a region.
 
 using System;
@@ -40,12 +39,29 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Diagnostics
         /// <summary>Physics seconds after the sled is let go at which its speed is read.</summary>
         public static readonly double[] Times = { 1.0, 2.0, 3.0, 4.0 };
 
+        /// <summary>The documented sled's friction timescale along its nose (s).</summary>
+        public const double NoseFrictionSeconds = 30.0;
+
         /// <summary>
-        /// The sled's speed (m/s) at <see cref="Times"/>: the harness's sled scenario at 45 Hz with 2 collision steps, the
-        /// documented sled let go at rest on its 15 degree slope (2.766 5.395 7.938 10.397; at 64 Hz with 2 collision steps
-        /// 2.769 5.399 7.942 10.402), whose figures agree at every rate within 0.1%.
+        /// The sled's speed (m/s) a time <paramref name="t"/> after it is let go at rest on the slope: the exact solution of the
+        /// controller's equation along the nose, v' = a - v / T, with a = g (sin slope + k sqrt(sin slope)) (gravity along the
+        /// slope and the sled's slope assist k, 0.045) and T the nose friction timescale. 2.717 5.345 7.887 10.346 at
+        /// <see cref="Times"/>.
         /// </summary>
-        public static readonly double[] Speeds = { 2.766, 5.395, 7.938, 10.397 };
+        public static double Ideal(double t)
+        {
+            double sin = Math.Sin(SlopeDegrees * Math.PI / 180.0);
+            double a = 9.80665 * (sin + 0.045 * Math.Sqrt(sin));
+            return a * NoseFrictionSeconds * (1.0 - Math.Exp(-t / NoseFrictionSeconds));
+        }
+
+        /// <summary>
+        /// The speeds the readings are compared with. They were the harness sled scenario's (2.766 5.395 7.938 10.397), which
+        /// drops the sled from half a metre onto the slope and so carries about 0.05 m/s of the landing in every reading; the
+        /// sled let go at rest on the ramp follows the exact solution (<see cref="Ideal"/>) to 0.1% at 45 Hz with 2 collision
+        /// steps, 64 Hz with 2 and 32 Hz with 4.
+        /// </summary>
+        public static readonly double[] Speeds = { Ideal(Times[0]), Ideal(Times[1]), Ideal(Times[2]), Ideal(Times[3]) };
 
         /// <summary>The pass line: the largest error of a reading, as a percent of the figure it is read against.</summary>
         public const double TolerancePercent = 2.0;
