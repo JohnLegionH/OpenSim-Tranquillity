@@ -174,6 +174,7 @@ public abstract class PhysicsActor
     public delegate void CollisionUpdate(EventArgs e);
     public delegate void OutOfBounds(Vector3 pos);
     public delegate void ComplexityError(string detail);
+    public delegate void PhysicalSizeError(string message);
     public delegate CameraData GetCameraData();
 
     // disable warning: public events
@@ -199,6 +200,13 @@ public abstract class PhysicsActor
     /// non-physical. Only the root part's actor is listened to, as for <see cref="OnOutOfBounds"/>.
     /// </summary>
     public event ComplexityError OnComplexityError;
+
+    /// <summary>
+    /// Raised by an engine that allows a physical object only within certain sizes, when the object this actor belongs to
+    /// is outside them. The argument is the whole message for the owner. The scene alerts the owner and makes the object
+    /// non-physical. Only the root part's actor is listened to, as for <see cref="OnComplexityError"/>.
+    /// </summary>
+    public event PhysicalSizeError OnPhysicalSizeError;
 #pragma warning restore 67
 
 
@@ -316,6 +324,11 @@ public abstract class PhysicsActor
     public virtual void RaiseComplexityError(string detail)
     {
         OnComplexityError?.Invoke(detail);
+    }
+
+    public virtual void RaisePhysicalSizeError(string message)
+    {
+        OnPhysicalSizeError?.Invoke(message);
     }
 
     public virtual void SendCollisionUpdate(EventArgs e)
