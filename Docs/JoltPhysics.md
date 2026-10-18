@@ -10,11 +10,11 @@
 
 The Jolt module is an optional physics engine for the region server, built on
 [Jolt Physics](https://github.com/jrouwe/JoltPhysics) through the joltc native library and the
-JoltPhysicsSharp binding. Each region gets its own Jolt physics system, and LSL vehicles run on
-Second Life's documented vehicle model: the motors, friction, hover, the vertical attractor, banking
-and deflection (see "Vehicles" below). The sled's slope assist is not a documented Second Life
-behaviour; it is carried over from the InWorldz Halcyon sled code. The vehicle types' earlier
-defaults, from the InWorldz Halcyon vehicle code, are kept behind `VehiclePresets = legacy`.
+JoltPhysicsSharp binding. Each region gets its own Jolt physics system. LSL vehicles are driven by a
+controller built on the Second Life vehicle model (motors, friction, hover, the vertical attractor,
+banking and deflection), and by default they behave as they do on the InWorldz Halcyon simulator,
+where that differs from Second Life's documentation. `VehicleBehaviour = SecondLife` makes a region
+follow Second Life's documentation instead (see "Vehicles" below).
 
 This guide is for operators. It covers selecting Jolt, its settings, its console commands, and
 the platforms it runs on today.
@@ -162,7 +162,7 @@ plain sets"), and `TestCommands` (below).
 
 `[Jolt] PhysicsStepRate` runs physics at a set rate inside each region heartbeat. The default is 45:
 fixed 45 Hz physics steps, whatever the heartbeat (`[Startup] FrameTime`, about 11 per second).
-`PhysicsStepRate = 0` runs one physics step per heartbeat instead, as earlier versions did by default:
+`PhysicsStepRate = 0` runs one physics step per heartbeat instead:
 
 ```ini
 [Jolt]
@@ -339,8 +339,8 @@ logs a warning at start naming the setting, and `jolt capacity` shows the pools 
 `ThreadCount = 0` (the default) is automatic: each pool gets its share of the processor count
 less one, at most 4 threads and at least 1. On a 20-thread machine with one pool that is 4 threads;
 with 2 pools, 4 each; on a 4-thread machine with one pool, 3. A positive `ThreadCount` is the total,
-used as given. To get the behaviour from before the cap, every processor but one in the pools, set
-`ThreadCount` to the processor count less one. The startup log and `jolt capacity` give the pools,
+used as given. To use more threads, for example every processor but one, set `ThreadCount` to the
+total you want across the pools. The startup log and `jolt capacity` give the pools,
 the threads per pool, and whether the count is automatic or set.
 
 The automatic count is per process: each region server process sizes its own pools, at most 4
@@ -671,7 +671,7 @@ every 50 ms, from the motion's own timer. A fixed body that is set to a new plac
 object on it stayed where it was and the platform left from under it: a rider on a platform moved 6 m sideways at 1 or 3 m/s fell
 the platform's 3 m in every case.
 
-The simulator now tells the root prim's actor while a motion plays (`PhysicsActor.MovedByKeyframedMotion`: on when the motion
+The simulator tells the root prim's actor while a motion plays (`PhysicsActor.MovedByKeyframedMotion`: on when the motion
 starts, off when it stops, is paused or has played out, or the object is selected; an actor made while it plays is told too).
 For that time the prim's body is a kinematic one on its own layer, `MovingStatic`, which collides exactly as a fixed prim does
 (ray casts and sensors find it as a fixed prim) but sits in the moving broad phase, so each move does not touch the large tree of
@@ -689,12 +689,13 @@ An avatar takes the velocity of the body under its feet and a physical object is
 - When the motion ends the body is made a fixed one again where the object is, and what rests on it is woken to settle. A
   region that never plays a keyframed motion has no kinematic body. The simulator sets the last pose and turns the hint off at the
   motion's next tick, so a heartbeat can find both: that heartbeat still moves the body to the last pose, and the body is made a
-  fixed one at the start of the next. Made a fixed body at once, the platform was put at the last pose in one go and an avatar
-  standing on it was left behind by the whole of that heartbeat's move (0.46 m at 10 m/s, 1.06 m at 22, 1.46 m at 30; 0.21 m at 5).
-- An avatar takes the platform's velocity in the step the motion starts. The body is made again when the motion starts, and the
-  avatar's character still held the removed body as its ground and found no velocity in it, so for one step the platform left it
-  behind (after ten heartbeats at 16.5 m/s it was 1.5 m from the platform's middle at one step per heartbeat and 0.4 m at 45 Hz).
-  An avatar whose ground was removed now finds its ground again before its step; the same run ends 0.00 m from the middle.
+  fixed one at the start of the next, so an avatar standing on the platform is carried through that heartbeat's last move
+  instead of being left behind by it (made a fixed body at once, the platform would jump to the last pose in one go: 0.46 m
+  behind at 10 m/s, 1.06 m at 22, 1.46 m at 30; 0.21 m at 5).
+- An avatar takes the platform's velocity in the step the motion starts. The platform's body is made again when the motion
+  starts, so an avatar whose ground was that body finds its ground again before its step; without that, the platform would
+  leave it behind for one step (after ten heartbeats at 16.5 m/s it would be 1.5 m from the platform's middle at one step per
+  heartbeat and 0.4 m at 45 Hz). With it the same run ends 0.00 m from the middle.
 - A platform that turns carries a rider round: 2 m from the centre of a platform turned 90 degrees at 30 degrees a second, a
   cube ended at 89.2 degrees and an avatar at 88.5 degrees, both at their radius (one step per heartbeat; at 45 Hz both about 89.5).
 - A linkset moves as one body: the parts' own sets, which follow the root's, change nothing, and the root's body is not made again.
@@ -717,7 +718,7 @@ physical objects and vehicles, phantom and volume-detect prims, and a selected o
 
 | Key | Default | What it sets |
 |---|---|---|
-| `KeyframedMotionCarriesRiders` | `true` | `true`: what stands on a prim that keyframed motion is moving is carried with it, as above. `false`: the prim stays a fixed body for the whole motion, as before this key. |
+| `KeyframedMotionCarriesRiders` | `true` | `true`: what stands on a prim that keyframed motion is moving is carried with it, as above. `false`: the prim stays a fixed body for the whole motion. |
 
 The harness scenarios `kin-box-*` and `kin-avatar-*` (a 6 x 6 x 0.5 m platform 3 m above the ground, a cube or an avatar on it,
 moved 6 m sideways or up at 1 or 3 m/s, by a set every 50 ms or every 0.2 s) and `kin-box-turn`, `kin-avatar-turn` give the figures.
@@ -779,12 +780,11 @@ uses.
 
 | Key | Default | What it sets |
 |---|---|---|
-| `MovedPrimsCarryRiders` | `false` | `true`: riders on a prim moved by a series of plain sets are carried, as above. `false`: such a prim is a fixed body set to each new place, as before this key. |
+| `MovedPrimsCarryRiders` | `false` | `true`: riders on a prim moved by a series of plain sets are carried, as above. `false`: such a prim is a fixed body set to each new place. |
 
 With the setting on, the harness platform (`kin-*-setpos`, a set every 0.2 s) carries a cube and an avatar 6 m sideways at 1 and
-3 m/s (they stayed on in every run; an avatar slid at most 0.6 m, a cube at most 0.4 m) where they fell 3 m before, and moving up
-nothing sank more than 0.45 m, the cube lifted 0.6 m by each set included. With it off the 16 `kin-*-setpos` harness runs give the same sample files, byte for byte, as the build
-before the key was added.
+3 m/s (they stayed on in every run; an avatar slid at most 0.6 m, a cube at most 0.4 m) where, with it off, they fall 3 m, and moving up
+nothing sank more than 0.45 m, the cube lifted 0.6 m by each set included.
 
 ## Seams in triangle meshes and terrain
 
@@ -845,7 +845,7 @@ ground, an edge) and never in free flight. `[Jolt] VehicleSpikeMitigation` sets 
 under `InWorldz`, off under `SecondLife`); `true` or `false` forces it. On rough ground at 15 m/s it lowers the vehicle's
 worst upward and angular accelerations and keeps it upright (a car type driven over the test ground tipped past 90 degrees
 in 4 of 10 step-rate cells without the cut under `SecondLife` behaviour, and in none with it), and a vehicle that lands hard
-no longer bounces. It does not stop a body that the engine's position solver turns over, which is what a seam does.
+does not bounce. It does not stop a body that the engine's position solver turns over, which is what a seam does.
 
 ## Mass: what a script reads and where it comes from
 
@@ -985,7 +985,7 @@ What each engine gives for the same request on level ground (Jolt measured in th
 `PhysicsStepRate` 45 and at one step per heartbeat; ubODE's walk measured in a region, its run and
 fly worked out from its code; BulletSim from its code):
 
-| | Asked | Jolt before these keys | Jolt now | ubODE | BulletSim | Second Life |
+| | Asked | Jolt with the factors at 1 | Jolt, default factors | ubODE | BulletSim | Second Life |
 |---|---|---|---|---|---|---|
 | Walk | 4.096 | 4.096 | 3.200 | 3.15 (3.13 measured) | 4.10 | 3.20 |
 | Run | 4.096, always run on | 4.096 | 5.130 | 5.12 | 5.32 | 5.13 |
@@ -1195,7 +1195,7 @@ not speed, and is not reported as such:
 - An object coming at the avatar that may push it carries it at the object's speed; what the avatar is
   moved beyond that in the same step was the object's overlap, and is not reported. A heavy linkset
   catching up a flying avatar as its push fades went a little into it before it could push it, and
-  the avatar reported 14.05 m/s for one step at PhysicsStepRate 45 while carried at 8.7; it now reports
+  the avatar would report 14.05 m/s for one step at PhysicsStepRate 45 while carried at 8.7; it reports
   the 8.7.
 Where the avatar moves is unchanged by this, and so is everything an avatar hit by nothing reports.
 
@@ -1280,7 +1280,7 @@ raises `collision_start` and `collision_end` while they interpenetrate. Jolt doe
   of physics by the simulator, with every engine.
 - Switching phantom or volume detect on or off on a prim, or on a linkset, changes the prim's body in
   place: it keeps its position and its physics body, and a physical one that was resting on something
-  it can now pass through falls.
+  it can pass through falls.
 - A ray cast finds phantom and volume-detect prims only when it asks for them: YEngine's `llCastRay`
   with `RC_DETECT_PHANTOM`. Phlox's `llCastRay` does not pass that option to the physics engine, so its
   casts do not find them.
@@ -1315,10 +1315,13 @@ keep triggering collisions, apart from a few times, unless there is movement (th
 
 ## Vehicles
 
-LSL vehicles run on a controller that steps each behaviour Second Life documents on that documented
-model. The sled's slope assist (`VehicleSledAssist` below) is not a documented Second Life behaviour;
-it is carried over from the InWorldz Halcyon sled code. The controller's frame structure and parameter handling come from the InWorldz Halcyon vehicle code, whose type
-defaults remain available as `VehiclePresets = legacy`. Every behaviour is stepped as the exact solution over the step
+LSL vehicles run on a controller that steps each behaviour Second Life documents, on that documented
+model. By default (`VehicleBehaviour = InWorldz`, see "Vehicle behaviour: SecondLife or InWorldz" below) a
+vehicle also follows the InWorldz Halcyon simulator where it differs from the documentation: its type
+presets, a boat's ground drag and camera steering, for example. `VehicleBehaviour = SecondLife` keeps to what Second Life
+documents. The sled's slope assist (`VehicleSledAssist` below) is not a documented Second Life behaviour; it comes from
+the InWorldz Halcyon sled code. The controller's frame structure and parameter handling come from the InWorldz Halcyon vehicle
+code. Every behaviour is stepped as the exact solution over the step
 the engine takes, so a vehicle drives the same at one step per heartbeat and at any
 `PhysicsStepRate`. The sections below give the model, the `[Jolt]` keys that govern vehicles, the
 known gaps against Second Life, and how to try a vehicle in the harness before a region.
@@ -1327,8 +1330,8 @@ known gaps against Second Life, and how to try a vehicle in the harness before a
 
 `[Jolt] VehicleGroundGravityFactor` (0 to 1, default 1) is the share of gravity a car or sled
 (`VEHICLE_TYPE_CAR`, `VEHICLE_TYPE_SLED`) gets while it touches the terrain or another object.
-"Touching" is the physics engine's contact in the last step. The default 1 leaves gravity whole,
-as it was before the key existed. BulletSim's vehicle code uses 0.2 (`[BulletSim]
+"Touching" is the physics engine's contact in the last step. The default 1 leaves gravity whole.
+BulletSim's vehicle code uses 0.2 (`[BulletSim]
 VehicleGroundGravityFudge`).
 
 ```ini
@@ -1344,15 +1347,16 @@ with 0.2.
 ### Vehicle type presets
 
 `llSetVehicleType` gives each type its defaults. `[Jolt] VehiclePresets` chooses which (where the key is not set,
-[`VehicleBehaviour`](#vehicle-behaviour-secondlife-or-inworldz) does: `InWorldz` gives `legacy`, `SecondLife` gives `documented`):
+[`VehicleBehaviour`](#vehicle-behaviour-secondlife-or-inworldz) does: `InWorldz`, the default, gives `legacy`, and
+`SecondLife` gives `documented`):
 
-- `documented` (the default): Second Life's documented values, from the wiki page of each type (https://wiki.secondlife.com/wiki/Linden_Vehicle_Tutorial)
+- `documented`: Second Life's documented values, from the wiki page of each type (https://wiki.secondlife.com/wiki/Linden_Vehicle_Tutorial)
   (`VEHICLE_TYPE_SLED`, `_CAR`, `_BOAT`, `_AIRPLANE`, `_BALLOON`). The sled page's hover efficiency
   of 10 is held to 1, as `llSetVehicleFloatParam` holds any efficiency, and the sled has hover off:
   the page's hover timescale of 10 s would turn hover on, against the page's own "no hover", so the
   sled's is 1000 s.
-- `legacy`: the InWorldz Halcyon values the module used before, for vehicles tuned against them, except
-  the car (below).
+- `legacy`: the InWorldz Halcyon values, for vehicles tuned against them, except the car (below). A region
+  gets these by default.
 
 ```ini
 [Jolt]
@@ -1372,7 +1376,7 @@ friction (100, 100, 0.3), the linear motor 0.5 / 1 / 1 s with decay 10 / 2 / 2 s
 attractor 0.6 / 2 s, banking -0.2 with mix 1 and timescale 1 s, and the flags `NO_DEFLECTION_UP`, `LIMIT_ROLL_ONLY`,
 `HOVER_UP_ONLY` and `LIMIT_MOTOR_UP`. It has no torque about world z (the legacy boat and airplane do; the car does
 not). It differs from the documented car in the friction, motor and decay timescales, the angular deflection and the
-attractor. The documented car (the default) is unchanged.
+attractor.
 
 Two vehicle types exist on InWorldz and not in Second Life: `VEHICLE_TYPE_SAILBOAT` (10001) and `VEHICLE_TYPE_MOTORCYCLE`
 (10002). Both are always available, with either preset set and either behaviour, since there is no Second Life type to differ
@@ -1416,7 +1420,7 @@ setting does not change another's. They have no `[Jolt]` keys.
 `[Jolt] VehicleBehaviour` chooses whose behaviour a region's vehicles follow where Second Life's documentation and the
 InWorldz (Halcyon) simulator differ. It is read once when the region starts.
 
-- `SecondLife`: what Second Life's wiki documents, with the documented presets. A region that wants the behaviour of releases before the default changed sets this.
+- `SecondLife`: what Second Life's wiki documents, with the documented presets. A region that wants only what the wiki documents sets this.
 - `InWorldz` (the default): Second Life compatible behaviour with the fixes of the InWorldz Halcyon simulator: the behaviours in the table below,
   camera steering (below the table), and the InWorldz preset values (`VehiclePresets = legacy`). A boat's ground drag, the motor offset on every
   linear force, NO_DEFLECTION_UP removing only an upward change, banking by the sine of the roll without the attractor and the vehicle's gravity
@@ -1462,10 +1466,8 @@ motor direction, and `VEHICLE_FLAG_MOUSEPOINT_STEER` and `_BANK` do the same in 
 `llRemoveVehicleFlags` and a saved vehicle (rezzed, copied, loaded with the region, crossing in). `MOUSEPOINT_STEER`,
 `MOUSEPOINT_BANK`, `REACT_TO_WIND` and `REACT_TO_CURRENTS` act under `InWorldz` (camera steering and wind, below) and are held and
 read back under Second Life's behaviour. `LIMIT_MOTOR_DOWN` and `TORQUE_WORLD_Z` act under either behaviour,
-because a script has to ask for them. Before this was fixed the numbers were read as another engine flag each (a script's
-`LIMIT_MOTOR_DOWN` set an unused flag, `REACT_TO_CURRENTS` set `LIMIT_MOTOR_DOWN`, `REACT_TO_WIND` set `TORQUE_WORLD_Z`, and
-`TORQUE_WORLD_Z` set `MOUSEPOINT_BANK`), so a vehicle that set one of those flags changes: it now does what the script asked.
-The type presets were right and do not change.
+because a script has to ask for them. Each flag number is read as the flag the script named, so a vehicle that sets one of
+them does what the script asked.
 
 **InWorldz parameters** (`llSetVehicleFloatParam`; the code is `VehicleParamCodes.cs`'s, the range is InWorldz's
 `ClampFloatParam`, and a value that is not a number is refused). Each is held and read back under both behaviours; a type
@@ -1528,7 +1530,7 @@ the motor decay cap, which is Second Life's documented 120 s under `SecondLife` 
 | `VehicleAngularLimiterFloor` | 0.1 | The angular rate limiter's floor, 0 to 1 (below the table). 1 turns the limiter off. |
 | `VehicleMinTimescale` | 0.0156 | Shortest timescale a script can set (s), 0.001 to 1. |
 | `VehicleMaxTimescale` | 1000 | Longest friction, motor or deflection timescale (s), at most 1000. 1000 s or more is "off" for friction and deflection. |
-| `VehicleMaxDecayTimescale` | 120 under `SecondLife`, 1000 under `InWorldz` | Longest motor decay timescale (s), linear and angular. It was 1000 before this key. Where the key is set it decides, whatever the behaviour; where it is not set, the behaviour does (the stock configuration leaves it unset). |
+| `VehicleMaxDecayTimescale` | 120 under `SecondLife`, 1000 under `InWorldz` | Longest motor decay timescale (s), linear and angular. Where the key is set it decides, whatever the behaviour; where it is not set, the behaviour does (the stock configuration leaves it unset). |
 | `VehicleMaxHoverTimescale` | 300 | Hover is off at or above this hover timescale (s). |
 | `VehicleMaxAttractTimescale` | 500 | The vertical attractor and banking are off at or above this timescale (s). |
 | `VehicleMaxMotorOffset` | 100 | Linear motor offset (m, each axis). |
@@ -1562,8 +1564,8 @@ revolutions per second in total. Under `SecondLife` a direction longer than
 `VehicleMaxAngularSpeed` is scaled down to that length with its direction kept, so <10, 10, 10> is held as <7.26, 7.26, 7.26>;
 a direction inside the cap is stored as sent. Under `InWorldz` each axis is held to 4 pi, as InWorldz does
 (`VehicleDynamics.cs:394-398`), which lets a diagonal direction reach 4 pi times the square root of 3. The scalar form of the call
-(which sets all three axes) and a saved vehicle's direction are held the same way. A script that sets a diagonal longer than 4 pi
-turns more slowly under the default than it did before this rule.
+(which sets all three axes) and a saved vehicle's direction are held the same way. A diagonal is therefore limited
+per axis under `InWorldz` and by its length under `SecondLife`.
 None of the type presets (either set) has a ratio below 1, so a vehicle that sets no deflection of its own is not limited.
 
 ### Vehicle motors and friction
@@ -1729,10 +1731,6 @@ prim whose physics is switched back on (`SceneObjectPart.AddToPhysics`). The mod
 Its velocity is the one the simulator replays onto it, so a vehicle arriving from another region at speed
 keeps it. A vehicle loaded with the region has its velocity zeroed on each step of its first 0.27 s, until
 a script sets its linear motor, as one whose script sets the type has.
-
-Before this override, the base `SetVehicle` set every vehicle flag on (its first call,
-`VehicleFlags(-1, false)`, sets them all, as on ubODE) and started both motors toward the saved
-directions.
 
 Physics switched off and on by a script or the build tool keeps a solid prim's actor, and its vehicle
 keeps every setting, as on ubODE. A phantom prim's actor is removed when its physics goes off and built
@@ -1943,7 +1941,7 @@ dotnet Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll --sce
 | `--vparam NAME=V` or `NAME=X,Y,Z` | A vehicle parameter by its LSL name, applied after the scenario's own, e.g. `LINEAR_FRICTION_TIMESCALE=1,1,1000` (repeatable) |
 | `--vflag NAME` or `-NAME` | A vehicle flag set (or removed) after the scenario's own, e.g. `HOVER_UP_ONLY` (repeatable) |
 | `--ball M[,M..]`, `--shot-speed V[,V..]` | The `tunnel-` scenarios: the ball's diameter (m, default 0.2) and the speed it is shot at (m/s, default 25); lists run every combination |
-| `--no-sim-defaults`, `--no-sim-prims`, `--no-sim-avatars`, `--no-region-mesher`, `--no-warm-up-step`, `--no-shipped-config`, `--legacy-defaults` | Build a run the earlier harness's way in one respect, or in all of them. Every run is built as a simulator builds it unless one of these is given (see "How the harness builds a run", below) |
+| `--no-sim-defaults`, `--no-sim-prims`, `--no-sim-avatars`, `--no-region-mesher`, `--no-warm-up-step`, `--no-shipped-config`, `--legacy-defaults` | Build a run without the simulator's values in one respect, or in all of them. Every run is built as a simulator builds it unless one of these is given (see "How the harness builds a run", below) |
 | `--vehicle-restore ROUTE` | Vehicle scenarios: when the setup is done, hand the vehicle back from its saved settings as the simulator does: `rez`, `region-start`, `copy`, `crossing`, `detach` or `physics-off-on` (see "Vehicles handed back from their saved settings", above) |
 | `--vehicle-script-again` | After `--vehicle-restore`, the scenario's script makes its vehicle calls again: the same vehicle set up by its script, on a body with the route's history |
 | `--out DIR` | Also write a CSV per run (`<scenario>-s<slope>-r<rate>.csv`, with `-p<rate>` added when the physics rate is on) and `summary.csv` there |
@@ -2010,8 +2008,7 @@ project runs the same scenarios as regression tests (`HarnessTests`).
 ### How the harness builds a run
 
 A run is built the way a simulator builds a region, so that a run that passes in the harness is not one a
-region would fail. Each way below has a switch that gives back the earlier harness's behaviour, for comparing
-with the rows recorded before.
+region would fail. Each way below has a switch that turns it off, for comparing a run with and without it.
 
 - **Prims and avatars get the values the simulator hands the engine** (`--no-sim-prims`,
   `--no-sim-avatars`, `--no-sim-defaults` for both). `SceneObjectPart.AddToPhysics` gives every new actor

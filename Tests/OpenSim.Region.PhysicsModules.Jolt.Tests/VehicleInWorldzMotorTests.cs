@@ -244,7 +244,7 @@ public class VehicleInWorldzMotorTests
         }
     }
 
-    // The step rates of the order: the heartbeat at 11, 22.5, 45 and 90 Hz, each split into 1 to 4 collision steps.
+    // The step rates the module is meant to run at: the heartbeat at 11, 22.5, 45 and 90 Hz, each split into 1 to 4 collision steps.
     public static IEnumerable<object[]> Cells()
     {
         foreach (object[] drive in Drives())
@@ -467,7 +467,7 @@ public class VehicleInWorldzMotorHarnessTests
     private readonly ITestOutputHelper _out;
     public VehicleInWorldzMotorHarnessTests(ITestOutputHelper output) => _out = output;
 
-    // The three drives of the order, run by the engine with the shipped contact friction: the lower part of the 15 degree ramp
+    // Three drives, run by the engine with the shipped contact friction: the lower part of the 15 degree ramp
     // driven from its crest (iw-car-ramp), of the 5 degree one (testcar-down-5), and the last second of an 8 s drive on level
     // ground, each against the terminal speed of the model at Halcyon's step on ground of the same friction.
     public static IEnumerable<object[]> EngineCells()

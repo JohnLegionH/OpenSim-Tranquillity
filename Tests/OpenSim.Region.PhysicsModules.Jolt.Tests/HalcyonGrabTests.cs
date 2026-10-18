@@ -20,7 +20,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// while it is dragged, and a drag of one is allowed (<see cref="JoltPrim.AllowsVehicleGrab"/>, <c>[Jolt] VehicleBehaviour =
 /// InWorldz</c>). Under SecondLife the actor is told of a drag and does nothing with it. The actor is driven as core does in
 /// SceneObjectGroup.SteerGrab: <see cref="JoltPrim.Grabbed"/>, then the move target, tau 0.25. Each result is a line
-/// "HALCYON-GRAB ..." in the test output. Serial with the other native tests.
+/// "Grab ..." in the test output. Serial with the other native tests.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
 public class HalcyonGrabTests
@@ -100,7 +100,7 @@ public class HalcyonGrabTests
         dragRig.Scene.Simulate(Rig.Heartbeat);
         double draggedSpin = Math.Abs(dragged.RotationalVelocity.Z);
 
-        Say($"HALCYON-GRAB spin after one heartbeat | {rate} Hz x {n} | free {freeSpin:0.0000} | dragged {draggedSpin:0.000000} (from 6)");
+        Say($"Grab spin after one heartbeat | {rate} Hz x {n} | free {freeSpin:0.0000} | dragged {draggedSpin:0.000000} (from 6)");
         Assert.True(freeSpin > 5.5, $"a free object kept {freeSpin}");
         Assert.True(draggedSpin < 0.001, $"a dragged object kept {draggedSpin}: Halcyon leaves 0.1^(0.0909 / 0.015) = 8e-7 of it");
     }
@@ -114,7 +114,7 @@ public class HalcyonGrabTests
         Drag(dragged, new Vector3(100f, 150f, 100f));
         rig.Scene.Simulate(Rig.Heartbeat);
         double spin = Math.Abs(dragged.RotationalVelocity.Z);
-        Say($"HALCYON-GRAB SecondLife spin after one heartbeat of a drag: {spin:0.0000} (from 6)");
+        Say($"Grab SecondLife spin after one heartbeat of a drag: {spin:0.0000} (from 6)");
         Assert.True(spin > 5.5, $"the spin fell to {spin}");
     }
 
@@ -125,7 +125,7 @@ public class HalcyonGrabTests
         JoltPrim box = rig.AddBox(new Vector3(1f, 1f, 1f), new Vector3(100f, 128f, 100f), vehicle: false);
         Drag(box, new Vector3(100f, 138f, 100f));
         rig.RunTo(6.0);
-        Say($"HALCYON-GRAB dragged 10 m: at y {box.Position.Y:0.000} after 6 s");
+        Say($"Grab dragged 10 m: at y {box.Position.Y:0.000} after 6 s");
         Assert.InRange(box.Position.Y, 137.9f, 138.1f);
         Release(box);
         rig.RunTo(7.0);
@@ -147,7 +147,7 @@ public class HalcyonGrabTests
         Release(box);
         rig.RunTo(6.0);
         double turnedAfter = TurnDegrees(box);
-        Say($"HALCYON-GRAB look-at: turned {turnedDragged:0.00} degrees during the drag, {turnedAfter:0.0} after it");
+        Say($"Grab look-at: turned {turnedDragged:0.00} degrees during the drag, {turnedAfter:0.0} after it");
         Assert.True(turnedDragged < 1.0, $"the look-at turned a dragged object {turnedDragged} degrees");
         Assert.InRange(turnedAfter, 88.0, 92.0);
     }
@@ -164,7 +164,7 @@ public class HalcyonGrabTests
         Drag(box, new Vector3(100f, 128f, 100f));
         rig.RunTo(6.0);
         double turned = TurnDegrees(box);
-        Say($"HALCYON-GRAB SecondLife look-at during a drag: turned {turned:0.0} degrees");
+        Say($"Grab SecondLife look-at during a drag: turned {turned:0.0} degrees");
         Assert.InRange(turned, 85.0, 95.0);
     }
 
@@ -188,7 +188,7 @@ public class HalcyonGrabTests
 
         Drag(car, new Vector3(car.Position.X, car.Position.Y + 30f, car.Position.Z));
         rig.RunTo(9.0);
-        Say($"HALCYON-GRAB vehicle | {rate} Hz x {n} | driven {driven:0.00} m/s in x, dragged: vx {car.Velocity.X:0.000} vy {car.Velocity.Y:0.000} at y {car.Position.Y:0.00}");
+        Say($"Grab vehicle | {rate} Hz x {n} | driven {driven:0.00} m/s in x, dragged: vx {car.Velocity.X:0.000} vy {car.Velocity.Y:0.000} at y {car.Position.Y:0.00}");
         Assert.True(driven > 8.0, $"the car was driven at {driven}");
         Assert.True(Math.Abs(car.Velocity.X) < 0.05, $"the controller still drove the car: vx {car.Velocity.X}");
         Assert.True(car.Position.Y > 128f + 20f, $"the drag did not take the car: y {car.Position.Y}");
@@ -204,7 +204,7 @@ public class HalcyonGrabTests
         rig.RunTo(6.0);
         Drag(car, new Vector3(car.Position.X, car.Position.Y + 30f, car.Position.Z));   // not reachable through core, which refuses it
         rig.RunTo(9.0);
-        Say($"HALCYON-GRAB SecondLife vehicle: vx {car.Velocity.X:0.00}, vy {car.Velocity.Y:0.000}");
+        Say($"Grab SecondLife vehicle: vx {car.Velocity.X:0.00}, vy {car.Velocity.Y:0.000}");
         Assert.True(car.Velocity.X > 8.0, $"the controller stopped: vx {car.Velocity.X}");
         Assert.True(Math.Abs(car.Velocity.Y) < 0.05, $"the drag moved the vehicle: vy {car.Velocity.Y}");
     }
@@ -239,7 +239,7 @@ public class HalcyonGrabTests
         rig.RunTo(6.0);
         double z = car.Position.Z;
         double vx = car.Velocity.X;
-        Say($"HALCYON-GRAB after a 4 s drag: vx {vx:0.000}, z {z:0.000} (the car floats at buoyancy 1)");
+        Say($"Grab after a 4 s drag: vx {vx:0.000}, z {z:0.000} (the car floats at buoyancy 1)");
         Assert.True(Math.Abs(z - 100.0) < 0.5, $"the car fell or rose to z {z}");
         Assert.True(Math.Abs(vx) < 1.0, $"the motors were not reset: vx {vx}");   // CheckResetMotors: more than 1 s since the last step
         Drive(rig, new Vector3(10f, 0f, 0f));              // a script sets them again

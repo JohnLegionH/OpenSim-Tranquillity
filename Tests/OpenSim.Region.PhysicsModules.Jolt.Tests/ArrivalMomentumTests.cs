@@ -41,8 +41,8 @@ public class ArrivalMomentumTests
     private const float Ground = 25f;
     private const float PlatformTop = Ground + 3f;
     private const float Thickness = 0.5f;
-    private const float DeckSpeed = 3f;                  // metres a second, the speed the platform had in the live crossing
-    private const float VelocityTolerance = 0.2f;        // the figure the order asks for
+    private const float DeckSpeed = 3f;                  // metres a second, the speed a platform had in a crossing that was observed
+    private const float VelocityTolerance = 0.2f;        // m/s: how far the avatar's speed may differ from the deck's
     private const uint AvatarId = 99u;
     private const uint PlatformId = 500u;
 

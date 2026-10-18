@@ -20,8 +20,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// (PhysxPrim.stability.cs EnforceMinimumDynamicDimensions and EnforceMaximumDynamicDimensions): an object whose box, lined up
 /// with the region's axes and holding every part of the linkset, has two or more sides under 0.009 m, a side over 256 m, or two
 /// sides over 128 m, is not simulated as physical: Halcyon makes the actor kinematic, tells nobody and leaves the physical flag
-/// set. Here the root's actor is held where it is (<see cref="JoltPrim.IsHeldBySizeLimit"/>) and <see cref="PhysicsActor.OnPhysicalSizeError"/>
-/// is never raised, wherever Halcyon rebuilds the actor (made physical, resized, a part linked in, a shape changed). Under
+/// set. Here the root's actor is held where it is (<see cref="JoltPrim.IsHeldBySizeLimit"/>) and the owner is not told, wherever
+/// Halcyon rebuilds the actor (made physical, resized, a part linked in, a shape changed). Under
 /// SecondLife nothing is held. Each result is a line "PRIM-SIZE ..." in the test output. Serial with the other native tests.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
@@ -40,12 +40,6 @@ public class PhysicalSizeLimitTests
                                         (byte)PhysShapeType.prim, _id++);
 
     private static JoltScene SceneUnder(string behaviour) => NewScene(Scratch(), ("BasicForcesBehaviour", behaviour));
-
-    private sealed class Heard
-    {
-        public readonly List<string> Messages = new();
-        public Heard(PhysicsActor actor) { actor.OnPhysicalSizeError += m => Messages.Add(m); }
-    }
 
     // ------------------------------------------------------------------ the rule itself (Halcyon's two functions)
 
@@ -80,9 +74,6 @@ public class PhysicalSizeLimitTests
             JoltPrim ok = Add(scene, new Vector3(2f, 1f, 1f), new Vector3(CentreX, CentreY, Ground + 3f), true);
             JoltPrim flat = Add(scene, new Vector3(0.005f, 0.005f, 1f), new Vector3(CentreX + 4f, CentreY, Ground + 3f), true);
             JoltPrim rod = Add(scene, new Vector3(300f, 0.5f, 0.5f), new Vector3(CentreX, CentreY + 4f, Ground + 3f), true);
-            var heardOk = new Heard(ok);
-            var heardFlat = new Heard(flat);
-            var heardRod = new Heard(rod);
             Assert.False(flat.IsHeldBySizeLimit);  // the actor is made; core says the building is over next
             ok.Building = false;
             flat.Building = false;
@@ -92,9 +83,6 @@ public class PhysicalSizeLimitTests
             Assert.True(flat.IsHeldBySizeLimit);
             Assert.True(rod.IsHeldBySizeLimit);
             Assert.True(flat.IsPhysical && rod.IsPhysical, "Halcyon leaves the physical flag set");
-            Assert.Empty(heardOk.Messages);
-            Assert.Empty(heardFlat.Messages);
-            Assert.Empty(heardRod.Messages);
         }
         finally { scene.Dispose(); }
     }
@@ -107,17 +95,13 @@ public class PhysicalSizeLimitTests
         {
             JoltPrim flat = Add(scene, new Vector3(0.005f, 0.005f, 1f), new Vector3(CentreX + 4f, CentreY, Ground + 3f), true);
             JoltPrim rod = Add(scene, new Vector3(300f, 0.5f, 0.5f), new Vector3(CentreX, CentreY + 4f, Ground + 3f), true);
-            var heardFlat = new Heard(flat);
-            var heardRod = new Heard(rod);
             flat.Building = false;
             rod.Building = false;
             flat.Size = new Vector3(0.004f, 0.004f, 1f);
             rod.Size = new Vector3(400f, 0.5f, 0.5f);
-            Say($"PRIM-SIZE under SecondLife: flat [{string.Join("|", heardFlat.Messages)}], rod [{string.Join("|", heardRod.Messages)}]");
+            Say($"PRIM-SIZE under SecondLife: flat held {flat.IsHeldBySizeLimit}, rod held {rod.IsHeldBySizeLimit}");
             Assert.False(flat.IsHeldBySizeLimit);
             Assert.False(rod.IsHeldBySizeLimit);
-            Assert.Empty(heardFlat.Messages);
-            Assert.Empty(heardRod.Messages);
         }
         finally { scene.Dispose(); }
     }
@@ -130,7 +114,6 @@ public class PhysicalSizeLimitTests
         {
             JoltPrim p = Add(scene, new Vector3(2f, 1f, 1f), new Vector3(CentreX, CentreY, Ground + 3f), true);
             p.Building = false;
-            var heard = new Heard(p);
             p.Size = new Vector3(2f, 1.5f, 1f);
             Assert.False(p.IsHeldBySizeLimit);
             p.Size = new Vector3(0.002f, 0.002f, 1f);
@@ -138,10 +121,9 @@ public class PhysicalSizeLimitTests
             p.Size = new Vector3(2f, 1f, 1f);
             Assert.False(p.IsHeldBySizeLimit);     // back inside the limits: let go
             p.Size = new Vector3(260f, 1f, 1f);
-            Say($"PRIM-SIZE resized: held {p.IsHeldBySizeLimit}, notices {heard.Messages.Count}");
+            Say($"PRIM-SIZE resized: held {p.IsHeldBySizeLimit}");
             Assert.True(p.IsHeldBySizeLimit);
             Assert.True(p.IsPhysical);
-            Assert.Empty(heard.Messages);
         }
         finally { scene.Dispose(); }
     }
@@ -154,12 +136,10 @@ public class PhysicalSizeLimitTests
         {
             JoltPrim idle = Add(scene, new Vector3(300f, 300f, 1f), new Vector3(CentreX, CentreY, Ground + 3f), false);
             idle.Building = false;
-            var heard = new Heard(idle);
             idle.Size = new Vector3(400f, 400f, 1f);
             Assert.False(idle.IsHeldBySizeLimit);  // static: no limit (core's own scene limits apply)
             idle.IsPhysical = true;
             Assert.True(idle.IsHeldBySizeLimit);
-            Assert.Empty(heard.Messages);
         }
         finally { scene.Dispose(); }
     }
@@ -174,13 +154,11 @@ public class PhysicalSizeLimitTests
             PrimitiveBaseShape hollow = Shapes().Single(s => s.Name == "hollow box 0.5").Build();   // 4 hulls
             var prim = (JoltPrim)scene.AddPrimShape("prim", hollow, new Vector3(CentreX, CentreY, Ground + 3f), new Vector3(300f, 1f, 1f),
                                                     Quaternion.Identity, true, false, (byte)PhysShapeType.prim, _id++);
-            var size = new Heard(prim);
             var complexity = new List<string>();
             prim.OnComplexityError += d => complexity.Add(d);
             prim.Building = false;
-            Say($"PRIM-SIZE too complex and too large: complexity [{string.Join("|", complexity)}], size [{string.Join("|", size.Messages)}]");
+            Say($"PRIM-SIZE too complex and too large: complexity [{string.Join("|", complexity)}]");
             Assert.Equal(new[] { "(4 of 2 convex hulls)" }, complexity);
-            Assert.Empty(size.Messages);
         }
         finally { scene.Dispose(); }
     }
@@ -193,21 +171,17 @@ public class PhysicalSizeLimitTests
         {
             // a straight rod 200 m long is one long side: allowed
             JoltPrim straight = Add(scene, new Vector3(200f, 1f, 1f), new Vector3(CentreX, CentreY, Ground + 3f), true);
-            var heardStraight = new Heard(straight);
             straight.Building = false;
             Assert.False(straight.IsHeldBySizeLimit);
 
             // turned 45 degrees about z, the same rod spans about 141 m in x and in y: two sides over 128 m
             Quaternion turned = Quaternion.CreateFromAxisAngle(Vector3.UnitZ, MathF.PI / 4f);
             JoltPrim diagonal = Add(scene, new Vector3(200f, 1f, 1f), new Vector3(CentreX, CentreY, Ground + 6f), true, turned);
-            var heardDiagonal = new Heard(diagonal);
             diagonal.Building = false;
             Assert.True(diagonal.IsHeldBySizeLimit);
-            Assert.Empty(heardDiagonal.Messages);
 
             // two 100 m prims linked end to end make a 200 m side: one long side, allowed; parts across make a second one
             JoltPrim root = Add(scene, new Vector3(100f, 1f, 1f), new Vector3(CentreX, CentreY, Ground + 9f), true);
-            var heardLinked = new Heard(root);
             root.Building = false;
             JoltPrim end = Add(scene, new Vector3(100f, 1f, 1f), new Vector3(CentreX + 100f, CentreY, Ground + 9f), true);
             end.link(root);
@@ -217,9 +191,8 @@ public class PhysicalSizeLimitTests
             Assert.False(root.IsHeldBySizeLimit);
             JoltPrim farAcross = Add(scene, new Vector3(1f, 100f, 1f), new Vector3(CentreX + 50f, CentreY + 130f, Ground + 9f), true);
             farAcross.link(root);   // y now spans about 180 m
-            Say($"PRIM-SIZE linkset: held {root.IsHeldBySizeLimit}, notices {heardLinked.Messages.Count}");
+            Say($"PRIM-SIZE linkset: held {root.IsHeldBySizeLimit}");
             Assert.True(root.IsHeldBySizeLimit);
-            Assert.Empty(heardLinked.Messages);
         }
         finally { scene.Dispose(); }
     }

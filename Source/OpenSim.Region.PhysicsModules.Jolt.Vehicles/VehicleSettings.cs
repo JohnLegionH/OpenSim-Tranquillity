@@ -1,8 +1,38 @@
-/* Copyright (c) 2026 Legion Builds
- *
- * This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+/*
+ * Copyright (c) 2015, InWorldz Halcyon Developers
+ * All rights reserved.
+ * 
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ * 
+ *   * Redistributions of source code must retain the above copyright notice, this
+ *     list of conditions and the following disclaimer.
+ * 
+ *   * Redistributions in binary form must reproduce the above copyright notice,
+ *     this list of conditions and the following disclaimer in the documentation
+ *     and/or other materials provided with the distribution.
+ * 
+ *   * Neither the name of halcyon nor the names of its
+ *     contributors may be used to endorse or promote products derived from
+ *     this software without specific prior written permission.
+ * 
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+/*
+ * The enablement and debugging switches (DoAngularDeflection through DebugRegionChange) are ported from InWorldz Halcyon
+ * (InWorldz.PhysxPhysics/Vehicle/VehicleDynamics.cs, class VehicleLimits: the Do* and Debug* switches), made per-region
+ * instance properties instead of statics. The limits take their defaults from VehicleLimits.cs.
+ * Adapted 2026 by Legion Builds
  */
 
 namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
@@ -13,8 +43,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// <summary>Second Life's documented defaults, from the wiki page of each type (VEHICLE_TYPE_CAR and the rest).</summary>
         Documented,
 
-        /// <summary>The InWorldz Halcyon values, which the module used before the documented set existed; for vehicles
-        /// tuned against them.</summary>
+        /// <summary>The InWorldz Halcyon values, for vehicles tuned against them.</summary>
         Legacy,
     }
 
@@ -31,7 +60,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
     /// <summary>
     /// The per-region settings every vehicle controller in a region shares: the preset set and the limits a script's
     /// vehicle parameters are held to. The host builds one from its configuration when the region starts. Each default
-    /// is the value the module had as a constant (VehicleLimits), except the motor decay cap, which is Second Life's
+    /// is the value of the matching constant in VehicleLimits, except the motor decay cap, which is Second Life's
     /// documented 120 s, and the preset set, which is the documented one.
     /// </summary>
     public sealed class VehicleSettings
@@ -162,7 +191,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         public bool SpikeMitigationOn => SpikeMitigation ?? Behaviour == VehicleBehaviour.InWorldz;
 
         // Enablement switches, useful for debugging specific features. A region's settings, so that switching one off
-        // in one region does not change the vehicles of another. All are true in production.
+        // in one region does not change the vehicles of another. All are true by default.
         public bool DoAngularDeflection { get; init; } = true;
         public bool DoLinearDeflection { get; init; } = true;
         public bool DoMotors { get; init; } = true;
@@ -171,7 +200,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         public bool DoVerticalAttractor { get; init; } = true;
         public bool DoBanking { get; init; } = true;
 
-        // Debugging switches: all false in production. Stored for the region; no vehicle code reads one yet.
+        // Debugging switches: all false by default. Stored for the region; no vehicle code reads one yet.
         public bool DebugPrintParams { get; init; } = false;
         public bool DebugTimestep { get; init; } = false;
         public bool DebugSpikeDetection { get; init; } = false;

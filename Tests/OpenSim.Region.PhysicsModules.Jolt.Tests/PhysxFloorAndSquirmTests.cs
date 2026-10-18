@@ -75,7 +75,7 @@ public class PhysxFloorAndSquirmTests
         StepTrace trace = p.Trace(box);
         p.RunTo(3.0);
         // Whether the engine has put it to sleep by now is a matter of the step rate; the push has to work either way.
-        Say($"[physx] T9 before the push: {rate} Hz x {n}, edge removal {(edge ? "on" : "off")}, box asleep {Asleep(p, box)}");
+        Say($"[physx] before the push: {rate} Hz x {n}, edge removal {(edge ? "on" : "off")}, box asleep {Asleep(p, box)}");
         if (angular) box.AddAngularForce(new Omv.Vector3((float)j, 0f, 0f), false);
         else box.AddForce(new Omv.Vector3((float)j, 0f, 0f), false);
         p.RunTo(p.Time + 0.3);
@@ -89,13 +89,13 @@ public class PhysxFloorAndSquirmTests
 
     [Theory]
     [MemberData(nameof(Cells))]
-    public void T9_a_tiny_impulse_gives_the_velocity_it_should(double rate, int n, bool edge)
+    public void a_tiny_impulse_gives_the_velocity_it_should(double rate, int n, bool edge)
     {
         var failures = new List<string>();
         foreach (double j in TinyForces)
         {
             double r = ImpulseRatio(rate, n, edge, j, false);
-            Say($"[physx] T9 impulse {j:0.0e+0} N s | {rate} Hz x {n} | edge removal {(edge ? "on" : "off")} | velocity gained / (j/m) = {r:0.0000}");
+            Say($"[physx] impulse {j:0.0e+0} N s | {rate} Hz x {n} | edge removal {(edge ? "on" : "off")} | velocity gained / (j/m) = {r:0.0000}");
             if (Math.Abs(r - 1.0) > Tolerance) failures.Add($"{j:0.0e+0}: {r:0.0000}");
         }
         Assert.True(failures.Count == 0, $"{rate} Hz x {n}: a tiny impulse gave the wrong velocity: " + string.Join("; ", failures));
@@ -103,13 +103,13 @@ public class PhysxFloorAndSquirmTests
 
     [Theory]
     [MemberData(nameof(Cells))]
-    public void T9_a_tiny_angular_impulse_gives_the_spin_it_should(double rate, int n, bool edge)
+    public void a_tiny_angular_impulse_gives_the_spin_it_should(double rate, int n, bool edge)
     {
         var failures = new List<string>();
         foreach (double j in TinyForces)
         {
             double r = ImpulseRatio(rate, n, edge, j, true);
-            Say($"[physx] T9 angular impulse {j:0.0e+0} N m s | {rate} Hz x {n} | edge removal {(edge ? "on" : "off")} | spin gained / (j/I) = {r:0.0000}");
+            Say($"[physx] angular impulse {j:0.0e+0} N m s | {rate} Hz x {n} | edge removal {(edge ? "on" : "off")} | spin gained / (j/I) = {r:0.0000}");
             if (Math.Abs(r - 1.0) > Tolerance) failures.Add($"{j:0.0e+0}: {r:0.0000}");
         }
         Assert.True(failures.Count == 0, $"{rate} Hz x {n}: a tiny angular impulse gave the wrong spin: " + string.Join("; ", failures));
@@ -119,7 +119,7 @@ public class PhysxFloorAndSquirmTests
     // body at rest could fall asleep) and between 0.2 s and 2 s (the body is woken by the force at every step) against f / m.
     [Theory]
     [MemberData(nameof(Cells))]
-    public void T9_a_tiny_constant_force_accelerates_the_box_as_it_should(double rate, int n, bool edge)
+    public void a_tiny_constant_force_accelerates_the_box_as_it_should(double rate, int n, bool edge)
     {
         var failures = new List<string>();
         foreach (double f in TinyForces)
@@ -139,7 +139,7 @@ public class PhysxFloorAndSquirmTests
                 return (rb.V.X - ra.V.X) / (rb.T - ra.T) / expected;
             }
             double early = Accel(0.2, 0.4), full = Accel(0.2, 2.0);
-            Say($"[physx] T9 force {f:0.0e+0} N | {rate} Hz x {n} | edge removal {(edge ? "on" : "off")} | acceleration / (f/m): 0.2-0.4 s {early:0.0000}, 0.2-2 s {full:0.0000}");
+            Say($"[physx] force {f:0.0e+0} N | {rate} Hz x {n} | edge removal {(edge ? "on" : "off")} | acceleration / (f/m): 0.2-0.4 s {early:0.0000}, 0.2-2 s {full:0.0000}");
             if (Math.Abs(early - 1.0) > Tolerance) failures.Add($"{f:0.0e+0} early: {early:0.0000}");
             if (Math.Abs(full - 1.0) > Tolerance) failures.Add($"{f:0.0e+0} to 2 s: {full:0.0000}");
         }
@@ -184,13 +184,13 @@ public class PhysxFloorAndSquirmTests
 
     [Theory]
     [MemberData(nameof(Cells))]
-    public void T8_a_box_on_a_slope_settles_and_stays_put(double rate, int n, bool edge)
+    public void a_box_on_a_slope_settles_and_stays_put(double rate, int n, bool edge)
     {
         var failures = new List<string>();
         foreach (double degrees in new[] { 0.0, 5.0, 20.0 })
         {
             Rest r = BoxOnSlope(rate, n, edge, degrees, 3.0, 20.0);
-            Say($"[physx] T8 box on {degrees} degrees | {rate} Hz x {n} | edge removal {(edge ? "on" : "off")} | still from {r.SleepAt:0.00} s, asleep at the end {r.Asleep} | after 3 s: top speed {r.CreepSpeed:0.00000} m/s, moved {r.Drift:0.00000} m in 17 s");
+            Say($"[physx] box on {degrees} degrees | {rate} Hz x {n} | edge removal {(edge ? "on" : "off")} | still from {r.SleepAt:0.00} s, asleep at the end {r.Asleep} | after 3 s: top speed {r.CreepSpeed:0.00000} m/s, moved {r.Drift:0.00000} m in 17 s");
             if (r.SleepAt < 0 || r.SleepAt > 3.0) failures.Add($"{degrees} degrees: still from {r.SleepAt:0.00} s");
             if (!r.Asleep) failures.Add($"{degrees} degrees: not asleep at the end");
             if (r.CreepSpeed > 1e-3 || r.Drift > 1e-3) failures.Add($"{degrees} degrees: creeps at {r.CreepSpeed:0.00000} m/s, {r.Drift:0.00000} m");
@@ -233,13 +233,13 @@ public class PhysxFloorAndSquirmTests
 
     [Theory]
     [MemberData(nameof(Cells))]
-    public void T8_a_vehicle_with_a_small_decaying_motor_comes_to_rest_and_sleeps(double rate, int n, bool edge)
+    public void a_vehicle_with_a_small_decaying_motor_comes_to_rest_and_sleeps(double rate, int n, bool edge)
     {
         var failures = new List<string>();
         foreach (double degrees in new[] { 0.0, 5.0 })
         {
             var (motorEnd, r, peak) = DecayingMotor(rate, n, edge, degrees, 0.3f, 0.5f);
-            Say($"[physx] T8 vehicle on {degrees} degrees | {rate} Hz x {n} | edge removal {(edge ? "on" : "off")} | peak {peak:0.000} m/s, motor ends at {motorEnd:0.00} s, still from {r.SleepAt:0.00} s, asleep at the end {r.Asleep} | 3 s after the end: top speed {r.CreepSpeed:0.00000} m/s, moved {r.Drift:0.00000} m in 25 s");
+            Say($"[physx] vehicle on {degrees} degrees | {rate} Hz x {n} | edge removal {(edge ? "on" : "off")} | peak {peak:0.000} m/s, motor ends at {motorEnd:0.00} s, still from {r.SleepAt:0.00} s, asleep at the end {r.Asleep} | 3 s after the end: top speed {r.CreepSpeed:0.00000} m/s, moved {r.Drift:0.00000} m in 25 s");
             if (r.SleepAt < 0 || r.SleepAt > motorEnd + 3.0) failures.Add($"{degrees} degrees: still from {r.SleepAt:0.00} s, motor end {motorEnd:0.00} s");
             if (!r.Asleep) failures.Add($"{degrees} degrees: not asleep at the end");
             if (r.CreepSpeed > 1e-3 || r.Drift > 1e-3) failures.Add($"{degrees} degrees: creeps at {r.CreepSpeed:0.00000} m/s, {r.Drift:0.00000} m");
