@@ -4793,6 +4793,39 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
     #region Border Crossing Methods
 
     /// <summary>
+    /// The object this avatar stands on, when it is moving: such an object crosses
+    /// with its riders when its origin reaches the border (<see cref="SceneObjectGroup.FreezeStandingRiders"/>), so a rider
+    /// that is ahead of the origin, in the direction it travels, reaches the border first and has to wait for it. Null for an
+    /// avatar that stands on nothing, on an object that stands still, or on one that is already crossing.
+    /// </summary>
+    private SceneObjectGroup MovingObjectRiddenHere()
+    {
+        if (!m_scene.EnableStandingRiderCrossing || !RideOn.IsLinked)
+            return null;
+
+        SceneObjectGroup group = m_scene.GetSceneObjectGroup(RideOn.GroupID);
+        if (group is null || group.IsDeleted || group.inTransit || group.IsAttachment)
+            return null;
+
+        float speed = RideOnLimits.MovingObjectSpeed;
+        if (group.RootPart.Velocity.LengthSquared() < speed * speed)
+            return null;
+
+        return group;
+    }
+
+    /// <summary>
+    /// Lets the engine keep the avatar standing where it stands on a moving object, even if that is outside the region (it
+    /// would pull it back inside, off the part of the object that reaches over the border), or takes that back.
+    /// </summary>
+    private void SetStandingOutsideAllowed(bool allowed)
+    {
+        PhysicsActor pa = PhysicsActor;
+        if (pa is not null && pa.AllowOutsideRegion != allowed)
+            pa.AllowOutsideRegion = allowed;
+    }
+
+    /// <summary>
     /// Starts the process of moving an avatar into another region if they are crossing the border.
     /// </summary>
     /// <remarks>
@@ -4821,6 +4854,12 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
 
         RegionInfo rinfo = m_scene.RegionInfo;
 
+        // An avatar standing on an object that is moving crosses with it, when the object does: until then the engine may
+        // let it stand outside the region (the part of the object it stands on can reach past the border before the
+        // object's origin does), and the border check leaves it alone.
+        SceneObjectGroup ridden = MovingObjectRiddenHere();
+        SetStandingOutsideAllowed(ridden is not null);
+
         float timeStep = m_scene.FrameTime;
         float t = pos2.X + vel.X * timeStep;
         if (t >= 0 && t < rinfo.RegionSizeX)
@@ -4829,6 +4868,9 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
             if (t >= 0 && t < rinfo.RegionSizeY)
                 return;
         }
+
+        if (ridden is not null)
+            return;
 
         //m_log.LogDebug(
         //    "[SCENE PRESENCE]: Testing border check for projected position {0} of {1} in {2}",
