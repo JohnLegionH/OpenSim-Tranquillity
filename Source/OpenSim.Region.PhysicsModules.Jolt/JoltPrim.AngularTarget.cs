@@ -86,6 +86,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // A spin (rad/s) under which a body at its target has settled there.
         internal const float SettledAngularSpeed = 0.01f;
 
+        // A spin (rad/s) under which a body being turned by the InWorldz look-at is taken to have stalled against friction.
+        internal const float StalledAngularSpeed = 0.2f;
+
         private SQuaternion _apidTarget = SQuaternion.Identity;   // _targetLock
         private float _apidStrength;                              // _targetLock
         private float _apidDamping;                               // _targetLock

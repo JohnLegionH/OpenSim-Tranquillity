@@ -114,13 +114,16 @@ public class AngularTargetInWorldzTests : AngularTargetTests
         Assert.True(Between(end.Rot, TurnZ(90f)) < 2f, $"size {size} mass {mass} air {air}: {Between(end.Rot, TurnZ(90f)):0.0} degrees from the target at t {end.T:0.00}");
     }
 
-    // Under InWorldz a cube lying on the ground stops 4 degrees short of a look-at target (a 2 m cube 2 degrees, in the air
-    // 0.9) with no spin, and stays there: the contact friction takes what the look-at gives it. Under Second Life the same
-    // cube reaches its target. Not fixed here (test-only change).
-    [Theory(Skip = "Known failure under InWorldz: a small cube on the ground stops 2 to 4 degrees short of its look-at target and stays there.")]
+    // A cube lying on the ground used to stop 4 degrees short of a look-at target (a 2 m cube 2 degrees) with no spin, and
+    // stay there: contact friction takes up to a fixed amount of velocity in each step, and the law's command, set from the
+    // error alone, falls below that near the target. The body is now asked again for what the engine took. The 66.7 Hz
+    // case is Halcyon's own 15 ms step, where the law is Halcyon's as written.
+    [Theory]
     [InlineData(45.0, 1f, 1f)]
     [InlineData(45.0, 1f, 100f)]
     [InlineData(0.0, 1f, 1f)]
+    [InlineData(66.66666666666667, 1f, 1f)]
+    [InlineData(45.0, 2f, 1f)]
     public void A_cube_on_the_ground_reaches_its_target_within_2_degrees(double physicsHz, float size, float mass)
     {
         List<Pt> trace = Run(physicsHz, 3f, r => LookAt(Cube(r, size, mass, false), TurnZ(90f), 0.3f, 0.3f));
