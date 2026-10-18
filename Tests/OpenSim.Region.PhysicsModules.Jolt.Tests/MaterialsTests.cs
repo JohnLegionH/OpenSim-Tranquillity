@@ -143,7 +143,6 @@ public class MaterialsTests
         const float T = 10f, v0 = 10f;
         List<Point> Fly(string contactFriction)
         {
-            double start = double.NaN;
             return Run(4f, r =>
             {
                 PhysicsActor car = r.AddBox(new Vector3(1f, 1f, 0.5f), new Vector3(100f, 128f, 150f), Quaternion.Identity);

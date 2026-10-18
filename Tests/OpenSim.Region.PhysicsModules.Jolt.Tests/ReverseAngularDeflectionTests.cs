@@ -30,7 +30,8 @@ public class ReverseAngularDeflectionTests
         Vector3 tail = Vector3.UnitX * rig.Body.Orientation;
         if (backing)
             tail = -tail;
-        Vector3 v = Vector3.Normalize(rig.Body.LinearVelocity);
+        Vector3 velocity = rig.Body.LinearVelocity;
+        Vector3 v = Vector3.Normalize(velocity);
         return Math.Acos(Math.Clamp(Vector3.Dot(tail, v), -1f, 1f));
     }
 
