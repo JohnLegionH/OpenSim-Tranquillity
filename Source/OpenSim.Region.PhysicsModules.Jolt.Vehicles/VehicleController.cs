@@ -1978,12 +1978,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 return;
             float share = 1f - (float)Math.Exp(-efficiency * h / timescale);
             Vector3 forward = Vector3.UnitX * _rotation;
-            // Under InWorldz a vehicle that is backing along its nose axis is on the axis already: the velocity is turned toward
-            // the end of the axis it is travelling toward. Turned toward the nose it would be an unstable balance, a sideways
-            // speed of a few millimetres a second growing until the vehicle goes off sideways, however straight it is driven.
+            // A vehicle that is backing along its nose axis is on the axis already ("redirect its linear velocity along its
+            // preferred X-axis"): the velocity is turned toward the end of the axis it is travelling toward. Turned toward the
+            // nose it would be an unstable balance, a sideways speed of a few millimetres a second growing until the vehicle
+            // swings round to go forward or goes off sideways, however straight it is driven.
             // (The law of InWorldz, VehicleDynamics.cs:1171-1210, adds the speed to the nose end whatever the direction of travel,
             // and so brakes a vehicle that is backing; this is the form that holds a line.)
-            Vector3 toward = InWorldz && Vector3.Dot(_rawWorldLinearVel, forward) < 0f ? -forward : forward;
+            // (Under SecondLife with NO_DEFLECTION_UP only the horizontal parts turn, so it is the horizontal parts that say which way.)
+            bool horizontalOnly = !InWorldz && (_sp.Flags & ExtendedVehicleFlags.NoDeflectionUp) != 0;
+            Vector3 heading = horizontalOnly ? new Vector3(_rawWorldLinearVel.X, _rawWorldLinearVel.Y, 0f) : _rawWorldLinearVel;
+            Vector3 along = horizontalOnly ? new Vector3(forward.X, forward.Y, 0f) : forward;
+            Vector3 toward = Vector3.Dot(heading, along) < 0f ? -forward : forward;
             Vector3 change;
             if ((_sp.Flags & ExtendedVehicleFlags.NoDeflectionUp) == 0)
                 change = Deflection(_rawWorldLinearVel, toward, share);
@@ -1996,7 +2001,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     change.Z = 0f;
             }
             else
-                change = HorizontalDeflection(_rawWorldLinearVel, forward, share);
+                change = HorizontalDeflection(_rawWorldLinearVel, toward, share);
             // InWorldz applies the push only if some part of it is more than 0.005 m/s in a step (VehicleDynamics.cs:1204-1208), which
             // keeps a vehicle at rest from being pushed about by a nose a fraction of a degree off its velocity. The 0.005 is per
             // 15 ms step, an acceleration of 0.33 m/s^2, so a step of h seconds takes h / 15 ms of it.
