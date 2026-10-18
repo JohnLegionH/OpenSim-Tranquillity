@@ -1,0 +1,138 @@
+# Copyright (c) 2026 Legion Builds
+#
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+# Builds the Jolt test projects and runs their suites on Linux x64 in Release. It runs only when a change touches
+# the Jolt module, its tests, its native or this file. Each project's test output is also checked with
+# assert-joltc-native.ps1: recorded natives under runtimes/<rid>/native/ and no other joltc.
+name: Jolt CI
+
+on:
+  pull_request:
+    paths:
+      - 'Source/OpenSim.Region.PhysicsModules.Jolt/**'
+      - 'Source/OpenSim.Region.PhysicsModules.Jolt.Backend/**'
+      - 'Source/OpenSim.Region.PhysicsModules.Jolt.Vehicles/**'
+      - 'Source/OpenSim.Region.PhysicsModules.Jolt.Diagnostics/**'
+      - 'Tests/OpenSim.Region.PhysicsModules.Jolt*/**'
+      - 'Tests/JoltTestShared/**'
+      - 'Tests/JoltPhysicsHarness/**'
+      - 'native/**'
+      - 'Directory.Build.props'
+      - 'global.json'
+      - '.github/workflows/jolt-ci.yml'
+  push:
+    branches:
+      - develop
+    paths:
+      - 'Source/OpenSim.Region.PhysicsModules.Jolt/**'
+      - 'Source/OpenSim.Region.PhysicsModules.Jolt.Backend/**'
+      - 'Source/OpenSim.Region.PhysicsModules.Jolt.Vehicles/**'
+      - 'Source/OpenSim.Region.PhysicsModules.Jolt.Diagnostics/**'
+      - 'Tests/OpenSim.Region.PhysicsModules.Jolt*/**'
+      - 'Tests/JoltTestShared/**'
+      - 'Tests/JoltPhysicsHarness/**'
+      - 'native/**'
+      - 'Directory.Build.props'
+      - 'global.json'
+      - '.github/workflows/jolt-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same pull request or branch replaces a run that is still going.
+concurrency:
+  group: jolt-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+  # The Jolt test projects: the module's, the backend's, the vehicle library's, the harness's own, the three scenario
+  # sets that run the harness, and the diagnostics assembly's.
+  JOLT_TEST_PROJECTS: >-
+    OpenSim.Region.PhysicsModules.Jolt.Tests
+    OpenSim.Region.PhysicsModules.Jolt.Backend.Tests
+    OpenSim.Region.PhysicsModules.Jolt.Vehicles.Tests
+    OpenSim.Region.PhysicsModules.Jolt.Harness.Tests
+    OpenSim.Region.PhysicsModules.Jolt.Scenarios.Avatar.Tests
+    OpenSim.Region.PhysicsModules.Jolt.Scenarios.Prim.Tests
+    OpenSim.Region.PhysicsModules.Jolt.Scenarios.Vehicle.Tests
+    OpenSim.Region.PhysicsModules.Jolt.Diagnostics.Tests
+
+jobs:
+  test:
+    name: Jolt suite Linux x64
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The version stamp (Nerdbank.GitVersioning) needs the history.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up .NET from global.json
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Restore and build the Jolt test projects
+        run: |
+          for project in $JOLT_TEST_PROJECTS; do
+            dotnet build "Tests/$project" -c Release --disable-build-servers -nodeReuse:false -p:UseSharedCompilation=false || exit 1
+          done
+
+      - name: Check the natives in the test output
+        shell: pwsh
+        run: |
+          foreach ($project in $env:JOLT_TEST_PROJECTS -split ' ') {
+            ./Source/OpenSim.Region.PhysicsModules.Jolt.Backend/assert-joltc-native.ps1 -PublishDir "Tests/$project/bin/Release/net10.0"
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+
+      - name: Run the Jolt suites
+        run: |
+          status=0
+          for project in $JOLT_TEST_PROJECTS; do
+            dotnet test "Tests/$project" -c Release --no-build \
+              --logger "console;verbosity=normal" --logger "trx;LogFileName=$project.trx" \
+              --results-directory "$RUNNER_TEMP/jolt-results" || status=1
+          done
+          exit $status
+
+      # Names every failed test and the start of its message as an error annotation, which the run page and the checks
+      # API show without downloading the artifact.
+      - name: Report the failed tests
+        if: failure()
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'jolt-results'
+          foreach ($trx in Get-ChildItem -LiteralPath $dir -Filter *.trx -ErrorAction SilentlyContinue) {
+            [xml]$x = Get-Content -LiteralPath $trx.FullName -Raw
+            $ns = New-Object System.Xml.XmlNamespaceManager($x.NameTable)
+            $ns.AddNamespace('t', $x.DocumentElement.NamespaceURI)
+            $failed = @($x.SelectNodes("//t:UnitTestResult[@outcome='Failed']", $ns))
+            Write-Host "$($trx.Name): $($failed.Count) failed"
+            foreach ($r in $failed | Select-Object -First 40) {
+              $m = $r.SelectSingleNode('t:Output/t:ErrorInfo/t:Message', $ns)
+              $msg = if ($m) { ($m.InnerText -replace '\s+', ' ') } else { '' }
+              if ($msg.Length -gt 400) { $msg = $msg.Substring(0, 400) }
+              Write-Host "::error title=Failed test::$($r.testName) | $msg"
+            }
+          }
+
+      - name: Upload the test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: jolt-results-linux-x64
+          path: ${{ runner.temp }}/jolt-results
+          if-no-files-found: ignore
