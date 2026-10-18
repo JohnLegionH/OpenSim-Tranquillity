@@ -370,8 +370,19 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             if (!NonFiniteGuard.Ok(momentum)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "avatar", LocalID, "Momentum", momentum.ToString()); return; }
             _velocity = momentum;
-            _targetVelocity = momentum;
-            _targetIsMomentum = true;
+            if (_flying)
+            {
+                _targetVelocity = momentum;
+                _targetIsMomentum = true;
+                PushMovement();
+                return;
+            }
+            // An avatar on its feet keeps the velocity it arrived with as momentum, which the backend fades on the ground to
+            // whatever its controls ask for. Held as the walking request, it would go on at that velocity until the avatar's
+            // controls next set one, and an avatar that crossed with no key held would never stop.
+            _targetIsMomentum = false;
+            if (_character.IsValid)
+                _backend.SetCharacterCarry(_character, ToS(momentum));
             PushMovement();
         }
 
