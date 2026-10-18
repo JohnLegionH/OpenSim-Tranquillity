@@ -377,8 +377,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         ///   ln(1 + pi - angle) / ln(1 + pi), within pi / 64 of aligned,
         ///
         /// with speedShare = the vehicle's speed (at most the reference speed) over the reference speed, T the timescale
-        /// held to at least the step, and the angle the rotation's angle (turned to pi minus it when the vehicle moves
-        /// backwards along its nose). The direction is Halcyon's: the normalised Euler angles of the rotation, not its axis.
+        /// held to at least the step, and the angle the rotation's angle, from the tail instead of the nose when the vehicle moves
+        /// backwards along its nose (InWorldz flips the angle to pi minus it but keeps the nose's direction, which turns a backing
+        /// vehicle round). The direction is Halcyon's: the normalised Euler angles of the rotation, not its axis.
         /// Zero below the deflection speed (a component of the world velocity of 0.2 m/s), and at a timescale of 1000 s
         /// or more (off).
         /// </summary>
@@ -398,15 +399,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             float speed = Utils.Clamp(Vector3.Mag(localLinearVelocity), 0, referenceSpeed);
             float speedpct = speed / referenceSpeed;
 
-            // The rotation between the nose and the direction of motion.
+            // The rotation between the end of the vehicle that leads and the direction of motion. InWorldz takes the nose and, for a
+            // vehicle moving backwards, flips the angle ("Cheat: if the local X movement is negative, flip the angle.",
+            // VehicleDynamics.cs:1137-1141) but keeps the nose's rotation to the velocity for the direction, which turns the nose
+            // toward the velocity the long way round and so swings the tail away from it: a car backing with its tail 30 degrees
+            // off its velocity ends up facing the way it travels. Here the tail leads when the vehicle backs, so the angle is the
+            // same one InWorldz uses and the rotation turns the tail toward the velocity.
             Vector3 ahead = new Vector3(1, 0, 0) * rotation;
+            if (localLinearVelocity.X < 0)
+                ahead = -ahead;
             Quaternion tween = RotBetween(ahead, Vector3.Normalize(worldLinearVelocity));
             float angle = AngleBetween(tween, Quaternion.Identity);
             Vector3 vtwix = Rot2Euler(tween);
-
-            // "Cheat: if the local X movement is negative, flip the angle."
-            if (localLinearVelocity.X < 0)
-                angle = (float)Math.PI - angle;
 
             vtwix = Vector3.Normalize(vtwix) * speedpct * (float)Math.PI * timepct * efficiency * (float)Math.Log(1.0 + angle);
 
