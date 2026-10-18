@@ -23,8 +23,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// which already holds the platform's own, so core hands zero for a carried avatar: the engine carries a standing
 /// avatar with the platform it stands on. These tests make the same calls in the same order, at both step modes, and
 /// measure the avatar against the deck: with zero it moves with the deck (also when the deck stops, and while it
-/// walks on the deck); with the deck's own velocity handed over as well it runs ahead of the deck, which is the
-/// double count they guard against.
+/// walks on the deck); with the deck's own velocity handed over as well it is carried a few centimetres ahead and then
+/// stays on the deck, the handed velocity being momentum that fades on the ground.
 /// Serial with the other native tests: every scene steps a real backend on the shared job pool.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
@@ -161,13 +161,14 @@ public class ArrivalMomentumTests
     [Theory]
     [InlineData(0f)]
     [InlineData(45f)]
-    public void A_rider_handed_the_decks_own_velocity_as_well_runs_ahead_of_it(float physicsRate)
+    public void A_rider_handed_the_decks_own_velocity_as_well_is_carried_only_a_moment_ahead_of_it(float physicsRate)
     {
-        // what core did before: the world velocity the avatar had in the first region
+        // what core handed over before it counted the platform's motion once: the world velocity the avatar had in the first
+        // region. It is momentum and fades on the deck, so it moves the avatar a few centimetres, not off the platform
         Outcome o = Run3(physicsRate, new Vector3(DeckSpeed, 0f, 0f), moveBeats: 55, restBeats: 0, Vector3.Zero);
         Say($"ARRIVE deck's velocity as momentum, rate {physicsRate:0}: drift max {F(o.MaxDrift)} m, speed gap {F(o.LastSecondSpeedGap)} m/s, on deck {o.OnDeckAtEnd}");
-        Assert.True(o.MaxDrift > 1.0, $"the avatar stayed within {o.MaxDrift:0.000} m of its place on the deck");
-        Assert.False(o.OnDeckAtEnd, "the avatar is still on the deck at the end");
+        Assert.True(o.OnDeckAtEnd, "the avatar is not on the deck at the end");
+        Assert.True(o.MaxDrift <= 0.5, $"the avatar was {o.MaxDrift:0.000} m off its place on the deck");
     }
 
     [Theory]

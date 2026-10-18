@@ -48,6 +48,12 @@ public static class RideOnLimits
     public const int RecrossWaitMs = 3000;
 
     /// <summary>
+    /// The speed (m/s) above which the object an avatar stands on counts as moving: it crosses a border with its riders, so the
+    /// riders wait for it there instead of crossing on their own.
+    /// </summary>
+    public const float MovingObjectSpeed = 0.1f;
+
+    /// <summary>
     /// How long after that wait a region that sent a crossing object keeps its frozen copy while it has still not heard that
     /// the crossing is complete, before it takes the report for lost and lets go of the copy (ms).
     /// </summary>

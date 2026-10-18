@@ -864,6 +864,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// </summary>
         void AddCharacterImpulse(CharacterId character, Vector3 velocityChange);
 
+        /// <summary>
+        /// The horizontal velocity an avatar arrived with from another region (or a teleport that keeps it): momentum, not a walk
+        /// command. The avatar keeps it while it is off the ground; on the ground it gives way to the velocity the avatar's
+        /// controls ask for, over a tenth of a second, so an avatar holding a key goes on
+        /// at its walking speed and one holding none comes to rest. The vertical part is the controller's own.
+        /// </summary>
+        void SetCharacterCarry(CharacterId character, Vector3 velocity);
+
         void SetCharacterMovement(
             CharacterId character, Vector3 desiredVelocity, bool jump, bool flying);
 

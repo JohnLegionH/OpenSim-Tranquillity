@@ -1978,14 +1978,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 return;
             float share = 1f - (float)Math.Exp(-efficiency * h / timescale);
             Vector3 forward = Vector3.UnitX * _rotation;
+            // Under InWorldz a vehicle that is backing along its nose axis is on the axis already: the velocity is turned toward
+            // the end of the axis it is travelling toward. Turned toward the nose it would be an unstable balance, a sideways
+            // speed of a few millimetres a second growing until the vehicle goes off sideways, however straight it is driven.
+            // (The law of InWorldz, VehicleDynamics.cs:1171-1210, adds the speed to the nose end whatever the direction of travel,
+            // and so brakes a vehicle that is backing; this is the form that holds a line.)
+            Vector3 toward = InWorldz && Vector3.Dot(_rawWorldLinearVel, forward) < 0f ? -forward : forward;
             Vector3 change;
             if ((_sp.Flags & ExtendedVehicleFlags.NoDeflectionUp) == 0)
-                change = Deflection(_rawWorldLinearVel, forward, share);
+                change = Deflection(_rawWorldLinearVel, toward, share);
             else if (InWorldz)
             {
                 // "Stop any upward deflection": InWorldz zeroes the upward part of the change only (VehicleDynamics.cs:1198-1202,
                 // SimulateLinearDeflection), so a downward part still deflects.
-                change = Deflection(_rawWorldLinearVel, forward, share);
+                change = Deflection(_rawWorldLinearVel, toward, share);
                 if (change.Z > 0f)
                     change.Z = 0f;
             }

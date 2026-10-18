@@ -3930,6 +3930,39 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             }
         }
 
+        public void SetCharacterCarry(CharacterId character, Vector3 velocity)
+        {
+            if (!IsFinite(velocity)) { CountRejectedNonFinite(); return; }
+            lock (_characterGate)
+            {
+                if (_characters.TryGet(character.Value, out JoltCharacterRecord rec))
+                    rec.Carry = new Vector3(velocity.X, velocity.Y, 0f);
+            }
+        }
+
+        /// <summary>
+        /// How fast the velocity an avatar arrived with gives way, on the ground, to the velocity its controls ask for (s). An
+        /// avatar that lands from a jump with its key let go stops within a step, so this is short: long enough to cover the
+        /// moments before the first control input reaches a region the avatar has just entered.
+        /// </summary>
+        internal const float ArrivalCarryFadeSeconds = 0.1f;
+
+        // The velocity an avatar arrived with (SetCharacterCarry), taken to the step's walking intent: it stays as it was in the
+        // air, and on walkable ground the part of it beyond the intent fades. Returns the horizontal velocity to move with.
+        private static Vector3 RelaxArrivalCarry(JoltCharacterRecord rec, Vector3 intent, bool onWalkable, float dt)
+        {
+            Vector3 rel = rec.Carry - intent;
+            if (onWalkable)
+                rel *= MathF.Exp(-dt / ArrivalCarryFadeSeconds);
+            if (rel.LengthSquared() < 1e-4f)
+            {
+                rec.Carry = Vector3.Zero;
+                return intent;
+            }
+            rec.Carry = intent + rel;
+            return rec.Carry;
+        }
+
         // How fast an avatar's push speed fades: on ground it can walk on (s), and flying. In the air it keeps it.
         internal const float PushFadeOnGroundSeconds = 0.25f;
         internal const float PushFadeFlyingSeconds = 1f;
@@ -4031,6 +4064,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             Vector3 newVel;
             bool falling = false;
             bool hovering = rec.HoverAt != null;
+            if (rec.Flying || hovering)
+                rec.Carry = Vector3.Zero;   // a flight is driven by its controls; the arrival velocity is for an avatar on its feet
 
             // A constant force (an attachment's llSetForce): its acceleration, and the velocity it has given. Up and down while
             // walking or in the air it adds to gravity, which the controller's own vertical velocity carries; across, and in
@@ -4112,6 +4147,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 // is being pushed sideways. With no input this is zero on static ground - no residual
                 // slide velocity carries over frame to frame.
                 Vector3 horiz = new Vector3(desired.X, desired.Y, 0f);
+                if (rec.Carry != Vector3.Zero)
+                    horiz = RelaxArrivalCarry(rec, horiz, onWalkable, dt);
                 if (onWalkable)
                     horiz += new Vector3(ch.GroundVelocity.X, ch.GroundVelocity.Y, 0f);
 
@@ -5454,6 +5491,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public Vector3 PendingPush;
         public Vector3 Push;
         public float PushAllowance;
+        public Vector3 Carry;                  // the horizontal velocity the avatar arrived with that its controls have not yet replaced (SetCharacterCarry)
 
         public float Mass;                     // CharacterDesc.Mass: what a loose object striking the avatar meets
         public Vector3 StepVelocity;           // the velocity the avatar moved with in its last step

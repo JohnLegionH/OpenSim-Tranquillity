@@ -139,10 +139,12 @@ public class AvatarSpeedTests
         Within(Run, 2f, MeanSpeedX(res.Samples, 4.0, 6.0));
     }
 
-    // A momentum handed over at a crossing or teleport (SetMomentum) is a velocity the avatar already had: it is kept
-    // as it is, not scaled again as a walk request would be.
+    // A momentum handed over at a crossing or teleport (SetMomentum) is a velocity the avatar already had, not a walk request:
+    // an avatar on its feet that no control asks to move carries it on for a moment and comes to rest, 0.1 s being the time
+    // the velocity takes to give way to the controls on the ground. It moves about Walk * 0.1 m in all, whatever the scale
+    // of a walk request (Walk * 0.1 is the distance of an exponential fade, a little less when it is stepped).
     [Fact]
-    public void A_handed_over_momentum_is_not_scaled()
+    public void A_handed_over_momentum_carries_an_avatar_on_its_feet_a_short_way_and_it_comes_to_rest()
     {
         var sc = new Scenario
         {
@@ -155,7 +157,10 @@ public class AvatarSpeedTests
             },
         };
         RunResult res = Harness.Harness.Run(sc, new HarnessOptions { RateHz = 11.0, PhysicsRateHz = 45.0 });
-        Within(Walk, 2f, MeanSpeedX(res.Samples, 1.0, 3.0));
+        Sample first = res.Samples[0], last = res.Samples[^1];
+        float carried = last.Position.X - first.Position.X;
+        Assert.InRange(carried, Walk * 0.05f, Walk * 0.12f);
+        Assert.True(MathF.Abs(MeanSpeedX(res.Samples, 1.0, 3.0)) < 0.05f, "the avatar is still moving after a second");
     }
 
     private static float MeanSpeedX(List<Sample> samples, double from, double to)
