@@ -46,7 +46,7 @@ public class VehicleBugRowsRateTests
         Assert.True(error <= percent, $"{what} at {rate} Hz with {n} collision steps: {got:0.00000} against {expected:0.00000} (within {percent}% of {scale})");
     }
 
-    // ---- HP-35: the motor-height rule's ray cadence and clock -------------------------------------------------------
+    // ---- The motor-height rule's ray cadence and clock -------------------------------------------------------
 
     // A car 5 m above a floor it never reaches the rays of (they stop short), moving, with the rule's limit and delay set.
     private static BehaviourRig HighCar(VehicleSettings s, float after)
@@ -95,7 +95,7 @@ public class VehicleBugRowsRateTests
         Near(at, 8 * HalcyonStep + 80.0 / 8.0, 10.12, "time the motors go off", rate, n, 1.0);
     }
 
-    // ---- HP-37: the upward-motor gravity check ----------------------------------------------------------------------
+    // ---- The upward-motor gravity check ----------------------------------------------------------------------
 
     // A motor that closes a gap of 12 m/s to its target in one step keeps 12 - 9.8 = 2.2 m/s, whatever the step; one that
     // closes 8 m/s keeps nothing; buoyancy carries its share of gravity; a downward change is never touched.
@@ -132,7 +132,7 @@ public class VehicleBugRowsRateTests
         Assert.True(Vz(SecondLife) > fall + 0.5, $"Second Life's up motor held the car up ({Vz(SecondLife):0.000} against {fall:0.000})");
     }
 
-    // ---- HP-13: the first step ---------------------------------------------------------------------------------------
+    // ---- The first step ---------------------------------------------------------------------------------------
 
     // Halcyon's first call integrates 0.2 of the step (the smoothed step starts from a Timestep of 0). The controller smooths
     // nothing: the first Update of a new vehicle moves it as far as any other, so a motor's first step is the exact one.
@@ -150,7 +150,7 @@ public class VehicleBugRowsRateTests
         Near(rig.Body.LinearVelocity.X, expected, expected, "speed after the first update", rate, n, 1.0);
     }
 
-    // ---- HP-22: the deflection's 0.005 m/s threshold ---------------------------------------------------------------
+    // ---- The deflection's 0.005 m/s threshold ---------------------------------------------------------------
 
     private static double DeflectedAngle(double startDegrees, double rate, int n, double seconds)
     {
@@ -178,7 +178,7 @@ public class VehicleBugRowsRateTests
         Near(stopped, 1.9099, 3.0, "3 degrees off the nose after 1.5 s", rate, n, 1.5);
     }
 
-    // ---- HP-24: the tilt measure ------------------------------------------------------------------------------------
+    // ---- The tilt measure ------------------------------------------------------------------------------------
 
     [Fact]
     public void The_tilt_is_the_angle_of_the_roll_and_pitch_rotation_without_the_yaw()
@@ -198,7 +198,7 @@ public class VehicleBugRowsRateTests
         Assert.Equal(180.0, HalcyonVehicleLaws.TiltAngle(Tilt(180, 0, 0)) / Deg, 2);
     }
 
-    // ---- HP-23: the sled's slope assist (regression, the grid it was not on) ------------------------------------------
+    // ---- The sled's slope assist (regression) ------------------------------------------
 
     private static double SledGain(double rate, int n, Vector3? offset = null)
     {
@@ -240,7 +240,7 @@ public class VehicleBugRowsRateTests
         Near(SledGain(rate, n, Vector3.Zero), expected, expected, "sled assist, no offset", rate, n, 1.0);
     }
 
-    // ---- HP-25, HP-26, HP-27: the attractor (regression on the grid) ------------------------------------------------
+    // ---- The attractor (regression) ------------------------------------------------
 
     private static BehaviourRig HeldOnItsBack(double rate, int n, int updates)
     {

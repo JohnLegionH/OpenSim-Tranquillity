@@ -50,7 +50,7 @@ public class VehicleParityC1Tests
         Assert.True(error <= percent, $"{what} at {rate} Hz with {n} collision steps: {got:0.00000} against {expected:0.00000} (within {percent}% of {scale})");
     }
 
-    // ---- HP-20: a boat's ground drag (VehicleDynamics.cs:1037-1073) ------------------------------------------------
+    // ---- A boat's ground drag (VehicleDynamics.cs:1037-1073) ------------------------------------------------
 
     // A boat with a 4 x 2 x 1 hull moving along its nose at 1 m/s with a linear motor set to 8 m/s, for a second. The terrain
     // is at 0 under the body; the hull's leading bottom edge is at z - 0.49.
@@ -113,7 +113,7 @@ public class VehicleParityC1Tests
         Assert.False(HalcyonVehicleLaws.BoatLeadingEdgeOnGround(new Vector3(0.004f, 0f, 0f), at, Quaternion.Identity, Vector3.Zero, half, (x, y) => 99f));
     }
 
-    // ---- HP-22: NO_DEFLECTION_UP zeroes only an upward change (VehicleDynamics.cs:1198-1202) -----------------------
+    // ---- NO_DEFLECTION_UP zeroes only an upward change (VehicleDynamics.cs:1198-1202) -----------------------
 
     private static BehaviourRig DeflectingCar(VehicleSettings settings, Vector3 velocity, bool noUp)
     {
@@ -159,7 +159,7 @@ public class VehicleParityC1Tests
         Near(free.Body.LinearVelocity.Z, speed * Math.Sin(angle), 5.0, "vz without the flag", rate, n, 1.5);
     }
 
-    // ---- HP-33: the motor offset acts on every linear force (VehicleMotor.AddForce) --------------------------------
+    // ---- The motor offset acts on every linear force (VehicleMotor.AddForce) --------------------------------
 
     // A car in the air at 10 m/s along its nose, a 20 s friction along it, its offset 0.1 m below the centre of mass. The
     // friction's slowing is a force at the offset, which pitches the vehicle: m dv r / I about y (1000 kg, I 400).
@@ -218,7 +218,7 @@ public class VehicleParityC1Tests
         }
     }
 
-    // ---- HP-28: banking by the sine of the roll, without the attractor (VehicleDynamics.cs:1338-1398) ---------------
+    // ---- Banking by the sine of the roll, without the attractor (VehicleDynamics.cs:1338-1398) ---------------
 
     private static BehaviourRig BankingCar(VehicleSettings s, float attractorTimescale)
     {
@@ -260,7 +260,7 @@ public class VehicleParityC1Tests
         Near(on.Body.AngularVelocity.Z, target * (1.0 - Math.Exp(-1.0)), Math.Abs(target), "yaw rate banked by the angle", rate, n, 2.0);
     }
 
-    // ---- HP-2: a vehicle honours the gravity multiplier under InWorldz (PhysxPrim.cs:349, 1614; VehicleDynamics.cs:318) ----
+    // ---- A vehicle honours the gravity multiplier under InWorldz (PhysxPrim.cs:349, 1614; VehicleDynamics.cs:318) ----
 
     private static float GravityShareOf(VehicleSettings s, float multiplier, float buoyancy, double rate, int n)
     {
@@ -309,7 +309,7 @@ public class VehicleParityC1Tests
         Assert.Equal(1f, sl.Car.GetFloatParam(VehFloatParam.Buoyancy));
     }
 
-    // ---- HP-67: a vehicle's running motors go on across a region border -----------------------------------------------
+    // ---- A vehicle's running motors go on across a region border -----------------------------------------------
 
     [Theory]
     [MemberData(nameof(Grid))]

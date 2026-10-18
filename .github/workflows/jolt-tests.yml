@@ -13,7 +13,6 @@ on:
   push:
     branches:
       - develop
-      - lane/jolt
   pull_request:
     branches:
       - develop

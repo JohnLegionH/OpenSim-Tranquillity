@@ -512,7 +512,7 @@ public class AngularTargetTests
         Assert.True(Between(trace[^1].Rot, TurnZ(90f)) < 2f, $"{Between(trace[^1].Rot, TurnZ(90f)):0.0} degrees from the target");
     }
 
-    // ---- figures (the order's table; asserted loosely, written to ANGULAR_TARGET_OUT when it is set) ----------------
+    // ---- figures (a turn of 90 degrees in 1 s at several masses and sizes; asserted loosely, written to ANGULAR_TARGET_OUT when it is set) ----------------
 
     public static IEnumerable<object[]> FigureCases()
     {

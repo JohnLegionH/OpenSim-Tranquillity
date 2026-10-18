@@ -162,7 +162,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         public bool SpikeMitigationOn => SpikeMitigation ?? Behaviour == VehicleBehaviour.InWorldz;
 
         // Enablement switches, useful for debugging specific features. A region's settings, so that switching one off
-        // in one region does not change the vehicles of another. All are true in production.
+        // in one region does not change the vehicles of another. All are true by default.
         public bool DoAngularDeflection { get; init; } = true;
         public bool DoLinearDeflection { get; init; } = true;
         public bool DoMotors { get; init; } = true;
@@ -171,7 +171,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         public bool DoVerticalAttractor { get; init; } = true;
         public bool DoBanking { get; init; } = true;
 
-        // Debugging switches: all false in production. Stored for the region; no vehicle code reads one yet.
+        // Debugging switches: all false by default. Stored for the region; no vehicle code reads one yet.
         public bool DebugPrintParams { get; init; } = false;
         public bool DebugTimestep { get; init; } = false;
         public bool DebugSpikeDetection { get; init; } = false;

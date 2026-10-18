@@ -57,7 +57,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // ONE shared, process-capped set of JobSystemThreadPools for ALL regions, created with Foundation
         // (first region in) and disposed with it (last region out). A per-region pool of ProcessorCount-1
         // threads makes N regions cost N*(cores-1) threads (measured ~36/region, 78 for two). InWorldz ran
-        // ~1 thread/region in production; a capped process-wide pool is the target shape. Sized once by the
+        // ~1 thread/region with the default settings; a capped process-wide pool is the target shape. Sized once by the
         // first region's settings (ThreadCount / DeterministicMode) under s_foundationGate, then shared.
         //
         // ONE PHYSICS UPDATE PER POOL. A JobSystemThreadPool's queue is a fixed ring of 1024 slots
@@ -570,7 +570,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // RequireSimLock first, which asks Monitor.IsEntered - "does THIS thread hold this backend's
         // _simLock" - and throws a managed, catchable exception naming the API when it does not. That
         // turns an unrecoverable native abort into a test failure, so an unlocked call site can be searched
-        // for in tests instead of waited for in production.
+        // for in tests instead of waited for in normal running.
         //
         // On by default in DEBUG. In RELEASE it costs a static bool read per call and is off unless a
         // test turns it on, so the shipped simulator pays nothing.
