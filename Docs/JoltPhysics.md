@@ -128,7 +128,7 @@ Jolt is chosen per simulator in `[Startup]`, and it needs the Meshmerizer mesher
   must be Meshmerizer and throws "Invalid physics meshing option for Jolt" when it initialises.
 - The shipped default stays `physics = ubODE`.
 
-`assert-joltc-native.ps1` (next to the module's project file) checks a build or publish directory
+`assert-joltc-native.ps1` (next to the backend's project file, `Source/OpenSim.Region.PhysicsModules.Jolt.Backend`) checks a build or publish directory
 before it is deployed: every `runtimes/<rid>/native/` joltc must be a build the module has a
 record of for its platform, and no
 other joltc file may be there (`-AllowStray` reports such files without failing, for an

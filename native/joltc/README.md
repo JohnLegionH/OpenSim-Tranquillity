@@ -28,7 +28,7 @@ checks this). More pools need a change in joltc itself.
 |---|---|
 | `Source/OpenSim.Region.PhysicsModules.Jolt.Backend/JoltNative.cs` | Picks the file for the running platform, checks its hash against the table below and loads it |
 | `Source/OpenSim.Region.PhysicsModules.Jolt.Backend/JoltNative.targets` | Keeps the package's unused files (`joltc_double.dll`, Android) out of an application's output |
-| `Source/OpenSim.Region.PhysicsModules.Jolt/assert-joltc-native.ps1` | Checks that an output or publish directory holds recorded joltc builds under `runtimes/<rid>/native/` and no other joltc |
+| `Source/OpenSim.Region.PhysicsModules.Jolt.Backend/assert-joltc-native.ps1` | Checks that an output or publish directory holds recorded joltc builds under `runtimes/<rid>/native/` and no other joltc |
 
 The `JoltPhysics.Native` package reaches every application that carries the module (the region
 server, the Jolt tests, the Jolt harness) through the backend's package reference. A build with

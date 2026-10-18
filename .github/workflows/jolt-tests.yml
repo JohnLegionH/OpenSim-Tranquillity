@@ -73,7 +73,7 @@ jobs:
         shell: pwsh
         run: |
           foreach ($project in $env:JOLT_TEST_PROJECTS -split ' ') {
-            ./Source/OpenSim.Region.PhysicsModules.Jolt/assert-joltc-native.ps1 -PublishDir "Tests/$project/bin/${{ matrix.configuration }}/net10.0"
+            ./Source/OpenSim.Region.PhysicsModules.Jolt.Backend/assert-joltc-native.ps1 -PublishDir "Tests/$project/bin/${{ matrix.configuration }}/net10.0"
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
 

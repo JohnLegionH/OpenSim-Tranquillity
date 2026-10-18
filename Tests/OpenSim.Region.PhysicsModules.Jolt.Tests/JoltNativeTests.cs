@@ -227,7 +227,7 @@ public class JoltNativeTests
     [Fact]
     public void The_record_matches_the_guard_script_and_the_repository_keeps_no_native()
     {
-        string guard = File.ReadAllText(Path.Combine(RepoRoot(), "Source", "OpenSim.Region.PhysicsModules.Jolt", "assert-joltc-native.ps1"));
+        string guard = File.ReadAllText(Path.Combine(RepoRoot(), "Source", "OpenSim.Region.PhysicsModules.Jolt.Backend", "assert-joltc-native.ps1"));
         var guardStock = Regex.Matches(guard, "\"([0-9A-F]{64})\"\\s*=\\s*@\\{\\s*Folder\\s*=\\s*\"([^\"]+)\";\\s*File\\s*=\\s*\"([^\"]+)\"")
             .Select(m => (Folder: m.Groups[2].Value, File: m.Groups[3].Value, Sha256: m.Groups[1].Value)).OrderBy(x => x.Folder).ToArray();
         Assert.Equal(JoltNative.Known.Where(b => b.Origin == JoltNativeOrigin.Package)

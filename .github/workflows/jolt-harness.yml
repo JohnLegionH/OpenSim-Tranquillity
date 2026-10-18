@@ -80,7 +80,7 @@ jobs:
 
       - name: Check the natives in the harness output
         shell: pwsh
-        run: ./Source/OpenSim.Region.PhysicsModules.Jolt/assert-joltc-native.ps1 -PublishDir Tests/JoltPhysicsHarness/bin/Release/net10.0
+        run: ./Source/OpenSim.Region.PhysicsModules.Jolt.Backend/assert-joltc-native.ps1 -PublishDir Tests/JoltPhysicsHarness/bin/Release/net10.0
 
       - name: Run the listed harness runs
         run: |
