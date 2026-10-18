@@ -14,6 +14,7 @@ on:
     branches:
       - develop
       - lane/jolt
+      - side/ci-platforms
   pull_request:
     branches:
       - develop
@@ -34,7 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2022, ubuntu-22.04]
+        os: [windows-2022, ubuntu-22.04, ubuntu-22.04-arm, macos-14, windows-11-arm]
         configuration: [Debug, Release]
     defaults:
       run:
@@ -69,10 +70,32 @@ jobs:
           --results-directory "$RUNNER_TEMP/jolt-results"
 
       - name: Run the Jolt diagnostics suite
+        if: ${{ !cancelled() }}
         run: >
           dotnet test Tests/OpenSim.Region.PhysicsModules.Jolt.Diagnostics.Tests -c ${{ matrix.configuration }} --no-build
           --logger "console;verbosity=normal" --logger "trx;LogFileName=jolt-diagnostics.trx"
           --results-directory "$RUNNER_TEMP/jolt-results"
+
+      # Names every failed test and the start of its message as an error annotation, which the run page and the checks
+      # API show without downloading the artifact.
+      - name: Report the failed tests
+        if: failure()
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'jolt-results'
+          foreach ($trx in Get-ChildItem -LiteralPath $dir -Filter *.trx -ErrorAction SilentlyContinue) {
+            [xml]$x = Get-Content -LiteralPath $trx.FullName -Raw
+            $ns = New-Object System.Xml.XmlNamespaceManager($x.NameTable)
+            $ns.AddNamespace('t', $x.DocumentElement.NamespaceURI)
+            $failed = @($x.SelectNodes("//t:UnitTestResult[@outcome='Failed']", $ns))
+            Write-Host "$($trx.Name): $($failed.Count) failed"
+            foreach ($r in $failed | Select-Object -First 40) {
+              $m = $r.SelectSingleNode('t:Output/t:ErrorInfo/t:Message', $ns)
+              $msg = if ($m) { ($m.InnerText -replace '\s+', ' ') } else { '' }
+              if ($msg.Length -gt 400) { $msg = $msg.Substring(0, 400) }
+              Write-Host "::error title=Failed test::$($r.testName) | $msg"
+            }
+          }
 
       - name: Upload the test results
         if: always()
