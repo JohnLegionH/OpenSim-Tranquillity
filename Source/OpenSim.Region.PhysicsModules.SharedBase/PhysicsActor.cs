@@ -319,6 +319,15 @@ public abstract class PhysicsActor
     /// </summary>
     public virtual bool WaitsBeforeCrossingBack => false;
 
+    /// <summary>
+    /// Tells an actor whose <see cref="WaitsBeforeCrossingBack"/> is true that its wait before crossing out again has
+    /// begun (<paramref name="keep"/> true) or is over (false). While it runs, an engine that takes a body out of the
+    /// simulation at the region's border keeps this one inside instead: it is stopped at the border and the avatars
+    /// standing on it are moved back with it, so that they stay on it. Halcyon does the same, leaving the object
+    /// in its scene and setting it back inside the region (PhysxPrim.CrossingFailure). The default does nothing.
+    /// </summary>
+    public virtual void KeepInsideBorder(bool keep) { }
+
     public abstract void link(PhysicsActor obj);
 
     public abstract void delink();
