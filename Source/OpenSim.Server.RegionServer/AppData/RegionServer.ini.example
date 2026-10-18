@@ -79,6 +79,12 @@
 
 
 [Startup]
+    ;# {ChildPresenceWaitSeconds} {} {Seconds a region waits for a crossing avatar's viewer to connect} {} 30
+    ;; When an avatar crosses into this region, the region waits this long for the viewer to connect before
+    ;; refusing the crossing. After a refused crossing the neighbouring region that sent it does not try the
+    ;; same avatar again for 60 seconds. (default is 30)
+    ; ChildPresenceWaitSeconds = 30
+
     ;# {ConsolePrompt} {} {ConsolePrompt} {} "Region (\R) "
     ;; Console prompt
     ;; Certain special characters can be used to customize the prompt
@@ -832,6 +838,77 @@
     ; shout_distance = 100
 
 
+[ViewerAddress]
+    ;; Which address a viewer is given for a neighbouring or destination region: when it teleports, crosses a
+    ;; region border, or is told about the regions around it. Robust has the same section (Robust.ini) for the
+    ;; login response; set the same values in both. Regions.ini can override Addresses and LocalAddress for
+    ;; one region.
+    ;;
+    ;; By default every viewer is given the address that the other region's ExternalHostName resolves to on this
+    ;; machine. A viewer outside your network cannot use it when this machine resolves your public host name to
+    ;; a private address (a hosts-file entry, split-horizon DNS): crossing into a neighbouring region then waits
+    ;; for a connection that never arrives and fails. Addresses lists which address each network of viewers is
+    ;; given instead.
+    ;;
+    ;; Nothing is detected or guessed: the only addresses given are the ones you write in Addresses. With
+    ;; Addresses empty nothing changes: every viewer is given the address as before.
+    ;;
+    ;; Host names are looked up through the operating system resolver (the hosts file and the system's resolver
+    ;; settings, resolv.conf on Linux); no DNS server is queried directly.
+    ;;
+    ;; The region's UDP socket listens on its InternalAddress (0.0.0.0, every IPv4 interface, in the Regions.ini
+    ;; example). ExternalHostName is still the one name the region is known by; on a machine with several
+    ;; networks, Addresses is how each network is given its own address for it.
+    ;;
+    ;; A viewer is classified by the address its region connection comes from (for a viewer not yet connected to
+    ;; this region, the address recorded when it logged in). Server-to-server traffic between regions and the
+    ;; grid service always uses the address the host name resolves to on this machine.
+    ;;
+    ;; Addresses given to viewers are IPv4: the viewer protocol carries four address bytes.
+    ;;
+    ;; Known limit: the public port is the region's port. A router that maps a different public port to the
+    ;; region is not supported.
+    ;;
+    ;; Example for a grid behind a home router, with a second name for the grid, public.grid.example.org, that
+    ;; is not in this machine's hosts file and resolves to your public address: viewers on your network keep
+    ;; the address the region has now, every other viewer is given the public one:
+    ;;   Addresses = "192.168.0.0/16, 0.0.0.0/0=public.grid.example.org"
+    ;; Example for a machine on several networks, one address for each network:
+    ;;   Addresses = "192.168.1.0/24=192.168.1.20, 10.8.0.0/24=10.8.0.1, 0.0.0.0/0=203.0.113.20"
+
+    ;# {Addresses} {} {Viewer networks and the address each is given} {} ""
+    ;; The list of viewer networks and the address each is given, comma separated, in the order you write it.
+    ;; An entry is "CIDR=address" (the viewer is given that address: an IPv4 address, or a host name looked up
+    ;; as described above) or just "CIDR" (the viewer is given the LocalAddress the other region registered with
+    ;; the grid, else the address that region's ExternalHostName resolves to on this machine, which is what it
+    ;; is given today). The first entry whose network contains the viewer's address is used; a viewer that no
+    ;; entry matches is given today's address. 0.0.0.0/0 matches every IPv4 viewer, so put it last. An entry
+    ;; that cannot be read is logged and skipped.
+    ;; Default: empty.
+    ;;
+    ;; If you already have a hosts-file entry that maps your public host name to a private address for the
+    ;; benefit of viewers in your network, it does no harm with these settings and is optional to remove; whether
+    ;; your router can carry the viewers' HTTP traffic back into your network without it is for you to test.
+    ; Addresses = ""
+
+    ;# {RefreshMinutes} {} {Minutes between repeated lookups} {} 30
+    ;; Minutes between repeated lookups of the host names in Addresses, so a dynamic-DNS change takes effect
+    ;; without a restart. 0 never repeats. A failed lookup keeps the last good address, and until a name has been
+    ;; looked up successfully its viewers are given today's address. Each answer is also cached for 5 minutes
+    ;; after its last use, so a value under 5 does not find a change any sooner. Default 30.
+    ; RefreshMinutes = 30
+
+    ;# {LocalAddress} {} {Address of this machine that viewers on a local network use} {} ""
+    ;; For regions that run on more than one machine: the IPv4 address of THIS machine that viewers on your
+    ;; local network use to reach its regions. Each region registers it with the grid, and the other regions
+    ;; and Robust give it to a viewer that matches a bare "CIDR" entry of Addresses, so a viewer on your network
+    ;; is sent to the right machine whatever the other machines' host-name lookups answer. Regions.ini can set it
+    ;; for one region. It is only used with a bare "CIDR" entry, and only by regions and a Robust of a version
+    ;; that knows it; others ignore it and behave as before.
+    ;; Default: empty, nothing is registered.
+    ; LocalAddress = ""
+
+
 [EntityTransfer]
     ;# {ScriptRezzedObjectsDieAtEdge} {} {Start objects rezzed by a script with STATUS_DIE_AT_EDGE set (Second Life's default).} {false true} false
     ;; Second Life gives an object rezzed by a script (llRezObject, llRezAtRoot) STATUS_DIE_AT_EDGE = TRUE, so that it is
@@ -987,11 +1064,23 @@
     ;; Adjusts wind strength. 0.0 = no wind, 1.0 = normal wind.
     ; strength = 1.0
 
+    ;; Values that are not finite numbers (NaN, Infinity) are not accepted: in this section such a value
+    ;; falls back to the key's default with a warning, and the wind module refuses it when a script
+    ;; (osSetWindParam) or the "wind" console command sets it.
+    ;;
+    ;; Who may call osSetWindParam is decided by the [OSSL] section, like any other OSSL function, for both
+    ;; YEngine and Phlox scripts. To limit it to estate owners and managers, put a line like this in the
+    ;; [OSSL] section (config-include/osslDefaultEnable.ini carries the shipped line for every function):
+    ; Allow_osSetWindParam = ESTATE_MANAGER,ESTATE_OWNER
+
     ;; The ZephyrWind plugin is selected with wind_plugin = ZephyrWind. It models terrain-shaped surface
     ;; wind, wind aloft, currents under the water and a prevailing wind that follows the region's sun,
     ;; on 16 m cells (a larger region has more cells). It takes these keys, shown with their defaults.
     ;; The strength key above belongs to SimpleRandomWind and is not read by ZephyrWind.
     ;; Winds set by scripts with iwSetWind are kept in memory only and are lost when the region restarts.
+    ;; The day the prevailing wind follows is the server clock taken against the environment's day length
+    ;; and offset, not the region's sky: a region whose sun is held still by its sky settings still has a
+    ;; prevailing wind that changes through the day.
     ;; The prevailing wind follows the region's day, taken from the region environment's day length
     ;; (14400 seconds, four hours, unless the environment sets another). The speed and the direction
     ;; each run through their cycle a fixed number of times a day, so the day length sets how fast the
@@ -1007,6 +1096,50 @@
     ; var_direction = 30.0
     ; rate_change_aloft = 1.0
     ; rate_change_flutter = 64.0
+
+
+[Weather]
+    ;# {enabled} {} {Enable script-made weather?} {true false} false
+    ;; Script-made weather. Off by default; with it off, nothing here has any effect and the wind
+    ;; behaves as it does without this section. Requires the wind module ([Wind] enabled = true).
+    ;;
+    ;; When on, a script whose owner is the estate owner, an estate manager or a god can add wind
+    ;; volumes: places (a sphere or an upright cylinder) where a wind, with all three components, is
+    ;; added to the base wind for a limited time. Phlox scripts use iwWindVolumeCreate,
+    ;; iwWindVolumeRemove and iwWindVolumes; YEngine scripts use osWindVolumeCreate,
+    ;; osWindVolumeRemove and osWindVolumes. Volumes are kept in memory only and are gone when the
+    ;; region restarts. In this release they are stored and can be created, listed and removed, but
+    ;; nothing reads them yet: they do not move bodies, change the wind model's cells or the wind
+    ;; array sent to viewers.
+    ;;
+    ;; With weather on, osSetWindParam also needs an owner who is the estate owner, an estate
+    ;; manager or a god. With weather off, osSetWindParam keeps the permission it always had.
+    ; enabled = false
+
+    ;# {max_volumes_region} {enabled:true} {Most wind volumes in the region?} {} 16
+    ;; The most wind volumes alive in the region at one time.
+    ; max_volumes_region = 16
+
+    ;# {max_volumes_object} {enabled:true} {Most wind volumes per object?} {} 4
+    ;; The most wind volumes alive at one time that a single object (the whole linkset) may have made.
+    ; max_volumes_object = 4
+
+    ;# {max_radius} {enabled:true} {Largest radius in metres?} {} 128
+    ;; The largest radius in metres, horizontal for a cylinder and in every direction for a sphere.
+    ; max_radius = 128
+
+    ;# {max_height} {enabled:true} {Largest cylinder height in metres?} {} 512
+    ;; The largest height in metres of a cylinder.
+    ; max_height = 512
+
+    ;# {max_speed} {enabled:true} {Fastest wind in metres per second?} {} 50
+    ;; The fastest wind in metres per second that one volume may be given (the length of its
+    ;; velocity), and the limit on the wind all volumes add together at any point.
+    ; max_speed = 50
+
+    ;# {max_lifetime} {enabled:true} {Longest lifetime in seconds?} {} 3600
+    ;; The longest lifetime in seconds a volume may be given. Every volume needs a lifetime above zero.
+    ; max_lifetime = 3600
 
 
 [Materials]
