@@ -25,30 +25,30 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// Set ANGULAR_TARGET_OUT to a file to have the figures runs append their rows to it.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
-[PinnedMaterials]
+[PinnedMaterials(BasicForces = "SecondLife")]
 public class AngularTargetTests
 {
-    private readonly ITestOutputHelper _output;
+    protected readonly ITestOutputHelper _output;
     public AngularTargetTests(ITestOutputHelper output) => _output = output;
 
-    private static readonly Vector3 Unit = new(1f, 1f, 1f);
-    private static readonly Vector3 High = new(128f, 128f, 150f);
+    protected static readonly Vector3 Unit = new(1f, 1f, 1f);
+    protected static readonly Vector3 High = new(128f, 128f, 150f);
     private const float X = 128f, Y = 128f;
     private const uint RootId = 1601, LeftId = 1602, RightId = 1603;
 
-    private readonly record struct Pt(double T, Quaternion Rot, Vector3 Spin, Vector3 Pos, int Awake);
+    protected readonly record struct Pt(double T, Quaternion Rot, Vector3 Spin, Vector3 Pos, int Awake);
 
-    private static Quaternion Turn(float degrees, Vector3 axis) => Quaternion.CreateFromAxisAngle(axis, degrees * MathF.PI / 180f);
-    private static Quaternion TurnZ(float degrees) => Turn(degrees, Vector3.UnitZ);
+    protected static Quaternion Turn(float degrees, Vector3 axis) => Quaternion.CreateFromAxisAngle(axis, degrees * MathF.PI / 180f);
+    protected static Quaternion TurnZ(float degrees) => Turn(degrees, Vector3.UnitZ);
 
     /// <summary>The angle between two rotations (degrees).</summary>
-    private static float Between(Quaternion a, Quaternion b)
+    protected static float Between(Quaternion a, Quaternion b)
     {
         float d = MathF.Abs(a.X * b.X + a.Y * b.Y + a.Z * b.Z + a.W * b.W);
         return 2f * MathF.Acos(MathF.Min(1f, d)) * 180f / MathF.PI;
     }
 
-    private static List<Pt> Run(double physicsHz, float seconds, Action<Run> setup, Action<Run, double> act = null)
+    protected static List<Pt> Run(double physicsHz, float seconds, Action<Run> setup, Action<Run, double> act = null)
     {
         var trace = new List<Pt>();
         var sc = new Scenario
@@ -67,10 +67,10 @@ public class AngularTargetTests
         return trace;
     }
 
-    private static Pt At(List<Pt> trace, double t) => trace.First(p => p.T >= t - 1e-9);
+    protected static Pt At(List<Pt> trace, double t) => trace.First(p => p.T >= t - 1e-9);
 
     // As a physics engine is handed a look-at: the target, then strength and damping, then on.
-    private static void LookAt(PhysicsActor a, Quaternion target, float strength, float damping)
+    protected static void LookAt(PhysicsActor a, Quaternion target, float strength, float damping)
     {
         a.APIDTarget = target;
         a.APIDStrength = strength;
@@ -79,7 +79,7 @@ public class AngularTargetTests
     }
 
     /// <summary>The cube standing clear of the ground, its weight cancelled (buoyancy 1), or resting on the ground.</summary>
-    private static PhysicsActor Cube(Run r, float size, float mass, bool air)
+    protected static PhysicsActor Cube(Run r, float size, float mass, bool air)
     {
         float z = air ? 150f : r.GroundAt(X, Y) + size * 0.5f + 0.02f;
         PhysicsActor a = r.AddBox(new Vector3(size, size, size), new Vector3(X, Y, z), Quaternion.Identity);
@@ -90,7 +90,7 @@ public class AngularTargetTests
     }
 
     /// <summary>Three 1 m cubes in a row along x, linked; the root is the middle one.</summary>
-    private static PhysicsActor Linkset(Run r, bool air, out PhysicsActor left)
+    protected static PhysicsActor Linkset(Run r, bool air, out PhysicsActor left)
     {
         float z = air ? 150f : r.GroundAt(X, Y) + 0.5f + 0.02f;
         PhysicsActor root = r.Actor = r.AddPart(PrimitiveBaseShape.CreateBox(), Unit, new Vector3(X, Y, z), Quaternion.Identity, true, RootId);
@@ -103,10 +103,10 @@ public class AngularTargetTests
     }
 
     // The error left from rest by the critically damped spring: e0 (1 + x) e^(-x), x = t / T.
-    private static double Left(double e0, double timescale, double t) => e0 * (1 + t / timescale) * Math.Exp(-t / timescale);
+    protected static double Left(double e0, double timescale, double t) => e0 * (1 + t / timescale) * Math.Exp(-t / timescale);
 
     /// <summary>The turn from the start, in degrees, at each sample (0 = not turned).</summary>
-    private static float[] Turned(List<Pt> trace) => trace.Select(p => Between(trace[0].Rot, p.Rot)).ToList().ToArray();
+    protected static float[] Turned(List<Pt> trace) => trace.Select(p => Between(trace[0].Rot, p.Rot)).ToList().ToArray();
 
     // ---- the turn --------------------------------------------------------------------------------------------------
 
@@ -115,7 +115,7 @@ public class AngularTargetTests
     [InlineData(45.0, true)]
     [InlineData(0.0, false)]
     [InlineData(0.0, true)]
-    public void It_turns_90_degrees_by_the_spring_rule_without_passing_the_target_in_the_air_and_on_the_ground(double physicsHz, bool air)
+    public virtual void It_turns_90_degrees_by_the_spring_rule_without_passing_the_target_in_the_air_and_on_the_ground(double physicsHz, bool air)
     {
         const float T = 0.2f;
         List<Pt> trace = Run(physicsHz, 4f, r => LookAt(Cube(r, 1f, 1f, air), TurnZ(90f), T, T));
@@ -150,7 +150,7 @@ public class AngularTargetTests
     [InlineData(45.0, 1f, 100f, false)]
     [InlineData(45.0, 4f, 100f, false)]
     [InlineData(0.0, 4f, 100f, false)]
-    public void It_reaches_the_target_within_2_degrees_the_same_for_any_mass_or_size(double physicsHz, float size, float mass, bool air)
+    public virtual void It_reaches_the_target_within_2_degrees_the_same_for_any_mass_or_size(double physicsHz, float size, float mass, bool air)
     {
         List<Pt> reference = Run(physicsHz, 2.5f, r => LookAt(Cube(r, 1f, 1f, true), TurnZ(90f), 0.3f, 0.3f));
         List<Pt> trace = Run(physicsHz, 2.5f, r => LookAt(Cube(r, size, mass, air), TurnZ(90f), 0.3f, 0.3f));
@@ -187,7 +187,7 @@ public class AngularTargetTests
     [InlineData(45.0, 30f, false)]
     [InlineData(0.0, 30f, true)]
     [InlineData(0.0, 60f, false)]
-    public void A_target_moved_many_times_a_second_is_followed_smoothly(double physicsHz, float updatesPerSecond, bool air)
+    public virtual void A_target_moved_many_times_a_second_is_followed_smoothly(double physicsHz, float updatesPerSecond, bool air)
     {
         List<Pt> trace = DragRun(physicsHz, updatesPerSecond, air, 0.1f, 1f, 1f, 1f);
         float[] turned = Turned(trace);
@@ -224,13 +224,13 @@ public class AngularTargetTests
     }
 
     // The cursor's turn (degrees) at time t: a smooth start and stop of `total` degrees over `seconds` from `start`.
-    private static float Ideal(double t, double seconds, double start, float total)
+    protected static float Ideal(double t, double seconds, double start, float total)
     {
         double s = Math.Clamp((t - start) / seconds, 0.0, 1.0);
         return total * (float)(s * s * (3.0 - 2.0 * s));
     }
 
-    private static List<Pt> DragRun(double physicsHz, float updatesPerSecond, bool air, float timescale, float size, float mass, float seconds, bool linkset = false, float duration = 6f)
+    protected static List<Pt> DragRun(double physicsHz, float updatesPerSecond, bool air, float timescale, float size, float mass, float seconds, bool linkset = false, float duration = 6f)
     {
         float last = float.NaN;
         return Run(physicsHz, duration,
@@ -256,7 +256,7 @@ public class AngularTargetTests
     }
 
     [Fact]
-    public void A_target_held_still_holds_within_half_a_degree_and_the_body_sleeps_and_a_new_target_wakes_it()
+    public virtual void A_target_held_still_holds_within_half_a_degree_and_the_body_sleeps_and_a_new_target_wakes_it()
     {
         PhysicsActor actor = null;
         bool second = false;
@@ -318,7 +318,7 @@ public class AngularTargetTests
     [InlineData(0.8f, 0.2f, 0.8f)]
     [InlineData(0.5f, 0f, 0.5f)]        // no damping: the strength alone
     [InlineData(0.3f, 5f, 1f)]          // "damping seems to be capped at 1.0"
-    public void Strength_and_damping_set_the_timescale(float strength, float damping, float timescale)
+    public virtual void Strength_and_damping_set_the_timescale(float strength, float damping, float timescale)
     {
         List<Pt> trace = Run(45.0, 6f, r => LookAt(Cube(r, 1f, 1f, true), TurnZ(90f), strength, damping));
         float[] turned = Turned(trace);
@@ -336,7 +336,7 @@ public class AngularTargetTests
     [InlineData(0.04f)]
     [InlineData(0f)]
     [InlineData(-1f)]
-    public void A_strength_under_the_minimum_does_nothing(float strength)
+    public virtual void A_strength_under_the_minimum_does_nothing(float strength)
     {
         List<Pt> trace = Run(45.0, 2f, r => LookAt(Cube(r, 1f, 1f, true), TurnZ(90f), strength, 0.5f));
         Assert.True(Turned(trace).Max() < 0.5f);
@@ -352,7 +352,7 @@ public class AngularTargetTests
     // ---- the short way, any axis -----------------------------------------------------------------------------------
 
     [Fact]
-    public void It_takes_the_short_way_round_and_turns_about_any_axis()
+    public virtual void It_takes_the_short_way_round_and_turns_about_any_axis()
     {
         // 270 degrees about Z is 90 the other way.
         List<Pt> trace = Run(45.0, 3f, r => LookAt(Cube(r, 1f, 1f, true), TurnZ(270f), 0.2f, 0.2f));
@@ -480,7 +480,7 @@ public class AngularTargetTests
     }
 
     [Fact]
-    public void An_angular_velocity_a_script_sets_is_a_starting_speed_the_spring_takes_to_the_target()
+    public virtual void An_angular_velocity_a_script_sets_is_a_starting_speed_the_spring_takes_to_the_target()
     {
         PhysicsActor actor = null;
         bool kicked = false;
@@ -534,7 +534,7 @@ public class AngularTargetTests
         }
     }
 
-    private void Row(string run, List<Pt> trace, Func<double, float> ideal)
+    protected void Row(string run, List<Pt> trace, Func<double, float> ideal)
     {
         float[] turned = Turned(trace);
         float overshoot = MathF.Max(0f, turned.Max() - 90f);
@@ -559,16 +559,22 @@ public class AngularTargetTests
             lock (typeof(AngularTargetTests))
                 File.AppendAllText(path, row + "\n");
         }
+        CheckFigure(run, overshoot, endErr);
+    }
+
+    /// <summary>What a figure run must show: Second Life's spring never passes its target.</summary>
+    protected virtual void CheckFigure(string run, float overshoot, float endErr)
+    {
         Assert.True(overshoot <= 0.5f, $"{run}: passed the target by {overshoot:0.0} degrees");
         Assert.True(endErr < 2f, $"{run}: {endErr:0.0} degrees from the target at the end");
     }
 
-    private static string Tag(double hz, bool air) => (hz > 0 ? "45Hz" : "heartbeat") + (air ? "/air" : "/ground");
+    protected static string Tag(double hz, bool air) => (hz > 0 ? "45Hz" : "heartbeat") + (air ? "/air" : "/ground");
 
     /// <summary>A 90 degree turn asked for at once (strength and damping 0.2): the table's "1 s" turn, a step in the target.</summary>
     [Theory]
     [MemberData(nameof(FigureCases))]
-    public void Figures_a_90_degree_turn(string name, double hz, bool air, float size, float mass)
+    public virtual void Figures_a_90_degree_turn(string name, double hz, bool air, float size, float mass)
     {
         bool linkset = name.EndsWith("linkset");
         List<Pt> trace = Run(hz, 6f, r => LookAt(linkset ? Linkset(r, air, out _) : Cube(r, size, mass, air), TurnZ(90f), 0.2f, 0.2f));
@@ -625,7 +631,7 @@ public class AngularTargetTests
     [Theory]
     [InlineData(0.0)]
     [InlineData(45.0)]
-    public void Figures_held_and_switched_off(double hz)
+    public virtual void Figures_held_and_switched_off(double hz)
     {
         List<Pt> held = Run(hz, 8f, r => LookAt(Cube(r, 1f, 1f, true), TurnZ(90f), 0.2f, 0.2f));
         Row($"held-5s|{Tag(hz, true)}", held, t => 0f);
