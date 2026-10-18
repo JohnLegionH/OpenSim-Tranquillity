@@ -32,6 +32,7 @@ public partial class Scene
         public bool AnyArrived;
         public List<SceneObjectGroup> DeferredAttachments = new();
         public bool PhysicsHeld;
+        public bool BorderKept;   // the engine was told to keep the object inside the border, and has not been told the wait is over
         public double StartedMs;
         public bool Released;
         public double ReleasedAtMs;
@@ -100,6 +101,22 @@ public partial class Scene
             m_log.LogError(e, $"[SCENE]: Problem holding the arrived object {newObject.UUID} still");
         }
 
+        // An engine that keeps the object from crossing out again for a while is also told to keep it inside the border
+        // for that time: left to cross out, its body would be taken out of the simulation under the riders.
+        bool borderKept = false;
+        try
+        {
+            if (newObject.UsesPhysics && newObject.RootPart.PhysActor is PhysicsActor waiting && waiting.WaitsBeforeCrossingBack)
+            {
+                waiting.KeepInsideBorder(true);
+                borderKept = true;
+            }
+        }
+        catch (Exception e)
+        {
+            m_log.LogError(e, $"[SCENE]: Problem keeping the arrived object {newObject.UUID} inside the border");
+        }
+
         double now = CrossingClock();
         newObject.ArrivedWithRidersAtMs = now;
         lock (m_crossingHoldLock)
@@ -111,7 +128,8 @@ public partial class Scene
                 Waiting = new HashSet<UUID>(hold.ExpectedRiders),
                 StartedMs = now,
                 DeadlineMs = now + RideOnLimits.ArriveHoldMs,
-                PhysicsHeld = physicsHeld
+                PhysicsHeld = physicsHeld,
+                BorderKept = borderKept
             };
         }
         return true;
@@ -237,6 +255,7 @@ public partial class Scene
         ReleaseLostPendingCrossings();
 
         List<ArrivalHold> due = null;
+        List<ArrivalHold> waitOver = null;
         lock (m_crossingHoldLock)
         {
             if (m_arrivalHolds.Count == 0)
@@ -247,6 +266,12 @@ public partial class Scene
             foreach (KeyValuePair<UUID, ArrivalHold> entry in m_arrivalHolds)
             {
                 ArrivalHold hold = entry.Value;
+                if (hold.BorderKept && now - hold.StartedMs >= RideOnLimits.RecrossWaitMs)
+                {
+                    hold.BorderKept = false;
+                    (waitOver ??= new List<ArrivalHold>()).Add(hold);
+                }
+
                 if (hold.Released)
                 {
                     if (now - hold.ReleasedAtMs >= ReleasedHoldMemoryMs)
@@ -263,10 +288,30 @@ public partial class Scene
             }
         }
 
+        if (waitOver is not null)
+        {
+            foreach (ArrivalHold hold in waitOver)
+                EndBorderKeeping(hold);
+        }
+
         if (due is not null)
         {
             foreach (ArrivalHold hold in due)
                 ReleaseArrivalHold(hold);
+        }
+    }
+
+    /// <summary>The object's wait before crossing out again is over: its engine may take it across the border.</summary>
+    private void EndBorderKeeping(ArrivalHold hold)
+    {
+        try
+        {
+            if (!hold.Group.IsDeleted)
+                hold.Group.RootPart.PhysActor?.KeepInsideBorder(false);
+        }
+        catch (Exception e)
+        {
+            m_log.LogError(e, $"[SCENE]: Problem letting the object {hold.Group.UUID} cross the border after its wait");
         }
     }
 

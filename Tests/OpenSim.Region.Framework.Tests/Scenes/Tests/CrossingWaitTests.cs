@@ -186,6 +186,61 @@ public class CrossingWaitTests : HeldCrossingFixture
         Assert.Null(m_sceneB.GetSceneObjectGroup(m_platform.UUID));
     }
 
+    // ---- keeping the object inside the border during the wait -----------------------------------------------------------
+
+    [Fact]
+    public void An_engine_that_waits_is_told_to_keep_the_object_inside_the_border_until_the_wait_is_over()
+    {
+        TestHelpers.InMethod();
+        Setup(physicalAndMovesOn: true, waitsBeforeCrossingBack: true);
+        ScenePresence rider = AddStandingRider(0x11, StandingOffset);
+        Cross(rider);
+        WaitingPrim arrived = m_physicsB.PrimOf(m_platform.UUID);
+        Assert.Equal(new[] { true }, arrived.Keeps);
+
+        Arrive(rider.UUID);
+        Elapse(RideOnLimits.RecrossWaitMs - 1);
+        Assert.Equal(new[] { true }, arrived.Keeps);
+
+        Elapse(1);
+        Assert.Equal(new[] { true, false }, arrived.Keeps);
+
+        Elapse(RideOnLimits.RecrossWaitMs);
+        Assert.Equal(new[] { true, false }, arrived.Keeps);
+    }
+
+    [Fact]
+    public void An_engine_that_does_not_wait_is_not_told_to_keep_the_object_inside()
+    {
+        TestHelpers.InMethod();
+        Setup(physicalAndMovesOn: true, waitsBeforeCrossingBack: false);
+        ScenePresence rider = AddStandingRider(0x11, StandingOffset);
+        Cross(rider);
+        WaitingPrim arrived = m_physicsB.PrimOf(m_platform.UUID);
+        Arrive(rider.UUID);
+        Elapse(RideOnLimits.RecrossWaitMs + 1);
+
+        Assert.Empty(arrived.Keeps);
+    }
+
+    [Fact]
+    public void The_wait_counts_from_the_arrival_not_from_the_release_of_the_hold()
+    {
+        TestHelpers.InMethod();
+        Setup(physicalAndMovesOn: true, waitsBeforeCrossingBack: true);
+        ScenePresence rider = AddStandingRider(0x11, StandingOffset);
+        Cross(rider);
+        WaitingPrim arrived = m_physicsB.PrimOf(m_platform.UUID);
+        Elapse(2000);
+        Arrive(rider.UUID);
+        Assert.Equal(new[] { true }, arrived.Keeps);
+
+        Elapse(999);
+        Assert.Equal(new[] { true }, arrived.Keeps);
+        Elapse(1);
+        Assert.Equal(new[] { true, false }, arrived.Keeps);
+    }
+
     // ---- stand-ins -------------------------------------------------------------------------------------------------
 
     private sealed class WaitingPrim : BasicPhysicsPrim
@@ -202,6 +257,9 @@ public class CrossingWaitTests : HeldCrossingFixture
 
         public List<string> Calls { get; } = new();
 
+        /// <summary>The values <see cref="KeepInsideBorder"/> was called with, in order.</summary>
+        public List<bool> Keeps { get; } = new();
+
         /// <summary>How far the stand-in engine moved the object on at the release.</summary>
         public Vector3 Moved { get; private set; }
 
@@ -215,6 +273,8 @@ public class CrossingWaitTests : HeldCrossingFixture
         public override bool WaitsBeforeCrossingBack => m_owner.Waits;
 
         public override void HoldStill() => Calls.Add("hold");
+
+        public override void KeepInsideBorder(bool keep) => Keeps.Add(keep);
 
         public override void ReleaseHold() => Calls.Add("release");
 

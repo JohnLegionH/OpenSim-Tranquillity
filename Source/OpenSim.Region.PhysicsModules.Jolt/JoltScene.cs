@@ -2757,6 +2757,46 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _timeDilation = gaps <= steps ? 1f : (float)(steps / gaps);
         }
 
+        // Bodies kept inside the region's border (JoltPrim.KeepInsideBorder) that this step carried across it. The body is put
+        // back and the avatars standing on it are moved with it once the character drain has run, so that the avatars' cached
+        // state is the one they are moved from.
+        private readonly List<(JoltPrim Prim, Vector3 Before)> _borderPins = new List<(JoltPrim, Vector3)>();
+
+        internal void QueueBorderPin(JoltPrim prim, Vector3 before)
+        {
+            lock (_borderPins) _borderPins.Add((prim, before));
+        }
+
+        private void FlushBorderPins()
+        {
+            (JoltPrim Prim, Vector3 Before)[] pins;
+            lock (_borderPins)
+            {
+                if (_borderPins.Count == 0) return;
+                pins = _borderPins.ToArray();
+                _borderPins.Clear();
+            }
+            foreach ((JoltPrim prim, Vector3 before) in pins)
+            {
+                try { prim.FinishBorderPin(before); }
+                catch (Exception e) { m_log.LogError($"{LogHeader} keeping prim {prim.LocalID} inside the border EXCEPTION: {e}"); }
+            }
+        }
+
+        // Puts the avatars that stand on this body back on it after it was set back from `before` to `now`.
+        internal void MoveCharactersStandingOn(BodyId body, Vector3 before, Vector3 now)
+        {
+            List<JoltCharacter> avs;
+            lock (_avatars)
+                avs = new List<JoltCharacter>(_avatars.Values);
+            foreach (JoltCharacter a in avs)
+            {
+                BodyId ground = a.GroundBody;
+                if (ground.IsValid && ground.Value == body.Value)
+                    a.PlaceBackOnGround(before, now);
+            }
+        }
+
         // Everything after the backend step: metrics, capacity, the body / character drains and the collision
         // dispatch. `r` is the step whose body and character states are reported; the contact count, overflow,
         // physics time and timing cover every backend step of this heartbeat (one, unless substepping).
@@ -2800,6 +2840,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     _avatars.TryGetValue(cs.Character.Value, out a);
                 a?.ApplyCharacterState(in cs);
             }
+
+            FlushBorderPins();
 
             DispatchContacts(_contactBuf, contactCount, contactsOverflowed, mergeSubsteps);
 

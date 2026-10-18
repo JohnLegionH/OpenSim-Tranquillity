@@ -695,7 +695,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     outOfBounds = true;
                 }
                 else if (_isPhysical && !InRegion(newPos))
-                    LeaveAcrossEdge(newPos, newRot, newVel, newAngVel);
+                {
+                    if (_keptInsideBorder)
+                        KeepAtBorder(newPos, newRot, newVel, newAngVel);
+                    else
+                        LeaveAcrossEdge(newPos, newRot, newVel, newAngVel);
+                }
                 else
                 {
                     _position = newPos;
@@ -734,6 +739,47 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         private bool InRegion(Vector3 p)   // Scene.PositionIsInCurrentRegion
             => p.X >= 0f && p.X < _module.RegionSizeX && p.Y >= 0f && p.Y < _module.RegionSizeY;
+
+        // While an object that crossed in with riders waits before it may cross out again (PhysicsActor.KeepInsideBorder), the
+        // body stays in the engine at the border. Taken out as for any crossing, it would leave the avatars standing on it with
+        // nothing under them and the speed it gave them, and core would put it back at rest and higher, once a step for as long
+        // as its script pushes it. Halcyon leaves the object in its scene and sets it back inside the region, stopped
+        // (PhysxPrim.CrossingFailure). Here the body is set back to half a metre inside, as core puts a stayed object back
+        // (SceneObjectGroup.CrossAsyncCompleted), loses its speed outward, and the avatars on it are set back with it.
+        private volatile bool _keptInsideBorder;
+
+        public override void KeepInsideBorder(bool keep) => _keptInsideBorder = keep && InWorldzBasicForces;
+
+        private const float BorderKeepMargin = 0.5f;
+
+        private void KeepAtBorder(Vector3 pos, Quaternion rot, Vector3 velocity, Vector3 angularVelocity)
+        {
+            float sx = _module.RegionSizeX, sy = _module.RegionSizeY;
+            Vector3 inside = pos;
+            inside.X = Math.Clamp(pos.X, BorderKeepMargin, sx - BorderKeepMargin);
+            inside.Y = Math.Clamp(pos.Y, BorderKeepMargin, sy - BorderKeepMargin);
+            if (inside.X != pos.X && Math.Sign(velocity.X) == Math.Sign(pos.X - inside.X)) velocity.X = 0f;
+            if (inside.Y != pos.Y && Math.Sign(velocity.Y) == Math.Sign(pos.Y - inside.Y)) velocity.Y = 0f;
+            Vector3 before = _position;
+            _position = inside;
+            _orientation = rot;
+            _velocity = velocity;
+            _rotationalVelocity = angularVelocity;
+            _module.QueueBorderPin(this, before);
+        }
+
+        // The second half, after the avatars' step state is in (JoltScene.FlushBorderPins).
+        internal void FinishBorderPin(Vector3 before)
+        {
+            lock (_awayLock)
+            {
+                if (_away != Away.None || !_body.IsValid)
+                    return;
+                _backend.SetBodyTransform(_body, ToS(_position), BodyOrientationOf(_orientation), activate: true);
+                _backend.SetBodyLinearVelocity(_body, ToS(_velocity));
+                _module.MoveCharactersStandingOn(_body, before, _position);
+            }
+        }
 
         private void LeaveAcrossEdge(Vector3 pos, Quaternion rot, Vector3 velocity, Vector3 angularVelocity)
         {
