@@ -1025,9 +1025,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
             m_frameNum++;
             m_vehicleMass = _hostBody.Mass;
-            _updateStep = pTimestep;
             _stepSeconds = pTimestep;
-            _stepShare = 1f;
 
             // The Halcyon code smoothed the step 0.8/0.2 per step, and filtered a velocity whose sign flipped since the
             // last step; both made the result depend on the step rate, and at a steady rate the smoothed step is the step.
@@ -1135,13 +1133,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             }
         }
 
-        // The length of the engine step BeginUpdate was given, and the share of it the step being run covers (1 for a
-        // whole step). InWorldz's laws have a few constants that are per step, not per second (a share of the angular
-        // velocity taken off each step, the smallest change worth making); a collision step takes its share of each, so the
-        // sum over a step is what it was when the controller ran once.
-        private float _updateStep = VehicleLimits.MinPhysicsTimestep;
-        private float _stepShare = 1f;
+        // The length of the step being run. InWorldz's laws have a few constants that are per step, not per second (the
+        // smallest change worth making); they were tuned for Halcyon's 15 ms step, so a step of h seconds takes h / 15 ms of
+        // each (HalcyonStepShare), the same acceleration at every Update rate and number of collision steps.
         private float _stepSeconds = VehicleLimits.MinPhysicsTimestep;
+
+        // The share of a per-Halcyon-step constant that a step of the current length takes.
+        private float HalcyonStepShare => (float)(_stepSeconds / HalcyonStep);
 
         // The body's state at the start of a step, in the frames the terms work in.
         private void ReadState()
@@ -1166,7 +1164,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         private void StepCore(float h)
         {
             _stepSeconds = h;
-            _stepShare = _updateStep > 0f ? Math.Min(1f, h / _updateStep) : 1f;
 
             // -------------------------------------------------------
             // Read current state from physics engine
@@ -1838,8 +1835,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         private void TorqueFini()
         {
-            // Clean up near-zero values (a change per step: a collision step takes its share of the limit)
-            float tiny = VehicleLimits.MinPhysicsForce * _stepShare;
+            // Clean up near-zero values (a change per Halcyon step, VehicleDynamics.cs:2447-2449: a step takes its share of the limit)
+            float tiny = VehicleLimits.MinPhysicsForce * HalcyonStepShare;
             if (Math.Abs(_accumTorqueVelChange.X) < tiny) _accumTorqueVelChange.X = 0f;
             if (Math.Abs(_accumTorqueVelChange.Y) < tiny) _accumTorqueVelChange.Y = 0f;
             if (Math.Abs(_accumTorqueVelChange.Z) < tiny) _accumTorqueVelChange.Z = 0f;
@@ -1949,7 +1946,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 return;
             if (IsLinearMotorStalled())
                 return;
-            float least = VehicleLimits.ThresholdAngularMotorDeltaV * _stepShare;
+            // pi / 512 per Halcyon step (VehicleDynamics.cs:1160-1162)
+            float least = VehicleLimits.ThresholdAngularMotorDeltaV * HalcyonStepShare;
             if (Math.Abs(push.X) >= least || Math.Abs(push.Y) >= least || Math.Abs(push.Z) >= least)
                 AddTorqueVelocityChange(push);
         }
