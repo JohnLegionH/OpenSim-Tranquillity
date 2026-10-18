@@ -1532,6 +1532,34 @@ public static class Harness
         },
         new()
         {
+            Name = "drop-rock-old-link",
+            Description = "The sports car linkset let fall 1.5 m onto level ground rolled 7 and pitched 5 degrees (as if landing on a slope or a bump), with the earlier test-drive script's values; no key; left 30 s.",
+            DefaultDuration = _ => 30f, DefaultHold = _ => 0f,
+            Setup = r => SetupDropDrive(r, true, true, 1.5f, 7f, 5f, false),
+        },
+        new()
+        {
+            Name = "drop-rock-script-link",
+            Description = "The sports car linkset let fall 1.5 m onto level ground rolled 7 and pitched 5 degrees (as if landing on a slope or a bump), with the current test-drive script's values; no key; left 30 s.",
+            DefaultDuration = _ => 30f, DefaultHold = _ => 0f,
+            Setup = r => SetupDropDrive(r, false, true, 1.5f, 7f, 5f, false),
+        },
+        new()
+        {
+            Name = "drop-rock-old-sitter-link",
+            Description = "The sports car linkset with a 70 kg block at the driver's sit offset let fall 1.5 m onto level ground rolled 7 and pitched 5 degrees (as if landing on a slope or a bump), with the earlier test-drive script's values; no key; left 30 s.",
+            DefaultDuration = _ => 30f, DefaultHold = _ => 0f,
+            Setup = r => SetupDropDrive(r, true, true, 1.5f, 7f, 5f, true),
+        },
+        new()
+        {
+            Name = "drop-rock-script-sitter-link",
+            Description = "The sports car linkset with a 70 kg block at the driver's sit offset let fall 1.5 m onto level ground rolled 7 and pitched 5 degrees (as if landing on a slope or a bump), with the current test-drive script's values; no key; left 30 s.",
+            DefaultDuration = _ => 30f, DefaultHold = _ => 0f,
+            Setup = r => SetupDropDrive(r, false, true, 1.5f, 7f, 5f, true),
+        },
+        new()
+        {
             Name = "park-wake",
             Description = "VEHICLE_TYPE_CAR with its presets, parked on level ground; at 8 s (asleep by then) the key goes down for 2 s with motor <8,0,0>.",
             // The heartbeat feed lets the key up at Hold, counted from the start.
@@ -1753,11 +1781,11 @@ public static class Harness
 
     // A sports car's linkset: a 3.4 x 1.5 x 0.45 m root box, a cabin, four wheel cylinders on their sides (their bottoms level
     // with the ground when the root centre is 0.52 m up), a headlight and a spoiler. Facing east, dropped `drop` metres.
-    private static void AddSportsCar(Run r, float x, float y, float drop)
+    private static void AddSportsCar(Run r, float x, float y, float drop, float rollDeg = 0f, float pitchDeg = 0f, bool sitter = false)
     {
         var rootSize = new Vector3(3.4f, 1.5f, 0.45f);
         var centre = new Vector3(x, y, r.GroundAt(x, y) + 0.52f + drop);
-        Quaternion lean = Quaternion.CreateFromEulers(r.Options.CrashAngle * MathF.PI / 180f, 0f, 0f);   // --crash-angle: rolled this much
+        Quaternion lean = Quaternion.CreateFromEulers((r.Options.CrashAngle + rollDeg) * MathF.PI / 180f, pitchDeg * MathF.PI / 180f, 0f);   // --crash-angle adds to the roll
         PhysicsActor root = r.AddBox(rootSize, centre, lean);
         uint id = 1100;
         void Part(PrimitiveBaseShape shape, Vector3 at, Vector3 size, Quaternion rot) => r.AddPart(shape, size, centre + Vector3.Transform(at, lean), lean * rot, true, id++, root);
@@ -1767,18 +1795,23 @@ public static class Harness
             Part(PrimitiveBaseShape.CreateCylinder(), new Vector3(wx, wy, -0.17f), new Vector3(0.7f, 0.7f, 0.3f), onSide);
         Part(PrimitiveBaseShape.CreateBox(), new Vector3(1.72f, 0f, 0.05f), new Vector3(0.12f, 0.9f, 0.14f), Quaternion.Identity);
         Part(PrimitiveBaseShape.CreateBox(), new Vector3(-1.55f, 0f, 0.5f), new Vector3(0.45f, 1.4f, 0.06f), Quaternion.Identity);
+        if (sitter)
+        {
+            // A seated driver as a 70 kg block at the sit offset (-0.25, 0, 0.62 from the root centre), density 70 / 0.064 m3.
+            r.AddPart(PrimitiveBaseShape.CreateBox(), new Vector3(0.4f, 0.4f, 0.4f), centre + Vector3.Transform(new Vector3(-0.25f, 0f, 0.62f), lean), lean, true, id++, root, 70f / 0.064f);
+        }
     }
 
     private static readonly Vector3 GarageMotor = new(7f, 0f, 0f);
 
     /// <summary>The drop-drive scenarios: a car box 0.4 m above level ground facing east. <paramref name="earlierScript"/>
     /// null leaves the type's presets; false sets what a current test-drive script sets; true what an earlier one set.</summary>
-    private static void SetupDropDrive(Run r, bool? earlierScript, bool linkset = false)
+    private static void SetupDropDrive(Run r, bool? earlierScript, bool linkset = false, float drop = 0.4f, float roll = 0f, float pitch = 0f, bool sitter = false)
     {
         if (linkset)
-            AddSportsCar(r, 165f, 85f, 0.4f);
+            AddSportsCar(r, 165f, 85f, drop, roll, pitch, sitter);
         else
-            r.AddBox(CarSize, new Vector3(165f, 85f, r.GroundAt(165f, 85f) + CarSize.Z * 0.5f + 0.4f), Quaternion.Identity);
+            r.AddBox(CarSize, new Vector3(165f, 85f, r.GroundAt(165f, 85f) + CarSize.Z * 0.5f + drop), Quaternion.Identity);
         r.MakeVehicle(Vehicle.TYPE_CAR);
         if (earlierScript.HasValue)
         {
