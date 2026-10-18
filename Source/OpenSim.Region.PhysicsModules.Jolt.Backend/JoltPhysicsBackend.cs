@@ -31,6 +31,12 @@ using JoltPhysicsSharp;
 
 // The test-only hooks (HoldPoolGateForTest) are internal.
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("OpenSim.Region.PhysicsModules.Jolt.Tests")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("OpenSim.Region.PhysicsModules.Jolt.Backend.Tests")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("OpenSim.Region.PhysicsModules.Jolt.Vehicles.Tests")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("OpenSim.Region.PhysicsModules.Jolt.Harness.Tests")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("OpenSim.Region.PhysicsModules.Jolt.Scenarios.Avatar.Tests")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("OpenSim.Region.PhysicsModules.Jolt.Scenarios.Prim.Tests")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("OpenSim.Region.PhysicsModules.Jolt.Scenarios.Vehicle.Tests")]
 
 namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 {

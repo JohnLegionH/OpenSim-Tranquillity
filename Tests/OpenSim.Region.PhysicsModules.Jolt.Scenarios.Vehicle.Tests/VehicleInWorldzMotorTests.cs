@@ -20,31 +20,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// the controller stepped beside the model on level ground and on a slope with contact friction as a constant deceleration,
 /// at Halcyon's step of 15 ms and at the steps the engine takes. Pure (a body with no engine), parallel.
 /// </summary>
-public class VehicleInWorldzMotorTests
+public partial class VehicleInWorldzMotorTests
 {
     private readonly ITestOutputHelper _out;
     public VehicleInWorldzMotorTests(ITestOutputHelper output) => _out = output;
 
     private const float Mu = 0.5f;
     private const float KeyRepeat = 0.1f;
-
-    /// <summary>The model given the parameters the controller holds (the preset the port ships for the type, and a test script's
-    /// changes), so that the two differ only in the law they apply to them.</summary>
-    internal static HalcyonMotorModel ModelOf(VehicleController car) => new HalcyonMotorModel
-    {
-        Type = VehicleType.Car,
-        LinearFrictionTimescale = car.GetVecParam(VehVectorParam.LinearFrictionTimescale),
-        AngularFrictionTimescale = car.GetVecParam(VehVectorParam.AngularFrictionTimescale),
-        LinearMotorTimescale = car.GetVecParam(VehVectorParam.LinearMotorTimescale),
-        AngularMotorTimescale = car.GetVecParam(VehVectorParam.AngularMotorTimescale),
-        LinearMotorDecayTimescale = car.GetVecParam(VehVectorParam.LinearMotorDecayTimescale),
-        AngularMotorDecayTimescale = car.GetVecParam(VehVectorParam.AngularMotorDecayTimescale),
-        VerticalAttractionTimescale = car.GetFloatParam(VehFloatParam.VerticalAttractionTimescale),
-        AngularDeflectionTimescale = car.GetFloatParam(VehFloatParam.AngularDeflectionTimescale),
-        AngularDeflectionEfficiency = car.GetFloatParam(VehFloatParam.AngularDeflectionEfficiency),
-        Buoyancy = car.GetFloatParam(VehFloatParam.Buoyancy),
-        LimitMotorUp = true,
-    };
 
     private static VehicleController CarController(BehaviourBody body, bool testCar, Func<DateTime> clock)
     {

@@ -23,6 +23,7 @@ on:
       - 'Source/OpenSim.Region.PhysicsModules.Jolt.Backend/**'
       - 'Source/OpenSim.Region.PhysicsModules.Jolt.Vehicles/**'
       - 'Tests/JoltPhysicsHarness/**'
+      - 'Tests/JoltTestShared/**'
       - '.github/workflows/jolt-harness.yml'
   pull_request:
     branches:
@@ -32,6 +33,7 @@ on:
       - 'Source/OpenSim.Region.PhysicsModules.Jolt.Backend/**'
       - 'Source/OpenSim.Region.PhysicsModules.Jolt.Vehicles/**'
       - 'Tests/JoltPhysicsHarness/**'
+      - 'Tests/JoltTestShared/**'
       - '.github/workflows/jolt-harness.yml'
   workflow_dispatch:
     inputs:

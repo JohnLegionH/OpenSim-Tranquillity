@@ -42,7 +42,7 @@ public class JoltNativePackageTests
     /// <summary>The restored package: its version and the folder its files are in.</summary>
     private static (string Version, string Folder) RestoredPackage()
     {
-        string assets = Path.Combine(RepoRoot(), "Tests", "OpenSim.Region.PhysicsModules.Jolt.Tests", "obj", "project.assets.json");
+        string assets = Path.Combine(RepoRoot(), "Tests", "OpenSim.Region.PhysicsModules.Jolt.Backend.Tests", "obj", "project.assets.json");
         Assert.True(File.Exists(assets), $"no restore found: {assets}");
         using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(assets));
         JsonProperty library = doc.RootElement.GetProperty("libraries").EnumerateObject()

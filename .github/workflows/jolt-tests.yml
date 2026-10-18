@@ -4,8 +4,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-# Builds the Jolt test project and runs the Jolt suite on Windows x64 and Linux x64, the platforms
-# this project tests the Jolt module's native on, in Debug and Release. Each job also checks the test
+# Builds the Jolt test projects and runs their suites on Windows x64 and Linux x64, the platforms
+# this project tests the Jolt module's native on, in Debug and Release. Each job also checks each project's test
 # output with assert-joltc-native.ps1: recorded natives under runtimes/<rid>/native/ and no other joltc.
 name: Jolt tests
 
@@ -25,6 +25,17 @@ permissions:
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
   DOTNET_NOLOGO: 1
+  # The Jolt test projects: the module's, the backend's, the vehicle library's, the harness's own, the three scenario
+  # sets that run the harness, and the diagnostics assembly's.
+  JOLT_TEST_PROJECTS: >-
+    OpenSim.Region.PhysicsModules.Jolt.Tests
+    OpenSim.Region.PhysicsModules.Jolt.Backend.Tests
+    OpenSim.Region.PhysicsModules.Jolt.Vehicles.Tests
+    OpenSim.Region.PhysicsModules.Jolt.Harness.Tests
+    OpenSim.Region.PhysicsModules.Jolt.Scenarios.Avatar.Tests
+    OpenSim.Region.PhysicsModules.Jolt.Scenarios.Prim.Tests
+    OpenSim.Region.PhysicsModules.Jolt.Scenarios.Vehicle.Tests
+    OpenSim.Region.PhysicsModules.Jolt.Diagnostics.Tests
 
 jobs:
   test:
@@ -52,28 +63,27 @@ jobs:
         with:
           global-json-file: global.json
 
-      - name: Build the Jolt test project
-        run: dotnet build Tests/OpenSim.Region.PhysicsModules.Jolt.Tests -c ${{ matrix.configuration }} --disable-build-servers -nodeReuse:false -p:UseSharedCompilation=false
-
-      - name: Build the Jolt diagnostics test project
-        run: dotnet build Tests/OpenSim.Region.PhysicsModules.Jolt.Diagnostics.Tests -c ${{ matrix.configuration }} --disable-build-servers -nodeReuse:false -p:UseSharedCompilation=false
+      - name: Build the Jolt test projects
+        run: |
+          for project in $JOLT_TEST_PROJECTS; do
+            dotnet build "Tests/$project" -c ${{ matrix.configuration }} --disable-build-servers -nodeReuse:false -p:UseSharedCompilation=false || exit 1
+          done
 
       - name: Check the natives in the test output
         shell: pwsh
-        run: ./Source/OpenSim.Region.PhysicsModules.Jolt/assert-joltc-native.ps1 -PublishDir Tests/OpenSim.Region.PhysicsModules.Jolt.Tests/bin/${{ matrix.configuration }}/net10.0
+        run: |
+          foreach ($project in $env:JOLT_TEST_PROJECTS -split ' ') {
+            ./Source/OpenSim.Region.PhysicsModules.Jolt/assert-joltc-native.ps1 -PublishDir "Tests/$project/bin/${{ matrix.configuration }}/net10.0"
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
 
-      - name: Run the Jolt suite
-        run: >
-          dotnet test Tests/OpenSim.Region.PhysicsModules.Jolt.Tests -c ${{ matrix.configuration }} --no-build
-          --logger "console;verbosity=normal" --logger "trx;LogFileName=jolt.trx"
-          --results-directory "$RUNNER_TEMP/jolt-results"
-
-      - name: Run the Jolt diagnostics suite
-        if: ${{ !cancelled() }}
-        run: >
-          dotnet test Tests/OpenSim.Region.PhysicsModules.Jolt.Diagnostics.Tests -c ${{ matrix.configuration }} --no-build
-          --logger "console;verbosity=normal" --logger "trx;LogFileName=jolt-diagnostics.trx"
-          --results-directory "$RUNNER_TEMP/jolt-results"
+      - name: Run the Jolt suites
+        run: |
+          status=0
+          for project in $JOLT_TEST_PROJECTS; do
+            dotnet test "Tests/$project" -c ${{ matrix.configuration }} --no-build               --logger "console;verbosity=normal" --logger "trx;LogFileName=$project.trx"               --results-directory "$RUNNER_TEMP/jolt-results" || status=1
+          done
+          exit $status
 
       # Names every failed test and the start of its message as an error annotation, which the run page and the checks
       # API show without downloading the artifact.

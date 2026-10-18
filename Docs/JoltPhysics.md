@@ -2011,8 +2011,12 @@ a fraction of real time, and the same arguments always give the same output.
 `[Startup] FrameTime` (11 Hz by default). `--physics-rate` runs the same scenario with physics steps
 inside each heartbeat, so the two can be compared, e.g.
 `--scenario testcar --slope 15 --rate 11 --physics-rate 0,45`; the summary marks those rows
-`<scenario>/p45`. The harness writes nothing unless `--out` is given. The module's test
-project runs the same scenarios as regression tests (`HarnessTests`).
+`<scenario>/p45`. The harness writes nothing unless `--out` is given. The Jolt tests are in `Tests/`, one project per part:
+`OpenSim.Region.PhysicsModules.Jolt.Tests` (the module), `.Backend.Tests`, `.Vehicles.Tests`, `.Diagnostics.Tests`,
+`.Harness.Tests` (the harness itself, `HarnessTests`) and `.Scenarios.Avatar.Tests`, `.Scenarios.Prim.Tests` and
+`.Scenarios.Vehicle.Tests`, which run the harness's scenarios as regression tests. Helpers more than one of them uses are in
+`Tests/JoltTestShared` and are compiled into each project that needs them; only the harness and the three scenario
+projects depend on the harness.
 
 ### How the harness builds a run
 

@@ -42,6 +42,9 @@
 using OpenMetaverse;
 using OpenSim.Region.PhysicsModules.Jolt.Vehicles;
 
+// Several test projects compile this file, and each sets only the fields its tests use; the rest keep their defaults.
+#pragma warning disable CS0649
+
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>

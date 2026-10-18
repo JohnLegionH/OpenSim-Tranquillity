@@ -29,6 +29,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- MaterialPins is shared with the test projects that do not reference the harness. -->
+    <Compile Include="..\JoltTestShared\MaterialPins.cs" Link="MaterialPins.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The [Jolt] section every simulator reads before its own ini; the harness starts from it. -->
     <Content Include="..\..\Source\OpenSim.Server.RegionServer\AppData\RegionServerDefaults.ini" Link="RegionServerDefaults.ini" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
