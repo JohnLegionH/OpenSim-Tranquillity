@@ -116,6 +116,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public bool BodyEnhancedEdgeRemoval = false;
         public bool AvatarEnhancedEdgeRemoval = false;
 
+        // A non-physical mesh prim's triangles are met from their front face only by a moving body, as Jolt does for a
+        // simulated contact: a box or a ball that reaches a one-sided wall or floor from behind passes through it.
+        // true cooks every triangle mesh with a reversed copy of each triangle, so the mesh is met from both sides.
+        // Doubles the triangles of each mesh shape (memory and cook time). Avatars already meet both sides.
+        public bool TwoSidedMeshCollision = false;
+
         // Jolt's speculative contact distance in metres (PhysicsSettings mSpeculativeContactDistance; the engine's own value is
         // 0.02, which is the default). A box sliding across two abutted prims can be stopped and tipped at the seam by the next
         // prim's end face seen from within this distance; 0.0025 and less remove that, 0.005 and more do not, and every value
@@ -195,6 +201,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.HonourConvexMesh = B(cfg, "HonourConvexMesh", c.HonourConvexMesh, warnings);
             c.BodyEnhancedEdgeRemoval = B(cfg, "BodyEnhancedEdgeRemoval", c.BodyEnhancedEdgeRemoval, warnings);
             c.AvatarEnhancedEdgeRemoval = B(cfg, "AvatarEnhancedEdgeRemoval", c.AvatarEnhancedEdgeRemoval, warnings);
+            c.TwoSidedMeshCollision = B(cfg, "TwoSidedMeshCollision", c.TwoSidedMeshCollision, warnings);
             c.SpeculativeContactDistance = F(cfg, "SpeculativeContactDistance", c.SpeculativeContactDistance, 0f, 0.5f, warnings);
             c.KeyframedMotionCarriesRiders = B(cfg, "KeyframedMotionCarriesRiders", c.KeyframedMotionCarriesRiders, warnings);
             c.MovedPrimsCarryRiders = B(cfg, "MovedPrimsCarryRiders", c.MovedPrimsCarryRiders, warnings);
@@ -409,6 +416,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             s.MaxBodyAngularSpeed = BodyMaxAngularSpeed;
             s.BodyInternalEdgeRemoval = BodyEnhancedEdgeRemoval;
             s.AvatarInternalEdgeRemoval = AvatarEnhancedEdgeRemoval;
+            s.TwoSidedMeshes = TwoSidedMeshCollision;
             s.SpeculativeContactDistance = SpeculativeContactDistance;
             s.RayCastBudgetMs = RayCastBudgetMs;
             s.RayCastSimulatorBudgetMs = RayCastSimulatorBudgetMs;
