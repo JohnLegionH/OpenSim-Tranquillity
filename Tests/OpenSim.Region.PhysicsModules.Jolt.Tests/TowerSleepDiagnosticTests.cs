@@ -25,7 +25,7 @@ public class TowerSleepDiagnosticTests
             var o = new HarnessOptions { RateHz = 11.0, PhysicsRateHz = 0.0 };
             o.Jolt["SleepVelocityThreshold"] = t;
             RunResult r = Harness.Harness.Run(Harness.Harness.Find("tower-10"), o);
-            float moved = r.Parts.Max(p => System.Numerics.Vector3.Distance(p.Position, p.EndPosition));
+            float moved = r.Parts.Max(p => OpenMetaverse.Vector3.Distance(p.Position, p.EndPosition));
             _out.WriteLine($"SWEEP threshold {t}: box10 asleep {r.Parts[9].SleptAt:0.00} box1 asleep {r.Parts[0].SleptAt:0.00} asleep at end {r.Parts.Count(p => p.AsleepAtEnd)} max moved {moved:0.0000}");
         }
     }
