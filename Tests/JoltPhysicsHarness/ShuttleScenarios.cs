@@ -55,8 +55,8 @@ public static class ShuttleScenarios
         public string Verdict => OnAtEnd ? "stays on" : double.IsNaN(LostContactT) ? "off at the end" : $"off from {LostContactT:0.0} s";
     }
 
-    public static string Name(bool physical, float riderAhead, bool linkset = false, float drop = 0f, bool crossing = false)
-        => $"shuttle-{(physical ? "physical" : "keyframed")}-{riderAhead:0.#}{(linkset ? "-linkset" : "")}{(drop > 0f ? $"-drop{drop:0.#}" : "")}{(crossing ? "-crossing" : "")}";
+    public static string Name(bool physical, float riderAhead, bool linkset = false, float drop = 0f, bool crossing = false, bool rider = true)
+        => $"shuttle-{(physical ? "physical" : "keyframed")}-{riderAhead:0.#}{(linkset ? "-linkset" : "")}{(drop > 0f ? $"-drop{drop:0.#}" : "")}{(crossing ? "-crossing" : "")}{(rider ? "" : "-empty")}";
 
     /// <summary>The deck's speed (m/s) on the way out or back, from how far it still has to go: the script's profile.</summary>
     public static float ProfileSpeed(float left)
@@ -111,13 +111,13 @@ public static class ShuttleScenarios
         return deck;
     }
 
-    public static Scenario Ride(bool physical, float riderAhead, bool linkset = false, float drop = 0f, bool crossing = false)
+    public static Scenario Ride(bool physical, float riderAhead, bool linkset = false, float drop = 0f, bool crossing = false, bool rider = true)
     {
         State st = null;
         float startX = crossing ? CrossingStartX : InRegionStartX;
         return new Scenario
         {
-            Name = Name(physical, riderAhead, linkset, drop, crossing),
+            Name = Name(physical, riderAhead, linkset, drop, crossing, rider),
             Description = $"A standing avatar {riderAhead:0.#} m ahead of the middle of a {DeckSide:0.#} m {(physical ? "physical sled" : "keyframed")} deck that goes {Distance:0} m out and back"
                           + (crossing ? ", across a region border." : "."),
             DefaultDuration = _ => (float)(SettleSeconds + 2 * (Distance / Cruise + 4) + WaitSeconds + TrailSeconds + 8),
@@ -128,9 +128,12 @@ public static class ShuttleScenarios
                 var deckAt = new Vector3(startX, StartY, ground + (physical ? Hover : DeckThickness * 0.5f));
                 PhysicsActor deck = MakeDeck(r, deckAt, physical, linkset);
                 float top = deckAt.Z + DeckThickness * 0.5f;
-                PhysicsActor av = r.AddAvatarAt(new Vector3(deckAt.X + riderAhead, deckAt.Y, top + r.AvatarStandHalf + 0.05f + drop), false);
-                r.Other = av;
-                r.OtherSize = r.AvatarBox;
+                if (rider)
+                {
+                    PhysicsActor av = r.AddAvatarAt(new Vector3(deckAt.X + riderAhead, deckAt.Y, top + r.AvatarStandHalf + 0.05f + drop), false);
+                    r.Other = av;
+                    r.OtherSize = r.AvatarBox;
+                }
                 r.Actor = deck;
                 r.ActorSize = new Vector3(DeckSide, DeckSide, DeckThickness);
                 st.NextTick = SettleSeconds;
@@ -334,5 +337,26 @@ public static class ShuttleScenarios
         bool on = end.Other != Vector3.Zero && Math.Abs(relEnd.X) < DeckSide / 2 && Math.Abs(relEnd.Y) < DeckSide / 2 && Math.Abs(relEnd.Z - off0.Z) < 0.4;
         double dist = Math.Sqrt(relEnd.X * relEnd.X + relEnd.Y * relEnd.Y);
         return new Figures(on, lost, maxBack, maxAhead, dist, whileStopped, relEnd.Z - off0.Z, stopT);
+    }
+
+    /// <summary>How far the deck strays from its line (the run's y, the deck being driven along x only), from the end of the settle:
+    /// the largest distance from StartY, the largest sideways speed the engine reports, and the largest turn of its heading from
+    /// +x in degrees.</summary>
+    public static (double MaxOffLine, double MaxSideSpeed, double MaxHeadingDeg, double FirstOffLineT) Drift(RunResult result)
+    {
+        double off = 0, side = 0, head = 0, firstT = double.NaN;
+        foreach (Sample s in result.Samples)
+        {
+            if (s.T <= SettleSeconds)
+                continue;
+            double d = Math.Abs(s.Position.Y - StartY);
+            off = Math.Max(off, d);
+            if (d > 0.5 && double.IsNaN(firstT))
+                firstT = s.T;
+            side = Math.Max(side, Math.Abs(s.Velocity.Y));
+            Vector3 fwd = Vector3.UnitX * s.Rotation;
+            head = Math.Max(head, Math.Abs(Math.Atan2(fwd.Y, fwd.X)) * 180.0 / Math.PI);
+        }
+        return (off, side, head, firstT);
     }
 }
