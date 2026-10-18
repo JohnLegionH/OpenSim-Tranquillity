@@ -116,7 +116,7 @@ public class BomAuxChannelTests
     [Fact]
     public void TheLibraryProducesAnAuxChannelOnlyForASlotThatIsPainted()
     {
-        var compositor = new TexLayerCompositor();
+        var compositor = new AvatarBakeCompositor();
 
         foreach (var (channel, slot, _) in Aux)
         {
@@ -134,7 +134,7 @@ public class BomAuxChannelTests
     [Fact]
     public void AllFiveAuxChannelsCompositeAndEncodeTogether()
     {
-        var compositor = new TexLayerCompositor();
+        var compositor = new AvatarBakeCompositor();
         var (assets, wearables, painted) = Outfit(Aux.Select(a => a.Slot).ToArray());
         Assert.Equal(5, painted.Count);
 
@@ -167,7 +167,7 @@ public class BomAuxChannelTests
     [Fact]
     public void TheOrchestratorStoresEachAuxChannelAndWritesFaces40To44()
     {
-        var compositor = new TexLayerCompositor();
+        var compositor = new AvatarBakeCompositor();
         var (assets, wearables, _) = Outfit(Aux.Select(a => a.Slot).ToArray());
         var avatars = new FakeAvatarService();
         var appearance = new AvatarAppearance();
@@ -204,7 +204,7 @@ public class BomAuxChannelTests
     [Fact]
     public void TheRobustRouteServesEveryAuxChannel()
     {
-        var compositor = new TexLayerCompositor();
+        var compositor = new AvatarBakeCompositor();
         var (assets, wearables, _) = Outfit(Aux.Select(a => a.Slot).ToArray());
         var avatars = new FakeAvatarService();
         var appearance = new AvatarAppearance();

@@ -228,7 +228,7 @@ public class CofWearableOrderTests
         const int size = 256;
         var red = UUID.Random(); var blue = UUID.Random();
         var textures = new Dictionary<UUID, RgbaPlanes> { [red] = Flat(255, 0, 0), [blue] = Flat(0, 0, 255) };
-        var compositor = new TexLayerCompositor();
+        var compositor = new AvatarBakeCompositor();
 
         // "@400" red, "@401" blue: blue is on top, and nothing red survives it.
         var blueOnTop = CofWearables.Derive(Empty(), new[]

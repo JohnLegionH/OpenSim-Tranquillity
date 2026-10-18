@@ -310,10 +310,9 @@ public class BackendTests
     }
 
     /// <summary>
-    /// The other half of the same rule: LLTexLayerTemplate::gatherAlphaMasks uses getLayer(num_wearables - 1)
-    /// only — "For rendering morph masks, we only want to use the top wearable" (lltexlayer.cpp:1710-1719) —
-    /// unlike render(), which loops over every instance. Two shirts must give the second one's mask, not the
-    /// product of both.
+    /// The other half of the same rule: the viewer's morph-mask gather for a per-wearable layer takes only the
+    /// last worn wearable of the type (lltexlayer.cpp:1710-1719), whereas its colour render loops over every
+    /// instance. Two shirts must give the second one's mask, not the product of both.
     /// </summary>
     [Fact]
     public void the_morph_mask_of_a_template_layer_comes_from_the_top_wearable_only()

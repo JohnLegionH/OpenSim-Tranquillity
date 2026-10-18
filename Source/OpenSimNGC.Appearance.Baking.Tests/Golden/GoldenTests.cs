@@ -146,7 +146,7 @@ public class GoldenTests
     {
         var overlay = new Dictionary<int, float>();
         if (bytes is null || bytes.Count == 0) return overlay;
-        var list = VisualParamEncoder.SendList(new TexLayerCompositor().Lad);
+        var list = VisualParamEncoder.SendList(new AvatarBakeCompositor().Lad);
         if (bytes.Count != list.Count) return overlay;
         for (var i = 0; i < list.Count; i++)
             overlay[list[i].Id] = list[i].Min + bytes[i] / 255f * (list[i].Max - list[i].Min);

@@ -12,7 +12,7 @@ namespace OpenSimNGC.Appearance.Baking;
 /// <summary>
 /// The library's bake backend: wearable text in, JPEG 2000 bakes out. Wearables are parsed with
 /// <see cref="WearableParser"/>, textures decoded with <see cref="J2kCodec"/>, each channel composited by
-/// <see cref="TexLayerCompositor"/> at <see cref="BakeRequest.BakeSize"/>, encoded as a five-component single-tile
+/// <see cref="AvatarBakeCompositor"/> at <see cref="BakeRequest.BakeSize"/>, encoded as a five-component single-tile
 /// codestream (RGB, visibility alpha, morph mask; Docs/MORPH-MASK-PASS.md) and hashed with
 /// <see cref="BakeHash"/>. Pure with respect to its inputs; no I/O.
 /// </summary>
@@ -25,14 +25,14 @@ public sealed class SkiaBakeBackend : IBakeBackend
         (BakeChannel.Aux1, TextureSlot.Aux1Tattoo), (BakeChannel.Aux2, TextureSlot.Aux2Tattoo), (BakeChannel.Aux3, TextureSlot.Aux3Tattoo),
     };
 
-    private readonly TexLayerCompositor _compositor;
+    private readonly AvatarBakeCompositor _compositor;
 
     /// <summary>A backend over the embedded avatar_lad.xml and character images.</summary>
-    public SkiaBakeBackend() : this(new TexLayerCompositor()) { }
+    public SkiaBakeBackend() : this(new AvatarBakeCompositor()) { }
 
-    public SkiaBakeBackend(TexLayerCompositor compositor) { _compositor = compositor; }
+    public SkiaBakeBackend(AvatarBakeCompositor compositor) { _compositor = compositor; }
 
-    public TexLayerCompositor Compositor => _compositor;
+    public AvatarBakeCompositor Compositor => _compositor;
 
     /// <summary>JPEG 2000 quality for the encoded bakes (0..1).</summary>
     public double Quality { get; init; } = 0.85;

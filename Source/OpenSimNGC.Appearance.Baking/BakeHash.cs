@@ -27,9 +27,9 @@ public static class BakeHash
     /// and their drivers) in parameter-id order, taken from <see cref="BakeRequest.VisualParams"/> or, failing
     /// that, from the topmost wearable that stores them. Independent of dictionary and list ordering.
     /// </summary>
-    public static string Compute(BakeChannel ch, BakeRequest r) => Compute(ch, r, new TexLayerCompositor());
+    public static string Compute(BakeChannel ch, BakeRequest r) => Compute(ch, r, new AvatarBakeCompositor());
 
-    public static string Compute(BakeChannel ch, BakeRequest r, TexLayerCompositor compositor)
+    public static string Compute(BakeChannel ch, BakeRequest r, AvatarBakeCompositor compositor)
     {
         ArgumentNullException.ThrowIfNull(r);
         var lad = compositor.Lad;
@@ -37,7 +37,7 @@ public static class BakeHash
         var paramIds = compositor.ParamsOf(ch).OrderBy(i => i).ToList();
 
         var feedingKinds = new HashSet<WearableKind> { WearableKind.Shape };
-        foreach (var s in slots) { var k = TexLayerCompositor.WearableOf(s); if (k != WearableKind.Invalid) feedingKinds.Add(k); }
+        foreach (var s in slots) { var k = AvatarBakeCompositor.WearableOf(s); if (k != WearableKind.Invalid) feedingKinds.Add(k); }
         foreach (var id in paramIds)
             if (lad.Params.TryGetValue(id, out var def) && def.Wearable is { Length: > 0 } owner && WearableKinds.FromName(owner) is { } k) feedingKinds.Add(k);
 

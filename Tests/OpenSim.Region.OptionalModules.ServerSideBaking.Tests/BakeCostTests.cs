@@ -76,7 +76,7 @@ public class BakeCostTests
             wearables[w.GetProperty("type").GetInt32()].Add(new UUID(w.GetProperty("itemId").GetString()), new UUID(w.GetProperty("assetId").GetString()));
         var vp = doc.RootElement.GetProperty("visualParams").EnumerateArray().Select(e => (byte)e.GetInt32()).ToArray();
 
-        var compositor = new TexLayerCompositor();
+        var compositor = new AvatarBakeCompositor();
         var avatars = new FakeAvatarService();
         var appearance = new AvatarAppearance();
 
