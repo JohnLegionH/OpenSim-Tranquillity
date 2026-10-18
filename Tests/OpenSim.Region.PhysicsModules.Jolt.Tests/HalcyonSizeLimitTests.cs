@@ -23,10 +23,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
 [DeleteScratchFolders]
-public class HalcyonParityE2SizeTests
+public class HalcyonSizeLimitTests
 {
     private readonly ITestOutputHelper _out;
-    public HalcyonParityE2SizeTests(ITestOutputHelper output) => _out = output;
+    public HalcyonSizeLimitTests(ITestOutputHelper output) => _out = output;
 
     private static uint _id = 47000;
     private const float Heartbeat = 1f / 11f;

@@ -15,14 +15,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
 /// Where the InWorldz behaviour of the Jolt module differs on purpose from Halcyon's code, measured three ways: Halcyon's law at
-/// Halcyon's own step of 15 ms (the translated models in HalcyonMotorModel.cs and HalcyonParityEModels.cs), the same law as it
+/// Halcyon's own step of 15 ms (the translated models in HalcyonMotorModel.cs and HalcyonAttitudeAndHoverModels.cs), the same law as it
 /// would run at the module's step rates (45 Hz and 11 Hz), and the module's current behaviour. The tests print the figures and
 /// assert the facts the comparison rests on. Pure (bodies with no engine), parallel.
 /// </summary>
-public class HalcyonParityETests
+public class InWorldzDifferencesFromHalcyonTests
 {
     private readonly ITestOutputHelper _out;
-    public HalcyonParityETests(ITestOutputHelper output) => _out = output;
+    public InWorldzDifferencesFromHalcyonTests(ITestOutputHelper output) => _out = output;
 
     private const double Deg = Math.PI / 180.0;
     private static string F(double v) => v.ToString("0.000", CultureInfo.InvariantCulture);
