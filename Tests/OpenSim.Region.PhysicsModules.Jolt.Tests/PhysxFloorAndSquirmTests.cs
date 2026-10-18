@@ -58,7 +58,7 @@ public class PhysxFloorAndSquirmTests
     private static bool Asleep(SpikeProbe p, JoltPrim prim)
         => p.Rig.Backend.TryGetBodyState(prim.BodyHandle, out BodyState s) && (s.Flags & BodyStateFlags.Active) == 0;
 
-    // ---- T9: tiny forces ---------------------------------------------------------------------------------------------
+    // ---- Tiny forces ---------------------------------------------------------------------------------------------
 
     private static readonly double[] TinyForces = { 1e-4, 5e-4, 1e-3, 5e-3 };
 
@@ -146,7 +146,7 @@ public class PhysxFloorAndSquirmTests
         Assert.True(failures.Count == 0, $"{rate} Hz x {n}: a tiny constant force accelerated the box wrongly: " + string.Join("; ", failures));
     }
 
-    // ---- T8: squirm --------------------------------------------------------------------------------------------------
+    // ---- Squirm --------------------------------------------------------------------------------------------------
 
     private readonly record struct Rest(double SleepAt, double CreepSpeed, double Drift, bool Asleep);
 
