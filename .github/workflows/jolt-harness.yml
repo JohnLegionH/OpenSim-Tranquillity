@@ -17,6 +17,7 @@ on:
   push:
     branches:
       - develop
+      - lane/jolt
     paths:
       - 'Source/OpenSim.Region.PhysicsModules.Jolt/**'
       - 'Source/OpenSim.Region.PhysicsModules.Jolt.Backend/**'
