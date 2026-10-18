@@ -14,7 +14,6 @@ on:
     branches:
       - develop
       - lane/jolt
-      - side/ci-platforms
   pull_request:
     branches:
       - develop
