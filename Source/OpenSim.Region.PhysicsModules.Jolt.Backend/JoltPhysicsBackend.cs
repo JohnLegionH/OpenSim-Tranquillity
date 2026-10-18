@@ -995,6 +995,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 solver.NumPositionSteps = (uint)settings.PositionIterations;
             if (settings.SpeculativeContactDistance is float speculative)
                 solver.SpeculativeContactDistance = speculative;
+            if (Environment.GetEnvironmentVariable("JOLT_DIAG_SLEEP_THRESHOLD") is string diagThreshold) solver.PointVelocitySleepThreshold = float.Parse(diagThreshold, System.Globalization.CultureInfo.InvariantCulture);
             _system.Settings = solver;
             _penetrationSlop = solver.PenetrationSlop;
             _positionShare = 1f - MathF.Pow(1f - solver.Baumgarte, Math.Max(1, solver.NumPositionSteps));

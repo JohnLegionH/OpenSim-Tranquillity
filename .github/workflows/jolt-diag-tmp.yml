@@ -31,13 +31,26 @@ jobs:
           global-json-file: global.json
       - name: Build
         run: dotnet build Tests/OpenSim.Region.PhysicsModules.Jolt.Tests -c Release --disable-build-servers -nodeReuse:false -p:UseSharedCompilation=false
+      - name: Run the chosen tests (threshold 0.05)
+        run: >
+          JOLT_DIAG_SLEEP_THRESHOLD=0.05 dotnet test Tests/OpenSim.Region.PhysicsModules.Jolt.Tests -c Release --no-build
+          --filter "FullyQualifiedName~Tower_at_rate_0"
+          --logger "console;verbosity=detailed" > "$RUNNER_TEMP/diag05.txt" 2>&1; true
+      - name: Run the chosen tests (threshold 0.1)
+        run: >
+          JOLT_DIAG_SLEEP_THRESHOLD=0.1 dotnet test Tests/OpenSim.Region.PhysicsModules.Jolt.Tests -c Release --no-build
+          --filter "FullyQualifiedName~Tower_at_rate_0"
+          --logger "console;verbosity=detailed" > "$RUNNER_TEMP/diag10.txt" 2>&1; true
       - name: Run the chosen tests
         run: >
           dotnet test Tests/OpenSim.Region.PhysicsModules.Jolt.Tests -c Release --no-build
-          --filter "FullyQualifiedName~TowerSleepDiagnosticTests"
+          --filter "FullyQualifiedName~Tower_at_rate_0"
           --logger "console;verbosity=detailed" > "$RUNNER_TEMP/diag.txt" 2>&1; true
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: diag-${{ matrix.os }}
-          path: ${{ runner.temp }}/diag.txt
+          path: |
+            ${{ runner.temp }}/diag.txt
+            ${{ runner.temp }}/diag05.txt
+            ${{ runner.temp }}/diag10.txt
