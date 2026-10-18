@@ -182,6 +182,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // _position directly, so it never trips the Position setter (which would force a transform).
         internal void ApplyCharacterState(in CharacterState s)
         {
+            _positionBeforeStep = _position;
             _position = new Vector3(s.Position.X, s.Position.Y, s.Position.Z);
             KeepInRegion();
             _velocity = new Vector3(s.LinearVelocity.X, s.LinearVelocity.Y, s.LinearVelocity.Z);
@@ -304,6 +305,21 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (_character.IsValid)
                 _backend.ReGroundCharacter(_character, ToS(pos));
         }
+
+        // The object this avatar stands on was set back (JoltPrim.FinishBorderPin) from where it stood before the step to
+        // `objectNow`. The avatar goes to the same place on it that it had before the step, and loses the velocity the object
+        // gave it on the way out, so that it is still on the object and not thrown off it. Its walking request stays.
+        internal void PlaceBackOnGround(Vector3 objectBefore, Vector3 objectNow)
+        {
+            _position = objectNow + (_positionBeforeStep - objectBefore);
+            _velocity = Vector3.Zero;
+            if (_character.IsValid)
+                _backend.ReGroundCharacter(_character, ToS(_position));
+            RequestPhysicsterseUpdate();
+        }
+
+        // Where the last drain before this one left the avatar.
+        private Vector3 _positionBeforeStep;
 
         // Facing is radially symmetric for a vertical capsule, so orientation does not change collision.
         // Cache it (the viewer's display rotation comes from the client's body-rot, not physics) and avoid

@@ -1026,6 +1026,15 @@ hold of over a second looked to the controller like a vehicle that had been idle
 (`HeldVehicleTests`: a balloon with a motor and a hover height, held five seconds, moves after the release as
 one that was never held does, both step modes).
 
+Under `BasicForcesBehaviour = InWorldz` such an object is also kept from crossing out again for three seconds after it
+arrived (`PhysicsActor.WaitsBeforeCrossingBack`, as Halcyon's `SceneObjectGroup.TestForAndBeginCrossing` does). Core tells
+the actor when that wait begins and ends (`PhysicsActor.KeepInsideBorder`). While it runs, a body that a script or motor
+drives across the border stays in the engine: it is set back to half a metre inside the region, loses its speed outward,
+and the avatars standing on it are set back to the same place on it with no velocity (Halcyon leaves the object in its
+scene and sets it back inside, `PhysxPrim.CrossingFailure`). Taken out of the engine as for any crossing, the body would
+leave its riders with nothing under them and the speed it gave them (`RecrossWaitRiderTests`). Under `SecondLife` there
+is no wait and nothing changes.
+
 ## What an avatar stands on
 
 An avatar standing on the terrain reports ground (`CollidingGround`), and one standing on a prim,
