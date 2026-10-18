@@ -409,13 +409,18 @@ public class PrimCellCacheTests
         }
         Assert.True(Value(line, "restarts_x20_shapes_left") == 0, $"twenty region starts and stops left {Value(line, "restarts_x20_shapes_left")} shapes or entries");
         // identical prims: one compound and two hundred small wrappers against two hundred compounds. The saving is about
-        // seventeen megabytes against a few hundred kilobytes, far beyond allocator noise on any platform.
-        Assert.True(idYes * 4 < idNo, $"the cache saved too little: {idYes} against {idNo} KB");
+        // seventeen megabytes against a few hundred kilobytes, far beyond allocator noise on Windows and Linux. On macOS the
+        // process figure moves by megabytes either way (a run without the cache measured less than nothing), so its counts
+        // above carry the check there.
+        if (!OperatingSystem.IsMacOS())
+            Assert.True(idYes * 4 < idNo, $"the cache saved too little: {idYes} against {idNo} KB");
         // The byte figures below are the process's private memory less the managed heap. Windows returns freed native memory to
         // the OS, so they hold there. glibc keeps freed memory in its arenas, so on Linux they move by megabytes either way
         // with nothing to do with the cache (a run with the cache off "kept" 18 MB, another with it on cost 1 MB more than
-        // without). The counts above carry the same checks on every platform.
-        if (OperatingSystem.IsWindows())
+        // without). The counts above carry the same checks on every platform. The bounds were set on Windows x64; Windows on
+        // Arm64 keeps freed memory longer (a run kept 15 MB after its prims were gone, with no shape or cache entry left),
+        // so they are asked of x64 only.
+        if (OperatingSystem.IsWindows() && System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.X64)
         {
             // different prims: a unit compound and a wrapper each against one compound: no more than a quarter over
             Assert.True(diYes < diNo * 1.25 + 512, $"the cache cost too much with nothing to share: {diYes} against {diNo} KB");

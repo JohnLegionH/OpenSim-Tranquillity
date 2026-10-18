@@ -122,6 +122,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // under 0.02 also changes how other contacts settle. See "Seams between prims" in Docs/JoltPhysics.md.
         public float SpeculativeContactDistance = 0.02f;
 
+        // Jolt's point velocity sleep threshold in metres per second (PhysicsSettings mPointVelocitySleepThreshold; the engine's
+        // own value is 0.03, which is the default). A body falls asleep once every point of it, and of everything resting on it,
+        // has moved slower than this for the engine's time before sleep. A tall stack sways a little above 0.03 at one physics
+        // step per heartbeat, and whether it falls asleep then depends on float rounding, which differs between CPUs.
+        public float SleepVelocityThreshold = 0.03f;
+
         // true: avatars and physical objects standing on a prim that keyframed motion (llSetKeyframedMotion) is moving are
         // carried with it, as Second Life does. false: the prim is a fixed body that is set to each new place, and what
         // stands on it is left behind.
@@ -196,6 +202,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.BodyEnhancedEdgeRemoval = B(cfg, "BodyEnhancedEdgeRemoval", c.BodyEnhancedEdgeRemoval, warnings);
             c.AvatarEnhancedEdgeRemoval = B(cfg, "AvatarEnhancedEdgeRemoval", c.AvatarEnhancedEdgeRemoval, warnings);
             c.SpeculativeContactDistance = F(cfg, "SpeculativeContactDistance", c.SpeculativeContactDistance, 0f, 0.5f, warnings);
+            c.SleepVelocityThreshold = F(cfg, "SleepVelocityThreshold", c.SleepVelocityThreshold, 0.001f, 1f, warnings);
             c.KeyframedMotionCarriesRiders = B(cfg, "KeyframedMotionCarriesRiders", c.KeyframedMotionCarriesRiders, warnings);
             c.MovedPrimsCarryRiders = B(cfg, "MovedPrimsCarryRiders", c.MovedPrimsCarryRiders, warnings);
             c.BodyUpdateBufferMax = I(cfg, "BodyUpdateBufferMax", c.BodyUpdateBufferMax, 1, 8_388_607, warnings);
@@ -410,6 +417,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             s.BodyInternalEdgeRemoval = BodyEnhancedEdgeRemoval;
             s.AvatarInternalEdgeRemoval = AvatarEnhancedEdgeRemoval;
             s.SpeculativeContactDistance = SpeculativeContactDistance;
+            s.SleepVelocityThreshold = SleepVelocityThreshold;
             s.RayCastBudgetMs = RayCastBudgetMs;
             s.RayCastSimulatorBudgetMs = RayCastSimulatorBudgetMs;
             s.RayCastMaxTestedHits = RayCastMaxTestedHits;

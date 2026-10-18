@@ -62,9 +62,11 @@ public class VehicleInWorldzTests
     [MemberData(nameof(ScenarioNames))]
     public void The_Second_Life_choice_gives_what_the_controller_gave_before_the_setting_to_the_bit(string scenario)
     {
-        Assert.Equal(Golden[scenario], Bits(Scenarios[scenario](SecondLife)));
-        // A controller handed no settings is the same controller.
-        Assert.Equal(Golden[scenario], Bits(Scenarios[scenario](VehicleSettings.Default)));
+        // Within float rounding of the figures recorded on x64 (see FloatRounding): the last bit differs on Arm64.
+        float[] state = Scenarios[scenario](SecondLife);
+        FloatRounding.AssertNear(Golden[scenario], state, scenario);
+        // A controller handed no settings is the same controller: bit for bit, on this machine.
+        Assert.Equal(Bits(state), Bits(Scenarios[scenario](VehicleSettings.Default)));
     }
 
     // ---------------------------------------------------------------------------------------------------------

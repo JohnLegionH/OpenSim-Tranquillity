@@ -18,6 +18,7 @@ on:
     branches:
       - develop
       - lane/jolt
+      - side/ci-fix-o8b
     paths:
       - 'Source/OpenSim.Region.PhysicsModules.Jolt/**'
       - 'Source/OpenSim.Region.PhysicsModules.Jolt.Backend/**'

@@ -230,8 +230,11 @@ public class SelectionAndMoveTests
         Assert.True(MathF.Abs(end.Position.Z - rest.Z) < 0.025f, $"it did not fall back to the ground (z {end.Position.Z}, rest {rest.Z})");
     }
 
-    // A box asleep on the ground is turned 45 degrees about a horizontal axis (llSetRot, or a build-tool turn: the root
-    // actor's Orientation). It wakes and settles flat on the ground again.
+    // A box asleep on the ground is turned 40 degrees about a horizontal axis (llSetRot, or a build-tool turn: the root
+    // actor's Orientation). It wakes and settles flat on the ground again. Not 45: a cube turned exactly 45 degrees stands
+    // balanced on an edge, an unstable equilibrium it leaves along a path that starts at zero speed, so whether the engine
+    // tips it or (the speed staying under its sleep threshold for half a second) puts it to sleep on the edge depends on
+    // float rounding. It tipped on x64 and Arm64 Windows and Linux and slept on its edge, 0.19 m high, on macOS.
     [Theory]
     [InlineData(45.0)]
     [InlineData(0.0)]
@@ -247,7 +250,7 @@ public class SelectionAndMoveTests
                     return;
                 turnedAt = r.Heartbeats;
                 rest = r.Actor.Position;
-                r.Actor.Orientation = Quaternion.CreateFromAxisAngle(Vector3.UnitX, MathF.PI / 4f);
+                r.Actor.Orientation = Quaternion.CreateFromAxisAngle(Vector3.UnitX, 40f * MathF.PI / 180f);
             });
 
         Assert.True(turnedAt > 0, "the box never went to sleep");

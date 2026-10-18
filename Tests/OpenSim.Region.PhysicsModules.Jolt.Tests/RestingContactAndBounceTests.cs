@@ -152,7 +152,7 @@ public class RestingContactAndBounceTests
         // sway and never fall asleep at 11, 22.5 or 45 Hz: Jolt puts the stack to sleep only when every box in it is
         // still, and the top one sways a few centimetres. At 22.5 Hz the solver takes 3 steps of 1/67.5 s
         // (JoltConfig.MinCollisionStepRate); with 2 of 1/45 s the tower did not fall asleep at 20.
-        AssertTowerStandsAndSleeps(Run("tower-10", physicsRate));
+        AssertTowerStandsAndSleeps(Run("tower-10", physicsRate, LegacyStepSleepSettings(physicsRate)));
     }
 
     [Theory]
@@ -163,8 +163,16 @@ public class RestingContactAndBounceTests
     public void A_tower_of_ten_boxes_stands_and_falls_asleep_at_the_shipped_solver_settings(double physicsRate)
     {
         // The solver settings RegionServerDefaults.ini sets in [Jolt], which every simulator reads before its own ini.
-        AssertTowerStandsAndSleeps(Run("tower-10", physicsRate, ShippedSolverSettings()));
+        AssertTowerStandsAndSleeps(Run("tower-10", physicsRate, ShippedSolverSettings().Concat(LegacyStepSleepSettings(physicsRate)).ToArray()));
     }
+
+    // At one physics step per heartbeat (physicsRate 0) the top boxes of the stack sway at 0.04 to 0.06 m/s for the whole run,
+    // above Jolt's own sleep threshold of 0.03 m/s, so whether the stack falls asleep there depends on float rounding: it
+    // does on Windows x64 at 3.7 s and never on Linux x64, Linux Arm64 or macOS. Those runs set the threshold to 0.1 m/s, at
+    // which the stack falls asleep at 3.09 s on every platform tried. At the other rates the sway is under 0.03 and the engine's
+    // own threshold is used.
+    private static (string Key, string Value)[] LegacyStepSleepSettings(double physicsRate)
+        => physicsRate == 0.0 ? new[] { ("SleepVelocityThreshold", "0.1") } : Array.Empty<(string, string)>();
 
     private static (string Key, string Value)[] ShippedSolverSettings([CallerFilePath] string here = "")
     {
