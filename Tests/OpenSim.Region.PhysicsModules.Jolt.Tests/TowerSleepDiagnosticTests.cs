@@ -50,4 +50,20 @@ public class TowerSleepDiagnosticTests
         }
         finally { sc.Input = original; }
     }
+
+    [Fact]
+    public void Tower_at_rate_0_with_other_solver_settings()
+    {
+        foreach (int steps in new[] { 6, 8, 12, 16 })
+            foreach (int vel in new[] { 20, 40 })
+                foreach (int pos in new[] { 2, 4 })
+                {
+                    var o = new HarnessOptions { RateHz = 11.0, PhysicsRateHz = 0.0 };
+                    o.Jolt["CollisionSteps"] = steps.ToString();
+                    o.Jolt["VelocityIterations"] = vel.ToString();
+                    o.Jolt["PositionIterations"] = pos.ToString();
+                    RunResult r = Harness.Harness.Run(Harness.Harness.Find("tower-10"), o);
+                    _out.WriteLine($"SWEEP steps {steps} vel {vel} pos {pos}: box1 {r.Parts[0].SleptAt:0.00} box5 {r.Parts[4].SleptAt:0.00} box10 {r.Parts[9].SleptAt:0.00} asleep-at-end {r.Parts.Count(p => p.AsleepAtEnd)}");
+                }
+    }
 }
