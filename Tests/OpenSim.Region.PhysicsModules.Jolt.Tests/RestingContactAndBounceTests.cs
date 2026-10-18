@@ -166,13 +166,14 @@ public class RestingContactAndBounceTests
         AssertTowerStandsAndSleeps(Run("tower-10", physicsRate, ShippedSolverSettings().Concat(LegacyStepSleepSettings(physicsRate)).ToArray()));
     }
 
-    // At one physics step per heartbeat (physicsRate 0) the top boxes of the stack sway at 0.04 to 0.06 m/s for the whole run,
-    // above Jolt's own sleep threshold of 0.03 m/s, so whether the stack falls asleep there depends on float rounding: it
-    // does on Windows x64 at 3.7 s and never on Linux x64, Linux Arm64 or macOS. Those runs set the threshold to 0.1 m/s, at
-    // which the stack falls asleep at 3.09 s on every platform tried. At the other rates the sway is under 0.03 and the engine's
-    // own threshold is used.
+    // At one physics step per heartbeat (physicsRate 0) the stack sways for the whole run at 0.04 to 0.06 m/s on the top boxes,
+    // above Jolt's own sleep threshold of 0.03 m/s, so whether it falls asleep there depends on float rounding. On Windows
+    // (x64 and Arm64) it settles and sleeps at 3.1 s, moving 8 mm. On Linux (x64 and Arm64) and macOS it sways by centimetres:
+    // with the engine's threshold it never sleeps; with 0.06 and above it sleeps at 3.1 s mid-sway, 3.3 cm from where it
+    // stood, which fails the 3 cm test below; with 0.05 it sleeps at 4.45 s, 2.4 cm out. Those runs set 0.05 m/s. At the other
+    // rates the sway is under 0.03 and the engine's own threshold is used.
     private static (string Key, string Value)[] LegacyStepSleepSettings(double physicsRate)
-        => physicsRate == 0.0 ? new[] { ("SleepVelocityThreshold", "0.1") } : Array.Empty<(string, string)>();
+        => physicsRate == 0.0 ? new[] { ("SleepVelocityThreshold", "0.05") } : Array.Empty<(string, string)>();
 
     private static (string Key, string Value)[] ShippedSolverSettings([CallerFilePath] string here = "")
     {
