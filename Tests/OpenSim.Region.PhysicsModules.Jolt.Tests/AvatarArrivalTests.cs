@@ -258,7 +258,9 @@ public class AvatarArrivalTests
             Assert.True(av.Flying);
             Step(scene, 11);   // 1 s
             Assert.True(av.Flying);
-            Assert.InRange(av.Position.X, at.X + 2f, at.X + 4f);
+            // The arrival velocity carries the avatar on a little and fades to what its controls ask for (nothing here), as a
+            // flight does when a key is let go; it is not held as a flying request.
+            Assert.InRange(av.Position.X, at.X + 0.1f, at.X + 0.6f);
             Assert.True(MathF.Abs(av.Position.Z - at.Z) < Tolerance, $"height changed from {at.Z} to {av.Position.Z}");
         }
         finally { scene.Dispose(); }

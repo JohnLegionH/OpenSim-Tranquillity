@@ -47,7 +47,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private Quaternion _orientation = Quaternion.Identity;
         private bool _flying;
         private bool _setAlwaysRun;
-        private bool _targetIsMomentum;     // _targetVelocity came from SetMomentum: a velocity, not a request to scale
 
         // Jump is a LATCH, not a one-shot. The animator calls AvatarJump ONCE, but ScenePresence writes
         // TargetVelocity every movement update (and zeroes its Z - the vertical only ever comes through
@@ -251,11 +250,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // flying, running (always run on) or walking. A walk or run scales the horizontal part only (the controller
         // takes no vertical intent off a flight); a flight scales all three, so straight up goes as fast as level, and
         // its downward part by the fly-down factor, since Second Life documents a faster descent (22.87 m/s against 16.00).
-        // A momentum handed over by SetMomentum is a velocity the avatar already had, so it goes through as it is.
         internal Vector3 DesiredVelocity()
         {
-            if (_targetIsMomentum)
-                return _targetVelocity;
             if (_flying)
             {
                 Vector3 v = _targetVelocity * _module.AvatarFlySpeedFactor;
@@ -305,7 +301,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _position = pos;
             _velocity = Vector3.Zero;
             _targetVelocity = Vector3.Zero;
-            _targetIsMomentum = false;
             if (_character.IsValid)
                 _backend.ReGroundCharacter(_character, ToS(pos));
         }
@@ -334,7 +329,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             {
                 if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "avatar", LocalID, "Velocity", value.ToString()); return; }
                 _targetVelocity = value;
-                _targetIsMomentum = false;
                 PushMovement();
             }
         }
@@ -347,7 +341,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             {
                 if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "avatar", LocalID, "TargetVelocity", value.ToString()); return; }
                 _targetVelocity = value;
-                _targetIsMomentum = false;
                 PushMovement();
             }
         }
@@ -370,17 +363,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             if (!NonFiniteGuard.Ok(momentum)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "avatar", LocalID, "Momentum", momentum.ToString()); return; }
             _velocity = momentum;
-            if (_flying)
-            {
-                _targetVelocity = momentum;
-                _targetIsMomentum = true;
-                PushMovement();
-                return;
-            }
-            // An avatar on its feet keeps the velocity it arrived with as momentum, which the backend fades on the ground to
-            // whatever its controls ask for. Held as the walking request, it would go on at that velocity until the avatar's
-            // controls next set one, and an avatar that crossed with no key held would never stop.
-            _targetIsMomentum = false;
+            // The velocity an avatar arrived with is handed to the backend as momentum, which gives way to whatever its controls ask
+            // for: on the ground over a short fade, flying likewise. Held as the movement request, it would go on at that velocity
+            // until the avatar's controls next set one, and an avatar that crossed with no key held would never stop. A flight's
+            // vertical part is not carried: a flying avatar's climb and descent follow its controls, as they do when a key is let go.
             if (_character.IsValid)
                 _backend.SetCharacterCarry(_character, ToS(momentum));
             PushMovement();

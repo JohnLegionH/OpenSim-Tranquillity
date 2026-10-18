@@ -3948,7 +3948,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         internal const float ArrivalCarryFadeSeconds = 0.1f;
 
         // The velocity an avatar arrived with (SetCharacterCarry), taken to the step's walking intent: it stays as it was in the
-        // air, and on walkable ground the part of it beyond the intent fades. Returns the horizontal velocity to move with.
+        // air, and on walkable ground, and while flying, the part of it beyond the intent fades. Returns the horizontal velocity to move with.
         private static Vector3 RelaxArrivalCarry(JoltCharacterRecord rec, Vector3 intent, bool onWalkable, float dt)
         {
             Vector3 rel = rec.Carry - intent;
@@ -4064,8 +4064,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             Vector3 newVel;
             bool falling = false;
             bool hovering = rec.HoverAt != null;
-            if (rec.Flying || hovering)
-                rec.Carry = Vector3.Zero;   // a flight is driven by its controls; the arrival velocity is for an avatar on its feet
+            if (hovering)
+                rec.Carry = Vector3.Zero;   // a hover is driven by its controls; the arrival velocity is for a walk or a flight
 
             // A constant force (an attachment's llSetForce): its acceleration, and the velocity it has given. Up and down while
             // walking or in the air it adds to gravity, which the controller's own vertical velocity carries; across, and in
@@ -4091,8 +4091,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             }
             else if (rec.Flying)
             {
-                // Flying: full 3D control, ground gravity disabled.
+                // Flying: full 3D control, ground gravity disabled. The horizontal velocity the avatar arrived with fades to what its
+                // controls ask for as it does on the ground, so a flight that crossed a border alone with no key held comes to rest
+                // where a flight stops when the key is let go; its climb and descent are its controls' alone.
                 newVel = desired;
+                if (rec.Carry != Vector3.Zero)
+                {
+                    Vector3 across = RelaxArrivalCarry(rec, new Vector3(desired.X, desired.Y, 0f), true, dt);
+                    newVel = new Vector3(across.X, across.Y, desired.Z);
+                }
                 if (forced)
                 {
                     forceStep = force;
