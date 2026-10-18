@@ -148,7 +148,8 @@ public class VehicleStepRateTests
         double Angle(BehaviourRig r)
         {
             Vector3 nose = Vector3.UnitX * r.Body.Orientation;
-            Vector3 v = Vector3.Normalize(r.Body.LinearVelocity);
+            Vector3 velocity = r.Body.LinearVelocity;
+            Vector3 v = Vector3.Normalize(in velocity);
             return Math.Acos(Math.Clamp(Vector3.Dot(nose, v), -1f, 1f)) / Deg;
         }
         double[] a = AtSeconds(rig, rate, n, Angle, 1, 2);

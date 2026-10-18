@@ -408,11 +408,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             Vector3 ahead = new Vector3(1, 0, 0) * rotation;
             if (localLinearVelocity.X < 0)
                 ahead = -ahead;
-            Quaternion tween = RotBetween(ahead, Vector3.Normalize(worldLinearVelocity));
+            Quaternion tween = RotBetween(ahead, Vector3.Normalize(in worldLinearVelocity));
             float angle = AngleBetween(tween, Quaternion.Identity);
             Vector3 vtwix = Rot2Euler(tween);
 
-            vtwix = Vector3.Normalize(vtwix) * speedpct * (float)Math.PI * timepct * efficiency * (float)Math.Log(1.0 + angle);
+            vtwix = Vector3.Normalize(in vtwix) * speedpct * (float)Math.PI * timepct * efficiency * (float)Math.Log(1.0 + angle);
 
             // Damping: "Most damping occurs closest to the target angle but releases at the sweet spot."
             Vector3 remvel = Vector3.Zero;
@@ -444,7 +444,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             Vector3 crossProduct = Vector3.Cross(a, b);
             double magProduct = Vector3.Mag(a) * Vector3.Mag(b);
             double angle = Math.Acos(dotProduct / magProduct);
-            Vector3 axis = Vector3.Normalize(crossProduct);
+            Vector3 axis = Vector3.Normalize(in crossProduct);
             double s = Math.Sin(angle / 2);
 
             double x = axis.X * s;
@@ -455,7 +455,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             if (double.IsNaN(x) || double.IsNaN(y) || double.IsNaN(z) || double.IsNaN(w))
                 return new Quaternion(0.0f, 0.0f, 0.0f, 1.0f);
 
-            return Quaternion.Normalize(new Quaternion((float)x, (float)y, (float)z, (float)w));
+            Quaternion result = new Quaternion((float)x, (float)y, (float)z, (float)w);
+            return Quaternion.Normalize(in result);
         }
 
         /// <summary>The Euler angles of a rotation, as llRot2Euler gives them (PhysUtil.cs:258-276).</summary>

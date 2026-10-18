@@ -182,7 +182,10 @@ public class VehicleStateQueueTests
         finally
         {
             stop.Cancel();
+            // the script tasks were cancelled just above; the wait only bounds how long the test lets them wind down
+#pragma warning disable xUnit1031
             scripts.Wait(TimeSpan.FromSeconds(10));
+#pragma warning restore xUnit1031
         }
         Assert.Null(fault);
     }
