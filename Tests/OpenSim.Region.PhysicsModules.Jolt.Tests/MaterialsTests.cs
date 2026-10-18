@@ -651,4 +651,87 @@ public class MaterialsTests
         }, null, behaviour == null ? Array.Empty<(string, string)>() : new[] { ("BasicForcesBehaviour", behaviour) });
         Assert.Equal(expected, seen);
     }
+
+    // ---- a sled's friction combine ---------------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("InWorldz", true)]
+    [InlineData("SecondLife", false)]
+    public void A_sleds_contacts_take_the_smaller_friction_under_InWorldz_only_and_a_changed_type_gives_that_up(string behaviour, bool min)
+    {
+        RunStages(new[] { ("VehicleBehaviour", behaviour) },
+            (r, root, child) =>
+            {
+                Assert.False(RecordOf(r, root).FrictionMin);
+                root.VehicleType = (int)Vehicle.TYPE_SLED;
+                Assert.Equal(min, RecordOf(r, root).FrictionMin);
+            },
+            (r, root, child) =>
+            {
+                root.VehicleType = (int)Vehicle.TYPE_CAR;
+                Assert.False(RecordOf(r, root).FrictionMin);
+                root.VehicleType = (int)Vehicle.TYPE_SLED;
+                Assert.Equal(min, RecordOf(r, root).FrictionMin);
+                root.VehicleType = (int)Vehicle.TYPE_NONE;
+                Assert.False(RecordOf(r, root).FrictionMin);
+            });
+    }
+
+    // A sled of three parts (a 1 x 1 x 0.5 m root and a child 1 m ahead and one 1 m behind) let go at rest on a fixed plank
+    // of friction 0.6 tilted 15 degrees (tan 15 = 0.268). A part's friction is 0, and 0 averaged with 0.6 is 0.3, above
+    // tan 15, which holds a body still; the smaller of the two is 0, which lets it slide down. Under SecondLife the average
+    // stays, as it was.
+    private static double SledOnA15DegreePlank(string behaviour, out double secondsSliding)
+    {
+        const float tilt = 15f * MathF.PI / 180f;
+        Quaternion lean = Quaternion.CreateFromAxisAngle(Vector3.UnitY, tilt);   // +x runs downhill
+        Vector3 along = Vector3.Transform(Vector3.UnitX, lean), up = Vector3.Transform(Vector3.UnitZ, lean);
+        var trace = new List<Point>();
+        double typeSetAt = -1;
+        var sc = new Scenario
+        {
+            Name = "sled-plank",
+            DefaultDuration = _ => 6f,
+            Setup = r =>
+            {
+                Vector3 centre = new(128f, 128f, r.GroundAt(128f, 128f) + 12f);
+                r.AddOtherBox(new Vector3(40f, 10f, 1f), centre, lean, false).Friction = 0.6f;
+                Vector3 at = centre - along * 8f + up * (0.5f + 0.25f + 0.02f);
+                r.AddBox(new Vector3(1f, 1f, 0.5f), at, lean).Friction = 0.6f;
+                r.AddChildBox(new Vector3(1f, 1f, 0.5f), at + along, lean, 41001).Friction = 0.6f;
+                r.AddChildBox(new Vector3(1f, 1f, 0.5f), at - along, lean, 41002).Friction = 0.6f;
+            },
+            Input = r =>
+            {
+                if (r.Heartbeats == 4 && typeSetAt < 0)
+                {
+                    r.Actor.VehicleType = (int)Vehicle.TYPE_SLED;
+                    typeSetAt = r.PhysicsTime;
+                }
+                trace.Add(new Point(r.PhysicsTime, r.Actor.Position, r.Actor.Velocity, r.Actor.RotationalVelocity));
+            },
+        };
+        var o = new HarnessOptions { RateHz = Heartbeat, PhysicsRateHz = PhysicsHz, UseDefaults = true };
+        o.Jolt["VehicleBehaviour"] = behaviour;
+        Harness.Harness.Run(sc, o);
+        Assert.True(typeSetAt > 0, "the sled was never made a vehicle");
+        secondsSliding = 2.0;
+        return At(trace, typeSetAt + secondsSliding).Velocity.Length();
+    }
+
+    [Fact]
+    public void A_sled_of_three_parts_starts_and_slides_on_a_fifteen_degree_plank_under_InWorldz()
+    {
+        double speed = SledOnA15DegreePlank("InWorldz", out double t);
+        _out.WriteLine($"SLED-PLANK InWorldz: {speed:0.000} m/s {t} s after it was let go");
+        Assert.InRange(speed, 3.0, 6.0);   // frictionless: g sin 15 = 2.54 m/s^2, so about 5 m/s after 2 s
+    }
+
+    [Fact]
+    public void A_sled_of_three_parts_stays_on_a_fifteen_degree_plank_under_SecondLife_as_it_did()
+    {
+        double speed = SledOnA15DegreePlank("SecondLife", out double t);
+        _out.WriteLine($"SLED-PLANK SecondLife: {speed:0.000} m/s {t} s after it was let go");
+        Assert.InRange(speed, 0.0, 0.3);
+    }
 }

@@ -575,7 +575,10 @@ Life wiki documents them (`llSetPhysicsMaterial`, https://wiki.secondlife.com/wi
   timescale T); in the air only the timescales act. `[Jolt] VehicleContactFriction`, when set, replaces
   every part's friction. A sled's parts all take `SledContactFriction` (0 by default) and keep their own
   restitution, density and gravity multiplier; when the type changes to another or to none, each part's
-  material friction comes back. A vehicle is damped as any physical prim is, and ignores the gravity
+  material friction comes back. Under `VehicleBehaviour = InWorldz` a sled's contacts also combine friction
+  with the smaller of the two values whatever `FrictionCombine` says, so a part at 0 stays at 0 on a prim or
+  the land (an average with a wood prim's 0.6 is 0.3, above tan 15 degrees, and held a sled still on a 15
+  degree ramp); under SecondLife the combine rule is unchanged. A vehicle is damped as any physical prim is, and ignores the gravity
   multiplier.
 
 Damping is two `[Jolt]` keys:
@@ -821,7 +824,7 @@ y axis in 28 of the 40 seam cells with the engine's own distance, 0.02, and in 1
 with 0.001 and 0). A vehicle driven across the same seams did the same (without the spike cut below: 28, 16, 2 and 0 of 40).
 
 `[Jolt] SpeculativeContactDistance` is nevertheless left at 0.02. Every smaller value changes how other contacts settle, and
-tests of existing behaviour fail with it: with 0.0025 ten of them (the sphere dropped into a physical bowl ends 5.6 cm off where the test allows 5; a ring dropped over a standing cylinder rests lower than the test allows; a cube in a tipped hollow box slides out 4 cm where the test needs 30; the tests of a physical box falling through a volume-detect prim and through a phantom prim count 3 where they expect 2; a sled sliding down a 15 degree slope is 2.8 % slower at one step rate; an airplane's steady speed at 11 Hz is 3.4 % lower; a vehicle with a seated avatar driven off a region edge is still moving at the end; the 90 degree mouselook turn settles later; and a fast linkset is through an avatar it should push); with 0.005 five; with 0.01 six; with 0, ten. Its other costs, measured on the same seam and landing
+tests of existing behaviour fail with it: with 0.0025 ten of them (the sphere dropped into a physical bowl ends 5.6 cm off where the test allows 5; a ring dropped over a standing cylinder rests lower than the test allows; a cube in a tipped hollow box slides out 4 cm where the test needs 30; the tests of a physical box falling through a volume-detect prim and through a phantom prim count 3 where they expect 2; a sled sliding down a 15 degree slope is 2.8 % slower at one step rate; an airplane's steady speed at 11 Hz is 3.4 % lower; a vehicle with a seated avatar driven off a region edge is still moving at the end; the 90 degree mouselook turn settles later; and a fast linkset is through an avatar it should push; with `BodyEnhancedEdgeRemoval` on as well, the sled, the mouselook turn and the linkset pass again and the rest still fail, which points to catches on the terrain's triangle edges for those three); with 0.005 five; with 0.01 six; with 0, ten. Its other costs, measured on the same seam and landing
 tests: a box dropped on the terrain at 20 m/s dips a little deeper before it is stopped (0.28 m under the surface at 0.005
 and below, 0.13 m at 0.01 and above; it never passes through the terrain or a 5 cm plate at 20 to 200 m/s at any value), and 0
 leaves a box at gravity multiplier 28 still bouncing at 5.98 m/s 0.3 s after it lands on the terrain at 32 Hz with 3 collision
@@ -1530,7 +1533,7 @@ the motor decay cap, which is Second Life's documented 120 s under `SecondLife` 
 | `VehicleMinHoverHeight`, `VehicleMaxHoverHeight` | -128, 10000 | Hover height range (m). Second Life documents a maximum of 100 (https://wiki.secondlife.com/wiki/Linden_Vehicle_Tutorial). |
 | `VehicleSledAssist` | 0.045 | The sled's slope assist: a sled with its nose down is pushed along it at this share of g times the square root of the sine of its pitch (a tenth of it, back down the slope, nose up). 0.045 is what the InWorldz sled code gave at its 15 ms step; it is now the same at any step rate. 0 turns it off. |
 | `VehicleContactFriction` | unset | Left unset, each part of a vehicle keeps its own material's friction, which adds to the vehicle's friction timescales while it slides in contact. A number (0 to 10) replaces every part's friction; 0 leaves the timescales as the only friction on a vehicle in contact. |
-| `SledContactFriction` | 0 | The contact friction of every part of a sled, whatever its material (0 to 10). |
+| `SledContactFriction` | 0 | The contact friction of every part of a sled, whatever its material (0 to 10). Under `VehicleBehaviour = InWorldz` a sled's contacts take the smaller friction of the two surfaces. |
 | `BasicForcesBehaviour` | InWorldz | `InWorldz` or `SecondLife`: whose behaviour the basic forces follow (the `PRIM_MATERIAL` preset table, hover, move to target, ground repel and look-at, mouse drags, physical size limits, the 0.977 buoyancy rule and targets across a region border; the list is in the description of the key in `RegionServerDefaults.ini`). |
 | `FrictionCombine`, `RestitutionCombine` | Average, Average | How two surfaces combine: `Average`, `GeometricMean`, `Multiply`, `Min` or `Max`. |
 | `TerrainFriction`, `TerrainRestitution` | 0.4, 0.05 | The terrain's friction (0 to 255) and restitution (0 to 1). |
