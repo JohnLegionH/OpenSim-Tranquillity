@@ -29,6 +29,9 @@
 // pushes up (Halcyon, PhysxPrim.pid.cs DoGroundRepel). A vehicle keeps its own hover and motion: neither controller acts on
 // an active vehicle.
 //
+// Under InWorldz behaviour the rules follow Halcyon's (PhysxPrim.pid.cs); the code is written for Jolt and holds none of
+// Halcyon's.
+//
 // Where the work is done. This file is the Update-rate half: it reads the script's settings, decides whether a controller
 // acts and arms BasicForcesStepProvider, which works the controller out in every collision step as a change of velocity over
 // the step's own length. The spring above is stepped exactly over that step, so the motion does not depend
