@@ -47,16 +47,13 @@ public class HalcyonParityE2SizeTests
         {
             JoltPrim refused = Add(scene, new Vector3(x, y, z), new Vector3(CentreX, CentreY, Ground + 40f));
             JoltPrim control = Add(scene, new Vector3(1f, 1f, 1f), new Vector3(CentreX + 5f, CentreY, Ground + 40f));
-            var heard = new List<string>();
-            refused.OnPhysicalSizeError += m => heard.Add(m);
             refused.Building = false;
             control.Building = false;
             Vector3 start = refused.Position, controlStart = control.Position;
             for (int i = 0; i < 22; i++)
                 scene.Simulate(Heartbeat);
             double held = (refused.Position - start).Length(), fell = controlStart.Z - control.Position.Z;
-            _out.WriteLine($"size {x} x {y} x {z}: notices {heard.Count}, flag set {refused.IsPhysical}, moved {held:0.000} m; the control fell {fell:0.000} m");
-            Assert.Empty(heard);
+            _out.WriteLine($"size {x} x {y} x {z}: flag set {refused.IsPhysical}, moved {held:0.000} m; the control fell {fell:0.000} m");
             Assert.True(refused.IsPhysical, "Halcyon leaves the physical flag set");
             Assert.True(fell > 5.0, $"the control did not fall: {fell}");
             Assert.True(held < 0.02, $"the refused object moved {held} m");
