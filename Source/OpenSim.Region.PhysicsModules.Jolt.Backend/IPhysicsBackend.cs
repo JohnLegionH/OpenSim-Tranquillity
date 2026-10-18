@@ -1071,6 +1071,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public bool AvatarInternalEdgeRemoval;
 
         /// <summary>
+        /// Cook every triangle mesh shape (CreateMeshShape) with a reversed copy of each triangle, so a moving body meets
+        /// it from either side. A simulated contact with a mesh ignores its back faces, and the stock native library has no
+        /// setting that changes that. Doubles the mesh's triangles. Off in an unset struct, which is one-sided.
+        /// </summary>
+        public bool TwoSidedMeshes;
+
+        /// <summary>
         /// How far apart two shapes can be, in metres, and still make a contact that stops them closing (Jolt's
         /// PhysicsSettings mSpeculativeContactDistance). Null (an unset struct) leaves the engine's own value, 0.02. A body that
         /// rests a few millimetres into a surface sees the end face of the next prim along as a wall within this distance, which

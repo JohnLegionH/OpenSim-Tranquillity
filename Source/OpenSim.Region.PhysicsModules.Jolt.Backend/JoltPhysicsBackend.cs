@@ -1736,9 +1736,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 if ((uint)indices[i] >= (uint)vertices.Length)
                     throw new ArgumentException($"CreateMeshShape: index {i} = {indices[i]} is outside [0, {vertices.Length}).");
             int triCount = indices.Length / 3;
-            var tris = new IndexedTriangle[triCount];
+            // Two-sided: each triangle is followed by its reverse (the same corners in the opposite order), whose front face
+            // is the original's back face.
+            int copies = _settings.TwoSidedMeshes ? 2 : 1;
+            var tris = new IndexedTriangle[triCount * copies];
             for (int t = 0; t < triCount; t++)
-                tris[t] = new IndexedTriangle(indices[t * 3], indices[t * 3 + 1], indices[t * 3 + 2], 0u, 0u);
+            {
+                tris[t * copies] = new IndexedTriangle(indices[t * 3], indices[t * 3 + 1], indices[t * 3 + 2], 0u, 0u);
+                if (copies == 2)
+                    tris[t * copies + 1] = new IndexedTriangle(indices[t * 3], indices[t * 3 + 2], indices[t * 3 + 1], 0u, 0u);
+            }
             var verts = vertices.ToArray();
             var settings = new MeshShapeSettings(verts.AsSpan(), tris.AsSpan());
             using var free = new ShapeSettingsScope(settings);
