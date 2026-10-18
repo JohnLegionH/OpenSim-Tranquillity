@@ -1086,6 +1086,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// </summary>
         public float? SpeculativeContactDistance;
 
+        /// <summary>
+        /// The speed in metres per second under which a body counts as still for sleeping (Jolt's PhysicsSettings
+        /// mPointVelocitySleepThreshold). Null (an unset struct) leaves the engine's own value, 0.03.
+        /// </summary>
+        public float? SleepVelocityThreshold;
+
         public const float JoltMaxLinearSpeed = 500f;
         public const float JoltMaxAngularSpeed = 0.25f * MathF.PI * 60f;
 

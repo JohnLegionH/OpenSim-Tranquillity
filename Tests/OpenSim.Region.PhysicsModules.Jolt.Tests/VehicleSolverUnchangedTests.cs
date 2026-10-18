@@ -149,9 +149,11 @@ public class VehicleSolverUnchangedTests
     {
         float[] state = Scenarios[scenario](SecondLife);
         Assert.True(SecondLifeGolden.TryGetValue(scenario, out uint[] golden), $"no golden for {scenario}: [\"{scenario}\"] = new uint[] {{ {Words(state)} }},");
-        Assert.True(golden.SequenceEqual(Bits(state)), $"{scenario}: new uint[] {{ {Words(state)} }}");
-        // A controller handed no settings is the same controller.
-        Assert.Equal(golden, Bits(Scenarios[scenario](VehicleSettings.Default)));
+        // Within float rounding of the figures recorded on x64 (see FloatRounding): the last bits differ on Arm64.
+        try { FloatRounding.AssertNear(golden, state, scenario); }
+        catch (Xunit.Sdk.XunitException e) { throw new Xunit.Sdk.XunitException($"{e.Message}; now new uint[] {{ {Words(state)} }}"); }
+        // A controller handed no settings is the same controller: bit for bit, on this machine.
+        Assert.Equal(Bits(state), Bits(Scenarios[scenario](VehicleSettings.Default)));
     }
 
     // The InWorldz linear motor of the same two runs, against Halcyon's law worked out step by step in doubles: the motor's ramp
@@ -189,7 +191,8 @@ public class VehicleSolverUnchangedTests
     {
         float[] state = LinearScenarios[scenario](SecondLife);
         Assert.True(SecondLifeLinearGolden.TryGetValue(scenario, out uint[] golden), $"no golden for {scenario}: [\"{scenario}\"] = new uint[] {{ {Words(state)} }},");
-        Assert.True(golden.SequenceEqual(Bits(state)), $"{scenario}: new uint[] {{ {Words(state)} }}");
+        try { FloatRounding.AssertNear(golden, state, scenario); }
+        catch (Xunit.Sdk.XunitException e) { throw new Xunit.Sdk.XunitException($"{e.Message}; now new uint[] {{ {Words(state)} }}"); }
     }
 
     private static readonly Dictionary<string, uint[]> SecondLifeGolden = new()

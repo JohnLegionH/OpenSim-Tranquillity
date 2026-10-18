@@ -38,6 +38,7 @@ public class JoltConfigTests
         s.CollisionSteps = 6;
         s.VelocityIterations = 20;
         s.SpeculativeContactDistance = 0.02f;   // Jolt's own value, set explicitly
+        s.SleepVelocityThreshold = 0.03f;       // likewise
         return s;
     }
 
@@ -103,6 +104,15 @@ public class JoltConfigTests
         Assert.True(s.DeterministicMode);
     }
 
+    [Fact]
+    public void The_sleep_velocity_threshold_is_the_engines_own_unless_set()
+    {
+        var warnings = new List<string>();
+        Assert.Equal(0.03f, JoltConfig.FromConfig(new IniConfigSource(), warnings).ToBackendSettings(256, 256).SleepVelocityThreshold);
+        Assert.Equal(0.1f, JoltConfig.FromConfig(Source(("SleepVelocityThreshold", "0.1")), warnings).ToBackendSettings(256, 256).SleepVelocityThreshold);
+        Assert.Empty(warnings);
+    }
+
     [Theory]
     [InlineData("Gravity", "NaN")]
     [InlineData("Gravity", "Infinity")]
@@ -121,6 +131,8 @@ public class JoltConfigTests
     [InlineData("BodyUpdateBufferMax", "0")]
     [InlineData("CharacterUpdateBufferMax", "-5")]
     [InlineData("ContactBufferMax", "-1")]
+    [InlineData("SleepVelocityThreshold", "0")]
+    [InlineData("SleepVelocityThreshold", "fast")]
     [InlineData("AvatarJumpSpeed", "NaN")]
     [InlineData("AvatarJumpSpeed", "-1")]
     [InlineData("CapacityLogIntervalSeconds", "0")]
