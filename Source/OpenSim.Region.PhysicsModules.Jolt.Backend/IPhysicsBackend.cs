@@ -757,6 +757,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// parts' values: friction sqrt(f1 x f2), restitution r1 x r2. SetBodyFriction and SetBodyRestitution set every
         /// part. A recreated body starts again from its BodyDesc values.</summary>
         void SetBodyPartMaterial(BodyId body, uint partUserData, float friction, float restitution);
+        /// <summary>true: every contact this body takes part in combines friction with <see cref="MaterialCombine.Min"/>, whatever
+        /// the world's rule is, so a part whose friction is 0 stays frictionless on any surface. false (the default of a new
+        /// body): the world's rule.</summary>
+        void SetBodyFrictionMin(BodyId body, bool min);
         /// <summary>A live shape's geometric volume (m^3); 0 for an unknown handle.</summary>
         float GetShapeVolume(ShapeId shape);
         /// <summary>A live shape's centre of mass in the shape's own frame (m), as Jolt computes it from the geometry at a

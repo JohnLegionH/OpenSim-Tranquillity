@@ -1406,7 +1406,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 return;
             PartMaterial(ra, manifold.SubShapeID1.Value, out float f1, out float r1);
             PartMaterial(rb, manifold.SubShapeID2.Value, out float f2, out float r2);
-            settings.CombinedFriction = Combine(_settings.FrictionCombine, f1, f2);
+            settings.CombinedFriction = Combine(ra.FrictionMin || rb.FrictionMin ? MaterialCombine.Min : _settings.FrictionCombine, f1, f2);
             settings.CombinedRestitution = BounceFromTheSurface(in body1, in body2, ra, rb, in manifold,
                                                                 Combine(_settings.RestitutionCombine, r1, r2));
         }
@@ -2602,6 +2602,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     if (rec.PartRestitution != null)
                         Array.Fill(rec.PartRestitution, restitution);
                 }
+            }
+        }
+
+        public void SetBodyFrictionMin(BodyId body, bool min)
+        {
+            lock (_simLock)
+            {
+                if (_disposed) return;
+                if (TryResolve(body, out JoltBodyRecord rec, out BodyID _))
+                    rec.FrictionMin = min;
             }
         }
 
@@ -5441,6 +5451,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public float Restitution;
         public float[]? PartFriction;     // a compound's per-child values, in its child order (SetBodyPartMaterial); null = the body's
         public float[]? PartRestitution;
+        public bool FrictionMin;          // SetBodyFrictionMin: this body's contacts combine friction with the smaller value
         public float GravityFactor;       // the body's gravity factor as last set (SetBodyGravityFactor); the bounce correction reads it
         public bool Awake;                // the engine had the body awake at the end of the last step (IsBodyAwake)
         public ContinuousCollision Ccd;   // SetBodyContinuousCollision; Off for a static body

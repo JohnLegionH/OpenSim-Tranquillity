@@ -2595,9 +2595,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (_compoundShape.IsValid && _linkChildren != null)
                 foreach (JoltPrim c in _linkChildren)
                     _backend.SetBodyPartMaterial(_body, c.LocalID, c._friction, c._restitution);
-            float? friction = _vehicle!.Type == Vehicles.Vehicle.TYPE_SLED ? _vehicle.Settings.SledContactFriction : _vehicle.Settings.ContactFriction;
+            bool sled = _vehicle!.Type == Vehicles.Vehicle.TYPE_SLED;
+            float? friction = sled ? _vehicle.Settings.SledContactFriction : _vehicle.Settings.ContactFriction;
             if (friction.HasValue)
                 _backend.SetBodyFriction(_body, friction.Value);   // every part's friction; restitutions stay
+            // InWorldz: a sled takes the smaller friction of the two surfaces, so a part at 0 stays at 0 on a prim or the
+            // land. Halcyon sets the sled's friction to 0 without choosing a combine rule; Jolt's average would turn it into
+            // half of what it slides on, which holds a sled still on a 15 degree ramp.
+            _backend.SetBodyFrictionMin(_body, sled && _vehicle.Settings.Behaviour == Vehicles.VehicleBehaviour.InWorldz);
         }
 
         private void RestoreVehicleBodyParams()
@@ -2607,6 +2612,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 return;
             // Back to the prims' own physics material, and a prim's damping.
             _backend.SetBodyFriction(_body, _friction);
+            _backend.SetBodyFrictionMin(_body, false);
             _backend.SetBodyRestitution(_body, _restitution);
             if (_compoundShape.IsValid && _linkChildren != null)
                 foreach (JoltPrim c in _linkChildren)
