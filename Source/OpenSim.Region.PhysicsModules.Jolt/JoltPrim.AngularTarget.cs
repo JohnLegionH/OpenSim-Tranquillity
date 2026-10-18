@@ -86,6 +86,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // A spin (rad/s) under which a body at its target has settled there.
         internal const float SettledAngularSpeed = 0.01f;
 
+        // A spin (rad/s) under which a body being turned by the InWorldz look-at is taken to have stalled against friction.
+        internal const float StalledAngularSpeed = 0.2f;
+
         private SQuaternion _apidTarget = SQuaternion.Identity;   // _targetLock
         private float _apidStrength;                              // _targetLock
         private float _apidDamping;                               // _targetLock
@@ -195,7 +198,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             bool fresh = !_angActing || spun;
             if (!awake)
             {
-                if (!changed && !spun && AngleBetween(q, goal) < HoldAngle)
+                // Halcyon's look-at stops the turn within a degree of the target (AtRotTolerance), so a body that has
+                // settled anywhere inside it is at its target; the Second Life spring settles much closer (HoldAngle).
+                float hold = plan.InWorldz ? HalcyonBasicForces.AtRotTolerance : HoldAngle;
+                if (!changed && !spun && AngleBetween(q, goal) <= hold)
                     return true;   // asleep at its target
                 _backend.ActivateBody(_body);
                 fresh = true;

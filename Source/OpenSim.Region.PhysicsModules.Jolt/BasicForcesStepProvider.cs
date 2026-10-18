@@ -332,11 +332,45 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _rotH = h; _rotC = strength; _rotKappa = damping;
             }
             AngularApproaching = turn.Length() > HalcyonBasicForces.AtRotTolerance || w.Length() > JoltPrim.SettledAngularSpeed;
+            if (ResetAngular)
+            {
+                _havePrev = false;
+                _loss = 0f;
+                ResetAngular = false;
+            }
             SVector3 next;
+            float scale = h * DampingFor(AngularDamping, h).Mean;
             if (turn.Length() <= HalcyonBasicForces.AtRotTolerance)
+            {
                 next = SVector3.Zero;
+                _havePrev = false;
+                _loss = 0f;
+            }
             else
+            {
                 next = w * _rotBeta - turn * _rotAlpha;
+                // Contact friction takes up to a fixed amount of velocity in each step whatever the look-at gives, so
+                // as the law's command shrinks near the target a body lying on the ground stops short of it with
+                // nothing left to move it (the law sets the velocity from the error alone). Once the body has all but
+                // stopped it is asked for what the engine took from the last command, as the Second Life spring is;
+                // while it is turning, and in the air, nothing is added and the law is Halcyon's as it stands.
+                if (Free(w, q).Length() <= JoltPrim.StalledAngularSpeed && _havePrev && _prevCmd.LengthSquared() > 1e-12f)
+                {
+                    SVector3 u = SVector3.Normalize(_prevCmd);
+                    SVector3 made = RotationVector(SQuaternion.Normalize(SQuaternion.Multiply(q, SQuaternion.Conjugate(_prevQ))));
+                    float missing = (_prevCmd.Length() * _prevScale - SVector3.Dot(made, u)) / _prevScale;
+                    _loss = missing > 0f ? missing : _loss * 0.5f;
+                }
+                else
+                    _loss *= 0.5f;
+                float turnLen = turn.Length();
+                if (turnLen > JoltPrim.MinLossTurn && _loss > 0f)
+                    next += turn * (_loss / turnLen);
+                _havePrev = true;
+                _prevQ = q;
+                _prevCmd = Free(next, q);
+                _prevScale = scale;
+            }
             next = Free(next, q) + LockedPart(w, q);
             float max = MaxAngularSpeed;
             float len = next.Length();
