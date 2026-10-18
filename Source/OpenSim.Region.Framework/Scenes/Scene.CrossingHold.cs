@@ -32,6 +32,7 @@ public partial class Scene
         public bool AnyArrived;
         public List<SceneObjectGroup> DeferredAttachments = new();
         public bool PhysicsHeld;
+        public double StartedMs;
         public bool Released;
         public double ReleasedAtMs;
     }
@@ -99,6 +100,8 @@ public partial class Scene
             m_log.LogError(e, $"[SCENE]: Problem holding the arrived object {newObject.UUID} still");
         }
 
+        double now = CrossingClock();
+        newObject.ArrivedWithRidersAtMs = now;
         lock (m_crossingHoldLock)
         {
             m_arrivalHolds[newObject.UUID] = new ArrivalHold
@@ -106,7 +109,8 @@ public partial class Scene
                 Group = newObject,
                 Source = hold.Source,
                 Waiting = new HashSet<UUID>(hold.ExpectedRiders),
-                DeadlineMs = CrossingClock() + RideOnLimits.ArriveHoldMs,
+                StartedMs = now,
+                DeadlineMs = now + RideOnLimits.ArriveHoldMs,
                 PhysicsHeld = physicsHeld
             };
         }
@@ -315,6 +319,32 @@ public partial class Scene
     }
 
     /// <summary>
+    /// Ends the engine's hold on an object that waited for its riders. The engine is told how long the object waited, at
+    /// most <see cref="RideOnLimits.ResumeInterpolationMaxMs"/>, and one that moves the object on by that time
+    /// (Halcyon: PhysxPrim.cs DoResumeInterpolation) takes the riders already here along by the same distance.
+    /// </summary>
+    private void ReleasePhysicsHold(ArrivalHold hold)
+    {
+        PhysicsActor actor = hold.Group.RootPart.PhysActor;
+        if (actor is null)
+            return;
+
+        double waitedMs = Math.Clamp(hold.ReleasedAtMs - hold.StartedMs, 0, RideOnLimits.ResumeInterpolationMaxMs);
+        Vector3 before = actor.Position;
+        actor.ReleaseHold((float)(waitedMs / 1000.0));
+        Vector3 moved = actor.Position - before;
+        if (moved == Vector3.Zero)
+            return;
+
+        UUID groupId = hold.Group.UUID;
+        foreach (ScenePresence rider in GetScenePresences())
+        {
+            if (!rider.IsChildAgent && rider.CarriedByGroup.Equals(groupId))
+                rider.AbsolutePosition += moved;
+        }
+    }
+
+    /// <summary>
     /// Lets a held object run: its keyframed motion starts and its scripts resume, then the sending region is told
     /// the crossing is complete, with the riders that did not arrive.
     /// </summary>
@@ -340,7 +370,7 @@ public partial class Scene
             {
                 group.HeldForRiders = false;
                 if (hold.PhysicsHeld)
-                    group.RootPart.PhysActor?.ReleaseHold();
+                    ReleasePhysicsHold(hold);
                 foreach (SceneObjectPart part in group.Parts)
                     part.KeyframeMotion?.ReleaseHold();
                 group.ResumeScripts();

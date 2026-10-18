@@ -22,6 +22,9 @@ namespace OpenSim.Region.Framework.Scenes
     /// object (where it arrives less where it left), so it names the same place in the world, whatever the size or the place
     /// of the two regions. A hover is a height above ground or water, and a
     /// look-at is a rotation of the world, so neither changes at the border.
+    ///
+    /// A mouse drag in progress (click-and-drag of a physical object) is kept as the point it steers to, moved like the
+    /// move-to target, the grabbed point's offset from the root and the agent that holds it.
     /// </summary>
     public sealed class CrossingTargets
     {
@@ -37,11 +40,16 @@ namespace OpenSim.Region.Framework.Scenes
         public float? LookStrength;
         public float? LookDamping;
 
+        public UUID? DragAgent;
+        public Vector3? DragAnchor;
+        public Vector3? DragTarget;
+
         public bool HasMove => MoveTarget.HasValue && MoveTau.HasValue;
         public bool HasHover => HoverHeight.HasValue && HoverType.HasValue && HoverTau.HasValue;
         public bool HasLook => LookTarget.HasValue && LookStrength.HasValue && LookDamping.HasValue;
+        public bool HasDrag => DragAgent.HasValue && DragAnchor.HasValue && DragTarget.HasValue;
 
         /// <summary>True when nothing is set, so nothing is written.</summary>
-        public bool IsEmpty => !HasMove && !HasHover && !HasLook;
+        public bool IsEmpty => !HasMove && !HasHover && !HasLook && !HasDrag;
     }
 }

@@ -783,6 +783,13 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
     public bool HeldForRiders { get; set; }
 
     /// <summary>
+    /// The time (the receiving region's crossing clock, ms) at which this object arrived in the region with riders to wait
+    /// for; NaN when it did not. An engine that asks for it (<see cref="PhysicsActor.WaitsBeforeCrossingBack"/>) keeps the
+    /// object from crossing out again for <see cref="RideOnLimits.RecrossWaitMs"/> after that.
+    /// </summary>
+    public double ArrivedWithRidersAtMs { get; set; } = double.NaN;
+
+    /// <summary>
     /// Set on the frozen original of an object this region sent to another region, from the moment that region took it
     /// until it reports the crossing complete (the object is then deleted) or gives it back (see <see cref="ShowToViewers"/>):
     /// the viewers of this region are not shown it, since they would see it twice.
@@ -1051,6 +1058,17 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         }
     }
 
+    /// <summary>
+    /// True while this object, which crossed into the region with riders, is within the short time after that in which its
+    /// engine does not let it cross out again.
+    /// </summary>
+    private bool IsWaitingBeforeCrossingBack(Scene scene)
+    {
+        if (double.IsNaN(ArrivedWithRidersAtMs) || m_rootPart.PhysActor is not { WaitsBeforeCrossingBack: true })
+            return false;
+        return scene.CrossingClock() - ArrivedWithRidersAtMs < RideOnLimits.RecrossWaitMs;
+    }
+
     private SceneObjectGroup CrossAsyncCore(SceneObjectGroup sog, Vector3 val, TeleportObjectData tpdata, CrossState state)
     {
         Scene sogScene = sog.m_scene;
@@ -1106,6 +1124,16 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         // engine, and with it the ground under them
         if (entityTransfer is not null)
             destination = entityTransfer.GetObjectDestination(sog, val, out newpos);
+
+        if (destination is not null && !isTeleport && sog.IsWaitingBeforeCrossingBack(sogScene))
+        {
+            // It crossed in with riders a moment ago, and its engine keeps such an object from crossing out again at once
+            // (Halcyon: SceneObjectGroup.cs, TestForAndBeginCrossing). It stays: nothing has been frozen yet, so the body is
+            // taken out of the engine as for any crossing and the caller puts it back inside the border, at rest.
+            root.KeyframeMotion?.StartCrossingCheck();
+            root.PhysActor?.CrossingStart();
+            return sog;
+        }
 
         string reason = string.Empty;
         EntityTransferContext ctx = new();
@@ -1171,7 +1199,10 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         if (sog.m_sittingAvatars.Count == 0 && riders is null)
         {
             if(entityTransfer.CrossPrimGroupIntoNewRegion(destination, newpos, sog, !isTeleport, true))
+            {
+                sog.EndGrabAfterSend();
                 return null;
+            }
             return sog;
         }
 
@@ -1328,6 +1359,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         if (sent)
         {
             state.Committed = true;
+            sog.EndGrabAfterSend();
             if (held)
             {
                 sogScene.AddPendingCrossing(sog);
@@ -3247,6 +3279,12 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
         // a copy is not in transit hopefully
         dupe.inTransit = false;
 
+        // a copy is not being dragged: the drag belongs to the original's actor and to the subscriptions it made
+        dupe.m_grabLock = new object();
+        dupe.m_grabbed = false;
+        dupe.m_grabAgent = UUID.Zero;
+        dupe.m_grabActor = null;
+
         // a copy is not in the scene yet; adding it records its first parcel
         dupe.m_parcelTracking = false;
         dupe.ForgetParcel();
@@ -3545,6 +3583,15 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
                 carried.HoverTau = m_scriptHoverTau;
                 carried.HoverRepel = m_scriptHoverRepel;
             }
+
+            // a drag in progress goes on in the next region (Halcyon moves the grab target by the region size, PhysxPrim.cs
+            // SuspendPhysicsSync)
+            if (m_grabbed && ReferenceEquals(m_grabActor, pa))
+            {
+                carried.DragAgent = m_grabAgent;
+                carried.DragAnchor = m_grabAnchor;
+                carried.DragTarget = m_grabTarget + regionShift;
+            }
         }
 
         if (root.TryGetLookAt(out Quaternion lookTarget, out float lookStrength, out float lookDamping))
@@ -3581,6 +3628,8 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
                 SetHoverHeight(carried.HoverHeight.Value, (PIDHoverType)carried.HoverType.Value, carried.HoverTau.Value, carried.HoverRepel ?? false);
             if (carried.HasLook)
                 RotLookAt(carried.LookTarget.Value, carried.LookStrength.Value, carried.LookDamping.Value);
+            if (carried.HasDrag)
+                ResumeGrab(carried.DragAgent.Value, carried.DragAnchor.Value, carried.DragTarget.Value);
         }
         catch (Exception e)
         {
@@ -4636,10 +4685,11 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
     // steers the root actor with its move-to-target (a velocity of distance / tau, gravity not applied) instead of
     // pushing it: a push per update is a spring with no damper that does nothing while the mouse is still.
     private const float GrabTau = 0.25f;
-    private readonly object m_grabLock = new();
+    private object m_grabLock = new();
     private bool m_grabbed;
     private UUID m_grabAgent;
     private Vector3 m_grabAnchor;
+    private Vector3 m_grabTarget;
     private PhysicsActor m_grabActor;
 
     // What scripts last set on the root actor (llMoveToTarget, llSetHoverHeight), put back when a drag ends.
@@ -4749,14 +4799,27 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
             if (wasHeld && ReferenceEquals(m_grabActor, pa))
             {
                 m_grabAgent = agent;
+                m_grabTarget = target;
                 pa.PIDTarget = target;
                 return;
             }
 
-            // a new drag, or the root's actor was replaced and the new one is switched on
+            StartGrab(pa, agent, target, wasHeld);
+        }
+    }
+
+    /// <summary>
+    /// A new drag, or the root's actor was replaced and the new one is switched on: the actor is told it is dragged and
+    /// given the drag's target and tau.
+    /// </summary>
+    private void StartGrab(PhysicsActor pa, UUID agent, Vector3 target, bool wasHeld)
+    {
+        lock (m_grabLock)
+        {
             m_grabbed = true;
             m_grabAgent = agent;
             m_grabActor = pa;
+            m_grabTarget = target;
 
             // only what the actor still has active is put back: a record left from an actor that has since been replaced is dropped
             m_scriptMoveActive &= pa.PIDActive;
@@ -4776,6 +4839,43 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
                 m_scene.EventManager.OnRemovePresence += GrabHolderRemoved;
                 m_scene.EventManager.OnMakeChildAgent += GrabHolderMadeChild;
             }
+        }
+    }
+
+    /// <summary>
+    /// The drag carries on in the next region as a record in the saved object (<see cref="CrossingTargets"/>): the point it
+    /// steers to, moved by the crossing's shift, the grabbed point's offset from the root, and who holds it. The next region
+    /// asks for it again only if the agent is known there, so that the viewer's release has someone to end it.
+    /// </summary>
+    private void ResumeGrab(UUID agent, Vector3 anchor, Vector3 target)
+    {
+        PhysicsActor pa = m_rootPart.PhysActor;
+        if (pa is null || !pa.IsPhysical || m_scene is null || !target.IsFinite() || !anchor.IsFinite())
+            return;
+        if (IsPhysicalDragRefused(pa.AllowsVehicleGrab) || m_scene.GetScenePresence(agent) is null)
+            return;
+
+        lock (m_grabLock)
+        {
+            m_grabAnchor = anchor;
+            StartGrab(pa, agent, target, false);
+        }
+    }
+
+    /// <summary>
+    /// The object has been sent to the next region, which now holds the drag if it is carried: this copy lets go of it, so
+    /// that no actor of this region is left steering to the cursor and no event of this region keeps the object. A copy
+    /// that is only kept for a recall comes back free of the drag.
+    /// </summary>
+    internal void EndGrabAfterSend()
+    {
+        try
+        {
+            EndGrab();
+        }
+        catch (Exception e)
+        {
+            m_log.LogWarning(e, $"[SCENE OBJECT]: Ending the drag of {Name} {UUID} after it was sent failed: {e.GetType().Name}: {e.Message}");
         }
     }
 

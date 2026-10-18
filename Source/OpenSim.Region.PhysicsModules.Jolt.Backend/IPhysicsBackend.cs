@@ -942,6 +942,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             ShapeId shape, Vector3 origin, Quaternion orientation, Vector3 direction,
             float maxDistance, QueryFilter filter, out RayHit hit);
 
+        /// <summary>
+        /// Whether the body, where it is now, sinks deeper than <paramref name="tolerance"/> into another static or dynamic
+        /// body (terrain, avatars and sensors are not counted). A body that only rests against another does not.
+        /// </summary>
+        bool BodyPenetratesOthers(BodyId body, float tolerance);
+
         // -- health -------------------------------------------------------
 
         /// <summary>Cumulative capacity / input-rejection counters. Cheap; safe from any thread.</summary>

@@ -3062,6 +3062,10 @@ public partial class Scene : SceneBase
             return false;
         }
 
+        // an object that came with no riders to wait for is not kept from crossing out again; the arrival with riders
+        // (IncomingCreateObject with a hold) sets the stamp after this
+        newObject.ArrivedWithRidersAtMs = double.NaN;
+
         bool taken;
         try
         {

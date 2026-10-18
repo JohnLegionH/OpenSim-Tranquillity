@@ -4697,6 +4697,35 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             return CollectUniqueBodies(found, results);
         }
 
+        public bool BodyPenetratesOthers(BodyId body, float tolerance)
+        {
+            if (_system == null || !float.IsFinite(tolerance))
+                return false;
+            var found = new List<CollideShapeResult>();
+            uint self;
+            lock (_simLock)
+            {
+                if (_disposed) return false;   // backend torn down (shutdown race) - no native call
+                if (!TryResolve(body, out JoltBodyRecord rec, out BodyID jid))
+                    return false;
+                self = jid.ID;
+                if (!_shapes.TryGet(rec.Shape.Value, out JoltShapeRecord shapeRec) || shapeRec.NativeShape == null)
+                    return false;
+                // the shape sits at the body's centre of mass, as in the sensor sweep above
+                Matrix4x4 com = Matrix4x4.CreateFromQuaternion(_bodyInterface.GetRotation(jid));
+                com.Translation = ToVec(_bodyInterface.GetCenterOfMassPosition(jid));
+                _system.NarrowPhaseQuery.CollideShape(shapeRec.NativeShape, Vector3.One, Matrix4x4.Transpose(com), DefaultCollideSettings(),
+                    Vector3.Zero, CollisionCollectorType.AllHit, found, null, FilterFor(QueryFilter.Static | QueryFilter.Dynamic), null, null);
+            }
+            for (int i = 0; i < found.Count; i++)
+            {
+                // the length of the penetration axis is the depth Jolt reports
+                if (found[i].BodyID2.ID != self && found[i].PenetrationAxis.Length() > tolerance)
+                    return true;
+            }
+            return false;
+        }
+
         public bool ShapeCast(ShapeId shape, Vector3 origin, Quaternion orientation, Vector3 direction, float maxDistance, QueryFilter filter, out RayHit hit)
         {
             hit = default;

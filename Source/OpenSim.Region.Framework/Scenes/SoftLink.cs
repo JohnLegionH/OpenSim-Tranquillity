@@ -39,6 +39,15 @@ public static class RideOnLimits
     public const int ArriveHoldMs = 10000;
 
     /// <summary>
+    /// The longest time an object that waited for its riders is moved on by when its hold ends, for an engine that does
+    /// that (PhysicsActor.ReleaseHold(float)): longer than this risks carrying it into what stands in its way (ms).
+    /// </summary>
+    public const int ResumeInterpolationMaxMs = 3000;
+
+    /// <summary>How long an object that crossed in with riders is kept from crossing out again, for an engine that asks for it (ms).</summary>
+    public const int RecrossWaitMs = 3000;
+
+    /// <summary>
     /// How long after that wait a region that sent a crossing object keeps its frozen copy while it has still not heard that
     /// the crossing is complete, before it takes the report for lost and lets go of the copy (ms).
     /// </summary>
