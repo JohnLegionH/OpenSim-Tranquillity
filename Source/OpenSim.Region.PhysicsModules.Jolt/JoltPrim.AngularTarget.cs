@@ -195,7 +195,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             bool fresh = !_angActing || spun;
             if (!awake)
             {
-                if (!changed && !spun && AngleBetween(q, goal) < HoldAngle)
+                // Halcyon's look-at stops the turn within a degree of the target (AtRotTolerance), so a body that has
+                // settled anywhere inside it is at its target; the Second Life spring settles much closer (HoldAngle).
+                float hold = plan.InWorldz ? HalcyonBasicForces.AtRotTolerance : HoldAngle;
+                if (!changed && !spun && AngleBetween(q, goal) <= hold)
                     return true;   // asleep at its target
                 _backend.ActivateBody(_body);
                 fresh = true;

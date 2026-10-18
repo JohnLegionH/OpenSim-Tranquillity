@@ -145,11 +145,10 @@ public class AngularTargetInWorldzTests : AngularTargetTests
         Assert.True(Between(end.Rot, TurnZ(90f)) < 2f, $"{Between(end.Rot, TurnZ(90f)):0.0} degrees from the target at t {end.T:0.00}");
     }
 
-    // A body held at its target has settled and may sleep. Under InWorldz it goes to sleep once and is woken again at
-    // once, and is awake in every second of the hold (an earlier version of the test below read it at one instant, 7.9 s).
-    // Not fixed here: the module's wake rule leaves a body asleep only within HoldAngle (0.2 degrees) of its target, and the
-    // InWorldz look-at stops the turn within a degree.
-    [Fact(Skip = "Known failure under InWorldz: a body held at its look-at target is woken again each time it sleeps, so it stays awake.")]
+    // A body held at its target has settled and may sleep. The look-at stops the turn within a degree of the target, so the
+    // wake rule leaves a body asleep anywhere inside that degree; it used to wake it unless it was within 0.2 degrees, and
+    // the body was awake in every second of the hold.
+    [Fact]
     public void A_target_held_still_lets_the_body_sleep_and_stay_asleep()
     {
         PhysicsActor actor = null;
