@@ -245,15 +245,17 @@ public class VehicleInWorldzSolverTests
         Assert.Equal(0f, rig.Body.AngularVelocity.Z);
     }
 
-    // Moving backwards along the nose: "if the local X movement is negative, flip the angle", pi minus it.
+    // Moving backwards along the nose: "if the local X movement is negative, flip the angle", pi minus it. The tail is what turns
+    // toward the velocity: here the velocity is 14.04 degrees from the tail, toward +y, so the push is about -z (the tail, on -x, turns
+    // toward +y by going clockwise seen from above). InWorldz keeps the nose's rotation for the direction and so pushes about +z.
     [Fact]
-    public void Moving_backwards_uses_pi_minus_the_angle()
+    public void Moving_backwards_uses_pi_minus_the_angle_and_turns_the_tail_toward_the_velocity()
     {
         var rig = Plane(InWorldz, new Vector3(-20f, 5f, 0f), 0.5f, 1f);
         rig.Car.Step((float)Hz45);
-        double angle = Math.PI - (Math.PI - Math.Atan2(5, 20));   // the rotation is about +z by pi - 14.04 degrees, flipped back
+        double angle = Math.Atan2(5, 20);   // between the tail and the velocity; pi minus the nose's angle to it
         double push = Math.Sqrt(20 * 20 + 5 * 5) / 30.0 * Math.PI * (Hz45 / 0.5) * Math.Log(1 + angle);
-        Near(push, rig.Body.AngularVelocity.Z, 1e-4, 0, "push about z");
+        Near(-push, rig.Body.AngularVelocity.Z, 1e-4, 0, "push about z");
     }
 
     // Within pi / 64 of aligned a damping term takes part of the angular velocity away:

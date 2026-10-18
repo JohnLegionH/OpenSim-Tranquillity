@@ -18,10 +18,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// </summary>
 public class VehicleReverseDeflectionTests
 {
-    private static BehaviourRig Sled(VehicleBehaviour behaviour, Vector3 velocity)
+    private static BehaviourRig Sled(VehicleBehaviour behaviour, Vector3 velocity, bool noDeflectionUp = false)
     {
         var rig = new BehaviourRig(new VehicleSettings { Behaviour = behaviour }, Vehicle.TYPE_SLED, gravity: false);
-        rig.Flag(ExtendedVehicleFlags.NoDeflectionUp, false);
+        rig.Flag(ExtendedVehicleFlags.NoDeflectionUp, noDeflectionUp);
         rig.Car.ProcessFloatVehicleParam(Vehicle.LINEAR_DEFLECTION_EFFICIENCY, 1f);
         rig.Car.ProcessFloatVehicleParam(Vehicle.LINEAR_DEFLECTION_TIMESCALE, 0.3f);
         rig.Body.LinearVelocity = velocity;
@@ -29,12 +29,19 @@ public class VehicleReverseDeflectionTests
     }
 
     [Theory]
-    [InlineData(VehicleBehaviour.InWorldz, 3f, 0.05f)]
-    [InlineData(VehicleBehaviour.InWorldz, 3f, -0.05f)]
-    public void A_vehicle_backing_along_its_nose_axis_does_not_swing_out_sideways(VehicleBehaviour behaviour, float speed, float sideways)
+    [InlineData(VehicleBehaviour.InWorldz, 3f, 0.05f, false, 45.0)]
+    [InlineData(VehicleBehaviour.InWorldz, 3f, -0.05f, false, 45.0)]
+    [InlineData(VehicleBehaviour.SecondLife, 3f, 0.05f, false, 45.0)]
+    [InlineData(VehicleBehaviour.SecondLife, 3f, -0.05f, false, 45.0)]
+    [InlineData(VehicleBehaviour.SecondLife, 3f, 0.05f, false, 11.0)]
+    [InlineData(VehicleBehaviour.SecondLife, 3f, -0.05f, false, 11.0)]
+    [InlineData(VehicleBehaviour.SecondLife, 3f, 0.05f, true, 45.0)]
+    [InlineData(VehicleBehaviour.SecondLife, 3f, 0.05f, true, 11.0)]
+    public void A_vehicle_backing_along_its_nose_axis_does_not_swing_out_sideways(VehicleBehaviour behaviour, float speed, float sideways,
+        bool noDeflectionUp, double rate)
     {
-        BehaviourRig rig = Sled(behaviour, new Vector3(-speed, sideways, 0f));
-        rig.Run(1.0 / 45, 135);
+        BehaviourRig rig = Sled(behaviour, new Vector3(-speed, sideways, 0f), noDeflectionUp);
+        rig.Run(1.0 / rate, (int)(3 * rate));
         Vector3 v = rig.Body.LinearVelocity;
         Assert.True(Math.Abs(v.Y) <= Math.Abs(sideways) + 1e-4f, $"the sideways speed grew from {sideways} to {v.Y}");
         Assert.True(v.X < -speed * 0.99f, $"the vehicle is no longer backing at its speed: velocity {v}");
