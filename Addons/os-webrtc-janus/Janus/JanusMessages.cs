@@ -121,11 +121,25 @@ public class JanusMessage
     {
         return m_message.ToString();
     }
-    /// <summary>How a request is serialized for a LOG line, as opposed to for the wire. The default is
-    /// ToJson; PluginMsgReq overrides it so a join capability is never printed at any level.</summary>
+    /// <summary>Top-level request fields that authenticate the sender and so must never reach a log.</summary>
+    private static readonly string[] LogRedactedFields = { "apisecret", "admin_secret" };
+
+    /// <summary>How a request is serialized for a LOG line, as opposed to for the wire. It is the wire
+    /// form with the API secret and the admin secret replaced; PluginMsgReq also hides a join capability.
+    /// Every other field (the transaction and session ids included) is left as it is: those are not
+    /// secrets and are what an operator correlates on.</summary>
     public virtual string ToJsonForLog()
     {
-        return ToJson();
+        ToJson();   // a subclass may assemble m_message here (PluginMsgReq adds its body)
+        OSDMap copy = new OSDMap();
+        foreach (KeyValuePair<string, OSD> field in m_message)
+            copy[field.Key] = field.Value;
+        foreach (string secret in LogRedactedFields)
+        {
+            if (copy.TryGetValue(secret, out OSD value) && !string.IsNullOrEmpty(value.AsString()))
+                copy[secret] = "<redacted " + secret + ">";
+        }
+        return copy.ToString();
     }
     public override string ToString()
     {
@@ -427,13 +441,12 @@ public class PluginMsgReq : JanusMessageReq
         return base.ToJson();
     }
 
-    /// <summary>The same body with the join capability replaced, for the [JanusWebRtcVoice]
-    /// MessageDetails debug line — the one place a request body is logged. It replaces the exact minted string, so
-    /// no part of a capability can survive into a log, and leaves every other field (the session id included)
-    /// as it is: those are not secrets and are what an operator correlates on.</summary>
+    /// <summary>The log form of the base request (secrets hidden) with the join capability replaced as well, for
+    /// the [JanusWebRtcVoice] MessageDetails debug line — the one place a request body is logged. It replaces the
+    /// exact minted string, so no part of a capability can survive into a log.</summary>
     public override string ToJsonForLog()
     {
-        string json = ToJson();
+        string json = base.ToJsonForLog();
         if (!m_body.ContainsKey("join_cap"))
             return json;
         string capability = m_body["join_cap"].AsString();
