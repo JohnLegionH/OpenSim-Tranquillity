@@ -599,23 +599,70 @@ namespace osWebRtcVoice.NonSpatial
         /// a viewer that is simply gone leaves an invitation that ages out and a voice session that dies.
         /// Returns the ids removed.
         /// </summary>
-        public IReadOnlyList<UUID> Sweep()
+        public IReadOnlyList<UUID> Sweep() => SweepWithSummary().Removed;
+
+        /// <summary>What one sweep did: the sessions removed, the invitations that lapsed and the seats released.</summary>
+        public readonly struct SweepSummary
+        {
+            public IReadOnlyList<UUID> Removed { get; }
+            public int InvitationsExpired { get; }
+            public int SeatsReleased { get; }
+
+            public SweepSummary(IReadOnlyList<UUID> removed, int invitationsExpired, int seatsReleased)
+            {
+                Removed = removed;
+                InvitationsExpired = invitationsExpired;
+                SeatsReleased = seatsReleased;
+            }
+        }
+
+        /// <summary>
+        /// <see cref="Sweep"/> with the counts the maintenance pass logs. A session removed for being
+        /// idle first has every member departed with the Expired reason, the same transition a normal
+        /// departure makes, so a caller still holding the session never sees a seat in a room that
+        /// no longer exists.
+        /// </summary>
+        public SweepSummary SweepWithSummary()
         {
             DateTime now = _clock();
             List<UUID> removed = new List<UUID>();
+            int invitationsExpired = 0;
+            int seatsReleased = 0;
             foreach (NonSpatialVoiceSession s in _store.All())
             {
-                _store.Mutate<object>(s.SessionId, sess =>
+                int[] counts = _store.Mutate(s.SessionId, sess =>
                 {
+                    int lapsed = 0;
                     foreach (NonSpatialMember m in sess.Members)
                         if (m.State == MemberState.Invited && now - m.InvitedUtc >= _inviteTtl)
                         {
                             m.State = MemberState.Departed;
                             m.Departure = DepartureReason.Expired;
                             m.LastSeenUtc = now;
+                            lapsed++;
                         }
-                    return null;
-                });
+                    int released = 0;
+                    if (now - sess.LastSeenUtc >= _idleTtl)
+                    {
+                        foreach (NonSpatialMember m in sess.Members)
+                        {
+                            if (m.HoldsSeat) released++;
+                            if (m.State != MemberState.Departed && m.State != MemberState.Declined)
+                            {
+                                m.State = MemberState.Departed;
+                                m.Departure = DepartureReason.Expired;
+                            }
+                            m.InChat = false;
+                            m.ViewerSession = null;
+                            m.LastSeenUtc = now;
+                        }
+                        sess.EndRingCycle();
+                    }
+                    return new[] { lapsed, released };
+                }, null);
+                if (counts == null) continue;
+                invitationsExpired += counts[0];
+                seatsReleased += counts[1];
                 NonSpatialVoiceSession after = _store.Get(s.SessionId);
                 if (after == null) continue;
                 if (after.IsDead || now - after.LastSeenUtc >= _idleTtl)
@@ -623,7 +670,7 @@ namespace osWebRtcVoice.NonSpatial
                     if (_store.Remove(after.SessionId)) removed.Add(after.SessionId);
                 }
             }
-            return removed;
+            return new SweepSummary(removed, invitationsExpired, seatsReleased);
         }
 
         // ---- helpers -------------------------------------------------------------------------

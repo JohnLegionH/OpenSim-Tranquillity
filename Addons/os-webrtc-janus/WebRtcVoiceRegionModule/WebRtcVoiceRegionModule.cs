@@ -135,6 +135,7 @@ public partial class WebRtcVoiceRegionModule : ISharedRegionModule
     // ISharedRegionModule.Close
     public void Close()
     {
+        StopNonSpatialMaintenance();
         StopAllVisibilityServices();
     }
 

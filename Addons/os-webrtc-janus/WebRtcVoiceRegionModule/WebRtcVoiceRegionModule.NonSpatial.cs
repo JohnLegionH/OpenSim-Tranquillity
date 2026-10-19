@@ -73,6 +73,11 @@ public partial class WebRtcVoiceRegionModule
 
     private NonSpatialVoiceSessionEngine m_nonSpatial;
 
+    // Drives the engine's Sweep() so invitations lapse and idle sessions are collected. Created with the
+    // engine, running while this module serves at least one region, disposed when the last region is
+    // removed and when the module closes.
+    private NonSpatialMaintenance m_nonSpatialMaintenance;
+
     private bool m_a2aVoiceEnabled = DefaultA2AVoiceEnabled;
 
     // Scenes this shared module serves, for callee resolution on THIS instance (the group
@@ -413,6 +418,17 @@ public partial class WebRtcVoiceRegionModule
             m_nonSpatialStore,
             new INonSpatialAdmission[] { new P2PAdmission(), new AdhocAdmission(), m_groupVoice.ToAdmissionOrNull() },
             JanusAudioBridge.ReadGridId(config));
+
+        m_nonSpatialMaintenance = new NonSpatialMaintenance(m_nonSpatial,
+            line => m_log.LogDebug("{LogHeader} {Line}", logHeader, line),
+            (message, e) => m_log.LogWarning(e, "{LogHeader} {Message}", logHeader, message));
+        m_nonSpatialMaintenance.Start();
+    }
+
+    // Stops the session sweep timer. Start() brings it back when a region is added again.
+    private void StopNonSpatialMaintenance()
+    {
+        m_nonSpatialMaintenance?.Stop();
     }
 
     // Tracks the scenes this shared module serves, for callee resolution on THIS instance (the group
@@ -422,11 +438,18 @@ public partial class WebRtcVoiceRegionModule
         lock (m_scenes)
             if (!m_scenes.Contains(scene))
                 m_scenes.Add(scene);
+        m_nonSpatialMaintenance?.Start();
     }
 
     private void UnregisterSceneForVoiceSessions(Scene scene)
     {
+        bool noScenesLeft;
         lock (m_scenes)
+        {
             m_scenes.Remove(scene);
+            noScenesLeft = m_scenes.Count == 0;
+        }
+        if (noScenesLeft)
+            StopNonSpatialMaintenance();
     }
 }
