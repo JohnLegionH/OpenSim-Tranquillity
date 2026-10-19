@@ -62,6 +62,14 @@ Conventions used below:
 | `VisibilityTickMs` | `250` | Milliseconds between visibility recomputations. | Feeder. |
 | `VisibilityRoomSendConcurrency` | `4` | Number of rooms addressed concurrently within one batch send. | Emission. |
 | `VisibilityArmingEnabled` | `false` | Create spatial rooms declaring the sim as their visibility authority (with epochs and heartbeats). The mixer withholds audio from a room whose authority goes silent. Takes effect only when the feeder and emission are also on. | Slvoice mixer; feeder; emission. |
+| `PositionFeedEnabled` | `false` | Send the mixer each voice participant's position as the region sees it (`peer_pos`, see the mixer feed protocol, section 6.6), so a viewer's own claim can be compared with it. Nothing is computed or sent while this is off. A mixer that does not advertise `vis_protocol` 3 is sent nothing. On the stock plugin it logs a warning at start and stays off. | Slvoice mixer at `vis_protocol` 3; feeder; emission. |
+| `PositionFeedMode` | `observe` | `observe` or `enforce`. `enforce` is accepted but not active yet; positions are sent in observe mode. | `PositionFeedEnabled`. |
+| `PositionFeedTickMs` | `500` | Milliseconds between position evaluations. | `PositionFeedEnabled`. |
+| `PositionFeedKeepAliveMs` | `1000` | A full snapshot of each room is sent at least this often (not less than the tick). | `PositionFeedEnabled`. |
+| `PositionFeedMoveThresholdCm` | `100` | Centimetres a participant must move from the last point sent before it is sent again between snapshots. | `PositionFeedEnabled`. |
+| `PositionFeedMarginCm` | `500` | Centimetres of difference the mixer should accept at the moment of a sample. | `PositionFeedEnabled`. |
+| `PositionFeedSpeedFloorCmS` | `800` | The smallest speed allowance sent, in cm/s, so a standing avatar that starts to run is not flagged. | `PositionFeedEnabled`. |
+| `PositionFeedSpeedMaxCmS` | `10000` | Speed ceiling in cm/s for a physics engine that declares no maximum speed of its own. An engine that does declare one (Bullet) uses that instead. | `PositionFeedEnabled`. |
 
 ### Join capability and moderation
 
@@ -96,7 +104,7 @@ if it cannot connect to Janus at startup.
 | `PluginName` | `janus.plugin.audiobridge` | Janus plugin the region attaches voice handles to. `janus.plugin.slvoice` selects a spatial mixer implementing that protocol. | The named plugin installed in Janus. |
 | `RequestTimeoutMs` | `5000` | Milliseconds an "ack"-answered Janus request waits for its result before failing. Zero or negative falls back to 5000. | - |
 | `AdminTimeoutMs` | `5000` | Milliseconds a Janus admin API request waits for its answer (used by visibility emission). | - |
-| `JanusGatewayCACertificateFile` | empty | Path of a private CA certificate (PEM or DER; a PEM file may hold several) trusted, in addition to the operating system's roots, for the `https://` gateway and admin URLs. See [Securing the connection to the mixer](#securing-the-connection-to-the-mixer). | A mixer served over https with a certificate from that CA. |
+| `JanusGatewayCACertificateFile` | empty | Path of a private CA certificate (PEM or DER; a PEM file may hold several) trusted alongside the operating system's roots, for the `https://` gateway and admin URLs. No setting turns validation off. See [Securing the connection to the mixer](#securing-the-connection-to-the-mixer). | A mixer served over https with a certificate from that CA. |
 | `JoinCapabilitySecret` | empty | Secret used to sign join capabilities, for avatars and for connectors. Never logged. Must match the mixer. At least 32 characters: with `JoinCapabilityEnabled` on, a shorter one is refused at startup and no capability is minted. | Slvoice mixer. |
 
 ### Securing the connection to the mixer
@@ -115,7 +123,7 @@ point the region server, and Robust if it talks to Janus, at the https URLs:
     JanusGatewayAdminURI = https://mixer.example.org:8090/admin
 ```
 
-The certificate is checked like any other HTTPS connection: it must chain to a root the operating system trusts and
+The certificate is checked as before, like any other HTTPS connection: it must chain to a root the operating system trusts and
 must name the host in the URL. No setting turns the check off. A certificate that fails it is refused, nothing is
 sent to that server, and the log says why (`[JANUS TLS] the certificate presented by ... was rejected`).
 
@@ -128,7 +136,7 @@ certificate itself:
     JanusGatewayCACertificateFile = /etc/opensim/mixer-ca.pem
 ```
 
-That certificate is trusted in addition to the system roots, only for the connection to the mixer. The host name
+That certificate is trusted alongside the system roots, only for the connection to the mixer. The host name
 must still match, so a CA certificate does not excuse a wrong name. Leave the key unset when the certificate is
 from a public CA. If the file is missing or unreadable, an error naming the key is logged and only the system roots
 are used. Restart the region server after changing it.

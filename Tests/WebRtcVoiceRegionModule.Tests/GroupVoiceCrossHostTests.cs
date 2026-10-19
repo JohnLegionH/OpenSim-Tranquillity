@@ -125,8 +125,22 @@ namespace osWebRtcVoice.Tests
         {
             // The whole cross-host design rests on this: (gridId, tag, sessionId) with a shared grid id.
             UUID grp = UUID.Random();
-            Assert.That(NonSpatialRoomKey.Derive(Grid, NonSpatialSessionType.Group, grp),
-                        Is.EqualTo(NonSpatialRoomKey.Derive(Grid, NonSpatialSessionType.Group, grp)));
+            Grid_ g = new Grid_();
+            g.Join(Alice, grp);
+            g.Join(Bob, grp);
+            // Two simulator processes, each with its own store, each creating the group's session itself.
+            (GroupVoicePolicy pa, NonSpatialVoiceSessionEngine a) = Instance(g);
+            (GroupVoicePolicy pb, NonSpatialVoiceSessionEngine b) = Instance(g);
+            GroupVoiceChatSession.TryHandleCall(Call(grp), Alice, pa, a, RegionA, out _);
+            GroupVoiceChatSession.TryHandleCall(Call(grp), Bob, pb, b, RegionA, out _);
+
+            string keyA = a.Store.Get(grp).RoomKey;
+            string keyB = b.Store.Get(grp).RoomKey;
+            Assert.That(keyA, Is.Not.Null.And.Not.Empty);
+            Assert.That(keyB, Is.EqualTo(keyA), "no coordination between the instances, same room");
+            Assert.That(keyA, Is.EqualTo(NonSpatialRoomKey.Derive(Grid, NonSpatialSessionType.Group, grp)));
+            Assert.That(NonSpatialRoomKey.Derive("other-grid", NonSpatialSessionType.Group, grp), Is.Not.EqualTo(keyA),
+                        "the grid id is part of the key");
         }
 
         [Test]

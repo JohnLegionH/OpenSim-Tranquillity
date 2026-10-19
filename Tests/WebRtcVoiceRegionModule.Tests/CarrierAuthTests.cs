@@ -494,6 +494,57 @@ namespace osWebRtcVoice.Tests
             Assert.That(t.Target, Is.EqualTo(Bob));
         }
 
+        // ---- the accepted-carrier log line --------------------------------------------------------
+
+        [Test]
+        public void AnAcceptedTextLineIsMarkedAuthenticatedAndNamesItsOrigin()
+        {
+            NonSpatialVoiceSessionEngine e = Engine();
+            ThreeWayText(e, out _, out NonSpatialVoiceSession s);
+
+            TextIntake t = CarrierIntake.AcceptText(Text(s, Alice, Bob, "hello there", Auth()), Auth(), e);
+
+            Assert.That(t.Authenticated, Is.True);
+            Assert.That(t.OriginRegion, Is.EqualTo(RegionA));
+            string line = CarrierAuth.AcceptedLine(CarrierAuth.KindText, t.SessionId, NonSpatialSessionType.Adhoc, t.OriginRegion);
+            Assert.That(line, Does.Contain("kind=text"));
+            Assert.That(line, Does.Contain("session=" + s.SessionId));
+            Assert.That(line, Does.Contain("type=Adhoc"));
+            Assert.That(line, Does.Contain("from=" + RegionA));
+            Assert.That(line, Does.Not.Contain("hello there"), "contents never reach the log");
+        }
+
+        [Test]
+        public void AnAcceptedRingCarriesItsTypeAndOrigin()
+        {
+            NonSpatialVoiceSessionEngine a = Engine();
+            NonSpatialVoiceSession s = Conference(a, Bob);
+            GridInstantMessage im = Ring(Bob, s, ConferenceBody(a, s), Auth());
+
+            RingIntake r = Offer(im, Auth(), Engine());
+
+            Assert.That(r.Authenticated, Is.True);
+            Assert.That(r.Type, Is.EqualTo(NonSpatialSessionType.Adhoc));
+            Assert.That(r.OriginRegion, Is.EqualTo(RegionA));
+            string line = CarrierAuth.AcceptedLine(CarrierAuth.KindRing, r.GroupId, r.Type, r.OriginRegion);
+            Assert.That(line, Does.Contain("kind=ring"));
+            Assert.That(line, Does.Contain("session=" + s.SessionId));
+            Assert.That(line, Does.Contain("from=" + RegionA));
+        }
+
+        [Test]
+        public void ARefusedCarrierIsNotMarkedAuthenticated()
+        {
+            NonSpatialVoiceSessionEngine a = Engine();
+            NonSpatialVoiceSession s = Conference(a, Bob);
+            GridInstantMessage forged = Ring(Bob, s, ConferenceBody(a, s), Auth(OtherSecret));
+            Assert.That(Offer(forged, Auth(), Engine()).Authenticated, Is.False);
+
+            NonSpatialVoiceSessionEngine e = Engine();
+            ThreeWayText(e, out _, out NonSpatialVoiceSession ts);
+            Assert.That(CarrierIntake.AcceptText(Text(ts, Alice, Bob, "forged", null), Auth(), e).Authenticated, Is.False);
+        }
+
         [Test]
         public void ATextLineWithNoMacIsRefused()
         {

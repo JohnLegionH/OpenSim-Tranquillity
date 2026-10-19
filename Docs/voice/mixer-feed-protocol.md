@@ -9,7 +9,7 @@ The mixer is a Janus plugin. The region server drives it in two ways:
 1. **Plugin handle messages** over the normal Janus session (create room, join, leave, trickle ICE).
    These are the same messages the stock AudioBridge plugin understands, with a few additive fields.
 2. **Admin API messages** (`message_plugin`) that carry the per-listener visibility feed:
-   `peer_ctl_batch` and `peer_ctl_heartbeat`. Viewers never see or send these.
+   `peer_ctl_batch`, `peer_ctl_heartbeat` and, optionally, `peer_pos`. Viewers never see or send these.
 
 Everything in this document is sim-to-mixer. The viewer-to-mixer data channel format is a separate
 matter and is not covered here.
@@ -381,6 +381,48 @@ advertises `vis_protocol` 2 again.
 When both the join capability and arming are on, the capability's `epoch` and `generation` fields
 come from the room's last published authority state, so a capability minted before an epoch change is
 rejected by a mixer that checks them.
+
+### 6.6 Participant positions (`peer_pos`, `vis_protocol` 3)
+
+A viewer reports its own position to the mixer, and nothing in the feed above says where the region
+actually has that avatar. With `[WebRtcVoice] PositionFeedEnabled = true` the region server sends the
+mixer each participant's position as the region sees it, so the mixer can compare the two. This
+revision only sends the positions, in `observe` mode; what a mixer does with them is up to the mixer.
+
+```json
+{ "request": "peer_pos", "room": 12345, "seq": 1760000000001, "full": true, "mode": "observe",
+  "pos": { "<agent uuid>": [x_cm, y_cm, z_cm, speed_cm_s, tolerance_cm] } }
+```
+
+- `x_cm`, `y_cm`, `z_cm` are global centimetres: the region's world origin plus the position inside the
+  region, times 100. This is the frame a viewer reports its own position in.
+- `speed_cm_s` is the speed the participant can really be moving at: twice the region's own velocity for
+  the avatar, or for the object it is sitting on if that is faster, never below `PositionFeedSpeedFloorCmS`
+  and never above the physics engine's maximum linear speed (`PhysicsScene.MaximumLinearVelocity`).
+  For an engine that declares no maximum, `PositionFeedSpeedMaxCmS` is the ceiling. A mixer can allow a
+  participant to be `speed_cm_s` further from the point for each second since it received it.
+- `tolerance_cm` is the difference to accept at the moment of the sample. For a root agent it is
+  `PositionFeedMarginCm`. For a child agent in a neighbouring region it is that margin plus 10 m plus two
+  seconds at `speed_cm_s`, because the root region sends a child's position only after about 10 m of
+  movement and at most every 2 s, and the velocity that comes with it is discarded.
+- `full: true` means the entries are the whole room: a participant not listed has left. `full: false`
+  updates only the listed participants. A full snapshot is sent when the room is new and at least every
+  `PositionFeedKeepAliveMs`; in between, only participants that are new or have moved at least
+  `PositionFeedMoveThresholdCm` since the last point sent.
+- `seq` is a per-room counter that only rises, and starts above the time in milliseconds at which the
+  region started, so a restarted region is not mistaken for old traffic. A mixer should ignore a request
+  whose `seq` is not above the last it saw for the room.
+- One request carries at most 120 entries (a larger room is split; only the first request of a full
+  snapshot has `full: true`). A room of 110 is about 8 KB.
+- `room_epoch` is added when the region runs with arming (6.1).
+- `mode` is `observe`. `PositionFeedMode = enforce` is accepted in the configuration but not active yet,
+  and is sent as `observe`.
+
+The region server sends `peer_pos` only after a reply from the mixer has advertised `vis_protocol` 3 or
+higher. It learns that from the replies to the `peer_ctl_batch` and `peer_ctl_heartbeat` requests it
+already sends, and it follows the latest reply: an applied reply that advertises no version means an
+older mixer, and positions stop. Until then it reads no positions and sends nothing, so a mixer that
+does not know `peer_pos` never receives one.
 
 ## 7. What the region server puts in the matrix
 

@@ -127,6 +127,16 @@
     ; both visibility keys above.
     ;VisibilityArmingEnabled = false
 
+    ; Position feed: the region tells the mixer where each voice participant really is (its position, a speed
+    ; allowance and a tolerance), so a viewer's own claim of its position can be compared with it. Default:
+    ; false, and nothing is computed or sent. Needs VisibilityFeederEnabled and VisibilityEmitEnabled, and a
+    ; mixer that advertises vis_protocol 3; an older mixer is sent nothing. With the stock
+    ; plugin it logs a warning at start and stays off.
+    ;PositionFeedEnabled = false
+    ; observe or enforce. Default: observe (the mixer counts what it would change and changes nothing).
+    ; enforce is accepted but not active yet; positions are sent in observe mode.
+    ;PositionFeedMode = observe
+
     ; The sim issues each joining avatar a signed join capability. Default: false. Needs the slvoice mixer
     ; and [JanusWebRtcVoice] JoinCapabilitySecret.
     ;JoinCapabilityEnabled = false
@@ -164,8 +174,9 @@
     ; APIKey to access the admin port on the Janus Gateway. Must be set to the same value as the Janus Gateway.
     ; Use a random secret of at least 32 characters; a shorter one is logged as a warning at startup.
     AdminAPIToken = AdminAPITokenToNeverCheckIn
-    ; Private CA certificate file (PEM or DER) trusted, in addition to the system's roots, for an https gateway or
-    ; admin URL whose certificate the system does not know. The host name must still match. Default: unset.
+    ; https URLs are validated as before: the certificate must chain to a trusted root and name the host contacted.
+    ; This adds a private CA certificate file (PEM or DER), trusted alongside the system roots. No setting turns
+    ; validation off. Default: unset.
     ;JanusGatewayCACertificateFile =
     ; Debugging: output to log file messages sent and received from Janus. Very verbose.
     MessageDetails = false
