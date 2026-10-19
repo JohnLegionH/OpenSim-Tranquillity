@@ -44,6 +44,9 @@ namespace osWebRtcVoice.Tests
             public string BaseUri { get; }
             public int Requests;
 
+            /// <summary>The body of every request the server received, in order.</summary>
+            public readonly List<string> Bodies = new List<string>();
+
             /// <summary>While this is unset a request is read but not answered, as a service that has hung does not answer.</summary>
             public readonly System.Threading.ManualResetEventSlim Answering = new System.Threading.ManualResetEventSlim(true);
 
@@ -76,6 +79,8 @@ namespace osWebRtcVoice.Tests
                             ctx.Request.InputStream.CopyTo(ms);
                             body = ms.ToArray();
                         }
+                        lock (Bodies)
+                            Bodies.Add(Encoding.UTF8.GetString(body));
                         Answering.Wait();
                         TestOSHttpRequest request = new TestOSHttpRequest { Headers = new NameValueCollection(ctx.Request.Headers) };
                         TestOSHttpResponse response = new TestOSHttpResponse();
@@ -338,6 +343,110 @@ namespace osWebRtcVoice.Tests
             Assert.That(refused.Decision, Is.EqualTo(SessionOutcome.StoreUnavailable));
             Assert.That(region.Get(GroupId), Is.Null);
             Assert.That(service.SessionCount, Is.EqualTo(0), "no session anywhere");
+        }
+
+        // ---- the wire contract ---------------------------------------------------------------------------
+
+        [Test]
+        public void EveryRequestHasTheDocumentedBody()
+        {
+            // The names and order of the fields each operation sends. A later move to another web stack, or a
+            // service written by someone else, is checked against these bytes.
+            UUID s = new UUID("a0000000-0000-4000-8000-000000000001");
+            UUID a = new UUID("a0000000-0000-4000-8000-000000000002");
+            UUID b = new UUID("a0000000-0000-4000-8000-000000000003");
+            UUID r = new UUID("a0000000-0000-4000-8000-000000000004");
+            UUID t = new UUID("a0000000-0000-4000-8000-000000000005");
+            VoiceSessionService service = VoiceSessionServiceTests.NewService();
+            using TestServer server = new TestServer(NewHandler(service));
+            VoiceSessionServicesConnector c = NewClient(server);
+
+            c.Start(2, a, b, t, r, 50);
+            c.StartAdhoc(a, t, r, new List<UUID> { b, s }, 0);
+            c.CheckInviteCount(s, a, new List<UUID> { b });
+            c.Invite(s, a, b);
+            c.Accept(s, a, r, "vs-1");
+            c.MarkPresent(s, a, r, "vs-1");
+            c.Decline(s, a);
+            c.Depart(s, a, 3);
+            c.LeaveChat(s, a);
+            c.DepartByViewerSession(a, "vs-1", 4);
+            c.DepartAll(a, 2);
+            c.DepartRegion(r);
+            c.RenewSeats(new List<SeatKey> { new SeatKey(s, a), new SeatKey(s, b) });
+            c.MarkInvited(s, new List<UUID> { a, b });
+            c.VerifyRing(s, b, a, 3);
+            c.CarrierKey(s, a);
+            c.IssueToken(s, a);
+            c.TakeConferenceRequest(a);
+            c.Get(s, a);
+            c.GetByRoomKey("room-key", a);
+
+            string[] expected =
+            {
+                $"METHOD=start&type=2&creator={a}&other={b}&temp={t}&origin={r}&cap=50",
+                $"METHOD=startadhoc&creator={a}&temp={t}&origin={r}&invitees={b}%2c{s}&cap=0",
+                $"METHOD=checkinvitecount&session={s}&inviter={a}&asked={b}",
+                $"METHOD=invite&session={s}&inviter={a}&invitee={b}",
+                $"METHOD=accept&session={s}&agent={a}&origin={r}&viewer=vs-1",
+                $"METHOD=markpresent&session={s}&agent={a}&origin={r}&viewer=vs-1",
+                $"METHOD=decline&session={s}&agent={a}",
+                $"METHOD=depart&session={s}&agent={a}&reason=3",
+                $"METHOD=leavechat&session={s}&agent={a}",
+                $"METHOD=departbyviewer&agent={a}&viewer=vs-1&reason=4",
+                $"METHOD=departall&agent={a}&reason=2",
+                $"METHOD=departregion&region={r}",
+                $"METHOD=renewseats&seats={s}%3a{a}%2c{s}%3a{b}",
+                $"METHOD=markinvited&session={s}&agents={a}%2c{b}",
+                $"METHOD=verifyring&session={s}&target={b}&caller={a}&type=3",
+                $"METHOD=carrierkey&session={s}&agent={a}",
+                $"METHOD=issuetoken&session={s}&agent={a}",
+                $"METHOD=takeconferencerequest&agent={a}",
+                $"METHOD=get&session={s}&agent={a}",
+                $"METHOD=getbyroomkey&roomkey=room-key&agent={a}",
+            };
+            string[] actual;
+            lock (server.Bodies)
+                actual = server.Bodies.ToArray();
+            Assert.That(actual, Is.EqualTo(expected));
+        }
+
+        [Test]
+        public void TheReplyEnvelopeHasTheDocumentedShape()
+        {
+            SessionReply reply = new SessionReply { Ok = true, Decision = "found", Text = "t", Flag = true, Count = 2 };
+
+            Assert.That(reply.ToJson(), Is.EqualTo(
+                "{\"Ok\":true,\"Decision\":\"found\",\"Created\":false,\"StartedRinging\":false,\"Session\":null,\"Sessions\":null,\"Text\":\"t\",\"Flag\":true,\"Count\":2}"));
+            SessionReply back = SessionReply.FromJson(reply.ToJson());
+            Assert.That(new object[] { back.Ok, back.Decision, back.Text, back.Flag, back.Count }, Is.EqualTo(new object[] { true, "found", "t", true, 2 }));
+            Assert.That(SessionReply.FromJson("not json"), Is.Null);
+            Assert.That(SessionReply.FromJson(""), Is.Null);
+        }
+
+        [Test]
+        public void ARoundTripThroughTheHandlerOnLoopback_IsReportedAsNumbers()
+        {
+            // Not a tight assertion: the figure that matters is the one measured between two hosts. This puts a number
+            // on the handler, the authentication and the serialisation alone.
+            VoiceSessionService service = VoiceSessionServiceTests.NewService();
+            using TestServer server = new TestServer(NewHandler(service));
+            GridNonSpatialSessions region = VoiceSessionServiceTests.NewRegion(NewClient(server));
+            region.StartAdhoc(Alice, UUID.Random(), RegionA, new List<UUID> { Bob });
+            UUID id = region.StartAdhoc(Alice, UUID.Random(), RegionA, new List<UUID> { Bob }).Session.SessionId;
+            region.Get(id);   // the first request pays for the connection and the JIT
+
+            const int n = 50;
+            List<double> ms = new List<double>();
+            for (int i = 0; i < n; i++)
+            {
+                System.Diagnostics.Stopwatch w = System.Diagnostics.Stopwatch.StartNew();
+                Assert.That(region.Get(id), Is.Not.Null);
+                ms.Add(w.Elapsed.TotalMilliseconds);
+            }
+            ms.Sort();
+            TestContext.Progress.WriteLine($"[loopback] get x{n}: median {ms[n / 2]:F2} ms, p95 {ms[(int)(n * 0.95)]:F2} ms, max {ms[n - 1]:F2} ms");
+            Assert.That(ms[n / 2], Is.LessThan(250), "a loopback request is nowhere near a quarter of a second");
         }
 
         [Test]
