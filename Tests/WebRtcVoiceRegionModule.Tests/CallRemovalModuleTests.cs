@@ -457,6 +457,23 @@ namespace osWebRtcVoice.Tests
             Assert.That(r.Call(Member), Is.EqualTo((int)HttpStatusCode.OK), "back with the powers");
         }
 
+        [Test]
+        public void AMemberWhoIsNoLongerInTheGroup_IsLetGoOnTheTick_WithNoRemovalRecorded()
+        {
+            using Region r = InACall();
+            FakeGroups.Powers.Remove(Member);   // the groups service no longer knows them as a member (a ban and eject, say)
+
+            Tick(r);
+
+            NonSpatialVoiceSession s = r.Sessions.Get(GroupId);
+            Assert.That(s.Find(Member).HoldsSeat, Is.False);
+            Assert.That(s.Find(Member).Departure, Is.EqualTo(DepartureReason.PowerLost));
+            Assert.That(r.Voice.Drops, Is.EqualTo(new[] { (Member, RoomOf(r)) }));
+            Assert.That(r.Events.Closes, Is.EqualTo(new[] { (Member, GroupId, "close_on_no_ability") }));
+            Assert.That(s.Removed, Is.Empty);
+            Assert.That(r.Call(Member), Is.Not.EqualTo((int)HttpStatusCode.OK), "and a new call is not answered: they are not a member");
+        }
+
         private static OSDMap MuteRequest(UUID target, bool muted) => new OSDMap
         {
             ["method"] = OSD.FromString("mute update"),
