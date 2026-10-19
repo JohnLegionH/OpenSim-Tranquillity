@@ -17,4 +17,8 @@ public partial class WebRtcVoiceServiceModule : INonSpatialParticipantMute
         => m_nonSpatialVoiceService is INonSpatialParticipantMute mute
             ? mute.SetCallMute(pAgentID, pRoomNumber, pMuted)
             : ParticipantMuteResult.Unsupported;
+
+    // INonSpatialParticipantMute
+    public bool HasCallParticipant(UUID pAgentID, int pRoomNumber)
+        => m_nonSpatialVoiceService is INonSpatialParticipantMute mute && mute.HasCallParticipant(pAgentID, pRoomNumber);
 }

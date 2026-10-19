@@ -29,11 +29,21 @@ namespace osWebRtcVoice.Tests
         private sealed class FakeEffects : ICallModerationEffects
         {
             public bool Can = true;
+            public bool Resolves = true;
             public ParticipantMuteResult Result = ParticipantMuteResult.Applied;
             public int Enforced;
+            public readonly List<UUID> EnforcedTargets = new();
+            public readonly List<(bool Moderated, int Muted)> Told = new();
             public readonly List<(ModerationOp Op, UUID Target, UUID By, bool Changed)> Changes = new();
             public bool CanEnforceVoice(NonSpatialVoiceSession session) => Can;
-            public ParticipantMuteResult EnforceVoice(NonSpatialVoiceSession session) { Enforced++; return Result; }
+            public bool CanResolveVoiceTarget(NonSpatialVoiceSession session, UUID target) => Resolves;
+            public ParticipantMuteResult EnforceVoice(NonSpatialVoiceSession session, UUID target)
+            {
+                Enforced++;
+                EnforcedTargets.Add(target);
+                Told.Add((session.VoiceModerated, session.VoiceMuted.Count));
+                return Result;
+            }
             public void Changed(NonSpatialVoiceSession session, ModerationOp op, UUID target, UUID by, bool changed)
                 => Changes.Add((op, target, by, changed));
         }
@@ -300,13 +310,91 @@ namespace osWebRtcVoice.Tests
         }
 
         [Test]
-        public void ATargetNotInTheRoomYetIsStillRecorded_SoItJoinsMuted()
+        public void AMuteOfAnAgentTheCallDoesNotHold_IsRefusedAndNothingIsRecorded()
+        {
+            Rig r = new();
+
+            ChatSessionOutcome o = r.Post(Alice, MuteUpdate(Group, Dave, "voice", true));
+
+            Assert.That(o.Status, Is.EqualTo(HttpStatusCode.NotFound));
+            Assert.That(o.Instrument, Does.Contain(CallModerationHandler.DecisionTargetNotInCall));
+            Assert.That(r.Session.IsVoiceMuted(Dave), Is.False);
+            Assert.That(r.Session.ModerationGeneration, Is.EqualTo(0));
+            Assert.That(r.Effects.Enforced, Is.EqualTo(0), "the room was not asked to mute anyone");
+        }
+
+        [Test]
+        public void AMemberWhoHasLeft_CannotBeMuted_ButCanBeUnmuted()
+        {
+            Rig r = new();
+            Assert.That(r.Post(Alice, MuteUpdate(Group, Bob, "voice", true)).Status, Is.EqualTo(HttpStatusCode.OK));
+            r.Engine.Depart(Group, Bob, DepartureReason.VoiceTeardown);
+            r.Engine.Depart(Group, Carol, DepartureReason.VoiceTeardown);
+
+            ChatSessionOutcome muteCarol = r.Post(Alice, MuteUpdate(Group, Carol, "voice", true));
+            Assert.That(muteCarol.Status, Is.EqualTo(HttpStatusCode.NotFound), "a member who left holds no seat to mute");
+            Assert.That(r.Session.IsVoiceMuted(Carol), Is.False);
+
+            ChatSessionOutcome unmuteBob = r.Post(Alice, MuteUpdate(Group, Bob, "voice", false));
+            Assert.That(unmuteBob.Status, Is.EqualTo(HttpStatusCode.OK), "a mute left on someone who left can be cleared");
+            Assert.That(r.Session.IsVoiceMuted(Bob), Is.False);
+        }
+
+        [Test]
+        public void AnUnresolvableTarget_IsRefusedBeforeAnythingIsRecorded()
+        {
+            Rig r = new();
+            r.Effects.Resolves = false;   // the voice server shows no participant for the agent's id
+
+            ChatSessionOutcome o = r.Post(Alice, MuteUpdate(Group, Bob, "voice", true));
+
+            Assert.That(o.Status, Is.EqualTo(HttpStatusCode.NotFound));
+            Assert.That(o.Instrument, Does.Contain(CallModerationHandler.DecisionTargetUnresolved));
+            Assert.That(r.Session.IsVoiceMuted(Bob), Is.False);
+            Assert.That(r.Session.ModerationGeneration, Is.EqualTo(0), "nothing was recorded");
+            Assert.That(r.Effects.Enforced, Is.EqualTo(0));
+            Assert.That(r.Effects.Changes, Is.Empty);
+        }
+
+        [Test]
+        public void AParticipantThatVanishesBeforeTheMute_IsRefused_TheRecordIsRestored_AndTheRoomToldTheEarlierState()
         {
             Rig r = new();
             r.Effects.Result = ParticipantMuteResult.NotInRoom;
 
-            Assert.That(r.Post(Alice, MuteUpdate(Group, Dave, "voice", true)).Status, Is.EqualTo(HttpStatusCode.OK));
-            Assert.That(r.Session.IsVoiceMuted(Dave), Is.True);
+            ChatSessionOutcome o = r.Post(Alice, MuteUpdate(Group, Bob, "voice", true));
+
+            Assert.That(o.Status, Is.EqualTo(HttpStatusCode.NotFound));
+            Assert.That(o.Instrument, Does.Contain(CallModerationHandler.DecisionTargetUnresolved));
+            Assert.That(r.Session.IsVoiceMuted(Bob), Is.False, "not a mute: the record does not hold it");
+            Assert.That(r.Effects.Changes, Is.Empty);
+            Assert.That(r.Effects.EnforcedTargets, Is.EqualTo(new[] { Bob, UUID.Zero }), "asked once for Bob, then the earlier state to the whole room");
+            Assert.That(r.Effects.Told[1], Is.EqualTo((false, 0)), "the earlier state: nobody muted");
+        }
+
+        [Test]
+        public void AMuteAllThatFailsPartway_IsTakenBackOut_AndTheRoomToldTheEarlierStateAgain()
+        {
+            Rig r = new();
+            r.Effects.Result = ParticipantMuteResult.Failed;
+
+            ChatSessionOutcome all = r.Post(Alice, SessionUpdate(Group, true));
+
+            Assert.That(all.Status, Is.EqualTo(HttpStatusCode.ServiceUnavailable));
+            Assert.That(r.Session.VoiceModerated, Is.False);
+            Assert.That(r.Effects.Enforced, Is.EqualTo(2), "the mute, then the earlier state, so no member stays muted at the room");
+            Assert.That(r.Effects.Told[0].Moderated, Is.True);
+            Assert.That(r.Effects.Told[1].Moderated, Is.False);
+        }
+
+        [Test]
+        public void AMuteAllWithNobodyInTheRoomYet_IsRecorded()
+        {
+            Rig r = new();
+            r.Effects.Result = ParticipantMuteResult.NotInRoom;
+
+            Assert.That(r.Post(Alice, SessionUpdate(Group, true)).Status, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(r.Session.VoiceModerated, Is.True, "each member is muted as it joins");
         }
 
         [Test]

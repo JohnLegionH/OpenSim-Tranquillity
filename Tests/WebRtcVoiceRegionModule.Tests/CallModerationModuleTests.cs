@@ -59,11 +59,20 @@ namespace osWebRtcVoice.Tests
         {
             public readonly List<(UUID Agent, int Room, bool Muted)> Mutes = new();
             public ParticipantMuteResult Answer = ParticipantMuteResult.Applied;
+
+            /// Agents the room has no participant for. Everyone else has one.
+            public readonly HashSet<UUID> NoParticipant = new();
+
+            /// An agent whose mute the room cannot carry out.
+            public UUID FailFor;
             public ParticipantMuteResult SetCallMute(UUID pAgentID, int pRoomNumber, bool pMuted)
             {
                 lock (Mutes) Mutes.Add((pAgentID, pRoomNumber, pMuted));
+                if (NoParticipant.Contains(pAgentID)) return ParticipantMuteResult.NotInRoom;
+                if (pMuted && pAgentID == FailFor) return ParticipantMuteResult.Failed;
                 return Answer;
             }
+            public bool HasCallParticipant(UUID pAgentID, int pRoomNumber) => !NoParticipant.Contains(pAgentID);
             public OSDMap ProvisionVoiceAccountRequest(OSDMap pRequest, UUID pUserID, UUID pScene) => null;
             public OSDMap VoiceSignalingRequest(OSDMap pRequest, UUID pUserID, UUID pScene) => null;
             public OSDMap ProvisionVoiceAccountRequest(IVoiceViewerSession pVSession, OSDMap pRequest, UUID pUserID, UUID pScene) => null;
@@ -335,6 +344,56 @@ namespace osWebRtcVoice.Tests
 
             Assert.That(r.Post(Officer, MuteUpdate(Member, "text", false)), Is.EqualTo((int)HttpStatusCode.OK));
             Assert.That(gate.MaySend(GroupId, Member), Is.True, "unmuting restores it at once");
+        }
+
+        // ---- who a voice mute can name -------------------------------------------------------------------------
+
+        [Test]
+        public void AMuteNamingAnAgentTheRoomHasNoParticipantFor_IsRefused404_AndNothingIsRecordedOrSent()
+        {
+            using Region r = Region.Create(Moderation);
+            r.Call(Officer);
+            r.Call(Member);
+            r.Present(Officer);
+            r.Present(Member);
+            r.Voice.NoParticipant.Add(Member);
+
+            Assert.That(r.Post(Officer, MuteUpdate(Member, "voice", true)), Is.EqualTo((int)HttpStatusCode.NotFound));
+
+            Assert.That(r.Sessions.Get(GroupId).IsVoiceMuted(Member), Is.False);
+            Assert.That(r.Sessions.Get(GroupId).ModerationGeneration, Is.EqualTo(0), "nothing recorded");
+            Assert.That(r.Voice.Mutes, Is.Empty, "and no mute went to the room");
+        }
+
+        [Test]
+        public void AMuteNamingAnAgentThatIsNotInTheCall_IsRefused404()
+        {
+            using Region r = Region.Create(Moderation);
+            r.Call(Officer);
+            r.Present(Officer);
+
+            Assert.That(r.Post(Officer, MuteUpdate(Other, "voice", true)), Is.EqualTo((int)HttpStatusCode.NotFound));
+
+            Assert.That(r.Sessions.Get(GroupId).ModerationGeneration, Is.EqualTo(0));
+            Assert.That(r.Voice.Mutes, Is.Empty);
+        }
+
+        [Test]
+        public void AMuteAllThatFailsForOneMember_LeavesNoMemberMutedInTheRoom()
+        {
+            using Region r = Region.Create(Moderation);
+            foreach (UUID a in new[] { Officer, Member, Other })
+            {
+                r.Call(a);
+                r.Present(a);
+            }
+            r.Voice.FailFor = Other;
+
+            Assert.That(r.Post(Officer, SessionUpdate(true)), Is.EqualTo((int)HttpStatusCode.ServiceUnavailable));
+
+            Assert.That(r.Sessions.Get(GroupId).VoiceModerated, Is.False);
+            foreach (UUID a in new[] { Officer, Member, Other })
+                Assert.That(r.Voice.Mutes.Last(m => m.Agent == a).Muted, Is.False, $"{a}: the room was told the earlier state again");
         }
 
         // ---- a voice mute that cannot be heard ---------------------------------------------------------------

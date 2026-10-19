@@ -20,4 +20,10 @@ public interface INonSpatialParticipantMute
     /// participant in that room.
     /// </summary>
     ParticipantMuteResult SetCallMute(UUID pAgentID, int pRoomNumber, bool pMuted);
+
+    /// <summary>
+    /// Whether the room holds at least one participant for this agent, found by the agent id the service set when it
+    /// joined them. A moderator's mute is refused, and nothing recorded, for an agent this does not find.
+    /// </summary>
+    bool HasCallParticipant(UUID pAgentID, int pRoomNumber);
 }

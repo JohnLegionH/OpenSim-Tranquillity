@@ -26,7 +26,12 @@
  *
  * THE ORDER IS: check, make sure the mute can be heard, record it, make it heard. A voice mute that cannot be
  * heard is refused before anything is recorded; one that was recorded and then could not be applied is taken
- * back out of the record. A mute is never reported as done when it is not.
+ * back out of the record, and the room is told the earlier state again so no part of it stays muted. A mute is
+ * never reported as done when it is not.
+ *
+ * A TARGET IS AN AGENT ID. A voice mute names a member of the call by the id the region set when it joined the
+ * member (the participant's display in the room is that id, never a name). A member the record does not hold, or
+ * whose participant the room cannot be shown to hold, is refused and nothing is recorded.
  *
  * With the feature off (CallModerationSettings.Enabled false) TryHandle returns false having done nothing, so the
  * request goes on to the answer it always had.
@@ -87,8 +92,17 @@ namespace osWebRtcVoice.NonSpatial
         /// <summary>Can a voice mute in this call be heard, with the voice server in use?</summary>
         bool CanEnforceVoice(NonSpatialVoiceSession session);
 
-        /// <summary>Make the record's voice mutes true in the call's room.</summary>
-        ParticipantMuteResult EnforceVoice(NonSpatialVoiceSession session);
+        /// <summary>
+        /// Can the voice server find the participant of this one agent, by the agent id the region set at join? Asked
+        /// before a mute of one agent is recorded.
+        /// </summary>
+        bool CanResolveVoiceTarget(NonSpatialVoiceSession session, UUID target);
+
+        /// <summary>
+        /// Make the record's voice mutes true in the call's room. <paramref name="target"/> is the one agent a mute names
+        /// (nil for the whole call): a room that holds no participant for it answers NotInRoom.
+        /// </summary>
+        ParticipantMuteResult EnforceVoice(NonSpatialVoiceSession session, UUID target);
 
         /// <summary>The record changed (or was asked to): tell the people whose panels show it.</summary>
         void Changed(NonSpatialVoiceSession session, ModerationOp op, UUID target, UUID by, bool changed);
@@ -113,6 +127,8 @@ namespace osWebRtcVoice.NonSpatial
         public const string DecisionVoiceUnsupported = "refused-voice-mute-unsupported";
         public const string DecisionVoiceFailed = "moderation-voice-mute-failed";
         public const string DecisionRecordRefused = "moderation-refused-record";
+        public const string DecisionTargetNotInCall = "moderation-refused-target-not-in-call";
+        public const string DecisionTargetUnresolved = "moderation-refused-target-unresolved";
 
         /// <summary>
         /// Answer a "mute update" or "session update" for a group call. False -- having done nothing -- when moderation is
@@ -188,10 +204,29 @@ namespace osWebRtcVoice.NonSpatial
             }
 
             bool voice = op != ModerationOp.TextMute;
+            if (op == ModerationOp.VoiceMute)
+            {
+                // Only an agent the record knows. An unmute may also clear a mute left on someone who has since left.
+                NonSpatialMember seat = session.Find(target);
+                bool known = (seat is not null && (seat.HoldsSeat || !on))
+                             || (!on && (session.VoiceMuted.Contains(target) || session.VoiceAllowed.Contains(target)));
+                if (!known)
+                {
+                    outcome = Refuse(HttpStatusCode.NotFound, agentID, name, sessionId, DecisionTargetNotInCall, "target=" + target);
+                    return true;
+                }
+            }
             if (voice && !effects.CanEnforceVoice(session))
             {
                 outcome = Refuse(HttpStatusCode.NotImplemented, agentID, name, sessionId, DecisionVoiceUnsupported,
                                  "no voice mute is available with this voice server; nothing recorded");
+                return true;
+            }
+
+            if (op == ModerationOp.VoiceMute && on && !effects.CanResolveVoiceTarget(session, target))
+            {
+                outcome = Refuse(HttpStatusCode.NotFound, agentID, name, sessionId, DecisionTargetUnresolved,
+                                 "target=" + target + " has no participant in the call's room; nothing recorded");
                 return true;
             }
 
@@ -210,15 +245,24 @@ namespace osWebRtcVoice.NonSpatial
 
             if (voice)
             {
-                ParticipantMuteResult heard = effects.EnforceVoice(now);
-                if (heard == ParticipantMuteResult.Unsupported || heard == ParticipantMuteResult.Failed)
+                ParticipantMuteResult heard = effects.EnforceVoice(now, op == ModerationOp.VoiceMute ? target : UUID.Zero);
+                // A mute of one agent whose participant is not in the room is not a mute. (Mute-all with nobody in the
+                // room yet is fine: it is told to the room as each member joins.)
+                bool unresolved = heard == ParticipantMuteResult.NotInRoom && op == ModerationOp.VoiceMute && on;
+                if (heard == ParticipantMuteResult.Unsupported || heard == ParticipantMuteResult.Failed || unresolved)
                 {
-                    // Not done: take it back out of the record, so it does not say something the room does not do.
+                    // Not done: take it back out of the record, so it does not say something the room does not do,
+                    // and say the earlier state to the room again, so nothing stays muted that the record does not hold.
                     if (changed)
-                        engine.Moderate(sessionId, agentID, op, target, op == ModerationOp.VoiceMute ? wasMuted : !on);
+                    {
+                        SessionOutcome restored = engine.Moderate(sessionId, agentID, op, target, op == ModerationOp.VoiceMute ? wasMuted : !on);
+                        effects.EnforceVoice(restored.Session ?? now, UUID.Zero);
+                    }
                     bool unsupported = heard == ParticipantMuteResult.Unsupported;
-                    outcome = Refuse(unsupported ? HttpStatusCode.NotImplemented : HttpStatusCode.ServiceUnavailable, agentID, name,
-                                     sessionId, unsupported ? DecisionVoiceUnsupported : DecisionVoiceFailed, "taken back out of the record");
+                    outcome = unresolved
+                        ? Refuse(HttpStatusCode.NotFound, agentID, name, sessionId, DecisionTargetUnresolved, "target=" + target + "; nothing recorded")
+                        : Refuse(unsupported ? HttpStatusCode.NotImplemented : HttpStatusCode.ServiceUnavailable, agentID, name,
+                                 sessionId, unsupported ? DecisionVoiceUnsupported : DecisionVoiceFailed, "taken back out of the record");
                     return true;
                 }
             }

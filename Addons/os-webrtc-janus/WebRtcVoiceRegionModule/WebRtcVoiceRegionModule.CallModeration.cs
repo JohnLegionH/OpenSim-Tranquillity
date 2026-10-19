@@ -148,7 +148,7 @@ public partial class WebRtcVoiceRegionModule
 
     // Make the record's voice mutes true in the call's room. Mixer: one send for the whole room. Stock plugin: one
     // mute request for each member who is in the room.
-    private ParticipantMuteResult EnforceCallVoice(NonSpatialVoiceSession session)
+    private ParticipantMuteResult EnforceCallVoice(NonSpatialVoiceSession session, UUID target = default)
     {
         Func<UUID, bool> moderator = a => IsCallModerator(session.Owner, a);
         int room = CallRoomNumber(session);
@@ -166,6 +166,8 @@ public partial class WebRtcVoiceRegionModule
                 ParticipantMuteResult r = mute.SetCallMute(m.AgentId, room, muted);
                 if (r == ParticipantMuteResult.Unsupported || r == ParticipantMuteResult.Failed)
                     return r;
+                if (r == ParticipantMuteResult.NotInRoom && m.AgentId == target)
+                    return r;   // the one agent a mute names has no participant: that is not a mute
                 if (r == ParticipantMuteResult.Applied)
                     worst = ParticipantMuteResult.Applied;
             }
@@ -187,6 +189,17 @@ public partial class WebRtcVoiceRegionModule
             m_log.LogWarning(e, "{LogHeader} call voice mute send failed for room {Room}", logHeader, room);
             return ParticipantMuteResult.Failed;
         }
+    }
+
+    // Whether a voice mute of this one agent can reach a participant. The stock AudioBridge is asked for the agent's
+    // participant (found by the agent id the region set at join); the mixer is told the agent id and applies it when
+    // the agent is in the room, so there the call's record of the seat is what there is.
+    private bool CanResolveCallVoiceTarget(NonSpatialVoiceSession session, UUID target)
+    {
+        if (!m_stockPlugin)
+            return session.Find(target)?.HoldsSeat == true;
+        INonSpatialParticipantMute mute = StockCallMute();
+        return mute is not null && mute.HasCallParticipant(target, CallRoomNumber(session));
     }
 
     // A member's provision into a call was admitted. A call that mutes anyone is told to the room again, so the new
@@ -321,7 +334,8 @@ public partial class WebRtcVoiceRegionModule
         private readonly WebRtcVoiceRegionModule m_module;
         public CallEffects(WebRtcVoiceRegionModule module) { m_module = module; }
         public bool CanEnforceVoice(NonSpatialVoiceSession session) => m_module.CanEnforceCallVoice();
-        public ParticipantMuteResult EnforceVoice(NonSpatialVoiceSession session) => m_module.EnforceCallVoice(session);
+        public ParticipantMuteResult EnforceVoice(NonSpatialVoiceSession session, UUID target) => m_module.EnforceCallVoice(session, target);
+        public bool CanResolveVoiceTarget(NonSpatialVoiceSession session, UUID target) => m_module.CanResolveCallVoiceTarget(session, target);
         public void Changed(NonSpatialVoiceSession session, ModerationOp op, UUID target, UUID by, bool changed)
         {
             if (changed) m_module.CallModerationChanged(session, op, target, by);

@@ -155,6 +155,38 @@ namespace osWebRtcVoice.Tests
         }
 
         [Test]
+        public async Task TwoMembersWithTheSameAvatarName_MutingOneLeavesTheOtherHeard()
+        {
+            StockJanusEnvironment.IgnoreUnlessPeerAvailable();
+            using StockRegion region = NewRegion();
+            // Every avatar a test scene makes is called the same thing, so the three here share one name. A mute names
+            // the agent id the region set at join, never the name.
+            Assert.That(region.Scene.GetScenePresence(Member).Name, Is.EqualTo(region.Scene.GetScenePresence(Late).Name),
+                        "precondition: the two members share an avatar name");
+            using Joined officer = await JoinCall(region, Officer, OfficerHz);
+            using Joined member = await JoinCall(region, Member, MemberHz);
+            using Joined late = await JoinCall(region, Late, LateHz);
+            await InRoom(officer.Answer.Room, 3);
+            await Task.Delay(1500);
+            List<Measurement> before = await Hear(officer, MemberHz, LateHz);
+            Assert.That(Measurement.MedianShare(before, MemberHz), Is.GreaterThan(0.2), "precondition: the first is heard");
+            Assert.That(Measurement.MedianShare(before, LateHz), Is.GreaterThan(0.2), "precondition: the second is heard");
+
+            CapAnswer muted = await region.ChatSessionAsync(Officer, MuteUpdate(Member, true));
+            Assert.That(muted.Status, Is.EqualTo(200));
+
+            List<Measurement> after = await Hear(officer, MemberHz, LateHz);
+            Assert.That(Measurement.MedianShare(after, MemberHz), Is.LessThan(0.05), "the one muted is no longer heard");
+            Assert.That(Measurement.MedianShare(after, LateHz), Is.GreaterThan(0.5), "the other, with the same name, still is");
+            List<Measurement> lateHears = await Hear(late, OfficerHz, MemberHz);
+            Assert.That(Measurement.MedianShare(lateHears, MemberHz), Is.LessThan(0.05));
+            Assert.That(Measurement.MedianShare(lateHears, OfficerHz), Is.GreaterThan(0.5));
+            await region.LogoutAsync(officer);
+            await region.LogoutAsync(member);
+            await region.LogoutAsync(late);
+        }
+
+        [Test]
         public async Task MuteAll_SilencesEveryoneButTheModerator_AndALaterJoinerIsSilent()
         {
             StockJanusEnvironment.IgnoreUnlessPeerAvailable();

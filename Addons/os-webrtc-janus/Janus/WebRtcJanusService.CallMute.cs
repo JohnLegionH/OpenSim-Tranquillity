@@ -6,6 +6,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 
 using Microsoft.Extensions.Logging;
@@ -15,6 +16,12 @@ using OpenMetaverse.StructuredData;
 namespace osWebRtcVoice;
 
 // Per-participant mute in a call's room through the AudioBridge's own moderator mute.
+//
+// A participant is found by the id this service set when it joined the room: the AudioBridge "display" of every
+// participant this service joins is the agent id (JanusRoom.JoinRoom), taken from the authenticated request, never
+// from anything the viewer sends and never an avatar name. So the agent id names the same participants whichever
+// region server joined them, and every participant of that agent is acted on together (an agent with two viewer
+// sessions in one room has two participants). A display that is not exactly that agent id is never a match.
 public partial class WebRtcJanusService : INonSpatialParticipantMute
 {
     // INonSpatialParticipantMute
@@ -31,22 +38,58 @@ public partial class WebRtcJanusService : INonSpatialParticipantMute
         }
     }
 
+    // INonSpatialParticipantMute
+    public bool HasCallParticipant(UUID pAgentID, int pRoomNumber)
+    {
+        try
+        {
+            (List<long> found, ParticipantMuteResult why) = ParticipantsOfAsync(pAgentID, pRoomNumber).GetAwaiter().GetResult();
+            return found.Count > 0;
+        }
+        catch (Exception e)
+        {
+            _log.LogWarning(e, $"{LogHeader} HasCallParticipant failed for agent {pAgentID}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The ids of every participant in the room whose display is exactly this agent's id, as the gateway lists them.
+    /// The gateway is asked each time, so a participant joined through another region server is found as well as one
+    /// this process joined. The result code is Applied when the room could be read and NotInRoom/Failed otherwise.
+    /// </summary>
+    private async Task<(List<long> Participants, ParticipantMuteResult Read)> ParticipantsOfAsync(UUID pAgentID, int pRoomNumber)
+    {
+        var found = new List<long>();
+        JanusViewerSession svc = await EnsureServiceSessionAsync().ConfigureAwait(false);
+        if (svc?.AudioBridge is null)
+            return (found, ParticipantMuteResult.Failed);
+
+        AudioBridgeResp listed = await svc.AudioBridge.SendAudioBridgeMsg(new AudioBridgeListParticipantsReq(pRoomNumber)).ConfigureAwait(false);
+        if (listed is null)
+            return (found, ParticipantMuteResult.Failed);
+        if (listed.AudioBridgeReturnCode != "participants")
+            return (found, listed.AudioBridgeErrorCode == WebRtcJanusService.JANUS_NO_SUCH_ROOM_ERROR_CODE
+                ? ParticipantMuteResult.NotInRoom : ParticipantMuteResult.Failed);
+
+        if (listed.PluginRespData.TryGetValue("participants", out OSD all) && all is OSDArray entries)
+            foreach (OSD one in entries)
+                if (one is OSDMap entry && UUID.TryParse(entry["display"].AsString(), out UUID display) && display == pAgentID)
+                {
+                    long id = entry["id"].AsLong();
+                    if (id != 0 && !found.Contains(id))
+                        found.Add(id);
+                }
+        return (found, ParticipantMuteResult.Applied);
+    }
+
     private async Task<ParticipantMuteResult> SetCallMuteAsync(UUID pAgentID, int pRoomNumber, bool pMuted)
     {
-        // The agent's joined session in that room, if this process holds it. The registry is process-wide.
-        long participant = 0;
-        lock (VoiceViewerSession.ViewerSessions)
-        {
-            foreach (IVoiceViewerSession s in VoiceViewerSession.ViewerSessions.Values)
-            {
-                if (s is JanusViewerSession js && js.AgentId == pAgentID && !js.Spatial
-                    && js.Room is not null && js.Room.RoomId == pRoomNumber && js.ParticipantId != 0)
-                {
-                    participant = js.ParticipantId;
-                    break;
-                }
-            }
-        }
+        (List<long> participants, ParticipantMuteResult read) = await ParticipantsOfAsync(pAgentID, pRoomNumber).ConfigureAwait(false);
+        if (read != ParticipantMuteResult.Applied)
+            return read;
+        if (participants.Count == 0)
+            return ParticipantMuteResult.NotInRoom;
 
         // The service's own handle sends the request: the mute is a room-level request, and a participant's handle
         // may be closing.
@@ -54,27 +97,14 @@ public partial class WebRtcJanusService : INonSpatialParticipantMute
         if (svc?.AudioBridge is null)
             return ParticipantMuteResult.Failed;
 
-        if (participant == 0)
+        // All of the agent's participants or none that the caller can rely on: the first one that cannot be muted ends
+        // the attempt, and the caller takes the record back and asks again for the earlier state.
+        foreach (long participant in participants)
         {
-            // Not joined through this process. A participant joins under its agent id as its display name, so the room
-            // itself says whether the agent is there, whichever region server it joined through.
-            AudioBridgeResp listed = await svc.AudioBridge.SendAudioBridgeMsg(new AudioBridgeListParticipantsReq(pRoomNumber)).ConfigureAwait(false);
-            if (listed is null)
-                return ParticipantMuteResult.Failed;
-            if (listed.AudioBridgeReturnCode != "participants")
-                return listed.AudioBridgeErrorCode == WebRtcJanusService.JANUS_NO_SUCH_ROOM_ERROR_CODE
-                    ? ParticipantMuteResult.NotInRoom : ParticipantMuteResult.Failed;
-            string display = pAgentID.ToString();
-            if (listed.PluginRespData.TryGetValue("participants", out OSD found) && found is OSDArray all)
-                foreach (OSD one in all)
-                    if (one is OSDMap entry && string.Equals(entry["display"].AsString(), display, StringComparison.OrdinalIgnoreCase))
-                    {
-                        participant = entry["id"].AsLong();
-                        break;
-                    }
-            if (participant == 0)
-                return ParticipantMuteResult.NotInRoom;
+            ParticipantMuteResult r = await svc.AudioBridge.SetParticipantMute(pRoomNumber, participant, pMuted).ConfigureAwait(false);
+            if (r != ParticipantMuteResult.Applied)
+                return r;
         }
-        return await svc.AudioBridge.SetParticipantMute(pRoomNumber, participant, pMuted).ConfigureAwait(false);
+        return ParticipantMuteResult.Applied;
     }
 }
