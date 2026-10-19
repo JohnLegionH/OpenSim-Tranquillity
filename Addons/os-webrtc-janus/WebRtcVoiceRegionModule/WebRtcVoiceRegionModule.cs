@@ -72,27 +72,6 @@ public partial class WebRtcVoiceRegionModule : ISharedRegionModule
 
     private IConfig m_Config;
 
-    // [WebRtcVoice] VisibilityFeederEnabled / VisibilityEmitEnabled. Off by default: the feeder pushes
-    // peer_ctl batches, which only a mixer that implements them understands.
-    public const bool DefaultVisibilityFeederEnabled = false;
-    public const bool DefaultVisibilityEmitEnabled = false;
-
-    public static bool ReadVisibilityFeederEnabled(IConfig pConfig)
-        => pConfig.GetBoolean("VisibilityFeederEnabled", DefaultVisibilityFeederEnabled);
-
-    public static bool ReadVisibilityEmitEnabled(IConfig pConfig)
-        => pConfig.GetBoolean("VisibilityEmitEnabled", DefaultVisibilityEmitEnabled);
-
-    // [WebRtcVoice] VisibilityArmingEnabled. Arming, room epochs, generations, heartbeats and
-    // acting on the mixer's reply. DISABLED by default: with the key
-    // absent or false the sim emits exactly the payloads it sent before arming existed (VisibilityKnobOffGoldenTests).
-    // Arming deliberately does not ride VisibilityEmitEnabled: that key is already true on existing
-    // grids, so riding it would have changed the wire on deploy.
-    public const bool DefaultVisibilityArmingEnabled = false;
-
-    public static bool ReadVisibilityArmingEnabled(IConfig pConfig)
-        => pConfig.GetBoolean("VisibilityArmingEnabled", DefaultVisibilityArmingEnabled);
-
     // [WebRtcVoice] GroupVoiceEnabled. OFF by default, so an install that never sets
     // it behaves exactly as it does today -- a group "call" falls through to the A2A arm and 404s,
     // and a group provision cannot exist because no room key was ever handed out. Opt-in only.
@@ -108,13 +87,6 @@ public partial class WebRtcVoiceRegionModule : ISharedRegionModule
 
     public static bool ReadA2AVoiceEnabled(IConfig pConfig)
         => pConfig.GetBoolean("A2AVoiceEnabled", DefaultA2AVoiceEnabled);
-
-    // [WebRtcVoice] VoiceModerationEnabled: parcel voice moderation (the SpatialVoiceModerationRequest
-    // capability and the moderation console commands). Off by default: the capability is not advertised.
-    public const bool DefaultVoiceModerationEnabled = false;
-
-    public static bool ReadVoiceModerationEnabled(IConfig pConfig)
-        => pConfig.GetBoolean("VoiceModerationEnabled", DefaultVoiceModerationEnabled);
 
     // [WebRtcVoice] GroupVoiceRequireVoicePower. The viewer separates GP_SESSION_JOIN (may be in the
     // session, roles_constants.h:144) from GP_SESSION_VOICE (may hear/talk, :145); we require both by
@@ -136,23 +108,6 @@ public partial class WebRtcVoiceRegionModule : ISharedRegionModule
     public static bool ReadAdhocVoiceEnabled(IConfig pConfig)
         => pConfig.GetBoolean("AdhocVoiceEnabled", DefaultAdhocVoiceEnabled);
 
-    // Per-listener visibility feeder, one service per region. Off by default.
-    private bool m_VisibilityFeederEnabled = DefaultVisibilityFeederEnabled;
-    private int m_VisibilityTickMs = 250;
-    // Emit the matrix to the mixer (peer_ctl_batch), separate from running the matrix. Off by default;
-    // false runs the feeder matrix-only for diagnostics.
-    private bool m_VisibilityEmitEnabled = DefaultVisibilityEmitEnabled;
-    // Arming (see ReadVisibilityArmingEnabled). Off by default.
-    private bool m_VisibilityArmingEnabled = DefaultVisibilityArmingEnabled;
-    // [JanusWebRtcVoice] admin endpoint/secret for the peer_ctl_batch sink this module now OWNS
-    // (option c-new): the sink is constructed here and handed directly to the feeder's sender, so
-    // sink and sender share one ALC and IPeerCtlBatchSink identity matches.
-    private string m_JanusAdminUri = string.Empty;
-    private string m_JanusAdminToken = string.Empty;
-    private int m_AdminTimeoutMs = 5000;
-    private int m_VisibilityRoomSendConcurrency = JanusPeerCtlBatchSink.DefaultRoomSendConcurrency;
-    private readonly Dictionary<Scene, VoiceVisibilityService> m_visibilityServices = new();
-
     // Avatar-to-avatar invitation registry. One per module
     // instance (one per region-server process), shared by every scene this shared module serves; thread-safe
     // because ChatSessionRequest arrives on cap HTTP threads. Cross-instance A2A is out of scope.
@@ -170,7 +125,6 @@ public partial class WebRtcVoiceRegionModule : ISharedRegionModule
     /// <summary>[WebRtcVoice] AdhocVoiceEnabled. False keeps the earlier stub behaviour.</summary>
     private bool m_adhocVoiceEnabled = DefaultAdhocVoiceEnabled;
     private bool m_a2aVoiceEnabled = DefaultA2AVoiceEnabled;
-    private bool m_moderationEnabled = DefaultVoiceModerationEnabled;
 
     // ISharedRegionModule.Initialize
     public void Initialise(IConfigSource config)
@@ -184,12 +138,9 @@ public partial class WebRtcVoiceRegionModule : ISharedRegionModule
                 _MessageDetails = m_Config.GetBoolean("MessageDetails", false);
                 InitialiseRefusalCache();
                 InitialiseStunServers();
-                m_VisibilityFeederEnabled = ReadVisibilityFeederEnabled(m_Config);
-                m_VisibilityTickMs = m_Config.GetInt("VisibilityTickMs", 250);
-                m_VisibilityEmitEnabled = ReadVisibilityEmitEnabled(m_Config);
-                m_VisibilityArmingEnabled = ReadVisibilityArmingEnabled(m_Config);
+                InitialiseVisibility(config);
                 m_a2aVoiceEnabled = ReadA2AVoiceEnabled(m_Config);
-                m_moderationEnabled = ReadVoiceModerationEnabled(m_Config);
+                InitialiseModeration();
 
                 // Group voice, opt-in. The membership and power lookups are bound per-request
                 // to the scene's IGroupsModule (grid state via the groups service, so the same answer
@@ -222,41 +173,10 @@ public partial class WebRtcVoiceRegionModule : ISharedRegionModule
                     m_nonSpatialStore,
                     new INonSpatialAdmission[] { new P2PAdmission(), new AdhocAdmission(), m_groupVoice.ToAdmissionOrNull() },
                     JanusAudioBridge.ReadGridId(config));
-                // Rooms addressed concurrently within one send. A latency budget, not a
-                // throughput knob � see JanusPeerCtlBatchSink.DefaultRoomSendConcurrency.
-                m_VisibilityRoomSendConcurrency = m_Config.GetInt("VisibilityRoomSendConcurrency",
-                    JanusPeerCtlBatchSink.DefaultRoomSendConcurrency);
-
-                // Sink endpoint from [JanusWebRtcVoice] (the same section the Janus service reads).
-                IConfig janusCfg = config.Configs["JanusWebRtcVoice"];
-                if (janusCfg is not null)
-                {
-                    m_JanusAdminUri = janusCfg.GetString("JanusGatewayAdminURI", string.Empty);
-                    m_JanusAdminToken = janusCfg.GetString("AdminAPIToken", string.Empty);
-                    m_AdminTimeoutMs = janusCfg.GetInt("AdminTimeoutMs", 5000);
-                }
-
-                // Console surfaces. The moderation commands are registered only with moderation enabled, and the
-                // peer_ctl counters only with the visibility feeder enabled; with the feeder off the commands
-                // would have nothing to report.
-                if (m_moderationEnabled)
-                    new VoiceModerationCommands(SnapshotVisibilityServices).Register();
-                if (m_VisibilityFeederEnabled)
-                    new VoiceVisibilityCommands(SnapshotVisibilityServices).Register();
 
                 m_log.LogInformation($"{logHeader}: enabled");
             }
         }
-    }
-
-    // A copy of the per-region service map for the console commands. A copy, not the live
-    // dictionary: a console handler resolves names, enumerates parcels and writes to a terminal,
-    // and none of that may happen while holding the lock that the CAP handler and RegionLoaded
-    // contend for.
-    private List<KeyValuePair<Scene, VoiceVisibilityService>> SnapshotVisibilityServices()
-    {
-        lock (m_visibilityServices)
-            return new List<KeyValuePair<Scene, VoiceVisibilityService>>(m_visibilityServices);
     }
 
     // ISharedRegionModule.PostInitialize
@@ -282,15 +202,7 @@ public partial class WebRtcVoiceRegionModule : ISharedRegionModule
         lock (m_scenes)
             m_scenes.Remove(scene);
 
-        lock (m_visibilityServices)
-        {
-            if (m_visibilityServices.TryGetValue(scene, out VoiceVisibilityService svc))
-            {
-                svc.Stop();
-                m_visibilityServices.Remove(scene);
-                scene.UnregisterModuleInterface<VoiceVisibilityService>(svc);
-            }
-        }
+        StopVisibilityService(scene);
     }
 
     // ISharedRegionModule.RegionLoaded
@@ -364,58 +276,14 @@ public partial class WebRtcVoiceRegionModule : ISharedRegionModule
 
             AdvertiseStunServers(simFeatures);
 
-            // Start the per-listener visibility feeder for this region (opt-in).
-            if (m_VisibilityFeederEnabled)
-            {
-                // Build the sink HERE and hand it directly to the service — same ALC, no scene
-                // registry (option c-new). Null when emission is off or admin config is missing;
-                // the service/sender then runs matrix-only and logs once.
-                IPeerCtlBatchSink sink = BuildPeerCtlSinkOrNull(scene);
-                VoiceVisibilityService svc = new VoiceVisibilityService(scene, m_VisibilityTickMs, m_VisibilityEmitEnabled, sink,
-                    TimeSpan.FromMilliseconds(m_AdminTimeoutMs), m_VisibilityArmingEnabled);
-                svc.Start();
-                lock (m_visibilityServices)
-                    m_visibilityServices[scene] = svc;
-                // The connector module (same assembly, separate module instance) reaches
-                // the per-region service — room record + moderation store — through the scene, the
-                // same way it reaches INPCModule. Concrete type, deliberately: no other assembly
-                // needs it.
-                scene.RegisterModuleInterface<VoiceVisibilityService>(svc);
-            }
+            StartVisibilityService(scene);
         }
-    }
-
-    // Construct the Janus peer_ctl_batch sink for this scene, or null to run matrix-only.
-    // Null when emission is disabled (no log — intentional) or when [JanusWebRtcVoice] admin
-    // endpoint/secret is absent (one loud WARN — the config saved us before, keep it loud).
-    private IPeerCtlBatchSink BuildPeerCtlSinkOrNull(Scene scene)
-    {
-        if (!m_VisibilityEmitEnabled)
-            return null;
-
-        if (string.IsNullOrEmpty(m_JanusAdminUri) || string.IsNullOrEmpty(m_JanusAdminToken))
-        {
-            m_log.LogWarning($"{logHeader}[Visibility]: VisibilityEmitEnabled but [JanusWebRtcVoice] " +
-                $"JanusGatewayAdminURI/AdminAPIToken missing; region \"{scene.RegionInfo.RegionName}\" runs matrix-only (no emission)");
-            return null;
-        }
-
-        // The sink logs its fallback room number once at Info, and the service hands it the room
-        // resolver in the service constructor immediately below this call.
-        return new JanusPeerCtlBatchSink(m_JanusAdminUri, m_JanusAdminToken,
-            TimeSpan.FromMilliseconds(m_AdminTimeoutMs), scene.RegionInfo.RegionID, scene.RegionInfo.RegionName,
-            m_VisibilityRoomSendConcurrency);
     }
 
     // ISharedRegionModule.Close
     public void Close()
     {
-        lock (m_visibilityServices)
-        {
-            foreach (VoiceVisibilityService svc in m_visibilityServices.Values)
-                svc.Stop();
-            m_visibilityServices.Clear();
-        }
+        StopAllVisibilityServices();
     }
 
     // ISharedRegionModule.Name
@@ -471,135 +339,8 @@ public partial class WebRtcVoiceRegionModule : ISharedRegionModule
                     ChatSessionRequest(httpRequest, httpResponse, agentID, scene);
                 }));
 
-        // Parcel voice moderation (parity with SL viewer 26.1), only when [WebRtcVoice] VoiceModerationEnabled is
-        // set. RegisterSimpleHandler both ADVERTISES the capability in the seed set (the viewer's getCapability
-        // resolves it) and routes the POST, identical to the three above.
-        if (m_moderationEnabled)
-            caps.RegisterSimpleHandler("SpatialVoiceModerationRequest",
-                    new SimpleStreamHandler("/" + UUID.Random(), (IOSHttpRequest httpRequest, IOSHttpResponse httpResponse) =>
-                    {
-                        SpatialVoiceModerationRequest(httpRequest, httpResponse, agentID, scene);
-                    }));
+        RegisterModerationCapability(scene, agentID, caps);
     }
-
-    /// <summary>
-    /// Handles the viewer's SpatialVoiceModerationRequest CAP (parity with SL viewer 26.1 parcel
-    /// voice moderation). First half: authorise and record sticky per-parcel moderation
-    /// state in memory. NOTHING consumes the store yet — the matrix enforcement rule is a separate
-    /// commit. The body shape is fixed by the viewer (llnearbyvoicemoderation.cpp):
-    ///   individual: { "operand": "mute" | "unmute", "agent_id": &lt;uuid&gt; }
-    ///   everyone:   { "operand": "mute_all" | "unmute_all" }
-    /// The body carries NO parcel id, so scope is resolved from the requester's position — this is
-    /// what makes moderation parcel-bound rather than viewer-declared.
-    /// </summary>
-    public void SpatialVoiceModerationRequest(IOSHttpRequest request, IOSHttpResponse response, UUID agentID, Scene scene)
-    {
-        if (request.HttpMethod != "POST")
-        {
-            m_log.LogDebug($"{logHeader}[Moderation]: not a POST request. Agent={agentID}");
-            response.StatusCode = (int)HttpStatusCode.NotFound;
-            return;
-        }
-
-        OSDMap map = BodyToMap(request, "SpatialVoiceModerationRequest");
-        if (map is null)
-        {
-            m_log.LogError($"{logHeader}[Moderation]: no request data. Agent={agentID}");
-            response.StatusCode = (int)HttpStatusCode.NoContent;
-            return;
-        }
-
-        // (2) Operand — conform to the viewer's shape exactly; reject anything else. mute/unmute
-        // carry an agent_id; mute_all/unmute_all do not. No other fields are read.
-        if (!map.TryGetString("operand", out string operand))
-        {
-            m_log.LogWarning($"{logHeader}[Moderation]: missing 'operand'. Agent={agentID}");
-            response.StatusCode = (int)HttpStatusCode.BadRequest;
-            return;
-        }
-        bool everyoneOp   = operand == "mute_all" || operand == "unmute_all";
-        bool individualOp = operand == "mute" || operand == "unmute";
-        if (!everyoneOp && !individualOp)
-        {
-            m_log.LogWarning($"{logHeader}[Moderation]: unknown operand \"{operand}\". Agent={agentID}");
-            response.StatusCode = (int)HttpStatusCode.BadRequest;
-            return;
-        }
-        UUID targetAgent = UUID.Zero;
-        if (individualOp)
-        {
-            if (!map.ContainsKey("agent_id") || (targetAgent = map["agent_id"].AsUUID()).IsZero())
-            {
-                m_log.LogWarning($"{logHeader}[Moderation]: operand \"{operand}\" without a valid agent_id. Agent={agentID}");
-                response.StatusCode = (int)HttpStatusCode.BadRequest;
-                return;
-            }
-        }
-
-        // (3) Resolve the target parcel from the REQUESTER's position. The body names no parcel,
-        // so this is the only trustworthy scope and it pins mute_all to the moderator's own parcel
-        // rather than a viewer-declared region.
-        if (scene.LandChannel is null || !scene.TryGetScenePresence(agentID, out ScenePresence sp))
-        {
-            m_log.LogWarning($"{logHeader}[Moderation]: cannot resolve requester presence/land in region \"{scene.Name}\". Agent={agentID}");
-            response.StatusCode = (int)HttpStatusCode.NotFound;
-            return;
-        }
-        ILandObject parcel = scene.LandChannel.GetLandObject(sp.AbsolutePosition.X, sp.AbsolutePosition.Y);
-        LandData land = parcel?.LandData;
-        if (land is null)
-        {
-            m_log.LogWarning($"{logHeader}[Moderation]: could not resolve a parcel at the requester's position. Agent={agentID}");
-            response.StatusCode = (int)HttpStatusCode.NotFound;
-            return;
-        }
-
-        // (4) Authorise server-side; never trust the viewer's own isNearbyChatModerator() gate.
-        // Compose owner / estate-manager / group-ModerateChat, the pieces the ban path uses.
-        if (!MayModerateVoice(scene, land, agentID))
-        {
-            m_log.LogWarning($"{logHeader}[Moderation]: DENIED {operand} on parcel {land.GlobalID} (\"{land.Name}\") for {agentID}: not owner, estate manager, or group moderator");
-            response.StatusCode = (int)HttpStatusCode.Forbidden;
-            return;
-        }
-
-        // (5) The store lives on the per-region visibility service. The matrix is the single
-        // enforcement point, so if the feeder is disabled there is no way to enforce a mute —
-        // refuse loudly rather than silently accept an unenforceable one.
-        VoiceVisibilityService svc;
-        lock (m_visibilityServices)
-            m_visibilityServices.TryGetValue(scene, out svc);
-        if (svc is null)
-        {
-            m_log.LogWarning($"{logHeader}[Moderation]: {operand} authorised on parcel {land.GlobalID} but the visibility feeder is disabled in region \"{scene.Name}\"; cannot enforce, not recorded.");
-            response.StatusCode = (int)HttpStatusCode.NotImplemented;
-            return;
-        }
-
-        switch (operand)
-        {
-            case "mute_all":   svc.Moderation.SetMuteEveryone(land.GlobalID, true);  break;
-            case "unmute_all": svc.Moderation.SetMuteEveryone(land.GlobalID, false); break;
-            case "mute":       svc.Moderation.MuteAgent(land.GlobalID, targetAgent);   break;
-            case "unmute":     svc.Moderation.UnmuteAgent(land.GlobalID, targetAgent); break;
-        }
-
-        // (6) Diagnosable from day one — accepted op with parcel GlobalID, operand, requester.
-        if (individualOp)
-            m_log.LogInformation($"{logHeader}[Moderation]: {operand} agent {targetAgent} on parcel {land.GlobalID} (\"{land.Name}\") by {agentID}");
-        else
-            m_log.LogInformation($"{logHeader}[Moderation]: {operand} on parcel {land.GlobalID} (\"{land.Name}\") by {agentID}");
-
-        response.RawBuffer = llsdUndefAnswerBytes;
-        response.StatusCode = (int)HttpStatusCode.OK;
-    }
-
-    // SL's three authorisation cases: land owner, estate manager/owner, or a member with
-    // GroupPowers.ModerateChat on a group-owned parcel. The composition now lives in the shared
-    // VoiceModerationAuth so the matrix's moderator-exemption uses exactly the same rule; behaviour
-    // is unchanged. Server-side only — the viewer's own gate is UI and spoofable.
-    private bool MayModerateVoice(Scene scene, LandData land, UUID agentID)
-        => VoiceModerationAuth.MayModerate(scene, land, agentID);
 
     /// <summary>
     /// Callback for a client request for Voice Account Details
@@ -884,11 +625,7 @@ public partial class WebRtcVoiceRegionModule : ISharedRegionModule
             // by the same gate (the service keeps its earlier record; the close/leave path clears it).
             if (A2AProvisionAdmission.RecordsListenerRoom(admission.Kind))
             {
-                int? provisionedRoom = resp.TryGetInt("room", out int provRoom) ? provRoom : (int?)null;
-                VoiceVisibilityService svc;
-                lock (m_visibilityServices)
-                    m_visibilityServices.TryGetValue(scene, out svc);
-                svc?.OnListenerProvisioned(agentID, provisionedRoom);
+                RecordListenerRoom(resp, agentID, scene);
             }
             else if (A2AProvisionAdmission.RecordsA2ASession(admission) && resp.TryGetString("viewer_session", out string provVs) && !string.IsNullOrEmpty(provVs))
             {

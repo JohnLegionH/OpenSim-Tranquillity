@@ -233,39 +233,6 @@ public partial class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
         }
     }
 
-    // Ensure the spatial room for a parcel exists, through the same service session the console
-    // uses. SelectRoom is the provisioning path's own call, so the room is created with the same flags a viewer's
-    // would be, including vis_authority when this sim arms (JanusAudioBridge.ShouldDeclareVisAuthority), and its
-    // process-wide coalescing makes a second call for a live room a no-op.
-    public int? EnsureSpatialRoom(UUID pSceneID, int pParcelLocalID)
-    {
-        try
-        {
-            return EnsureSpatialRoomAsync(pSceneID, pParcelLocalID).Result;
-        }
-        catch (Exception e)
-        {
-            _log.LogWarning(e, $"{LogHeader} EnsureSpatialRoom failed for scene {pSceneID} parcel {pParcelLocalID}");
-            return null;
-        }
-    }
-
-    private async Task<int?> EnsureSpatialRoomAsync(UUID pSceneID, int pParcelLocalID)
-    {
-        for (int attempt = 0; attempt < 2; attempt++)
-        {
-            JanusViewerSession svc = await EnsureServiceSessionAsync(pForceReconnect: attempt > 0).ConfigureAwait(false);
-            if (svc?.AudioBridge is null)
-                return null;
-            // The ensure asks the mixer every time (since 0.8i every select does).
-            JanusRoom room = await svc.AudioBridge.EnsureRoom(pSceneID.ToString(), "local", true, pParcelLocalID,
-                string.Empty).ConfigureAwait(false);
-            if (room is not null)
-                return room.RoomId;
-        }
-        return null;
-    }
-
     // Disconnect the viewer session. This is called when the viewer logs out or hangs up.
     private void DisconnectViewerSession(JanusViewerSession pViewerSession)
     {

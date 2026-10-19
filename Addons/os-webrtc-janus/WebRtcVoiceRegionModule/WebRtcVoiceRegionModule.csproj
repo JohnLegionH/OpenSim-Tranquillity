@@ -13,6 +13,8 @@
     <Compile Include="WebRtcVoiceRegionModule.cs" />
     <Compile Include="WebRtcVoiceRegionModule.Stun.cs" />
     <Compile Include="WebRtcVoiceRegionModule.JanusHardening.cs" />
+    <Compile Include="WebRtcVoiceRegionModule.Visibility.cs" />
+    <Compile Include="WebRtcVoiceRegionModule.Moderation.cs" />
     <Compile Include="LandBan.cs" />
     <Compile Include="ProvisionParcelResolver.cs" />
     <Compile Include="FeederWorldFromScene.cs" />
