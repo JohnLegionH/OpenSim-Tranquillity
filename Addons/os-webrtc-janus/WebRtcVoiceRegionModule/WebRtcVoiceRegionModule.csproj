@@ -21,6 +21,7 @@
     <Compile Include="LandBan.cs" />
     <Compile Include="ProvisionParcelResolver.cs" />
     <Compile Include="ChildParcelProximity.cs" />
+    <Compile Include="ProvisionParcelAccess.cs" />
     <Compile Include="FeederWorldFromScene.cs" />
     <Compile Include="FeederResumeLatch.cs" />
     <Compile Include="VoiceVisibilityService.cs" />

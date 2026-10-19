@@ -35,6 +35,7 @@
     <Compile Include="A2ALifecycleTests.cs" />
     <Compile Include="ProvisionParcelResolverTests.cs" />
     <Compile Include="ChildParcelProximityTests.cs" />
+    <Compile Include="ProvisionParcelAccessTests.cs" />
     <Compile Include="A2AClientCloseGuardTests.cs" />
     <Compile Include="VisibilityDefaultsTests.cs" />
     <Compile Include="VisibilityArmingDefaultsTests.cs" />

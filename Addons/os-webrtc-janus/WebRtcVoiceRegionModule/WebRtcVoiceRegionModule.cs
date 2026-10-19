@@ -347,9 +347,27 @@ public partial class WebRtcVoiceRegionModule : ISharedRegionModule
                         m_log.LogWarning("{LogHeader}[ProvisionVoice]: parcel_local_id {ClientId} from agent {AgentId} does not match the avatar's parcel {ServerLocalId} in \"{RegionName}\" — using the server parcel",
                             logHeader, clientParcelId, agentID, res.ServerLocalId, scene.Name);
 
-                    if (!scene.RegionInfo.EstateSettings.TaxFree && (land.Flags & (uint)ParcelFlags.AllowVoiceChat) == 0)
+                    // Voice off on the parcel and bans are enforced whether or not the estate is TaxFree: the
+                    // sim's own ban and restrict answers are false under TaxFree, so the ban list is also read
+                    // directly (ProvisionParcelAccess). Done before any parcel_local_id rewrite below.
+                    EstateSettings estateSettings = scene.RegionInfo.EstateSettings;
+                    ProvisionAccess access = ProvisionParcelAccess.Check(
+                        land,
+                        parcel.IsRestrictedFromLand(agentID) || parcel.IsBannedFromLand(agentID),
+                        a => scene.Permissions.IsAdministrator(a),
+                        a => estateSettings.IsEstateManagerOrOwner(a),
+                        agentID,
+                        Util.UnixTimeSinceEpoch());
+                    if (access == ProvisionAccess.VoiceOff)
                     {
                         m_log.LogDebug($"{logHeader}[ProvisionVoice]:parcel voice not allowed");
+                        response.RawBuffer = llsdUndefAnswerBytes;
+                        response.StatusCode = (int)HttpStatusCode.Forbidden;
+                        return;
+                    }
+                    if (access == ProvisionAccess.Barred)
+                    {
+                        m_log.LogDebug($"{logHeader}[ProvisionVoice]:agent not allowed on parcel");
                         response.RawBuffer = llsdUndefAnswerBytes;
                         response.StatusCode = (int)HttpStatusCode.Forbidden;
                         return;
@@ -367,20 +385,6 @@ public partial class WebRtcVoiceRegionModule : ISharedRegionModule
                     }
                     // else ParcelSource.ClientHint: the client's parcel_local_id is forwarded unchanged (pre-slice-1).
 
-                    // This
-                    // check used to be chained as the "else" of the UseEstateVoiceChan branch
-                    // above, so setting the estate-channel flag skipped ban/restrict enforcement
-                    // entirely. Room selection (which Janus room to route to) and access control
-                    // (may this agent have voice here at all) are independent decisions, so the
-                    // check now runs on both the estate-channel and per-parcel paths.
-                    if(parcel.IsRestrictedFromLand(agentID) || parcel.IsBannedFromLand(agentID))
-                    {
-                        // check Z distance?
-                        m_log.LogDebug($"{logHeader}[ProvisionVoice]:agent not allowed on parcel");
-                        response.RawBuffer = llsdUndefAnswerBytes;
-                        response.StatusCode = (int)HttpStatusCode.Forbidden;
-                        return;
-                    }
                 }
             }
         }
