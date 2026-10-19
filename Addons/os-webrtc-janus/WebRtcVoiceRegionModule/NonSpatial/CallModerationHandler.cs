@@ -212,6 +212,19 @@ namespace osWebRtcVoice.NonSpatial
                 }
             }
 
+            outcome = Apply(engine, effects, session, agentID, op, target, on, name);
+            return true;
+        }
+
+        /// <summary>
+        /// Carry out one moderation decision on a call, once the asker has been judged entitled to make it: check the
+        /// target, make sure a voice mute can be heard, record it, make it heard, and tell the people whose panels show
+        /// it. Used by the viewer's requests (after the power check) and by the operator console. A voice mute that cannot
+        /// be carried out is taken back out of the record, and the room is told the earlier state again.
+        /// </summary>
+        public static ChatSessionOutcome Apply(INonSpatialSessions engine, ICallModerationEffects effects, NonSpatialVoiceSession session,
+                                               UUID agentID, ModerationOp op, UUID target, bool on, string name)
+        {
             bool voice = op != ModerationOp.TextMute;
             if (op == ModerationOp.VoiceMute)
             {
@@ -221,33 +234,29 @@ namespace osWebRtcVoice.NonSpatial
                              || (!on && (session.VoiceMuted.Contains(target) || session.VoiceAllowed.Contains(target)));
                 if (!known)
                 {
-                    outcome = Refuse(HttpStatusCode.NotFound, agentID, name, sessionId, DecisionTargetNotInCall, "target=" + target);
-                    return true;
+                    return Refuse(HttpStatusCode.NotFound, agentID, name, session.SessionId, DecisionTargetNotInCall, "target=" + target);
                 }
             }
             if (voice && !effects.CanEnforceVoice(session))
             {
-                outcome = Refuse(HttpStatusCode.NotImplemented, agentID, name, sessionId, DecisionVoiceUnsupported,
+                return Refuse(HttpStatusCode.NotImplemented, agentID, name, session.SessionId, DecisionVoiceUnsupported,
                                  "no voice mute is available with this voice server; nothing recorded");
-                return true;
             }
 
             if (op == ModerationOp.VoiceMute && on && !effects.CanResolveVoiceTarget(session, target))
             {
-                outcome = Refuse(HttpStatusCode.NotFound, agentID, name, sessionId, DecisionTargetUnresolved,
+                return Refuse(HttpStatusCode.NotFound, agentID, name, session.SessionId, DecisionTargetUnresolved,
                                  "target=" + target + " has no participant in the call's room; nothing recorded");
-                return true;
             }
 
             bool wasMuted = op == ModerationOp.VoiceMute && session.IsVoiceMuted(target);
-            SessionOutcome recorded = engine.Moderate(sessionId, agentID, op, target, on);
+            SessionOutcome recorded = engine.Moderate(session.SessionId, agentID, op, target, on);
             if (!recorded.Ok)
             {
                 HttpStatusCode code = recorded.Decision == SessionOutcome.StoreUnavailable ? HttpStatusCode.ServiceUnavailable
                                     : recorded.Decision == SessionOutcome.NoSuchSession ? HttpStatusCode.NotFound
                                     : HttpStatusCode.Forbidden;
-                outcome = Refuse(code, agentID, name, sessionId, DecisionRecordRefused, recorded.Decision);
-                return true;
+                return Refuse(code, agentID, name, session.SessionId, DecisionRecordRefused, recorded.Decision);
             }
             NonSpatialVoiceSession now = recorded.Session ?? session;
             bool changed = recorded.Decision == SessionOutcome.ModerationChanged;
@@ -264,26 +273,24 @@ namespace osWebRtcVoice.NonSpatial
                     // and say the earlier state to the room again, so nothing stays muted that the record does not hold.
                     if (changed)
                     {
-                        SessionOutcome restored = engine.Moderate(sessionId, agentID, op, target, op == ModerationOp.VoiceMute ? wasMuted : !on);
+                        SessionOutcome restored = engine.Moderate(session.SessionId, agentID, op, target, op == ModerationOp.VoiceMute ? wasMuted : !on);
                         effects.EnforceVoice(restored.Session ?? now, UUID.Zero);
                     }
                     bool unsupported = heard == ParticipantMuteResult.Unsupported;
-                    outcome = unresolved
-                        ? Refuse(HttpStatusCode.NotFound, agentID, name, sessionId, DecisionTargetUnresolved, "target=" + target + "; nothing recorded")
+                    return unresolved
+                        ? Refuse(HttpStatusCode.NotFound, agentID, name, session.SessionId, DecisionTargetUnresolved, "target=" + target + "; nothing recorded")
                         : Refuse(unsupported ? HttpStatusCode.NotImplemented : HttpStatusCode.ServiceUnavailable, agentID, name,
-                                 sessionId, unsupported ? DecisionVoiceUnsupported : DecisionVoiceFailed, "taken back out of the record");
-                    return true;
+                                 session.SessionId, unsupported ? DecisionVoiceUnsupported : DecisionVoiceFailed, "taken back out of the record");
                 }
             }
 
             effects.Changed(now, op, target, agentID, changed);
-            outcome = new ChatSessionOutcome
+            return new ChatSessionOutcome
             {
                 Status = HttpStatusCode.OK,
-                Instrument = Line(agentID, name, sessionId, changed ? DecisionApplied : DecisionUnchanged,
+                Instrument = Line(agentID, name, session.SessionId, changed ? DecisionApplied : DecisionUnchanged,
                                   $"op={op} target={(target == UUID.Zero ? "-" : target.ToString())} on={on} generation={now.ModerationGeneration}"),
             };
-            return true;
         }
 
         private static bool ParseMuteUpdate(OSDMap req, out ModerationOp op, out UUID target, out bool on, out string why)

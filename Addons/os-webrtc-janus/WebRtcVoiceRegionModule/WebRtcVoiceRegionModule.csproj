@@ -21,6 +21,8 @@
     <Compile Include="WebRtcVoiceRegionModule.AdhocVoice.cs" />
     <Compile Include="WebRtcVoiceRegionModule.CallModeration.cs" />
     <Compile Include="WebRtcVoiceRegionModule.CallRemoval.cs" />
+    <Compile Include="WebRtcVoiceRegionModule.CallConsole.cs" />
+    <Compile Include="CallModerationCommands.cs" />
     <Compile Include="LandBan.cs" />
     <Compile Include="ProvisionParcelResolver.cs" />
     <Compile Include="ChildParcelProximity.cs" />

@@ -58,6 +58,7 @@ public partial class WebRtcVoiceRegionModule
         InitialiseCallRemovalCache();
         m_callModeration = new CallModerationPolicy { Settings = settings, IsMember = GroupIsMember, Powers = GroupPowersOf };
         m_callChatGate = new CallGroupChatGate(m_nonSpatial, cache: m_gridSessions is not null);
+        RegisterCallConsole();
         m_log.LogInformation("{LogHeader} CALL MODERATION enabled ([WebRtcVoice] CallModerationEnabled): moderators of a group call "
             + "(Moderate Group Chat) can mute a member's voice or text, or the whole call's voice. Voice mutes use {Path}. "
             + "Roster flags are re-checked every {Seconds} s. A removal lasts {Lasts}", logHeader,
@@ -100,7 +101,9 @@ public partial class WebRtcVoiceRegionModule
         return true;
     }
 
-    private bool IsCallModerator(UUID group, UUID agent) => m_callModeration.IsUsable && m_callModeration.MayModerate(agent, group);
+    // A conference has no group and so no moderators: nobody in it is exempt from a mute.
+    private bool IsCallModerator(UUID group, UUID agent)
+        => group != UUID.Zero && m_callModeration.IsUsable && m_callModeration.MayModerate(agent, group);
 
     // ---- voice -------------------------------------------------------------------------------------
 
@@ -208,7 +211,7 @@ public partial class WebRtcVoiceRegionModule
     // member is silenced if the call says so and hears only who it should.
     private void SyncCallVoiceOnJoin(UUID agentID, NonSpatialVoiceSession session)
     {
-        if (!m_callModeration.IsUsable || session is null || session.Type != NonSpatialSessionType.Group)
+        if (!m_callModeration.IsUsable || session is null || session.Type == NonSpatialSessionType.P2P)
             return;
         NonSpatialVoiceSession current = m_nonSpatial?.Get(session.SessionId, agentID) ?? session;
         if (!current.VoiceModerated && current.VoiceMuted.Count == 0)
