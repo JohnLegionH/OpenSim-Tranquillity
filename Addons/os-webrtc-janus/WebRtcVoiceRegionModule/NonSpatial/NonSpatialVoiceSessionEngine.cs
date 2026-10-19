@@ -205,12 +205,12 @@ namespace osWebRtcVoice.NonSpatial
             AdmissionVerdict v = Admission(NonSpatialSessionType.Adhoc).CanStart(creator, UUID.Zero, invitees ?? new List<UUID>());
             if (!v.Admitted) return SessionOutcome.Fail(v.Decision);
 
-            // No seat is held yet, so the people who can be rung are the conference cap. An invitation
-            // reserves nothing, so a list that fits can still be more than will accept; this bound only
-            // stops one request ringing the whole grid. A list over it is refused whole, never cut to its
-            // first entries.
+            // The conference cap counts the person who starts the call, who takes the first seat, so the
+            // people who can be rung are the cap minus one. An invitation reserves nothing, so a list that
+            // fits can still be more than will accept; this bound only stops one request ringing the whole
+            // grid. A list over it is refused whole, never cut to its first entries.
             List<UUID> distinct = DistinctInvitees(invitees, creator);
-            int room = NonSpatialCaps.Effective(NonSpatialSessionType.Adhoc, requestedCap);
+            int room = Math.Max(NonSpatialCaps.Effective(NonSpatialSessionType.Adhoc, requestedCap) - 1, 0);
             if (distinct.Count > room)
             {
                 NoteRefusal(creator, SessionOutcome.TooManyInvitees,

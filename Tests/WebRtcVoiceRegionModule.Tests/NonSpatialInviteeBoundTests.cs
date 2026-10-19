@@ -83,8 +83,8 @@ namespace osWebRtcVoice.Tests
         public void AStartWithMoreNewInviteesThanTheConferenceHasRoomForIsRefusedWhole()
         {
             NonSpatialVoiceSessionEngine e = Engine();
-            // The conference cap is 50, and no seat is held before the start, so 50 can be invited and 51 cannot.
-            Assert.That(AdhocVoiceChatSession.TryHandleStartConference(StartBody(People(51)), Alice, e, RegionA, true,
+            // The conference cap is 50 and it includes whoever starts the call, so 49 can be invited and 50 cannot.
+            Assert.That(AdhocVoiceChatSession.TryHandleStartConference(StartBody(People(50)), Alice, e, RegionA, true,
                 out ChatSessionOutcome outcome), Is.True);
 
             Assert.That(outcome.Status, Is.EqualTo(HttpStatusCode.Forbidden));
@@ -97,20 +97,31 @@ namespace osWebRtcVoice.Tests
         public void AStartAtTheLimitIsAccepted()
         {
             NonSpatialVoiceSessionEngine e = Engine();
-            Assert.That(AdhocVoiceChatSession.TryHandleStartConference(StartBody(People(50)), Alice, e, RegionA, true,
+            Assert.That(AdhocVoiceChatSession.TryHandleStartConference(StartBody(People(49)), Alice, e, RegionA, true,
                 out ChatSessionOutcome outcome), Is.True);
 
             Assert.That(outcome.Status, Is.EqualTo(HttpStatusCode.OK));
             Assert.That(e.Store.All(), Has.Count.EqualTo(1));
-            Assert.That(e.Store.All()[0].Members, Has.Count.EqualTo(51));
+            Assert.That(e.Store.All()[0].Members, Has.Count.EqualTo(50), "the starter and 49 invitees fill the cap of 50");
+        }
+
+        [Test]
+        public void TheStarterCountsAgainstARequestedSmallerCapToo()
+        {
+            NonSpatialVoiceSessionEngine e = Engine();
+
+            Assert.That(e.StartAdhoc(Alice, UUID.Random(), RegionA, People(5), requestedCap: 5).Decision,
+                        Is.EqualTo(SessionOutcome.TooManyInvitees), "five invitees and the starter are six people");
+            Assert.That(e.StartAdhoc(Alice, UUID.Random(), RegionA, People(4), requestedCap: 5).Ok, Is.True,
+                        "four invitees and the starter are five");
         }
 
         [Test]
         public void RepeatsAndTheCreatorDoNotCountAgainstTheLimit()
         {
             NonSpatialVoiceSessionEngine e = Engine();
-            List<UUID> asked = People(50);
-            asked.AddRange(People(50));      // every invitee twice
+            List<UUID> asked = People(49);
+            asked.AddRange(People(49));      // every invitee twice
             asked.Add(Alice);                // the creator inviting themselves
             asked.Add(UUID.Zero);
 
