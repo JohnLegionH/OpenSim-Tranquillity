@@ -79,6 +79,7 @@
     <Compile Include="VoiceSessionServiceTests.cs" />
     <Compile Include="VoiceSessionWireTests.cs" />
     <Compile Include="GridStoreResilienceTests.cs" />
+    <Compile Include="GridStoreProcessTests.cs" />
     <Compile Include="StockModerationTests.cs" />
     <Compile Include="ProvisionPassthroughTests.cs" />
     <Compile Include="StockPluginSwitchTests.cs" />
