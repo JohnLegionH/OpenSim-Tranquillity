@@ -25,8 +25,7 @@ namespace osWebRtcVoice
             in EstateView estate)
         {
             // (1) Voice enable. If the source's voice is off, it is audible to no one.
-            //     Retains the TaxFree override on the parcel voice-ENABLE flag (semantics doc
-            //     2.2); Decision 2(b) fixed only the BAN void, not this enable override.
+            //     The estate's TaxFree flag does not switch a voice-off parcel back on.
             if (!SourceVoiceAudible(sourceParcel, estate))
                 return true;
 
@@ -67,9 +66,9 @@ namespace osWebRtcVoice
         public static bool IsModerationMuted(in AgentView source, in ParcelView sourceParcel)
             => sourceParcel.ExcludesByModeration(source.Id);
 
-        /// voice ON for a source's parcel: estate master AND (TaxFree OR parcel AllowVoiceChat).
+        /// voice ON for a source's parcel: estate master AND parcel AllowVoiceChat.
         internal static bool SourceVoiceAudible(in ParcelView sourceParcel, in EstateView estate)
-            => estate.AllowVoice && (estate.TaxFree || sourceParcel.AllowVoiceChat);
+            => estate.AllowVoice && sourceParcel.AllowVoiceChat;
 
         // ---- SeeAVs symmetric-hiding predicate --------------------------------------------
         //
