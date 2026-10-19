@@ -45,6 +45,13 @@ namespace osWebRtcVoice.NonSpatial
         public string Token { get; set; }
         public bool RingSent { get; set; }
         public List<string> Invited { get; set; } = new List<string>();
+
+        // Moderation. Absent from a copy a service without it made, which reads as no moderation.
+        public bool VoiceModerated { get; set; }
+        public int ModerationGeneration { get; set; }
+        public List<string> VoiceMuted { get; set; } = new List<string>();
+        public List<string> VoiceAllowed { get; set; } = new List<string>();
+        public List<string> TextMuted { get; set; } = new List<string>();
         public List<MemberData> Members { get; set; } = new List<MemberData>();
     }
 
@@ -113,6 +120,11 @@ namespace osWebRtcVoice.NonSpatial
                 });
                 if (s.WasInvited(m.AgentId)) d.Invited.Add(m.AgentId.ToString());
             }
+            d.VoiceModerated = s.VoiceModerated;
+            d.ModerationGeneration = s.ModerationGeneration;
+            foreach (UUID a in s.VoiceMuted) d.VoiceMuted.Add(a.ToString());
+            foreach (UUID a in s.VoiceAllowed) d.VoiceAllowed.Add(a.ToString());
+            foreach (UUID a in s.TextMuted) d.TextMuted.Add(a.ToString());
             return d;
         }
 
@@ -143,7 +155,17 @@ namespace osWebRtcVoice.NonSpatial
             if (d.Invited != null)
                 foreach (string a in d.Invited)
                     if (UUID.TryParse(a, out UUID invited)) s.MarkInvited(invited);
+            s.RestoreModeration(d.VoiceModerated, d.ModerationGeneration, Ids(d.VoiceMuted), Ids(d.VoiceAllowed), Ids(d.TextMuted));
             return s;
+        }
+
+        private static List<UUID> Ids(List<string> text)
+        {
+            List<UUID> ids = new List<UUID>();
+            if (text != null)
+                foreach (string t in text)
+                    if (UUID.TryParse(t, out UUID id)) ids.Add(id);
+            return ids;
         }
 
         public static SessionOutcome ToOutcome(SessionReply r)

@@ -88,6 +88,12 @@ namespace osWebRtcVoice.NonSpatial
         /// </summary>
         string CarrierKey(UUID sessionId, UUID agent);
 
+        /// <summary>
+        /// Record a moderator's decision (a mute of one agent's voice or text, or of the whole call's voice). Whether the
+        /// asker may moderate is decided by the caller. The outcome says whether the record changed.
+        /// </summary>
+        SessionOutcome Moderate(UUID sessionId, UUID by, ModerationOp op, UUID target, bool on);
+
         string IssueToken(UUID sessionId, UUID agent);
 
         /// <summary>As <see cref="IssueToken(UUID, UUID)"/>, and says whether a null result is because the store could not be reached.</summary>

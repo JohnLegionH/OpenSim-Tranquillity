@@ -112,6 +112,10 @@ namespace osWebRtcVoice.NonSpatial
                         ? m_service.VerifyRing(s[0], s[1], s[2], ringType) : null;
                 case "carrierkey":
                     return Ids(r, out s, "session", "agent") ? m_service.CarrierKey(s[0], s[1]) : null;
+                case "moderate":
+                    return Ids(r, out s, "session", "by") && OptionalId(r, "target", out UUID modTarget) && Int(r, "op", out int modOp)
+                           && Int(r, "on", out int modOn)
+                        ? m_service.Moderate(s[0], s[1], modOp, modTarget, modOn != 0) : null;
                 case "issuetoken":
                     return Ids(r, out s, "session", "agent") ? m_service.IssueToken(s[0], s[1]) : null;
                 case "takeconferencerequest":

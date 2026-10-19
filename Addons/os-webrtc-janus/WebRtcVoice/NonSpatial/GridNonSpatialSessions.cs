@@ -220,6 +220,9 @@ namespace osWebRtcVoice.NonSpatial
         public SessionOutcome VerifyRing(UUID sessionId, UUID target, UUID claimedCaller, NonSpatialSessionType type)
             => Outcome(_service.VerifyRing(sessionId, target, claimedCaller, (int)type), "verifyring");
 
+        public SessionOutcome Moderate(UUID sessionId, UUID by, ModerationOp op, UUID target, bool on)
+            => Outcome(_service.Moderate(sessionId, by, (int)op, target, on), "moderate");
+
         public string IssueToken(UUID sessionId, UUID agent) => IssueToken(sessionId, agent, out _);
 
         public string IssueToken(UUID sessionId, UUID agent, out bool unavailable)

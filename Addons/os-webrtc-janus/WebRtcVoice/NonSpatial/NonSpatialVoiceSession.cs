@@ -81,6 +81,17 @@ namespace osWebRtcVoice.NonSpatial
         Expired = 5,
     }
 
+    /// <summary>What a moderation request changes in the record.</summary>
+    public enum ModerationOp
+    {
+        /// <summary>One agent's voice.</summary>
+        VoiceMute = 0,
+        /// <summary>One agent's text.</summary>
+        TextMute = 1,
+        /// <summary>The whole call's voice ("mute all" / "unmute all").</summary>
+        VoiceModerated = 2,
+    }
+
     /// <summary>One agent's membership of one non-spatial voice session. Mutated only under the store's lock.</summary>
     public sealed class NonSpatialMember
     {
@@ -201,6 +212,98 @@ namespace osWebRtcVoice.NonSpatial
 
         public bool WasInvited(UUID agent) => _invited.Contains(agent);
 
+        // ---- moderation ------------------------------------------------------------------------
+        //
+        // What the call's moderators have decided, kept in the record so it follows the call wherever the record
+        // lives. Authorisation is not here: the region decides who may ask, the record only holds the result.
+        // A mute-all outlives the room emptying (EndRingCycle leaves it alone); all of it goes with the record.
+
+        /// <summary>Most agents one of the moderation sets holds. A request past it is refused.</summary>
+        public const int MaxModerationEntries = 1000;
+
+        private readonly HashSet<UUID> _voiceMuted = new HashSet<UUID>();
+        private readonly HashSet<UUID> _voiceAllowed = new HashSet<UUID>();
+        private readonly HashSet<UUID> _textMuted = new HashSet<UUID>();
+
+        /// <summary>The moderators muted every voice in the call ("mute all"). Later joiners are muted too.</summary>
+        public bool VoiceModerated { get; internal set; }
+
+        /// <summary>Bumped by exactly one for each moderation change that changed something.</summary>
+        public int ModerationGeneration { get; internal set; }
+
+        /// <summary>Agents a moderator muted by name.</summary>
+        public IReadOnlyCollection<UUID> VoiceMuted => _voiceMuted;
+
+        /// <summary>While the call is moderated: agents a moderator let speak by name.</summary>
+        public IReadOnlyCollection<UUID> VoiceAllowed => _voiceAllowed;
+
+        /// <summary>Agents whose text a moderator muted.</summary>
+        public IReadOnlyCollection<UUID> TextMuted => _textMuted;
+
+        public bool IsTextMuted(UUID agent) => _textMuted.Contains(agent);
+
+        /// <summary>
+        /// Whether moderation silences this agent's voice. A name beats the mode: a muted agent is silent, an allowed
+        /// agent speaks while the call is moderated. Who is a moderator (never muted) is for the region to say.
+        /// </summary>
+        public bool IsVoiceMuted(UUID agent)
+            => _voiceMuted.Contains(agent) || (VoiceModerated && !_voiceAllowed.Contains(agent));
+
+        public bool HasModeration => VoiceModerated || _voiceMuted.Count > 0 || _textMuted.Count > 0;
+
+        /// <summary>Applies one change. True when it changed something (and the generation moved).</summary>
+        internal bool ApplyModeration(ModerationOp op, UUID target, bool on)
+        {
+            bool changed;
+            switch (op)
+            {
+                case ModerationOp.VoiceMute:
+                    if (on)
+                        changed = _voiceMuted.Add(target) | _voiceAllowed.Remove(target);
+                    else
+                        changed = _voiceMuted.Remove(target) | (VoiceModerated && _voiceAllowed.Add(target));
+                    break;
+                case ModerationOp.TextMute:
+                    changed = on ? _textMuted.Add(target) : _textMuted.Remove(target);
+                    break;
+                case ModerationOp.VoiceModerated:
+                    if (on)
+                    {
+                        changed = !VoiceModerated || _voiceAllowed.Count > 0;
+                        VoiceModerated = true;
+                        _voiceAllowed.Clear();
+                    }
+                    else
+                    {
+                        changed = VoiceModerated || _voiceMuted.Count > 0 || _voiceAllowed.Count > 0;
+                        VoiceModerated = false;
+                        _voiceMuted.Clear();
+                        _voiceAllowed.Clear();
+                    }
+                    break;
+                default:
+                    return false;
+            }
+            if (changed) ModerationGeneration++;
+            return changed;
+        }
+
+        internal bool ModerationFull(ModerationOp op, bool on)
+            => on && ((op == ModerationOp.VoiceMute && _voiceMuted.Count >= MaxModerationEntries)
+                      || (op == ModerationOp.TextMute && _textMuted.Count >= MaxModerationEntries))
+               || (!on && op == ModerationOp.VoiceMute && VoiceModerated && _voiceAllowed.Count >= MaxModerationEntries);
+
+        /// <summary>Restores moderation read from a copy of the record.</summary>
+        internal void RestoreModeration(bool voiceModerated, int generation, IEnumerable<UUID> muted,
+                                        IEnumerable<UUID> allowed, IEnumerable<UUID> textMuted)
+        {
+            VoiceModerated = voiceModerated;
+            ModerationGeneration = generation;
+            if (muted != null) foreach (UUID a in muted) _voiceMuted.Add(a);
+            if (allowed != null) foreach (UUID a in allowed) _voiceAllowed.Add(a);
+            if (textMuted != null) foreach (UUID a in textMuted) _textMuted.Add(a);
+        }
+
         /// <summary>
         /// Who has already used the ring they were marked invited for (see the engine's VerifyRing). A ring is
         /// one-shot: a fresh invitation entitles the agent to one ring, and a second claim to the same ring is a replay.
@@ -285,6 +388,9 @@ namespace osWebRtcVoice.NonSpatial
         {
             get
             {
+                // A group's mute-all (and the names muted) outlive an empty room: the group's session is made again
+                // when the room refills, and the moderators' decision has to still stand. It goes with the idle sweep.
+                if (Type == NonSpatialSessionType.Group && HasModeration) return false;
                 foreach (NonSpatialMember m in _members.Values)
                     if (m.State == MemberState.Invited || m.HoldsSeat || (m.InChat && Type != NonSpatialSessionType.P2P)) return false;
                 return true;

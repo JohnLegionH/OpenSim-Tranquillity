@@ -90,6 +90,9 @@ namespace osWebRtcVoice.NonSpatial
         public SessionReply CarrierKey(UUID sessionId, UUID agent)
             => Call("carrierkey", ("session", sessionId), ("agent", agent));
 
+        public SessionReply Moderate(UUID sessionId, UUID by, int op, UUID target, bool on)
+            => Call("moderate", ("session", sessionId), ("by", by), ("target", target), ("op", op), ("on", on ? 1 : 0));
+
         public SessionReply IssueToken(UUID sessionId, UUID agent)
             => Call("issuetoken", ("session", sessionId), ("agent", agent));
 

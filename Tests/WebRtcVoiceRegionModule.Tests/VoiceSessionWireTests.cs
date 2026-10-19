@@ -199,6 +199,8 @@ namespace osWebRtcVoice.Tests
             Assert.That(region.VerifyRing(id, dave, Alice, NonSpatialSessionType.Adhoc).Decision, Is.EqualTo("refused-ring-used"), "over the wire too");
             Assert.That(region.CarrierKey(id, Alice), Has.Length.GreaterThanOrEqualTo(CarrierAuth.MinSecretLength), "a seated member is given the key");
             Assert.That(region.CarrierKey(id, UUID.Random()), Is.Null, "a stranger is not");
+            Assert.That(region.Moderate(id, Alice, ModerationOp.TextMute, Bob, true).Decision, Is.EqualTo("moderation-changed"));
+            Assert.That(region.Get(id).IsTextMuted(Bob), Is.True, "the record crossed the wire");
             Assert.That(region.TryTakeConferenceRequest(Alice), Is.True);
             Assert.That(region.DepartByViewerSession(Bob, "v", DepartureReason.VoiceTeardown), Has.Count.EqualTo(1));
             Assert.That(region.Depart(id, Alice, DepartureReason.VoiceTeardown).Ok, Is.True);
@@ -377,6 +379,8 @@ namespace osWebRtcVoice.Tests
             c.MarkInvited(s, new List<UUID> { a, b });
             c.VerifyRing(s, b, a, 3);
             c.CarrierKey(s, a);
+            c.Moderate(s, a, 0, b, true);
+            c.Moderate(s, a, 2, UUID.Zero, false);
             c.IssueToken(s, a);
             c.TakeConferenceRequest(a);
             c.Get(s, a);
@@ -400,6 +404,8 @@ namespace osWebRtcVoice.Tests
                 $"METHOD=markinvited&session={s}&agents={a}%2c{b}",
                 $"METHOD=verifyring&session={s}&target={b}&caller={a}&type=3",
                 $"METHOD=carrierkey&session={s}&agent={a}",
+                $"METHOD=moderate&session={s}&by={a}&target={b}&op=0&on=1",
+                $"METHOD=moderate&session={s}&by={a}&target={UUID.Zero}&op=2&on=0",
                 $"METHOD=issuetoken&session={s}&agent={a}",
                 $"METHOD=takeconferencerequest&agent={a}",
                 $"METHOD=get&session={s}&agent={a}",

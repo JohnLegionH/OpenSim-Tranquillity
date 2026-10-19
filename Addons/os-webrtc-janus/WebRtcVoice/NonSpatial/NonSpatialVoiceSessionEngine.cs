@@ -72,6 +72,15 @@ namespace osWebRtcVoice.NonSpatial
 
         /// <summary>The grid session service did not answer, so nothing was started, joined or changed.</summary>
         public const string StoreUnavailable = "refused-store-unavailable";
+
+        /// <summary>A moderation change that changed the record.</summary>
+        public const string ModerationChanged = "moderation-changed";
+
+        /// <summary>A moderation change that left the record as it was (already so).</summary>
+        public const string ModerationUnchanged = "moderation-unchanged";
+
+        /// <summary>The call's moderation list is full, or the request names nobody.</summary>
+        public const string ModerationRefused = "refused-moderation";
     }
 
     public sealed class NonSpatialVoiceSessionEngine : INonSpatialSessions
@@ -789,6 +798,31 @@ namespace osWebRtcVoice.NonSpatial
                 if (a == UUID.Zero) continue;
                 if (sess.Find(a) == null) sess.Upsert(a, MemberState.Invited, UUID.Zero, now);
             }
+        }
+
+        // ---- moderation ------------------------------------------------------------------------
+
+        /// <summary>
+        /// Record a moderator's decision in the session: one agent's voice or text, or the whole call's voice. The
+        /// engine trusts <paramref name="by"/>: whether that agent may moderate is the region's decision. Idempotent;
+        /// a request that changes nothing says so and leaves the generation alone. Never for a call between two people.
+        /// </summary>
+        public SessionOutcome Moderate(UUID sessionId, UUID by, ModerationOp op, UUID target, bool on)
+        {
+            if (!Enum.IsDefined(typeof(ModerationOp), op) || by == UUID.Zero
+                || (op != ModerationOp.VoiceModerated && target == UUID.Zero))
+                return SessionOutcome.Fail(SessionOutcome.ModerationRefused);
+            DateTime now = _clock();
+            return _store.Mutate(sessionId, sess =>
+            {
+                if (sess.Type == NonSpatialSessionType.P2P)
+                    return SessionOutcome.Fail(SessionOutcome.ModerationRefused, sess);
+                if (sess.ModerationFull(op, on))
+                    return SessionOutcome.Fail(SessionOutcome.ModerationRefused, sess);
+                bool changed = sess.ApplyModeration(op, target, on);
+                if (changed) sess.LastSeenUtc = now;
+                return new SessionOutcome(true, changed ? SessionOutcome.ModerationChanged : SessionOutcome.ModerationUnchanged, sess);
+            }, SessionOutcome.Fail(SessionOutcome.NoSuchSession));
         }
 
         // ---- credentials -----------------------------------------------------------------------

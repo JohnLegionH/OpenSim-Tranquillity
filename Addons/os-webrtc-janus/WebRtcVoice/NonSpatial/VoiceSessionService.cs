@@ -163,6 +163,11 @@ namespace osWebRtcVoice.NonSpatial
             return new SessionReply { Ok = key != null, Decision = key != null ? "carrier-key" : SessionOutcome.NoSuchSession, Text = key };
         }
 
+        public SessionReply Moderate(UUID sessionId, UUID by, int op, UUID target, bool on)
+            => Enum.IsDefined(typeof(ModerationOp), op)
+                ? Reply(_engine.Moderate(sessionId, by, (ModerationOp)op, target, on), by)
+                : SessionReply.Fail("refused-bad-request");
+
         public SessionReply IssueToken(UUID sessionId, UUID agent)
         {
             string token = _engine.IssueToken(sessionId, agent);
