@@ -62,6 +62,14 @@ Conventions used below:
 | `VisibilityTickMs` | `250` | Milliseconds between visibility recomputations. | Feeder. |
 | `VisibilityRoomSendConcurrency` | `4` | Number of rooms addressed concurrently within one batch send. | Emission. |
 | `VisibilityArmingEnabled` | `false` | Create spatial rooms declaring the sim as their visibility authority (with epochs and heartbeats). The mixer withholds audio from a room whose authority goes silent. Takes effect only when the feeder and emission are also on. | Slvoice mixer; feeder; emission. |
+| `PositionFeedEnabled` | `false` | Send the mixer each voice participant's position as the region sees it (`peer_pos`, see the mixer feed protocol, section 6.6), so a viewer's own claim can be compared with it. Nothing is computed or sent while this is off. A mixer that does not advertise `vis_protocol` 3 is sent nothing. | Slvoice mixer at `vis_protocol` 3; feeder; emission. |
+| `PositionFeedMode` | `observe` | `observe` or `enforce`. `enforce` is accepted but not active yet; positions are sent in observe mode. | `PositionFeedEnabled`. |
+| `PositionFeedTickMs` | `500` | Milliseconds between position evaluations. | `PositionFeedEnabled`. |
+| `PositionFeedKeepAliveMs` | `1000` | A full snapshot of each room is sent at least this often (not less than the tick). | `PositionFeedEnabled`. |
+| `PositionFeedMoveThresholdCm` | `100` | Centimetres a participant must move from the last point sent before it is sent again between snapshots. | `PositionFeedEnabled`. |
+| `PositionFeedMarginCm` | `500` | Centimetres of difference the mixer should accept at the moment of a sample. | `PositionFeedEnabled`. |
+| `PositionFeedSpeedFloorCmS` | `800` | The smallest speed allowance sent, in cm/s, so a standing avatar that starts to run is not flagged. | `PositionFeedEnabled`. |
+| `PositionFeedSpeedMaxCmS` | `10000` | Speed ceiling in cm/s for a physics engine that declares no maximum speed of its own. An engine that does declare one (Bullet) uses that instead. | `PositionFeedEnabled`. |
 
 ### Join capability and moderation
 
