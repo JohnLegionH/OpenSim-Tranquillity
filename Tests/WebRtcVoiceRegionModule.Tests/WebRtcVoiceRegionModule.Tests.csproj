@@ -28,6 +28,7 @@
     <Compile Include="ConnectorIdentityTests.cs" />
     <Compile Include="A2ASessionRegistryTests.cs" />
     <Compile Include="A2AInvitationTests.cs" />
+    <Compile Include="A2ACharacterisationTests.cs" />
     <Compile Include="VoiceConnectorRegistryTests.cs" />
     <Compile Include="VoiceConnectorRegistrarTests.cs" />
     <Compile Include="VoiceConnectorDisclosureTests.cs" />
