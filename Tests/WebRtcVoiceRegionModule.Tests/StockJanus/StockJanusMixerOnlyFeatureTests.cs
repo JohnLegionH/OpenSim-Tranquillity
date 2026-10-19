@@ -90,10 +90,10 @@ namespace osWebRtcVoice.Tests
                 string[] lines;
                 lock (problems.Lines) lines = problems.Lines.ToArray();
                 foreach (string l in lines) TestContext.Out.WriteLine(l.Length > 400 ? l.Substring(0, 400) : l);
-                // Two lines are known and expected here: the missing-gatekeeper note of a test grid, and the "event no
-                // outstanding request" error the session logs for each room broadcast the stock plugin sends to every
-                // participant (another participant joined, left or finished setting up).
-                string[] unexpected = lines.Where(l => !l.Contains("no GatekeeperURI") && !l.Contains("event no outstanding request")).ToArray();
+                // One line is expected here: the missing-gatekeeper note of a test grid. The room broadcasts the stock
+                // plugin sends to every participant (another participant joined, left or finished setting up) are
+                // logged at Debug and so do not appear at this level.
+                string[] unexpected = lines.Where(l => !l.Contains("no GatekeeperURI")).ToArray();
                 Assert.That(unexpected, Is.Empty, "a normal join and leave on the stock plugin should log no other warning or error");
             }
             finally

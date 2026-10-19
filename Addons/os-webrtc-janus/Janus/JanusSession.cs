@@ -604,7 +604,7 @@ public partial class JanusSession : IDisposable
                                     }
                                     else
                                     {
-                                        m_log.LogError("{0} EventLongPoll: event no outstanding request {1}", LogHeader, resp.ToString());
+                                        m_log.Log(UnclaimedEventLevel(resp), "{0} EventLongPoll: event no outstanding request {1}", LogHeader, resp.ToString());
                                         OnEvent?.Invoke(eventResp);
                                     }
                                     break;
