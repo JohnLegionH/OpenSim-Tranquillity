@@ -11,8 +11,9 @@
  * The engine decides nothing about who may start, invite or join. It asks an admission policy, one
  * per session type, exactly as the live A2A path keeps its decision in A2AProvisionAdmission.Decide
  * rather than in the registry (A2ASessionRegistry.cs:10-13, "This class makes NO authorization
- * decision itself"). Keeping the same separation means the A2A path can later migrate A2A onto this engine by
- * supplying an admission that defers to the existing predicate, with no change to the engine.
+ * decision itself"). Keeping the same separation is what let the A2A calls move onto this engine (A2ACalls, which
+ * replaced that registry) by supplying an admission that defers to the existing predicate, with no change to the
+ * engine.
  *
  * The verdict carries a DECISION WORD, matching the house instrument convention
  * (A2AProvisionAdmission.cs:36) so one greppable line per decision stays possible.

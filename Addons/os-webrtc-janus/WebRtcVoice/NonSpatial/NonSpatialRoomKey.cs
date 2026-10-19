@@ -9,7 +9,7 @@
  * The MEDIA ROOM identity, derived INDEPENDENTLY of the session identity.
  *
  * WHY NOT REUSE THE SESSION ID. The live A2A path sets ChannelUri => SessionId.ToString()
- * (A2ASessionRegistry.cs:66). That works, but it is OUR choice and not the viewer's contract:
+ * (A2ASession.ChannelUri). That works, but it is OUR choice and not the viewer's contract:
  * P1-VERIFY established the viewer treats channel_uri as OPAQUE -- startAdHocSession takes it
  * straight out of channelInfo (llvoicewebrtc.cpp:1511) and posts it back verbatim as `channel`
  * (:3695). Binding room identity to session identity costs us the ability to re-room a live session
@@ -27,7 +27,7 @@
  *
  *  (1) AGAINST LIVE A2A ROOMS -- STRUCTURAL, provable. A2A admission resolves a room by
  *      TryGetByChannel, which is `UUID.TryParse(channel)` and returns null when it fails
- *      (A2ASessionRegistry.cs:323-327). A room key minted here NEVER parses as a bare UUID: it
+ *      (A2ACalls.TryGetByChannel parses the channel with UUID.TryParse). A room key minted here NEVER parses as a bare UUID: it
  *      always carries the "nsv1:<tag>:" prefix. So no conference room key can ever be mistaken for
  *      an A2A channel, and no A2A channel can ever equal a room key. This holds regardless of hash
  *      behaviour. (The reverse structural claim one might reach for -- that XOR-derived A2A ids have

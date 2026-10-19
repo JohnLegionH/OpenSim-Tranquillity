@@ -40,7 +40,7 @@ public enum VoiceConnectorScope
 /// record, loaded from a [VoiceConnector.&lt;name&gt;] ini section. Identity fields are immutable
 /// (the record IS the operator's grant: writing the ini is the authorisation); the
 /// mutable slots at the bottom are runtime state, set at registration, and are
-/// guarded by the owning registry's lock, the A2ASessionRegistry shape (A2ASessionRegistry.cs).
+/// guarded by the owning registry's lock, the same shape as the avatar-to-avatar call records.
 /// </summary>
 public sealed class VoiceConnectorRecord
 {
@@ -75,7 +75,7 @@ public sealed class VoiceConnectorRecord
 
     // ---- Mutable runtime state, set from registration onward. Written ONLY under the owning registry's
     // lock (VoiceConnectorRegistry), never by this class's consumers directly — the
-    // A2ASessionRegistry discipline (immutable identity, lock-guarded mutable state).
+    // discipline of the call records (immutable identity, lock-guarded mutable state).
     /// <summary>The NPC's agent id once created; UUID.Zero until then. Public setter
     /// for the test fixtures; production writes come only from VoiceConnectorRegistrar.</summary>
     public UUID NpcId { get; set; }

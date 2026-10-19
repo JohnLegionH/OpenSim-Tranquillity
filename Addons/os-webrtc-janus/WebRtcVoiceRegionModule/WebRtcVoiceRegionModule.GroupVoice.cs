@@ -349,17 +349,18 @@ public partial class WebRtcVoiceRegionModule
         scene.EventManager.OnIncomingInstantMessage += OnIncomingGroupRing;
     }
 
-    // The presence backstop for seats: a root close releases the agent's group and conference seats.
-    private void ReleaseSeatsOnClientClosed(Scene scene, UUID clientID, Scene s)
+    // The presence backstop for seats: a root close releases the agent's group and conference seats. `left` is what the
+    // departure of the agent from every session returned; the avatar-to-avatar calls in it are the caller's to handle.
+    private void ReleaseSeatsOnClientClosed(Scene scene, UUID clientID, Scene s, IReadOnlyList<NonSpatialVoiceSession> left)
     {
         // A ROOT presence closing releases the agent's group seats too. Same guard as
         // above (ShouldMarkGone): a child teardown is a border crossing, not a departure, and
         // must not free a seat the agent still holds from its root region. This is the
         // presence backstop -- departure never waits on a POST that may never come.
-        foreach (NonSpatialVoiceSession gone in
-                 m_nonSpatial?.DepartAll(clientID, DepartureReason.PresenceLost)
-                 ?? (IReadOnlyList<NonSpatialVoiceSession>)Array.Empty<NonSpatialVoiceSession>())
+        foreach (NonSpatialVoiceSession gone in left)
         {
+            if (gone.Type == NonSpatialSessionType.P2P)
+                continue;
             m_log.LogDebug("{LogHeader} {Line}", logHeader,
                 GroupVoiceChatSession.Line(clientID, gone.Owner, "group-seat-released-client-closed",
                     $"room={gone.RoomKey} region={s?.Name ?? scene.Name} seats={gone.SeatsHeld}/{gone.Cap}"));
@@ -430,17 +431,17 @@ public partial class WebRtcVoiceRegionModule
     }
 
     // A voice teardown releases the group and conference seats held under that viewer session.
-    private void ReleaseGroupSeatsOnLogout(UUID agentID, string a2aVs)
+    private void ReleaseGroupSeatsOnLogout(UUID agentID, string a2aVs, IReadOnlyList<NonSpatialVoiceSession> left)
     {
         // The SAME teardown releases a group seat. Before this, the logout arm knew
         // only about A2A records, so a group member who hung up held their seat until the
         // 8 h idle TTL -- with the 50 cap load-bearing, enough hang-ups would lock a group
         // out of its own room. Keyed by viewer session, so it frees exactly the seat this
         // logout is for and never another region's.
-        foreach (NonSpatialVoiceSession gone in
-                 m_nonSpatial?.DepartByViewerSession(agentID, a2aVs, DepartureReason.VoiceTeardown)
-                 ?? (IReadOnlyList<NonSpatialVoiceSession>)Array.Empty<NonSpatialVoiceSession>())
+        foreach (NonSpatialVoiceSession gone in left)
         {
+            if (gone.Type == NonSpatialSessionType.P2P)
+                continue;
             // The same teardown already covered conferences -- DepartByViewerSession is
             // type-blind and always was -- but it logged every release as a group one. The
             // line now names what actually ended.

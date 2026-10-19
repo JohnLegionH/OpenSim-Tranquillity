@@ -49,7 +49,7 @@ using osWebRtcVoice.NonSpatial;   // the non-spatial engine and the group arm
 
 namespace osWebRtcVoice;
 
-// Non-spatial voice sessions: the shared engine, the avatar-to-avatar invitation registry and the chat session plumbing the group and conference features build on.
+// Non-spatial voice sessions: the shared engine, the avatar-to-avatar calls kept in it and the chat session plumbing the group and conference features build on.
 public partial class WebRtcVoiceRegionModule
 {
     // [WebRtcVoice] A2AVoiceEnabled: avatar-to-avatar calls (the "call" and "start p2p voice" chat session
@@ -60,10 +60,13 @@ public partial class WebRtcVoiceRegionModule
     public static bool ReadA2AVoiceEnabled(IConfig pConfig)
         => pConfig.GetBoolean("A2AVoiceEnabled", DefaultA2AVoiceEnabled);
 
-    // Avatar-to-avatar invitation registry. One per module
-    // instance (one per region-server process), shared by every scene this shared module serves; thread-safe
-    // because ChatSessionRequest arrives on cap HTTP threads. Cross-instance A2A is out of scope.
-    private readonly A2ASessionRegistry m_a2aSessions = new();
+    // Avatar-to-avatar calls. They are sessions of the same non-spatial store as group and conference calls: in this
+    // process, or in the grid session service when SessionStoreMode is grid. Shared by every scene this module
+    // serves; thread-safe because ChatSessionRequest arrives on cap HTTP threads. The store is read through
+    // m_nonSpatial on every use, so these follow whichever store was set up. The invitation itself is delivered
+    // only to a callee on this instance.
+    private A2ACalls m_a2aCalls;
+    private A2ACalls A2A => m_a2aCalls ??= new A2ACalls(() => m_nonSpatial);
 
     // The non-spatial engine and the group policy. The engine is constructed
     // unconditionally and costs nothing when idle; the POLICY is what gates every group arm, and it
@@ -159,7 +162,7 @@ public partial class WebRtcVoiceRegionModule
     private bool m_a2aVoiceEnabled = DefaultA2AVoiceEnabled;
 
     // Scenes this shared module serves, for callee resolution on THIS instance (the group
-    // module's m_sceneList / GetActiveClient pattern). Cross-instance A2A is out of scope.
+    // module's m_sceneList / GetActiveClient pattern).
     private readonly List<Scene> m_scenes = new();
 
     /// <summary>
@@ -189,10 +192,10 @@ public partial class WebRtcVoiceRegionModule
         SubscribeGroupVoiceEvents(scene);
         SubscribeConferenceEvents(scene);
         // A client that drops without a logout provision (crash, kill)
-        // would otherwise leave its Active A2A record until the idle backstop, suppressing a re-ring
-        // between the same pair. Treat the close as that party gone from every record it is in;
-        // the record is removed only when the other party is gone too (both-logout semantics), and a
-        // later admitted provision re-marks the party present, so this is reversible.
+        // would otherwise leave its Active A2A call until the idle backstop, suppressing a re-ring
+        // between the same pair. Treat the close as that party gone from every call it is in;
+        // the call ends only when the other party is gone too (both-logout semantics), and a
+        // later admitted provision seats the party again, so this is reversible.
         scene.EventManager.OnClientClosed += (clientID, s) => OnVoiceClientClosed(scene, clientID, s);
     }
 
@@ -204,9 +207,13 @@ public partial class WebRtcVoiceRegionModule
         // as WebRtcVoiceServiceModule.Event_OnClientClosed.
         Scene closedIn = s ?? scene;
         ScenePresence sp = closedIn.GetScenePresence(clientID);
-        if (!A2ASessionRegistry.ShouldMarkGone(sp != null, sp != null && sp.IsChildAgent))
+        if (!A2ACalls.ShouldMarkGone(sp != null, sp != null && sp.IsChildAgent))
             return;   // child teardown (border crossing / draw distance) — the agent's voice lives in its root region
-        foreach (A2ASession gone in m_a2aSessions.MarkGoneSessions(clientID, null))
+        // The agent leaves every call, group and conference it holds a seat in. One departure serves them all; the
+        // avatar-to-avatar calls it ended are handled here, the rest in ReleaseSeatsOnClientClosed.
+        IReadOnlyList<NonSpatialVoiceSession> left = m_nonSpatial?.DepartAll(clientID, DepartureReason.PresenceLost)
+            ?? (IReadOnlyList<NonSpatialVoiceSession>)Array.Empty<NonSpatialVoiceSession>();
+        foreach (A2ASession gone in A2A.Ended(left))
         {
             m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} session-id={SessionId} region={RegionName} decision=removed-client-closed",
                 logHeader, clientID, gone.SessionId, s?.Name ?? scene.Name);
@@ -218,7 +225,7 @@ public partial class WebRtcVoiceRegionModule
             if (line != null)
                 m_log.LogDebug("{LogHeader} {Line}", logHeader, line);
         }
-        ReleaseSeatsOnClientClosed(scene, clientID, s);
+        ReleaseSeatsOnClientClosed(scene, clientID, s, left);
     }
 
     // What a provision answer changes in the non-spatial records, by the kind admission decided.
@@ -234,11 +241,11 @@ public partial class WebRtcVoiceRegionModule
         {
             // Admitted AND joined -- only the service's success map carries viewer_session
             // (ProvisionResponseBuilder.BuildSuccess); a failure map ({response:"failed"}, with or
-            // without error_code) leaves the record as it was. The callee's admitted provision is
+            // without error_code) leaves the call as it was. The callee's admitted provision is
             // the accept (Invited -> Active).
             string vs = provVs;
             bool wasActive = admission.Session.State == A2ASessionState.Active;
-            A2ASession s = m_a2aSessions.MarkProvisioned(admission.Session.SessionId, agentID, vs);
+            A2ASession s = A2A.MarkProvisioned(admission.Session.SessionId, agentID, scene.RegionInfo.RegionID, vs);
             // The mixer room the service derived (grid id + channel + type) rides on the
             // success map as `room`; surfaced here so an A2A join is auditable end to end.
             m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} session-id={SessionId} viewer_session={ViewerSession} room={Room} state={State} decision=provisioned",
@@ -267,11 +274,14 @@ public partial class WebRtcVoiceRegionModule
         }
         else if (admission.Kind == ProvisionKind.Logout && a2aVs != "-")
         {
-            // Teardown by viewer session: only the record this party joined under that session is
-            // affected; a spatial logout matches nothing and is a no-op here. Both parties gone
-            // removes the Active record (both-logout). The remaining party (if still on
-            // this instance) gets the departed party's LEAVE.
-            foreach (A2ASession gone in m_a2aSessions.MarkGoneSessions(agentID, a2aVs))
+            // Teardown by viewer session: only the seat this party joined under that session is
+            // released; a spatial logout matches nothing and is a no-op here. Both parties gone
+            // ends the Active call (both-logout). The remaining party (if still on
+            // this instance) gets the departed party's LEAVE. The same teardown releases a group or
+            // conference seat held under that viewer session.
+            IReadOnlyList<NonSpatialVoiceSession> left = m_nonSpatial?.DepartByViewerSession(agentID, a2aVs, DepartureReason.VoiceTeardown)
+                ?? (IReadOnlyList<NonSpatialVoiceSession>)Array.Empty<NonSpatialVoiceSession>();
+            foreach (A2ASession gone in A2A.Ended(left))
             {
                 m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} session-id={SessionId} viewer_session={ViewerSession} decision=removed-both-logout",
                     logHeader, agentID, gone.SessionId, a2aVs);
@@ -283,7 +293,7 @@ public partial class WebRtcVoiceRegionModule
                     m_log.LogDebug("{LogHeader} {Line}", logHeader, line);
             }
 
-            ReleaseGroupSeatsOnLogout(agentID, a2aVs);
+            ReleaseGroupSeatsOnLogout(agentID, a2aVs, left);
         }
     }
 
@@ -313,8 +323,7 @@ public partial class WebRtcVoiceRegionModule
         // mixer teardown to the close-capture path. Everything else stays refused exactly as left it.
         // A GROUP provision is a "multiagent" body whose `channel` is one of our room keys
         // ("nsv1:group:<uuid>"), which can never be an A2A channel because that lookup is
-        // UUID.TryParse. Anything else -- every body that exists today -- goes to the untouched
-        // A2AProvisionAdmission.Decide below with the same arguments it has always had.
+        // UUID.TryParse. Anything else goes to A2AProvisionAdmission.Decide below.
         if (!NonSpatialVoiceFeatureOn() && A2AProvisionAdmission.IsPassthroughBody(map))
         {
             // No avatar-to-avatar, group or conference feature is on, so nothing here issues a channel and there is
@@ -330,7 +339,7 @@ public partial class WebRtcVoiceRegionModule
         }
         else
         {
-            admission = A2AProvisionAdmission.Decide(map, agentID, m_a2aSessions);
+            admission = A2AProvisionAdmission.Decide(map, agentID, A2A);
         }
         channelType = admission.ChannelType;
         a2aVs = map.TryGetString("viewer_session", out string vsRaw) && !string.IsNullOrEmpty(vsRaw) ? vsRaw : "-";
@@ -385,7 +394,7 @@ public partial class WebRtcVoiceRegionModule
             return true;
 
         // The decision is pure and unit-tested (ChatSessionRequestLogic); this adapter applies it.
-        // "start p2p voice" records the pair in the invitation registry (params = callee; absent -> 400,
+        // "start p2p voice" records the pair as a call in the session store (params = callee; absent -> 400,
         // replacing the old UUID.Random fallback); "call" mints the per-session token and answers in the
         // HTTP body with voice_credentials { channel_uri, channel_credentials } (llvoicechannel.cpp:687).
         // Nothing in this method admits a multiagent provision; that is decided in ProvisionVoiceAccountRequest.
@@ -411,7 +420,7 @@ public partial class WebRtcVoiceRegionModule
         {
             if (!m_a2aVoiceEnabled)
                 return false;   // the stock handler in ChatSessionRequest answers
-            outcome = ChatSessionRequestLogic.Decide(reqmap, agentID, sp.Name, m_a2aSessions);
+            outcome = ChatSessionRequestLogic.Decide(reqmap, agentID, sp.Name, A2A, scene.RegionInfo.RegionID);
         }
 
         m_log.LogDebug("{LogHeader} {Line}", logHeader, outcome.Instrument);
@@ -431,7 +440,7 @@ public partial class WebRtcVoiceRegionModule
             // One ring per Invited record. Marked only on a confirmed enqueue, so a
             // callee-unreachable delivery leaves the flag clear and a caller retry can ring later.
             if (decision == A2AInviteDelivery.DecisionSent)
-                m_a2aSessions.MarkInviteSent(outcome.Invite.SessionId);
+                A2A.MarkInviteSent(outcome.Invite.SessionId);
         }
 
         if (outcome.Reply is not null)

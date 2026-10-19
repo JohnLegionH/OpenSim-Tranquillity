@@ -14,7 +14,7 @@
  * (llvoicewebrtc.cpp:1511, :3695). The discriminator is therefore the CHANNEL STRING, and that is
  * precisely what NonSpatialRoomKey's prefix was built to provide: a group room key is
  * "nsv1:group:<uuid>", which can never parse as a bare UUID and so can never be an A2A channel
- * (A2ASessionRegistry.TryGetByChannel is UUID.TryParse, :323-327).
+ * (A2ACalls.TryGetByChannel is UUID.TryParse).
  *
  * THE LIVE A2A PATH IS NOT EDITED. This is a wrapper: it takes the group arm only when group voice
  * is enabled AND the channel is one of our room keys, and otherwise calls

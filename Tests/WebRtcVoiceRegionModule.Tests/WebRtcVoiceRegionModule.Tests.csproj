@@ -26,9 +26,12 @@
     <Compile Include="VoiceModerationConsoleTests.cs" />
     <Compile Include="VoiceModerationMuteConsoleTests.cs" />
     <Compile Include="ConnectorIdentityTests.cs" />
-    <Compile Include="A2ASessionRegistryTests.cs" />
+    <Compile Include="A2ACallsTests.cs" />
     <Compile Include="A2AInvitationTests.cs" />
     <Compile Include="A2ACharacterisationTests.cs" />
+    <Compile Include="A2ARegistry.cs" />
+    <Compile Include="A2AGridCallTests.cs" />
+    <Compile Include="P2PCallRulesTests.cs" />
     <Compile Include="VoiceConnectorRegistryTests.cs" />
     <Compile Include="VoiceConnectorRegistrarTests.cs" />
     <Compile Include="VoiceConnectorDisclosureTests.cs" />

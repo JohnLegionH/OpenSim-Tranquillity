@@ -161,6 +161,7 @@ namespace osWebRtcVoice.NonSpatial
 
         public SessionReply Get(UUID sessionId, UUID agent = default)
         {
+            _engine.Get(sessionId);   // a call whose time ran out ends before it is read
             SessionData d = Snapshot(sessionId, agent);
             return d == null ? SessionReply.Fail(SessionOutcome.NoSuchSession) : new SessionReply { Ok = true, Decision = "found", Session = d };
         }

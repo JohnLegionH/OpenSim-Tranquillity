@@ -55,7 +55,7 @@ public sealed class VoiceConnectorLoadResult
 /// The voice-connector policy registry. Loaded once
 /// from [VoiceConnector.&lt;name&gt;] ini sections; the records ARE the authorisation
 /// (operator-only by construction). Thread-safe: reads and the
-/// mutable-state writes all take the one internal lock, the A2ASessionRegistry discipline.
+/// mutable-state writes all take the one internal lock, the discipline of the avatar-to-avatar call records.
 /// </summary>
 public sealed class VoiceConnectorRegistry : IVoiceConnectorRegistry
 {
