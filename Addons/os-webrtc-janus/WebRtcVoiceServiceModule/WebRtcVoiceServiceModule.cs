@@ -56,13 +56,6 @@ public partial class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoic
     private static string LogHeader = "[WEBRTC VOICE SERVICE MODULE]";
 
     private static bool m_Enabled = false;
-    // [WebRtcVoice] AllowNpcVoice. The default is false because the stock server gives an NPC no way to reach
-    // voice provisioning: the provision handler is a per-agent capability, capabilities are created only for
-    // real client circuits (Scene.NewUserConnection calls ICapabilitiesModule.CreateCaps), and NPCModule adds its
-    // avatar with Scene.AddNewAgent without creating any. False therefore keeps the stock behaviour (an NPC gets
-    // no voice); true is an explicit opt-in, and a registered voice connector identity is admitted either way.
-    public const bool DefaultAllowNpcVoice = false;
-    private static bool m_allowNpcVoice = DefaultAllowNpcVoice;
     private IConfigSource m_Config;
 
     private IWebRtcVoiceService m_spatialVoiceService;
@@ -210,21 +203,6 @@ public partial class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoic
     {
     }
 
-    // [WebRtcVoice] AllowNpcVoice from a config section; a missing key reads as DefaultAllowNpcVoice.
-    public static bool ReadAllowNpcVoice(IConfig pConfig)
-    {
-        return pConfig.GetBoolean("AllowNpcVoice", DefaultAllowNpcVoice);
-    }
-
-    // The AllowNpcVoice decision, pure and side-effect-free so it is unit-testable without a Scene (NpcProvisionGuardTests — the
-    // IsProvisionableChannelType / HasRealViewerSession extraction pattern). Refuse iff the
-    // presence is an NPC AND the operator has not opened the surface AND the id is not a
-    // registered voice-connector identity. A non-NPC presence is never refused here.
-    public static bool IsNpcProvisionRefused(bool pIsNpcPresence, bool pAllowNpcVoice, bool pIsConnectorIdentity)
-    {
-        return pIsNpcPresence && !pAllowNpcVoice && !pIsConnectorIdentity;
-    }
-
     // IWebRtcVoiceService.ProvisionVoiceAccountRequest
         public OSDMap ProvisionVoiceAccountRequest(OSDMap pRequest, UUID pUserID, UUID pSceneID)
     {
@@ -276,28 +254,8 @@ public partial class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoic
         }
         else
         {
-            // The AllowNpcVoice guard runs
-            // BEFORE any session is created. An NPC presence gets voice only when the operator
-            // opened the surface ([WebRtcVoice] AllowNpcVoice=true) or the id is a registered
-            // voice-connector identity (IVoiceConnectorRegistry on the scene; null registry ==
-            // no connector identities). Real-avatar presences never enter the predicate's refuse
-            // arm. The decision is the pure IsNpcProvisionRefused so it is unit-testable
-            // (NpcProvisionGuardTests) — the same extraction pattern as IsProvisionableChannelType.
-            Scene npcScene;
-            lock (m_scenes)
-                m_scenes.TryGetValue(pSceneID, out npcScene);
-            ScenePresence npcSp = npcScene?.GetScenePresence(pUserID);
-            if (npcSp is not null && IsNpcProvisionRefused(
-                    npcSp.PresenceType == PresenceType.Npc,
-                    m_allowNpcVoice,
-                    npcScene.RequestModuleInterface<IVoiceConnectorRegistry>()?.IsConnectorIdentity(pUserID) ?? false))
-            {
-                m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} region={RegionName} decision=refused-npc",
-                    LogHeader, pUserID, npcScene.Name);
-                m_log.LogWarning("{LogHeader} refusing NPC voice provision from agent {AgentId} in region \"{RegionName}\" (AllowNpcVoice=false, not a connector identity)",
-                    LogHeader, pUserID, npcScene.Name);
+            if (RefuseNpcProvision(pUserID, pSceneID))
                 return null;
-            }
 
             // The viewer re-provisions immediately after a failed provision. Inside RefusalCacheSeconds a
             // repeat attempt gets the same failure answer again, without creating a voice session or calling the
