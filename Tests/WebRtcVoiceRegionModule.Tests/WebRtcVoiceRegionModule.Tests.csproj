@@ -49,6 +49,7 @@
     <Compile Include="A2AClientCloseGuardTests.cs" />
     <Compile Include="VisibilityDefaultsTests.cs" />
     <Compile Include="VisibilityArmingDefaultsTests.cs" />
+    <Compile Include="PositionFeedConfigTests.cs" />
     <Compile Include="VoiceFeatureSwitchTests.cs" />
     <Compile Include="NpcCreateDuplicateIdTests.cs" />
     <Compile Include="ConnectorArmingTests.cs" />

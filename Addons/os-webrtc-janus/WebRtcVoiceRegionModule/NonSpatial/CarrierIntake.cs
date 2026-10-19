@@ -41,6 +41,14 @@ namespace osWebRtcVoice.NonSpatial
         public UUID GroupId { get; init; }
         public OSDMap Body { get; init; }
         public SessionOutcome Adopted { get; init; }
+
+        /// <summary>True once the carrier passed authentication, whatever the session engine then decided.</summary>
+        public bool Authenticated { get; init; }
+
+        public NonSpatialSessionType Type { get; init; }
+
+        /// <summary>The region the carrier says it came from.</summary>
+        public UUID OriginRegion { get; init; }
     }
 
     /// <summary>The outcome of offering an incoming grid IM to the conference-text receiver.</summary>
@@ -57,6 +65,7 @@ namespace osWebRtcVoice.NonSpatial
         public string Message { get; init; }
         public string FromName { get; init; }
         public UUID OriginRegion { get; init; }
+        public bool Authenticated { get; init; }
     }
 
     public static class CarrierIntake
@@ -120,6 +129,7 @@ namespace osWebRtcVoice.NonSpatial
             return new RingIntake
             {
                 Claimed = true, Ok = adopted.Ok, Decision = adopted.Decision, Target = target, GroupId = groupId,
+                Authenticated = true, Type = type, OriginRegion = new UUID(msg.RegionID),
                 Body = body, Adopted = adopted,
             };
         }
@@ -154,21 +164,21 @@ namespace osWebRtcVoice.NonSpatial
             // instance derives for the session.
             NonSpatialVoiceSession session = engine.Get(sessionId);
             if (session is null || session.Type != NonSpatialSessionType.Adhoc)
-                return new TextIntake { Claimed = true, Decision = SessionOutcome.NoSuchSession, Target = target, SessionId = sessionId };
+                return new TextIntake { Claimed = true, Authenticated = true, OriginRegion = new UUID(msg.RegionID), Decision = SessionOutcome.NoSuchSession, Target = target, SessionId = sessionId };
             if (string.IsNullOrEmpty(roomKey) || !string.Equals(roomKey, session.RoomKey, StringComparison.Ordinal))
-                return new TextIntake { Claimed = true, Decision = DecisionRoomKeyMismatch, Target = target, SessionId = sessionId };
+                return new TextIntake { Claimed = true, Authenticated = true, OriginRegion = new UUID(msg.RegionID), Decision = DecisionRoomKeyMismatch, Target = target, SessionId = sessionId };
             NonSpatialMember from = session.Find(sender);
             NonSpatialMember to = session.Find(target);
             if (from is null || !from.HoldsSeat || to is null || !to.HoldsSeat)
                 return new TextIntake
                 {
-                    Claimed = true, Decision = AdhocTextSession.DecisionNotMember, Target = target,
+                    Claimed = true, Authenticated = true, OriginRegion = new UUID(msg.RegionID), Decision = AdhocTextSession.DecisionNotMember, Target = target,
                     SessionId = sessionId, Sender = sender,
                 };
 
             return new TextIntake
             {
-                Claimed = true, Ok = true, Decision = AdhocTextTransport.DecisionSent, Target = target,
+                Claimed = true, Authenticated = true, Ok = true, Decision = AdhocTextTransport.DecisionSent, Target = target,
                 SessionId = sessionId, Sender = sender, Message = message, FromName = fromName,
                 OriginRegion = new UUID(msg.RegionID),
             };

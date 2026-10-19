@@ -38,6 +38,25 @@ namespace osWebRtcVoice.Tests
         }
 
         [Test]
+        public void RoomKey_MatchesValuesComputedOutsideTheCode()
+        {
+            // Expected values: SHA-256 of "urn:opensim:webrtc-voice:nonspatial-room:v1" 0x1F grid 0x1F tag 0x1F session,
+            // first 16 bytes written as a UUID, computed with a separate SHA-256 implementation.
+            Assert.That(NonSpatialRoomKey.Derive("example-grid", NonSpatialSessionType.Adhoc, Session1),
+                        Is.EqualTo("nsv1:adhoc:49297b95-568c-9b3d-08d3-4da0484b01b0"));
+            Assert.That(NonSpatialRoomKey.Derive("example-grid", NonSpatialSessionType.P2P, Session1),
+                        Is.EqualTo("nsv1:p2p:5b883caf-ad16-a223-2b87-5506d39e8d7b"));
+            Assert.That(NonSpatialRoomKey.Derive("example.org", NonSpatialSessionType.Group, Session1),
+                        Is.EqualTo("nsv1:group:923cab68-9cac-b91b-a34b-106d39076e22"));
+        }
+
+        [Test]
+        public void Namespace_IsNeutral()
+        {
+            Assert.That(NonSpatialRoomKey.Namespace, Does.StartWith("urn:opensim:webrtc-voice:"));
+        }
+
+        [Test]
         public void RoomKey_IsDeterministic_SoAnyInstanceDerivesTheSame()
         {
             string a = NonSpatialRoomKey.Derive("example-grid", NonSpatialSessionType.Adhoc, Session1);

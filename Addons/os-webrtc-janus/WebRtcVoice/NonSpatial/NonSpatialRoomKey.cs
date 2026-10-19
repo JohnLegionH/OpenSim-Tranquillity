@@ -67,7 +67,7 @@ namespace osWebRtcVoice.NonSpatial
         /// Namespace for the room-key digest. A fixed, arbitrary constant whose only job is to keep
         /// this derivation from ever coinciding with some other SHA-256 of the same tuple.
         /// </summary>
-        public const string Namespace = "urn:legion:voice:nonspatial-room:v1";
+        public const string Namespace = "urn:opensim:webrtc-voice:nonspatial-room:v1";
 
         /// <summary>The prefix that makes a room key structurally un-parseable as a bare UUID (layer 1).</summary>
         public const string Prefix = "nsv1";

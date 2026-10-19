@@ -37,6 +37,7 @@ namespace osWebRtcVoice
             "VisibilityEmitEnabled",
             "VisibilityArmingEnabled",
             "ConnectorsEnabled",
+            "PositionFeedEnabled",
         };
 
         /// <summary>The plugin the region attaches to: [JanusWebRtcVoice] PluginName, or the stock plugin when unset.</summary>

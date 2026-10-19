@@ -128,6 +128,11 @@ public partial class WebRtcVoiceRegionModule
         => m_log.LogDebug("{LogHeader} carrier not sent: session={Session} decision={Decision}", logHeader, session,
                           CarrierIntake.DecisionCarrierOff);
 
+    // An accepted carrier (one that passed authentication) is logged at Debug with the session id, its type and
+    // the region it came from, so a call can be followed across processes. Never contents.
+    private void LogCarrierAccepted(string kind, UUID session, NonSpatialSessionType type, UUID origin)
+        => m_log.LogDebug("{LogHeader} {Line}", logHeader, CarrierAuth.AcceptedLine(kind, session, type, origin));
+
     // A refused carrier is logged by reason and running count only, never by contents, and not on every
     // refusal: the first of each reason and then every hundredth, so a flood cannot flood the log.
     private void LogCarrierRefusal(string kind, string reason, long count)

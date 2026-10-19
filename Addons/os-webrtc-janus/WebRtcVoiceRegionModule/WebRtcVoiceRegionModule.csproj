@@ -36,6 +36,7 @@
     <Compile Include="JanusPeerCtlBatchSink.cs" />
     <Compile Include="VisAuthority.cs" />
     <Compile Include="A2ACalls.cs" />
+    <Compile Include="VoicePositionPump.cs" />
     <Compile Include="ChatSessionRequestLogic.cs" />
     <Compile Include="A2AAgentListDelivery.cs" />
     <Compile Include="A2AInviteDelivery.cs" />
