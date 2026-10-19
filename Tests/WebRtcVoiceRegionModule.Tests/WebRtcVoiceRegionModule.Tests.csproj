@@ -57,6 +57,14 @@
     <Compile Include="AdhocConferenceTextTests.cs" />
     <Compile Include="AdhocChatLifecycleTests.cs" />
     <Compile Include="GroupChatSessionGuardTests.cs" />
+    <!-- Opt-in integration tests against a real Janus gateway (skipped unless WEBRTC_JANUS_TEST_URL is set). -->
+    <Compile Include="StockJanus\StockRegion.cs" />
+    <Compile Include="StockJanus\DefaultsProbe.cs" />
+    <Compile Include="StockJanus\StockJanusMixerOnlyFeatureTests.cs" />
+    <Compile Include="StockJanus\StockJanusRegionTests.cs" />
+    <Compile Include="StockJanus\StockJanusNonSpatialTests.cs" />
+    <Compile Include="..\WebRtcJanusService.Tests\StockJanus\StockJanusSupport.cs" Link="StockJanus\StockJanusSupport.cs" />
+    <None Include="..\WebRtcJanusService.Tests\StockJanus\aiortc_peer.py" Link="StockJanus\aiortc_peer.py" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
@@ -90,6 +98,7 @@
     <ProjectReference Include="..\..\Addons\OpenSim.Addons.Groups\OpenSim.Addons.Groups.csproj" />
     <ProjectReference Include="..\..\Source\OpenSim.Region.OptionalModules\OpenSim.Region.OptionalModules.csproj" />
     <ProjectReference Include="..\..\Addons\os-webrtc-janus\Janus\WebRtcJanusService.csproj" />
+    <ProjectReference Include="..\..\Addons\os-webrtc-janus\WebRtcVoiceServiceModule\WebRtcVoiceServiceModule.csproj" />
   </ItemGroup>
 
   <ItemGroup>
