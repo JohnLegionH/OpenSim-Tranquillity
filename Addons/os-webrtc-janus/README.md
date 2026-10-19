@@ -88,6 +88,12 @@ The region server reads every `.ini` file in that folder at startup; the folder 
 | `StunServers` | `[WebRtcVoice]` | empty | Comma-separated STUN URIs advertised to viewers as the `stun-servers` simulator feature. Stock viewers need a valid entry. |
 | `VisibilityFeederEnabled`, `VisibilityEmitEnabled` | `[WebRtcVoice]` | `false` | Send per-listener visibility to a mixer that understands it. Need `JanusGatewayAdminURI` and `AdminAPIToken`. |
 
+**A mixer on another host needs TLS or a private network.** The API and admin secrets are sent with every
+request, so over plain `http://` they cross the network in clear. Use `https://` URLs for `JanusGatewayURI` and
+`JanusGatewayAdminURI`; the certificate is validated and there is no setting that turns that off. If it comes from
+a private CA, set `JanusGatewayCACertificateFile` to that CA's certificate file. Details: `Docs/voice/configuration.md`,
+"Securing the connection to the mixer".
+
 ### Upgrading
 
 With every optional switch left off, the region behaves as the previous release did, except for

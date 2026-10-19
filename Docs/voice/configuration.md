@@ -95,7 +95,42 @@ if it cannot connect to Janus at startup.
 | `PluginName` | `janus.plugin.audiobridge` | Janus plugin the region attaches voice handles to. `janus.plugin.slvoice` selects a spatial mixer implementing that protocol. | The named plugin installed in Janus. |
 | `RequestTimeoutMs` | `5000` | Milliseconds an "ack"-answered Janus request waits for its result before failing. Zero or negative falls back to 5000. | - |
 | `AdminTimeoutMs` | `5000` | Milliseconds a Janus admin API request waits for its answer (used by visibility emission). | - |
+| `JanusGatewayCACertificateFile` | empty | Path of a private CA certificate (PEM or DER; a PEM file may hold several) trusted, in addition to the operating system's roots, for the `https://` gateway and admin URLs. See [Securing the connection to the mixer](#securing-the-connection-to-the-mixer). | A mixer served over https with a certificate from that CA. |
 | `JoinCapabilitySecret` | empty | Secret used to sign join capabilities, for avatars and for connectors. Never logged. Must match the mixer. At least 32 characters: with `JoinCapabilityEnabled` on, a shorter one is refused at startup and no capability is minted. | Slvoice mixer. |
+
+### Securing the connection to the mixer
+
+Every request to the mixer carries the API secret or the admin secret. Over plain `http://` those cross the
+network in clear, so anyone on the path can read them and take over the mixer. A mixer on another host therefore
+needs TLS, or a network that only you control (a private LAN or a VPN). A mixer on the same host, reached through
+the loopback address, needs neither.
+
+To use TLS, serve the mixer's gateway and admin APIs over https (the mixer needs a certificate and its key), then
+point the region server, and Robust if it talks to Janus, at the https URLs:
+
+```ini
+[JanusWebRtcVoice]
+    JanusGatewayURI = https://mixer.example.org:8089/voice
+    JanusGatewayAdminURI = https://mixer.example.org:8090/admin
+```
+
+The certificate is checked like any other HTTPS connection: it must chain to a root the operating system trusts and
+must name the host in the URL. No setting turns the check off. A certificate that fails it is refused, nothing is
+sent to that server, and the log says why (`[JANUS TLS] the certificate presented by ... was rejected`).
+
+If the mixer's certificate comes from a CA the operating system does not know (your own CA, or a self-signed
+certificate), set `JanusGatewayCACertificateFile` to the file holding that CA's certificate, or the self-signed
+certificate itself:
+
+```ini
+[JanusWebRtcVoice]
+    JanusGatewayCACertificateFile = /etc/opensim/mixer-ca.pem
+```
+
+That certificate is trusted in addition to the system roots, only for the connection to the mixer. The host name
+must still match, so a CA certificate does not excuse a wrong name. Leave the key unset when the certificate is
+from a public CA. If the file is missing or unreadable, an error naming the key is logged and only the system roots
+are used. Restart the region server after changing it.
 
 Grid identity: room numbers for non-spatial sessions are derived from the grid's gatekeeper address, so two grids
 sharing one mixer do not collide. It is read from `GatekeeperURI` (in `[Hypergrid]`, `[Startup]` or `[Const]`), else

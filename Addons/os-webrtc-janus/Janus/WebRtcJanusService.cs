@@ -86,6 +86,7 @@ public partial class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                 _JanusAdminURI = janusConfig.GetString("JanusGatewayAdminURI", string.Empty);
                 _JanusAdminToken = janusConfig.GetString("AdminAPIToken", string.Empty);
                 WarnOnShortJanusSecrets();
+                ReadTlsConfig(janusConfig);
                 ReadPluginNameConfig(janusConfig);
                 ReadGridIdConfig();
                 ReadArmingConfig(webRtcVoiceConfig, janusConfig);
@@ -139,7 +140,7 @@ public partial class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
     private async Task<bool> ConnectToSessionAndAudioBridge(JanusViewerSession pViewerSession)
     {
         JanusSession janusSession = new JanusSession(_JanusServerURI, _JanusAPIToken, _JanusAdminURI, _JanusAdminToken, _MessageDetails,
-            _httpHandlerFactory?.Invoke());
+            CreateHttpHandler());
         janusSession.JanusRequestTimeout = TimeSpan.FromMilliseconds(_JanusRequestTimeoutMs);
         if (await janusSession.CreateSession().ConfigureAwait(false))
         {

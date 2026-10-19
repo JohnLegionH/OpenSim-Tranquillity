@@ -66,6 +66,20 @@ public partial class WebRtcJanusService
             _log.LogWarning($"{LogHeader} [JanusWebRtcVoice] AdminAPIToken is shorter than {MinSecretLength} characters; use a longer random secret");
     }
 
+    // [JanusWebRtcVoice] JanusGatewayCACertificateFile — a private CA certificate the sim trusts, in addition to the
+    // system's roots, for https gateway and admin URLs. Empty by default; see JanusTls.
+    private string _JanusCaCertificateFile = string.Empty;
+
+    private void ReadTlsConfig(IConfig janusConfig)
+    {
+        _JanusCaCertificateFile = janusConfig.GetString(JanusTls.CaCertificateFileKey, string.Empty);
+    }
+
+    // The handler every Janus session's HttpClient uses: the test factory when there is one, otherwise the
+    // validating handler for http and https URLs alike.
+    private HttpMessageHandler CreateHttpHandler()
+        => _httpHandlerFactory?.Invoke() ?? JanusTls.CreateHandler(_JanusCaCertificateFile);
+
     // [JanusWebRtcVoice] RequestTimeoutMs — how long an ack'd Janus request waits for its event.
     private int _JanusRequestTimeoutMs = JanusSession.DefaultRequestTimeoutMs;
 

@@ -82,7 +82,8 @@
     ;RefusalCacheSeconds = 5
 
 [JanusWebRtcVoice]
-    ; URI to access the Janus Gateway
+    ; URI to access the Janus Gateway. Use https:// when the gateway is on another host, or reach it over a
+    ; private network: the API and admin secrets are sent with every request.
     JanusGatewayURI = http://janus.example.org:14223/voice
     ; APIKey to access the Janus Gateway. Must be set to the same value as the Janus Gateway.
     ; Use a random secret of at least 32 characters; a shorter one is logged as a warning at startup.
@@ -92,6 +93,9 @@
     ; APIKey to access the admin port on the Janus Gateway. Must be set to the same value as the Janus Gateway.
     ; Use a random secret of at least 32 characters; a shorter one is logged as a warning at startup.
     AdminAPIToken = AdminAPITokenToNeverCheckIn
+    ; Private CA certificate file (PEM or DER) trusted, in addition to the system's roots, for an https gateway or
+    ; admin URL whose certificate the system does not know. The host name must still match. Default: unset.
+    ;JanusGatewayCACertificateFile =
     ; Debugging: output to log file messages sent and received from Janus. Very verbose.
     MessageDetails = false
 

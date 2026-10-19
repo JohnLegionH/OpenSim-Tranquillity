@@ -77,7 +77,7 @@ namespace osWebRtcVoice
         /// Construct from the same config WebRtcJanusService already reads
         /// (JanusGatewayAdminURI, AdminAPIToken) plus a per-send deadline.
         /// </summary>
-        public JanusAdminClient(string adminUri, string adminSecret, TimeSpan timeout)
+        public JanusAdminClient(string adminUri, string adminSecret, TimeSpan timeout, HttpMessageHandler handler = null)
         {
             _adminUri = adminUri;
             _adminSecret = adminSecret;
@@ -88,7 +88,9 @@ namespace osWebRtcVoice
             // is the normal deadline; this fires only if the token failed to cancel (e.g. a half-dead
             // pooled connection stalling the response-body read). Set well beyond the per-call
             // deadline so it never pre-empts the normal cancellation path.
-            _httpClient = new HttpClient { Timeout = ComputeClientTimeout(timeout) };
+            // A null handler is the default one; the sink passes JanusTls's, which also validates https certificates.
+            _httpClient = handler is null ? new HttpClient() : new HttpClient(handler);
+            _httpClient.Timeout = ComputeClientTimeout(timeout);
         }
 
         /// <summary>The absolute <see cref="HttpClient.Timeout"/> backstop: 4x the admin timeout. The
