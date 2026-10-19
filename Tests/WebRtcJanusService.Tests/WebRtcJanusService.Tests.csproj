@@ -37,6 +37,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Include="StockJanus\aiortc_peer.py" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="NUnit.Framework" />
   </ItemGroup>
 
