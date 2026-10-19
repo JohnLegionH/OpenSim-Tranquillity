@@ -32,11 +32,11 @@ namespace osWebRtcVoice.Tests
         }
 
         [Test]
-        public void LegionNamespace_IsTheV5OfItsDocumentedName()
+        public void ConnectorNamespace_IsTheV5OfItsDocumentedName()
         {
-            Assert.That(ConnectorIdentity.NameBasedV5(NamespaceUrl, ConnectorIdentity.LegionNamespaceName),
-                Is.EqualTo(ConnectorIdentity.LegionNamespace));
-            Assert.That(ConnectorIdentity.LegionNamespace, Is.EqualTo(new UUID("52a31546-4858-5791-8b48-262208d96039")));
+            Assert.That(ConnectorIdentity.NameBasedV5(NamespaceUrl, ConnectorIdentity.ConnectorNamespaceName),
+                Is.EqualTo(ConnectorIdentity.ConnectorNamespace));
+            Assert.That(ConnectorIdentity.ConnectorNamespace, Is.EqualTo(new UUID("ca7b653b-b665-5e77-9260-6674637f6134")));
         }
 
         [Test]
@@ -46,9 +46,9 @@ namespace osWebRtcVoice.Tests
             UUID second = ConnectorIdentity.DeriveAgentId(Grid, "Example Region", "Recorder");
 
             Assert.That(second, Is.EqualTo(first), "a restart derives the same id");
-            Assert.That(first, Is.EqualTo(new UUID("ca6873f8-1173-5688-b514-e80752dbe2b7")), "uuid5(connector_ns, \"<grid>/Example Region/Recorder\")");
+            Assert.That(first, Is.EqualTo(new UUID("fbe7d778-2ba6-5d64-a859-e10181a25c60")), "uuid5(connector_ns, \"<grid>/Example Region/Recorder\")");
             Assert.That(ConnectorIdentity.DeriveAgentId(string.Empty, "Example Region", "Recorder"),
-                Is.EqualTo(new UUID("a4476ab9-63c3-55a2-bd83-141d8ed5f2cd")), "a grid without GatekeeperURI: \"/Example Region/Recorder\"");
+                Is.EqualTo(new UUID("561d41d6-7747-5e70-8ab1-3dda83a2760b")), "a grid without GatekeeperURI: \"/Example Region/Recorder\"");
             Assert.That(ConnectorIdentity.IdentityName(Grid, "Example Region", "Recorder"), Is.EqualTo(Grid + "/Example Region/Recorder"));
         }
 

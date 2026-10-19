@@ -122,6 +122,7 @@ names the reason) and does not load at all.
 
 The connector NPC's agent id is derived from the grid identity, the region name and the record name, so it is the
 same after a restart. Renaming the section or the region gives the connector a new id.
+The id is a version 5 (name-based) UUID in the namespace derived from `urn:opensim:webrtc-voice:connector`.
 
 Connector disclosure cannot be turned off: connector NPCs always carry the name token, and the region always
 issues its entry and proximity notices.

@@ -34,11 +34,11 @@ namespace osWebRtcVoice;
 public static class ConnectorIdentity
 {
     /// <summary>The name the connector-identity namespace is itself derived from, under the RFC 4122 URL namespace.</summary>
-    public const string LegionNamespaceName = "urn:legion-grid:voice-connector";
+    public const string ConnectorNamespaceName = "urn:opensim:webrtc-voice:connector";
 
-    /// <summary>The connector-identity namespace: uuid5(NAMESPACE_URL, "urn:legion-grid:voice-connector").
+    /// <summary>The connector-identity namespace: uuid5(NAMESPACE_URL, "urn:opensim:webrtc-voice:connector").
     /// Fixed forever - changing it would give every deployed connector a new id.</summary>
-    public static readonly UUID LegionNamespace = new UUID("52a31546-4858-5791-8b48-262208d96039");
+    public static readonly UUID ConnectorNamespace = new UUID("ca7b653b-b665-5e77-9260-6674637f6134");
 
     /// <summary>The exact v5 name for a connector: "{gridId}/{regionName}/{recordName}" (null reads as empty).</summary>
     public static string IdentityName(string pGridId, string pRegionName, string pRecordName)
@@ -46,7 +46,7 @@ public static class ConnectorIdentity
 
     /// <summary>The connector NPC's agent id for this grid, region and record.</summary>
     public static UUID DeriveAgentId(string pGridId, string pRegionName, string pRecordName)
-        => NameBasedV5(LegionNamespace, IdentityName(pGridId, pRegionName, pRecordName));
+        => NameBasedV5(ConnectorNamespace, IdentityName(pGridId, pRegionName, pRecordName));
 
     /// <summary>RFC 4122 section 4.3, version 5: SHA-1 over the namespace id (network byte order, which is
     /// the order of its canonical string) followed by the UTF-8 name; the first 16 bytes with the version
