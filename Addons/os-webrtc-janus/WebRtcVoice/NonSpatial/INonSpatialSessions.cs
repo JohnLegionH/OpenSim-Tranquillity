@@ -62,6 +62,20 @@ namespace osWebRtcVoice.NonSpatial
                                        UUID creator, IEnumerable<UUID> alreadyRung,
                                        NonSpatialSessionType type = NonSpatialSessionType.Group);
 
+        /// <summary>
+        /// True when the store itself says whether a ring is genuine (<see cref="VerifyRing"/>), so a region need not
+        /// trust, or adopt anything from, a ring it received. False for the in-process engine, which can only adopt.
+        /// </summary>
+        bool StoreVerifiesRings { get; }
+
+        /// <summary>
+        /// Ask the store whether a ring received for <paramref name="target"/> is genuine, and use it up. Genuine means
+        /// the session exists with the ring's type, its ring was sent, <paramref name="claimedCaller"/> holds a seat in it,
+        /// the target was marked invited, and the target has not already used this ring. Nothing is created or changed
+        /// except using the ring up. The session returned is as the target may see it, credential included.
+        /// </summary>
+        SessionOutcome VerifyRing(UUID sessionId, UUID target, UUID claimedCaller, NonSpatialSessionType type);
+
         string IssueToken(UUID sessionId, UUID agent);
 
         /// <summary>As <see cref="IssueToken(UUID, UUID)"/>, and says whether a null result is because the store could not be reached.</summary>

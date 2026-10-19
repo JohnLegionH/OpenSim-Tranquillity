@@ -412,7 +412,7 @@ public partial class WebRtcVoiceRegionModule
     {
         if (candidates is null || candidates.Count == 0 || body is null)
             return;
-        if (!m_carrierAuth.Enabled)
+        if (!m_carrierAuth.Enabled && !RingsAreVerifiedByTheStore)
         {
             LogCarrierOff(session.SessionId);
             return;
@@ -453,6 +453,8 @@ public partial class WebRtcVoiceRegionModule
             return;
 
         UUID originRegion = originScene?.RegionInfo?.RegionID ?? UUID.Zero;
+        // Marked before the rings go out, so a store that verifies rings finds the target marked (see the group ring).
+        m_nonSpatial?.MarkInvited(session.SessionId, online);
         foreach (UUID target in online)
         {
             try
@@ -468,7 +470,6 @@ public partial class WebRtcVoiceRegionModule
                 m_log.LogWarning(e, "{LogHeader} cross-instance conference ring to {Target} failed", logHeader, target);
             }
         }
-        m_nonSpatial?.MarkInvited(session.SessionId, online);
     }
 
     private void SubscribeConferenceEvents(Scene scene)

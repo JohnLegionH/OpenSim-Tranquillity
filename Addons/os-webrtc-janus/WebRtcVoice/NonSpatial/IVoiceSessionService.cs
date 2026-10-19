@@ -46,6 +46,15 @@ namespace osWebRtcVoice.NonSpatial
         SessionReply RenewSeats(IReadOnlyList<SeatKey> seats);
 
         SessionReply MarkInvited(UUID sessionId, IReadOnlyList<UUID> agents);
+
+        /// <summary>
+        /// A region received a ring naming this session for <paramref name="target"/> from <paramref name="claimedCaller"/>.
+        /// Answers yes (with the session as the target may see it, credential included) only for a session of that type
+        /// whose ring was sent, whose caller holds a seat, and in which the target was marked invited and has not
+        /// already used the ring. A yes uses the ring up.
+        /// </summary>
+        SessionReply VerifyRing(UUID sessionId, UUID target, UUID claimedCaller, int type);
+
         SessionReply IssueToken(UUID sessionId, UUID agent);
         SessionReply TakeConferenceRequest(UUID agent);
         /// <summary>

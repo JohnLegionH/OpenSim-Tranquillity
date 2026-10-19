@@ -107,6 +107,9 @@ namespace osWebRtcVoice.NonSpatial
                     return Seats(r, "seats", out List<SeatKey> seats) ? m_service.RenewSeats(seats) : null;
                 case "markinvited":
                     return Ids(r, out s, "session") && List(r, "agents", out List<UUID> agents) ? m_service.MarkInvited(s[0], agents) : null;
+                case "verifyring":
+                    return Ids(r, out s, "session", "target", "caller") && Int(r, "type", out int ringType)
+                        ? m_service.VerifyRing(s[0], s[1], s[2], ringType) : null;
                 case "issuetoken":
                     return Ids(r, out s, "session", "agent") ? m_service.IssueToken(s[0], s[1]) : null;
                 case "takeconferencerequest":

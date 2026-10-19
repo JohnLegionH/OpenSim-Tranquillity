@@ -195,7 +195,20 @@ namespace osWebRtcVoice.NonSpatial
 
         public bool WasInvited(UUID agent) => _invited.Contains(agent);
 
-        internal void MarkInvited(UUID agent) => _invited.Add(agent);
+        /// <summary>
+        /// Who has already used the ring they were marked invited for (see the engine's VerifyRing). A ring is
+        /// one-shot: a fresh invitation entitles the agent to one ring, and a second claim to the same ring is a replay.
+        /// </summary>
+        private readonly HashSet<UUID> _ringsUsed = new HashSet<UUID>();
+
+        internal void MarkInvited(UUID agent)
+        {
+            if (_invited.Add(agent))
+                _ringsUsed.Remove(agent);
+        }
+
+        /// <summary>True the first time it is asked for an invited agent, false after that.</summary>
+        internal bool TakeRing(UUID agent) => _invited.Contains(agent) && _ringsUsed.Add(agent);
 
         /// <summary>
         /// Forget that ONE agent was rung, without ending the cycle for everyone else.
@@ -204,12 +217,17 @@ namespace osWebRtcVoice.NonSpatial
         /// against a re-ring storm because only an explicit invite puts them back in Invited, and
         /// AdhocVoiceInvite.Targets rings Invited members only.
         /// </summary>
-        internal void ClearInvited(UUID agent) => _invited.Remove(agent);
+        internal void ClearInvited(UUID agent)
+        {
+            _invited.Remove(agent);
+            _ringsUsed.Remove(agent);
+        }
 
         /// <summary>The room emptied: forget the ring so a later start rings the group again.</summary>
         internal void EndRingCycle()
         {
             _invited.Clear();
+            _ringsUsed.Clear();
             RingSent = false;
         }
 

@@ -92,6 +92,10 @@ public partial class WebRtcVoiceRegionModule
     // the same value on every region server.
     private CarrierAuth m_carrierAuth = CarrierAuth.Off();
 
+    // True when the grid session service judges rings (SessionStoreMode grid). A ring then needs no shared secret:
+    // the receiving region asks the service whether the ring is genuine instead of trusting what it carries.
+    private bool RingsAreVerifiedByTheStore => m_nonSpatial is { StoreVerifiesRings: true };
+
     // Reads [WebRtcVoice] CarrierSecret and says once, at startup, whether cross-process carriers are on.
     // The secret itself is never logged.
     private void InitialiseCarrierAuth()

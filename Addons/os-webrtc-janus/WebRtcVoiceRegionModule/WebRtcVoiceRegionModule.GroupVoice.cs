@@ -102,7 +102,7 @@ public partial class WebRtcVoiceRegionModule
     {
         if (session is null || !m_groupVoice.IsUsable || body is null)
             return;
-        if (!m_carrierAuth.Enabled)
+        if (!m_carrierAuth.Enabled && !RingsAreVerifiedByTheStore)
         {
             LogCarrierOff(session.Owner);
             return;
@@ -181,6 +181,10 @@ public partial class WebRtcVoiceRegionModule
             return;
 
         UUID originRegion = originScene?.RegionInfo?.RegionID ?? UUID.Zero;
+        // Marked before the rings go out, because a region that keeps its sessions in the grid service asks the
+        // service whether a ring it received was one the sender sent, and the answer is yes only for a target
+        // already marked. Marked whatever delivery says, as before.
+        m_nonSpatial?.MarkInvited(session.SessionId, remote);
         foreach (UUID target in remote)
         {
             try
@@ -196,7 +200,6 @@ public partial class WebRtcVoiceRegionModule
                 m_log.LogWarning(e, "{LogHeader} cross-instance ring to {Target} failed", logHeader, target);
             }
         }
-        m_nonSpatial?.MarkInvited(session.SessionId, remote);
     }
 
     /// <summary>

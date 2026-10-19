@@ -177,6 +177,11 @@ namespace osWebRtcVoice.NonSpatial
             return new SessionOutcome(true, "ring-session-held", s);
         }
 
+        public bool StoreVerifiesRings => true;
+
+        public SessionOutcome VerifyRing(UUID sessionId, UUID target, UUID claimedCaller, NonSpatialSessionType type)
+            => Outcome(_service.VerifyRing(sessionId, target, claimedCaller, (int)type), "verifyring");
+
         public string IssueToken(UUID sessionId, UUID agent) => IssueToken(sessionId, agent, out _);
 
         public string IssueToken(UUID sessionId, UUID agent, out bool unavailable)

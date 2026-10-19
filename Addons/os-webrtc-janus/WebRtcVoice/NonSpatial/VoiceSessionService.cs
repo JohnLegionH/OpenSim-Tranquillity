@@ -152,6 +152,11 @@ namespace osWebRtcVoice.NonSpatial
             return new SessionReply { Ok = true, Decision = "marked" };
         }
 
+        public SessionReply VerifyRing(UUID sessionId, UUID target, UUID claimedCaller, int type)
+            => type == (int)NonSpatialSessionType.Group || type == (int)NonSpatialSessionType.Adhoc
+                ? Reply(_engine.VerifyRing(sessionId, target, claimedCaller, (NonSpatialSessionType)type), target)
+                : SessionReply.Fail("refused-bad-request");
+
         public SessionReply IssueToken(UUID sessionId, UUID agent)
         {
             string token = _engine.IssueToken(sessionId, agent);

@@ -801,6 +801,30 @@ namespace osWebRtcVoice.NonSpatial
         /// does not invalidate credentials already in a viewer's hands. Returns null when the agent
         /// is not a member of the voice session, so a token can never be handed to a stranger.
         /// </summary>
+        public bool StoreVerifiesRings => false;
+
+        /// <summary>
+        /// Whether a ring received for <paramref name="target"/> is genuine, judged from this engine's own record and
+        /// nothing the ring carried. Group and conference rings only. Nothing is created or changed except that a
+        /// genuine ring is used up, so a replay of it is refused.
+        /// </summary>
+        public SessionOutcome VerifyRing(UUID sessionId, UUID target, UUID claimedCaller, NonSpatialSessionType type)
+        {
+            if (type != NonSpatialSessionType.Group && type != NonSpatialSessionType.Adhoc)
+                return SessionOutcome.Fail("refused-session-type-mismatch");
+            return _store.Mutate(sessionId, sess =>
+            {
+                if (sess.IsDead) return SessionOutcome.Fail(SessionOutcome.NoSuchSession);
+                if (sess.Type != type) return SessionOutcome.Fail("refused-session-type-mismatch");
+                if (!sess.RingSent) return SessionOutcome.Fail("refused-ring-not-sent");
+                NonSpatialMember caller = sess.Find(claimedCaller);
+                if (caller == null || !caller.HoldsSeat) return SessionOutcome.Fail("refused-caller-not-seated");
+                if (!sess.WasInvited(target)) return SessionOutcome.Fail("refused-target-not-invited");
+                if (!sess.TakeRing(target)) return SessionOutcome.Fail("refused-ring-used");
+                return new SessionOutcome(true, "ring-verified", sess);
+            }, SessionOutcome.Fail(SessionOutcome.NoSuchSession));
+        }
+
         public string IssueToken(UUID sessionId, UUID agent, out bool unavailable)
         {
             unavailable = false;

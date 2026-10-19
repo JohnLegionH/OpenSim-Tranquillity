@@ -185,6 +185,8 @@ namespace osWebRtcVoice.Tests
             Assert.That(region.LeaveChat(id, Bob).Decision, Is.EqualTo("chat-left"));
             region.MarkInvited(id, new List<UUID> { dave });
             Assert.That(region.Get(id).WasInvited(dave), Is.True);
+            Assert.That(region.VerifyRing(id, dave, Alice, NonSpatialSessionType.Adhoc).Decision, Is.EqualTo("ring-verified"));
+            Assert.That(region.VerifyRing(id, dave, Alice, NonSpatialSessionType.Adhoc).Decision, Is.EqualTo("refused-ring-used"), "over the wire too");
             Assert.That(region.TryTakeConferenceRequest(Alice), Is.True);
             Assert.That(region.DepartByViewerSession(Bob, "v", DepartureReason.VoiceTeardown), Has.Count.EqualTo(1));
             Assert.That(region.Depart(id, Alice, DepartureReason.VoiceTeardown).Ok, Is.True);

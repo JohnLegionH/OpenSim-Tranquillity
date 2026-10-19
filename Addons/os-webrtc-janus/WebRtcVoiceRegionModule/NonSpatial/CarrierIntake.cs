@@ -78,13 +78,39 @@ namespace osWebRtcVoice.NonSpatial
                 return new RingIntake { Claimed = true, Decision = DecisionFeatureOff, Target = target, GroupId = groupId };
 
             auth ??= CarrierAuth.Off();
-            string reason = auth.Verify(GroupVoiceRingTransport.Fields(target, groupId, body), authBlock);
+            // A store that judges rings itself does not need the carrier's MAC, so a grid that keeps its sessions in
+            // the grid service rings across regions without a shared secret. A region that does have a secret still
+            // requires the MAC, which also covers the names the invitation shows, since the store holds no names.
+            bool storeVerifies = engine.StoreVerifiesRings;
+            string reason = storeVerifies && !auth.Enabled
+                ? null
+                : auth.Verify(GroupVoiceRingTransport.Fields(target, groupId, body), authBlock);
             if (reason != null)
                 return new RingIntake
                 {
                     Claimed = true, Decision = DecisionCarrierRefused, Reason = reason,
                     RefusalCount = auth.RecordRefusal(reason), Target = target, GroupId = groupId,
                 };
+
+            if (storeVerifies)
+            {
+                // Nothing is adopted from the wire: the store says whether this ring is genuine, and the room and
+                // credential the viewer is shown are the store's, not the carrier's.
+                SessionOutcome verified = engine.VerifyRing(groupId, target, caller, type);
+                if (!verified.Ok)
+                    return new RingIntake { Claimed = true, Decision = verified.Decision, Target = target, GroupId = groupId };
+                if (string.IsNullOrEmpty(verified.Session?.Token))
+                    return new RingIntake { Claimed = true, Decision = "refused-no-credential", Target = target, GroupId = groupId };
+                OSDMap voice = body.TryGetOSDMap("voice", out OSDMap v) ? v : new OSDMap();
+                voice["channel_uri"] = OSD.FromString(verified.Session.RoomKey);
+                voice["channel_credentials"] = OSD.FromString(verified.Session.Token);
+                body["voice"] = voice;
+                return new RingIntake
+                {
+                    Claimed = true, Ok = true, Decision = verified.Decision, Target = target, GroupId = groupId,
+                    Body = body, Adopted = verified,
+                };
+            }
 
             SessionOutcome adopted = engine.AdoptRemoteRing(groupId, roomKey, credential,
                                                             type == NonSpatialSessionType.Adhoc

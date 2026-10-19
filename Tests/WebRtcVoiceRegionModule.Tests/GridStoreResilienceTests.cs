@@ -66,6 +66,7 @@ namespace osWebRtcVoice.Tests
             public SessionReply DepartRegion(UUID region) => Pass("departregion", () => Inner.DepartRegion(region));
             public SessionReply RenewSeats(IReadOnlyList<SeatKey> seats) => Pass("renewseats", () => Inner.RenewSeats(seats));
             public SessionReply MarkInvited(UUID sessionId, IReadOnlyList<UUID> agents) => Pass("markinvited", () => Inner.MarkInvited(sessionId, agents));
+            public SessionReply VerifyRing(UUID sessionId, UUID target, UUID claimedCaller, int type) => Pass("verifyring", () => Inner.VerifyRing(sessionId, target, claimedCaller, type));
             public SessionReply IssueToken(UUID sessionId, UUID agent) => Pass("issuetoken", () => Inner.IssueToken(sessionId, agent));
             public SessionReply TakeConferenceRequest(UUID agent) => Pass("takeconferencerequest", () => Inner.TakeConferenceRequest(agent));
             public SessionReply Get(UUID sessionId, UUID agent = default) => Pass("get", () => Inner.Get(sessionId, agent));

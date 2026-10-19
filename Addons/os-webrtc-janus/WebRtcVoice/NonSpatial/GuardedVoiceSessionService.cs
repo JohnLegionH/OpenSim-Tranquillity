@@ -88,6 +88,9 @@ namespace osWebRtcVoice.NonSpatial
         public SessionReply MarkInvited(UUID sessionId, IReadOnlyList<UUID> agents)
             => Run(() => _inner.MarkInvited(sessionId, agents));
 
+        public SessionReply VerifyRing(UUID sessionId, UUID target, UUID claimedCaller, int type)
+            => Run(() => _inner.VerifyRing(sessionId, target, claimedCaller, type));
+
         public SessionReply IssueToken(UUID sessionId, UUID agent)
             => Run(() => _inner.IssueToken(sessionId, agent));
 

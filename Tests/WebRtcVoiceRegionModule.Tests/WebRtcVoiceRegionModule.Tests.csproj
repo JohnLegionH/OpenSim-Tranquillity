@@ -32,6 +32,7 @@
     <Compile Include="A2ARegistry.cs" />
     <Compile Include="A2AGridCallTests.cs" />
     <Compile Include="A2AStoreUnavailableTests.cs" />
+    <Compile Include="RingVerificationTests.cs" />
     <Compile Include="P2PCallRulesTests.cs" />
     <Compile Include="SeatRenewalTests.cs" />
     <Compile Include="VoiceConnectorRegistryTests.cs" />
