@@ -160,10 +160,13 @@ namespace osWebRtcVoice.NonSpatial
             switch (raw)
             {
                 case OSDArray arr:
+                    // A set for the repeat test: scanning the list per entry is quadratic, and the array
+                    // is whatever the client sent.
+                    HashSet<UUID> seen = new HashSet<UUID>();
                     foreach (OSD entry in arr)
                     {
                         UUID id = entry.AsUUID();
-                        if (id != UUID.Zero && !invitees.Contains(id)) invitees.Add(id);
+                        if (id != UUID.Zero && seen.Add(id)) invitees.Add(id);
                     }
                     break;
                 default:
@@ -193,7 +196,18 @@ namespace osWebRtcVoice.NonSpatial
                 return false;
 
             List<UUID> asked = ParseInvitees(reqmap);
-            List<string> refusals = new List<string>();
+            SessionOutcome fits = engine.CheckInviteCount(sessionId, agentID, asked);
+            if (!fits.Ok)
+            {
+                outcome = new ChatSessionOutcome
+                {
+                    Status = HttpStatusCode.Forbidden,
+                    Instrument = Line(agentID, sessionId, "adhoc-refused-" + fits.Decision,
+                                      $"session={sessionId} asked={asked.Count}"),
+                };
+                return true;
+            }
+            int refusals = 0;
             foreach (UUID invitee in asked)
             {
                 if (invitee == agentID) continue;                      // never invite yourself
@@ -204,7 +218,7 @@ namespace osWebRtcVoice.NonSpatial
                 SessionOutcome r = engine.Invite(sessionId, agentID, invitee);
                 if (!r.Ok)
                 {
-                    refusals.Add(invitee + ":" + r.Decision);
+                    refusals++;
                     continue;
                 }
                 if (!alreadyInTheCall && !alreadyRung)
@@ -217,7 +231,7 @@ namespace osWebRtcVoice.NonSpatial
                 Instrument = Line(agentID, sessionId,
                                   newlyInvited.Count > 0 ? DecisionInvited : DecisionInviteNothingNew,
                                   $"session={sessionId} asked={asked.Count} new={newlyInvited.Count}"
-                                  + (refusals.Count > 0 ? " refused=[" + string.Join(",", refusals) + "]" : string.Empty)),
+                                  + (refusals > 0 ? " refused=" + refusals : string.Empty)),
             };
             return true;
         }

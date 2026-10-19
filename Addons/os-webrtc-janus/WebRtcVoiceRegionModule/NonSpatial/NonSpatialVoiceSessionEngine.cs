@@ -63,6 +63,9 @@ namespace osWebRtcVoice.NonSpatial
 
         /// <summary>The agent already has the most live sessions it may have started.</summary>
         public const string AgentSessionCap = "session-cap-agent";
+
+        /// <summary>A start or invite would add more new people than the conference has room for.</summary>
+        public const string TooManyInvitees = "too-many-invitees";
     }
 
     public sealed class NonSpatialVoiceSessionEngine
@@ -183,6 +186,19 @@ namespace osWebRtcVoice.NonSpatial
             AdmissionVerdict v = Admission(NonSpatialSessionType.Adhoc).CanStart(creator, UUID.Zero, invitees ?? new List<UUID>());
             if (!v.Admitted) return SessionOutcome.Fail(v.Decision);
 
+            // No seat is held yet, so the people who can be rung are the conference cap. An invitation
+            // reserves nothing, so a list that fits can still be more than will accept; this bound only
+            // stops one request ringing the whole grid. A list over it is refused whole, never cut to its
+            // first entries.
+            List<UUID> distinct = DistinctInvitees(invitees, creator);
+            int room = NonSpatialCaps.Effective(NonSpatialSessionType.Adhoc, requestedCap);
+            if (distinct.Count > room)
+            {
+                NoteRefusal(creator, SessionOutcome.TooManyInvitees,
+                            $"asked={invitees?.Count ?? 0} new={distinct.Count} room={room}");
+                return SessionOutcome.Fail(SessionOutcome.TooManyInvitees);
+            }
+
             NonSpatialVoiceSession prior = FindAdhocByTemp(creator, tempSessionId);
             if (prior != null)
             {
@@ -190,7 +206,51 @@ namespace osWebRtcVoice.NonSpatial
                 return new SessionOutcome(true, "start-idempotent", prior, created: false);
             }
             return StartWithId(NonSpatialSessionType.Adhoc, UUID.Random(), tempSessionId, creator, UUID.Zero,
-                               originRegion, requestedCap, invitees);
+                               originRegion, requestedCap, distinct);
+        }
+
+        /// <summary>
+        /// The invitees once each, in first-seen order, without the nil id and without <paramref name="except"/>
+        /// (the person asking). A set, not a scan of the list, so a long list costs linear time.
+        /// </summary>
+        public static List<UUID> DistinctInvitees(IEnumerable<UUID> asked, UUID except)
+        {
+            List<UUID> distinct = new List<UUID>();
+            if (asked == null) return distinct;
+            HashSet<UUID> seen = new HashSet<UUID>();
+            foreach (UUID a in asked)
+                if (a != UUID.Zero && a != except && seen.Add(a))
+                    distinct.Add(a);
+            return distinct;
+        }
+
+        /// <summary>
+        /// Decide whether an "invite" naming <paramref name="asked"/> fits the conference. The new
+        /// people in the request (not seated, and not already holding an invitation) may not outnumber the
+        /// seats still free, and a request over that is refused whole. Nothing is invited by this call.
+        /// </summary>
+        public SessionOutcome CheckInviteCount(UUID sessionId, UUID inviter, IReadOnlyCollection<UUID> asked)
+        {
+            List<UUID> distinct = DistinctInvitees(asked, inviter);
+            return _store.Mutate(sessionId, sess =>
+            {
+                int fresh = 0;
+                foreach (UUID a in distinct)
+                {
+                    NonSpatialMember m = sess.Find(a);
+                    if (m == null || (!m.HoldsSeat && m.State != MemberState.Invited))
+                        fresh++;
+                }
+                int room = sess.Cap - sess.SeatsHeld;
+                if (fresh > room)
+                {
+                    NoteRefusal(inviter, SessionOutcome.TooManyInvitees,
+                                $"asked={asked?.Count ?? 0} new={fresh} room={Math.Max(room, 0)}");
+                    // A room with no seat left is the capacity refusal an invite into it has always had.
+                    return SessionOutcome.Fail(room <= 0 ? SessionOutcome.Capacity : SessionOutcome.TooManyInvitees, sess);
+                }
+                return new SessionOutcome(true, "invitees-fit", sess);
+            }, SessionOutcome.Fail(SessionOutcome.NoSuchSession));
         }
 
         private SessionOutcome StartWithId(NonSpatialSessionType type, UUID sessionId, UUID tempSessionId,
