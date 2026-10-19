@@ -51,11 +51,6 @@ public partial class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
     private string _JanusAdminURI = string.Empty;
     private string _JanusAdminToken = string.Empty;
 
-    // The grid's identity folded into every non-spatial room number so
-    // two grids on a shared mixer cannot collide on the same channel. Read once from the region's
-    // own config (GatekeeperURI, the same chain GridInfo uses); empty when the grid has none.
-    private string _GridId = string.Empty;
-
     // Create spatial "local" rooms with vis_authority=true. True
     // only when the sim arms: [WebRtcVoice] VisibilityArmingEnabled (default false) with the feeder and emission on
     // (default true), resolved exactly as WebRtcVoiceRegionModule resolves them.
@@ -101,11 +96,7 @@ public partial class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                 _JanusAdminURI = janusConfig.GetString("JanusGatewayAdminURI", string.Empty);
                 _JanusAdminToken = janusConfig.GetString("AdminAPIToken", string.Empty);
                 ReadPluginNameConfig(janusConfig);
-                _GridId = JanusAudioBridge.ReadGridId(_Config);
-                if (string.IsNullOrEmpty(_GridId))
-                    _log.LogWarning($"{LogHeader} no GatekeeperURI in [Hypergrid]/[Startup]/[Const] (nor [GatekeeperService] ExternalName / [GridService] Gatekeeper): multiagent rooms are derived without a grid id");
-                else
-                    _log.LogInformation($"{LogHeader} grid id for multiagent rooms = {_GridId}");
+                ReadGridIdConfig();
                 _DeclareVisAuthority = webRtcVoiceConfig.GetBoolean("VisibilityArmingEnabled", false)
                     && webRtcVoiceConfig.GetBoolean("VisibilityFeederEnabled", false)
                     && webRtcVoiceConfig.GetBoolean("VisibilityEmitEnabled", false);

@@ -60,9 +60,6 @@ public partial class JanusAudioBridge : JanusPlugin
         // m_log.LogDebug("{0} JanusAudioBridge constructor (plugin={1})", LogHeader, pPluginName);
     }
 
-    /// <summary>The grid id folded into every "multiagent" room number by <see cref="SelectRoom"/>.</summary>
-    public string GridId { get; }
-
     /// <summary>Whether spatial "local" rooms are declared as having a sim authority.</summary>
     public bool DeclareVisAuthority { get; }
 
@@ -78,31 +75,6 @@ public partial class JanusAudioBridge : JanusPlugin
     /// so declaring them would silence every call once fail-closed is enabled.</summary>
     public static bool ShouldDeclareVisAuthority(bool pDeclare, string pChannelType)
         => pDeclare && string.Equals(pChannelType, "local", StringComparison.Ordinal);
-
-    /// <summary>
-    /// The grid identifier for room derivation: the region's GatekeeperURI, read through the
-    /// same section chain GridInfo uses for Scene.SceneGridInfo ([Const] / [Startup] / [Hypergrid],
-    /// then [GatekeeperService] ExternalName, then [GridService] Gatekeeper), so it is the identity
-    /// the region already presents on Hypergrid. Stable across restarts and identical for every
-    /// region of the grid because it comes from the shared grid config; different per grid by
-    /// construction. Normalised (trim, lower-case, no trailing slash) because the value is a hash
-    /// input and two regions must not disagree over a spelling. No DNS resolution here (GridInfo
-    /// resolves and throws; this must not take the voice service down). Empty when unconfigured.
-    /// </summary>
-    public static string ReadGridId(IConfigSource pConfig)
-    {
-        if (pConfig is null)
-            return string.Empty;
-        string[] sections = ["Const", "Startup", "Hypergrid"];
-        string gatekeeper = Util.GetConfigVarFromSections<string>(pConfig, "GatekeeperURI", sections, string.Empty);
-        if (string.IsNullOrEmpty(gatekeeper))
-            gatekeeper = pConfig.Configs["GatekeeperService"]?.GetString("ExternalName", string.Empty);
-        if (string.IsNullOrEmpty(gatekeeper))
-            gatekeeper = pConfig.Configs["GridService"]?.GetString("Gatekeeper", string.Empty);
-        if (string.IsNullOrEmpty(gatekeeper))
-            return string.Empty;
-        return gatekeeper.Trim().TrimEnd('/').ToLowerInvariant();
-    }
 
     public override void Dispose()
     {

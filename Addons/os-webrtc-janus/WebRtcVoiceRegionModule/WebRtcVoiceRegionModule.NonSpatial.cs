@@ -1,0 +1,432 @@
+/*
+ * Copyright (c) Contributors, http://opensimulator.org/
+ * See CONTRIBUTORS.TXT for a full list of copyright holders.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *     * Redistributions of source code must retain the above copyright
+ *       notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright
+ *       notice, this list of conditions and the following disclaimer in the
+ *       documentation and/or other materials provided with the distribution.
+ *     * Neither the name of the OpenSimulator Project nor the
+ *       names of its contributors may be used to endorse or promote products
+ *       derived from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE DEVELOPERS ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE CONTRIBUTORS BE LIABLE FOR ANY
+ * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+// Adapted 2026 by Legion Builds
+
+using System.Collections.Generic;
+using System.Net;
+using System.Reflection;
+
+using OpenSim.Framework;
+using OpenSim.Framework.Servers.HttpServer;
+using OpenSim.Region.Framework.Interfaces;
+using OpenSim.Region.Framework.Scenes;
+
+using Caps = OpenSim.Framework.Capabilities.Caps;
+
+using OpenMetaverse;
+using OpenMetaverse.StructuredData;
+using OSDMap = OpenMetaverse.StructuredData.OSDMap;
+
+using Nini.Config;
+using Microsoft.Extensions.Logging;
+using OpenSim.Services.Interfaces;   // IPresenceService, for the online-only ring filter
+using osWebRtcVoice.NonSpatial;   // the non-spatial engine and the group arm
+
+namespace osWebRtcVoice;
+
+// Non-spatial voice sessions: the shared engine, the avatar-to-avatar invitation registry and the chat session plumbing the group and conference features build on.
+public partial class WebRtcVoiceRegionModule
+{
+    // [WebRtcVoice] A2AVoiceEnabled: avatar-to-avatar calls (the "call" and "start p2p voice" chat session
+    // requests answered with an invitation registry and per-session credentials). Off by default: the
+    // chat session handler then answers as it did before the feature existed.
+    public const bool DefaultA2AVoiceEnabled = false;
+
+    public static bool ReadA2AVoiceEnabled(IConfig pConfig)
+        => pConfig.GetBoolean("A2AVoiceEnabled", DefaultA2AVoiceEnabled);
+
+    // Avatar-to-avatar invitation registry. One per module
+    // instance (one per region-server process), shared by every scene this shared module serves; thread-safe
+    // because ChatSessionRequest arrives on cap HTTP threads. Cross-instance A2A is out of scope.
+    private readonly A2ASessionRegistry m_a2aSessions = new();
+
+    // The non-spatial engine and the group policy. The engine is constructed
+    // unconditionally and costs nothing when idle; the POLICY is what gates every group arm, and it
+    // is GroupVoicePolicy.Disabled unless [WebRtcVoice] GroupVoiceEnabled is set. The store is the
+    // in-process one; a service-backed store can replace it behind INonSpatialSessionStore
+    // without touching anything here.
+    private readonly InMemoryNonSpatialSessionStore m_nonSpatialStore = new();
+
+    private NonSpatialVoiceSessionEngine m_nonSpatial;
+
+    private bool m_a2aVoiceEnabled = DefaultA2AVoiceEnabled;
+
+    // Scenes this shared module serves, for callee resolution on THIS instance (the group
+    // module's m_sceneList / GetActiveClient pattern). Cross-instance A2A is out of scope.
+    private readonly List<Scene> m_scenes = new();
+
+    /// <summary>
+    /// Write a ChatSessionRequest outcome's body and status. Extracted verbatim from the tail of
+    /// <see cref="ChatSessionRequest"/> so the group arm answers through exactly the same code
+    /// the A2A arm does; it carries no event-queue or invitation work, which only the A2A arm has.
+    /// </summary>
+    private static void ApplyChatSessionOutcome(ChatSessionOutcome outcome, IOSHttpResponse response)
+    {
+        if (outcome.Body is not null)
+            response.RawBuffer = Util.UTF8.GetBytes(OSDParser.SerializeLLSDXmlString(outcome.Body));
+        // "fetch history" answers with an ARRAY, which the viewer type-checks before reading
+        // (llimview.cpp:816-822). Same serialiser, different root node.
+        else if (outcome.BodyArray is not null)
+            response.RawBuffer = Util.UTF8.GetBytes(OSDParser.SerializeLLSDXmlString(outcome.BodyArray));
+
+        response.StatusCode = (int)outcome.Status;
+    }
+
+    /// <summary>The voice session-id a ChatSessionRequest body carries, or Zero.</summary>
+    private static UUID GroupSessionIdOf(OSDMap reqmap)
+        => reqmap is not null && reqmap.TryGetUUID("session-id", out UUID id) ? id : UUID.Zero;
+
+    // Subscribes the scene events the voice sessions rely on.
+    private void SubscribeVoiceSessionEvents(Scene scene)
+    {
+        SubscribeGroupVoiceEvents(scene);
+        SubscribeConferenceEvents(scene);
+        // A client that drops without a logout provision (crash, kill)
+        // would otherwise leave its Active A2A record until the idle backstop, suppressing a re-ring
+        // between the same pair. Treat the close as that party gone from every record it is in;
+        // the record is removed only when the other party is gone too (both-logout semantics), and a
+        // later admitted provision re-marks the party present, so this is reversible.
+        scene.EventManager.OnClientClosed += (clientID, s) => OnVoiceClientClosed(scene, clientID, s);
+    }
+
+    // A client closed: drop its avatar-to-avatar records, then release its group and conference seats.
+    private void OnVoiceClientClosed(Scene scene, UUID clientID, Scene s)
+    {
+        // Look the presence up in the scene the close fired for. OnClientClosed runs
+        // inside Scene.RemoveClient before the presence is removed, so it is resolvable here. Same guard
+        // as WebRtcVoiceServiceModule.Event_OnClientClosed.
+        Scene closedIn = s ?? scene;
+        ScenePresence sp = closedIn.GetScenePresence(clientID);
+        if (!A2ASessionRegistry.ShouldMarkGone(sp != null, sp != null && sp.IsChildAgent))
+            return;   // child teardown (border crossing / draw distance) — the agent's voice lives in its root region
+        foreach (A2ASession gone in m_a2aSessions.MarkGoneSessions(clientID, null))
+        {
+            m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} session-id={SessionId} region={RegionName} decision=removed-client-closed",
+                logHeader, clientID, gone.SessionId, s?.Name ?? scene.Name);
+            // Tell the remaining party the departed one LEFT (if reachable here).
+            List<Scene> scenesSnap;
+            lock (m_scenes)
+                scenesSnap = new List<Scene>(m_scenes);
+            string line = A2AAgentListDelivery.SendLeave(scenesSnap, gone, clientID, null);
+            if (line != null)
+                m_log.LogDebug("{LogHeader} {Line}", logHeader, line);
+        }
+        ReleaseSeatsOnClientClosed(scene, clientID, s);
+    }
+
+    // What a provision answer changes in the non-spatial records, by the kind admission decided.
+    private void OnProvisionAnswered(OSDMap resp, ProvisionAdmission admission, string a2aVs, UUID agentID, Scene scene)
+    {
+        if (A2AProvisionAdmission.RecordsListenerRoom(admission.Kind))
+        {
+            RecordListenerRoom(resp, agentID, scene);
+        }
+        else if (A2AProvisionAdmission.RecordsA2ASession(admission) && resp.TryGetString("viewer_session", out string provVs) && !string.IsNullOrEmpty(provVs))
+        {
+            // Admitted AND joined -- only the service's success map carries viewer_session
+            // (ProvisionResponseBuilder.BuildSuccess); a failure map ({response:"failed"}, with or
+            // without error_code) leaves the record as it was. The callee's admitted provision is
+            // the accept (Invited -> Active).
+            string vs = provVs;
+            bool wasActive = admission.Session.State == A2ASessionState.Active;
+            A2ASession s = m_a2aSessions.MarkProvisioned(admission.Session.SessionId, agentID, vs);
+            // The mixer room the service derived (grid id + channel + type) rides on the
+            // success map as `room`; surfaced here so an A2A join is auditable end to end.
+            m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} session-id={SessionId} viewer_session={ViewerSession} room={Room} state={State} decision=provisioned",
+                logHeader, agentID, admission.Session.SessionId, vs ?? "-",
+                resp.TryGetInt("room", out int a2aRoom) ? a2aRoom.ToString() : "-",
+                s?.State.ToString() ?? "gone");
+            // On the TRANSITION to Active (the callee's accept), both parties'
+            // IM panels get ChatterBoxSessionAgentListUpdates -- each receives the other's ENTER
+            // plus its own entry, can_voice_chat:true by construction (false hangs up the call,
+            // llimview.cpp:4366-4382). Not re-sent on a reconnect re-provision of an already-
+            // Active record. This is the participant/moderation surface only; the caller's
+            // connected state comes from mixer presence.
+            if (!wasActive && s != null && s.State == A2ASessionState.Active)
+            {
+                List<Scene> scenes;
+                lock (m_scenes)
+                    scenes = new List<Scene>(m_scenes);
+                foreach (string line in A2AAgentListDelivery.SendActivePair(scenes, s, null))
+                    m_log.LogDebug("{LogHeader} {Line}", logHeader, line);
+            }
+        }
+        else if ((admission.Kind == ProvisionKind.Group || admission.Kind == ProvisionKind.Adhoc)
+                 && resp.TryGetString("viewer_session", out string groupVs) && !string.IsNullOrEmpty(groupVs))
+        {
+            RecordGroupSeatPresent(admission, groupVs, agentID, scene);
+        }
+        else if (admission.Kind == ProvisionKind.Logout && a2aVs != "-")
+        {
+            // Teardown by viewer session: only the record this party joined under that session is
+            // affected; a spatial logout matches nothing and is a no-op here. Both parties gone
+            // removes the Active record (both-logout). The remaining party (if still on
+            // this instance) gets the departed party's LEAVE.
+            foreach (A2ASession gone in m_a2aSessions.MarkGoneSessions(agentID, a2aVs))
+            {
+                m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} session-id={SessionId} viewer_session={ViewerSession} decision=removed-both-logout",
+                    logHeader, agentID, gone.SessionId, a2aVs);
+                List<Scene> scenes;
+                lock (m_scenes)
+                    scenes = new List<Scene>(m_scenes);
+                string line = A2AAgentListDelivery.SendLeave(scenes, gone, agentID, null);
+                if (line != null)
+                    m_log.LogDebug("{LogHeader} {Line}", logHeader, line);
+            }
+
+            ReleaseGroupSeatsOnLogout(agentID, a2aVs);
+        }
+    }
+
+    // Decides whether a provision request is admitted, and as what kind. A "local" request goes on to the
+    // parcel and estate checks in the caller; a "multiagent" one is admitted by the group or avatar-to-avatar
+    // registry. Writes the refusal and returns false when the request is not admitted.
+    private bool TryAdmitProvision(OSDMap map, UUID agentID, Scene scene, IOSHttpResponse response,
+        out ProvisionAdmission admission, out string channelType, out string a2aVs)
+    {
+        channelType = string.Empty;
+        a2aVs = "-";
+        // FAIL CLOSED: voice authorization -- the parcel/estate ban & restrict
+        // checks below -- is only implemented for the "local" channel, and those checks are nested
+        // under `channel_type == "local"`. A request whose channel_type is ANYTHING ELSE, or is
+        // missing, would skip every one of them and provision voice past a parcel or estate ban.
+        // Refuse it here, BEFORE room selection and BEFORE any Janus session creation, with the
+        // SAME response an unauthorized local request gets (llsd <undef/> + 403 Forbidden; see the
+        // ban/restrict branch below). "multiagent" is RESERVED for the future avatar-to-avatar
+        // feature, which must bring its OWN authorization when it is built -- this deny is
+        // DELIBERATE, not a stub to remove.
+        // Admission. "local" -> IsProvisionableChannelType (unchanged predicate) -> the
+        // parcel/estate checks below. "multiagent" -> the invitation registry: the body's `channel`
+        // (NOT channel_id) names a live session, the agent is a named party, `credentials` equals the
+        // session token; else 403. A teardown body ({logout, viewer_session}, no channel_type) is routed to
+        // the voice service by viewer_session -- the guard had been refusing every logout provision
+        // since it shipped (live logs: 'refusing provision with channel_type ""' at each teardown), leaving
+        // mixer teardown to the close-capture path. Everything else stays refused exactly as left it.
+        // A GROUP provision is a "multiagent" body whose `channel` is one of our room keys
+        // ("nsv1:group:<uuid>"), which can never be an A2A channel because that lookup is
+        // UUID.TryParse. Anything else -- every body that exists today -- goes to the untouched
+        // A2AProvisionAdmission.Decide below with the same arguments it has always had.
+        if (NonSpatialProvisionAdmission.IsGroupProvision(map))
+        {
+            if (!TryAdmitGroupProvision(map, agentID, scene, response, out admission))
+                return false;
+        }
+        else
+        {
+            admission = A2AProvisionAdmission.Decide(map, agentID, m_a2aSessions);
+        }
+        channelType = admission.ChannelType;
+        a2aVs = map.TryGetString("viewer_session", out string vsRaw) && !string.IsNullOrEmpty(vsRaw) ? vsRaw : "-";
+
+        // Permanent instrument: one greppable DEBUG line per provision
+        // naming the fields the A2A authorization decides on; the token itself is never logged.
+        m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} region={RegionName} channel_type=\"{ChannelType}\" channel={Channel} credentials={Credentials} viewer_session={ViewerSession} logout={Logout} decision={Decision}",
+            logHeader, agentID, scene.Name, channelType, admission.Channel,
+            map.TryGetString("credentials", out string a2aCreds) && !string.IsNullOrEmpty(a2aCreds) ? "present" : "absent",
+            a2aVs, admission.Kind == ProvisionKind.Logout, admission.Decision);
+
+        if (!admission.Admitted)
+        {
+            m_log.LogWarning($"{logHeader}[ProvisionVoice]: refusing provision with channel_type \"{channelType}\" ({admission.Decision}) from agent {agentID} in region \"{scene.Name}\"");
+            response.RawBuffer = llsdUndefAnswerBytes;
+            response.StatusCode = (int)HttpStatusCode.Forbidden;
+            return false;
+        }
+        return true;
+    }
+
+    // A ring must come from the agent's ROOT region, the same presence rule the close path uses
+    // (sp == null || sp.IsChildAgent). A child agent's request is refused before any registry state.
+    // Only applies when a non-spatial feature is enabled: otherwise the request is answered as it
+    // always was.
+    private bool RefuseChildChatSession(ScenePresence sp, UUID agentID, Scene scene, IOSHttpResponse response)
+    {
+        if (sp.IsChildAgent && (m_a2aVoiceEnabled || m_groupVoice.IsUsable || m_adhocVoiceEnabled))
+        {
+            m_log.LogWarning($"{logHeader} ChatSessionRequest: refusing child agent {agentID} in region \"{scene.RegionInfo.RegionName}\" (chat session requests come from the agent's root region)");
+            response.StatusCode = (int)HttpStatusCode.Forbidden;
+            return true;
+        }
+        return false;
+    }
+
+    // Handles the chat session requests the non-spatial features answer: the group and conference arms, then the
+    // avatar-to-avatar decision and the shared reply. Returns false when none of them applies, so the stock
+    // handler in ChatSessionRequest answers.
+    private bool TryHandleNonSpatialChatSession(OSDMap reqmap, UUID agentID, ScenePresence sp, Scene scene, IOSHttpResponse response)
+    {
+        // Permanent instrument: the body the viewer actually sent,
+        // single-line and greppable, BEFORE any decision. Never carries a token (the request has none).
+        m_log.LogDebug("{LogHeader} {Tag} agent={AgentId} region={RegionName} body={Body}",
+            logHeader, ChatSessionRequestLogic.InstrumentTag, agentID, scene.RegionInfo.RegionName,
+            OSDParser.SerializeJsonString(reqmap));
+
+        if (TryHandleGroupChatSession(reqmap, agentID, sp, scene, response))
+            return true;
+
+        // The decision is pure and unit-tested (ChatSessionRequestLogic); this adapter applies it.
+        // "start p2p voice" records the pair in the invitation registry (params = callee; absent -> 400,
+        // replacing the old UUID.Random fallback); "call" mints the per-session token and answers in the
+        // HTTP body with voice_credentials { channel_uri, channel_credentials } (llvoicechannel.cpp:687).
+        // Nothing in this method admits a multiagent provision; that is decided in ProvisionVoiceAccountRequest.
+        // "start conference" opens the ADHOC session and produces the two ids the viewer is
+        // waiting on. Deliberately NOT an early return like the group arms: the outcome falls into
+        // the shared tail below, whose Reply path already sends the event-queue
+        // ChatterBoxSessionStartReply. One sender for that event, not two.
+        // Voice on an ad-hoc conference -- the same two methods the group arms above answer,
+        // for a conference id instead of a group id.
+        //
+        // Order does not matter here, and that is worth stating rather than relying on. The group
+        // arms take a "call" only when the voice session-id is a GROUP THIS AGENT BELONGS TO; a conference
+        // id is a server-minted random UUID and is never a group id, so they always decline it. These
+        // arms take it only when the store holds a genuinely AD-HOC session with this agent as a
+        // member, so they can never capture a group call either. The two discriminators are disjoint
+        // by construction, not by sequence.
+        if (TryHandleAdhocChatSession(reqmap, agentID, sp, scene, response))
+            return true;
+
+        if (!AdhocVoiceChatSession.TryHandleStartConference(reqmap, agentID, m_nonSpatial,
+                                                            scene.RegionInfo.RegionID, m_adhocVoiceEnabled,
+                                                            out ChatSessionOutcome outcome))
+        {
+            if (!m_a2aVoiceEnabled)
+                return false;   // the stock handler in ChatSessionRequest answers
+            outcome = ChatSessionRequestLogic.Decide(reqmap, agentID, sp.Name, m_a2aSessions);
+        }
+
+        m_log.LogDebug("{LogHeader} {Line}", logHeader, outcome.Instrument);
+
+        // "call" produced an invitation for the other party. Deliver it as a generic
+        // ChatterBoxInvitation event (BuildEvent + Enqueue) to the callee on THIS instance; an
+        // unreachable callee (offline / another region server) gets nothing and the caller rings out.
+        // Never affects this request's outcome: the caller's credentials are returned regardless.
+        if (outcome.Invite is not null)
+        {
+            List<Scene> scenes;
+            lock (m_scenes)
+                scenes = new List<Scene>(m_scenes);
+            string decision = A2AInviteDelivery.Deliver(scenes, outcome.Invite.Callee, outcome.Invite.Body, null, out string calleeRegion);
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                A2AInviteDelivery.Line(outcome.Invite.Callee, outcome.Invite.Caller, outcome.Invite.SessionId, calleeRegion, decision));
+            // One ring per Invited record. Marked only on a confirmed enqueue, so a
+            // callee-unreachable delivery leaves the flag clear and a caller retry can ring later.
+            if (decision == A2AInviteDelivery.DecisionSent)
+                m_a2aSessions.MarkInviteSent(outcome.Invite.SessionId);
+        }
+
+        if (outcome.Reply is not null)
+        {
+            IEventQueue queue = scene.RequestModuleInterface<IEventQueue>();
+            if (queue is null)
+            {
+                m_log.LogError("{0}: no event queue for scene {1}", logHeader, scene.RegionInfo.RegionName);
+                response.StatusCode = (int)HttpStatusCode.InternalServerError;
+                return true;
+            }
+
+            // The viewer reads only success / temp_session_id / session_id from this event; it never reads
+            // voice_enabled, session_name or type (wire trace). Values kept as before for stock viewers.
+            queue.ChatterBoxSessionStartReply(
+                    outcome.Reply.SessionId,
+                    sp.Name,
+                    2,
+                    false,
+                    true,
+                    outcome.Reply.TempSessionId,
+                    true,
+                    string.Empty,
+                    agentID);
+
+            // The conference just opened, so ring the invitees the viewer named in `params`.
+            // Fired on the engine's 0 -> 1 seat transition, which for AD-HOC is the creator's own
+            // seat inside Start -- there is no other accept to hang it on. Placed AFTER the re-key
+            // event so a ring failure can never cost the initiator the reply it is blocked on.
+            if (outcome.StartedRinging)
+                RingAdhocMembers(m_nonSpatial?.Store.Get(outcome.Reply.SessionId), agentID, sp.Name, null);
+            // The creator took the first seat inside Start, so the roster exists from
+            // this moment. One entry, the creator's own -- which is what the group path also sends
+            // to an agent opening a voice session (GroupsMessagingModule.cs:661-664).
+            SendConferenceRoster(m_nonSpatial?.Store.Get(outcome.Reply.SessionId), agentID, joined: true);
+        }
+
+        ApplyChatSessionOutcome(outcome, response);
+        return true;
+    }
+
+    // Reads the avatar-to-avatar, group and conference settings and builds the non-spatial engine.
+    private void InitialiseNonSpatial(IConfigSource config)
+    {
+        m_a2aVoiceEnabled = ReadA2AVoiceEnabled(m_Config);
+
+        // Group voice, opt-in. The membership and power lookups are bound per-request
+        // to the scene's IGroupsModule (grid state via the groups service, so the same answer
+        // on every region and every host), not captured here, because scenes are added later.
+        if (ReadGroupVoiceEnabled(m_Config))
+        {
+            m_groupVoice = new GroupVoicePolicy
+            {
+                Enabled = true,
+                RequireVoicePower = ReadGroupVoiceRequireVoicePower(m_Config),
+                Cap = ReadGroupVoiceCap(m_Config),
+                IsMember = GroupIsMember,
+                Powers = GroupPowersOf,
+            };
+            m_log.LogInformation(
+                "{LogHeader} GROUP VOICE enabled ([WebRtcVoice] GroupVoiceEnabled): cap {Cap}, required powers 0x{Mask:X}{Note}",
+                logHeader, NonSpatialCaps.Effective(NonSpatialSessionType.Group, m_groupVoice.Cap),
+                m_groupVoice.RequiredMask,
+                m_groupVoice.RequireVoicePower ? " (GP_SESSION_JOIN + GP_SESSION_VOICE)" : " (GP_SESSION_JOIN only)");
+        }
+
+        m_adhocVoiceEnabled = ReadAdhocVoiceEnabled(m_Config);
+        if (m_adhocVoiceEnabled)
+            m_log.LogInformation("{LogHeader} ADHOC VOICE enabled ([WebRtcVoice] AdhocVoiceEnabled): "
+                + "\"start conference\" answers with an event-queue ChatterBoxSessionStartReply", logHeader);
+
+        // The SAME grid id the room numbers are hashed from, so a group room
+        // key derived here and a room number derived in the bridge agree across the grid.
+        m_nonSpatial = new NonSpatialVoiceSessionEngine(
+            m_nonSpatialStore,
+            new INonSpatialAdmission[] { new P2PAdmission(), new AdhocAdmission(), m_groupVoice.ToAdmissionOrNull() },
+            JanusAudioBridge.ReadGridId(config));
+    }
+
+    // Tracks the scenes this shared module serves, for callee resolution on THIS instance (the group
+    // module's m_sceneList / GetActiveClient pattern). Cross-instance A2A is out of scope.
+    private void RegisterSceneForVoiceSessions(Scene scene)
+    {
+        lock (m_scenes)
+            if (!m_scenes.Contains(scene))
+                m_scenes.Add(scene);
+    }
+
+    private void UnregisterSceneForVoiceSessions(Scene scene)
+    {
+        lock (m_scenes)
+            m_scenes.Remove(scene);
+    }
+}
