@@ -70,6 +70,7 @@ namespace osWebRtcVoice.Tests
             janus.Set("JoinCapabilitySecret", "0123456789abcdef0123456789abcdef0123456789abcdef");
         }
 
+        [NeedsPlugin(JanusPluginKind.Stock)]
         [Test]
         public async Task StockPlugin_PlainJoinAndLeave_WritesNoWarningsOrErrors()
         {
@@ -102,6 +103,7 @@ namespace osWebRtcVoice.Tests
             }
         }
 
+        [NeedsPlugin(JanusPluginKind.Stock)]
         [Test]
         public async Task EverySlvoiceSwitchOn_VoiceStillWorksOnTheStockPlugin_AndEachSwitchReportsItCannotWork()
         {
@@ -150,6 +152,7 @@ namespace osWebRtcVoice.Tests
 
         // ---- what the stock plugin silently ignores --------------------------------------------
 
+        [NeedsPlugin(JanusPluginKind.Stock)]
         [Test]
         public async Task ModerationMute_OnTheStockPlugin_UsesTheAudioBridgesOwnMute()
         {
@@ -190,6 +193,7 @@ namespace osWebRtcVoice.Tests
             await region.LogoutAsync(b);
         }
 
+        [NeedsPlugin(JanusPluginKind.Stock)]
         [Test]
         public async Task ModerationMuteAll_OnTheStockPlugin_AlsoMutesSomeoneWhoJoinsAfterwards()
         {
@@ -216,6 +220,7 @@ namespace osWebRtcVoice.Tests
             await region.LogoutAsync(b);
         }
 
+        [NeedsPlugin(JanusPluginKind.Stock)]
         [Test]
         public async Task JoinCapability_OnTheStockPlugin_IsNotEnforced()
         {

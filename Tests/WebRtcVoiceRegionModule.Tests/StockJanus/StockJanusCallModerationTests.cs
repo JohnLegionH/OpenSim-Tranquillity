@@ -119,6 +119,7 @@ namespace osWebRtcVoice.Tests
             return m;
         }
 
+        [NeedsPlugin(JanusPluginKind.Any)]
         [Test]
         public async Task AMutedMembersAudioStopsReachingTheOthers_AndUnmuteRestoresIt()
         {
@@ -154,6 +155,7 @@ namespace osWebRtcVoice.Tests
             await region.LogoutAsync(late);
         }
 
+        [NeedsPlugin(JanusPluginKind.Any)]
         [Test]
         public async Task TwoMembersWithTheSameAvatarName_MutingOneLeavesTheOtherHeard()
         {
@@ -186,6 +188,7 @@ namespace osWebRtcVoice.Tests
             await region.LogoutAsync(late);
         }
 
+        [NeedsPlugin(JanusPluginKind.Any)]
         [Test]
         public async Task MuteAll_SilencesEveryoneButTheModerator_AndALaterJoinerIsSilent()
         {

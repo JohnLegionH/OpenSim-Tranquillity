@@ -42,6 +42,7 @@ namespace osWebRtcVoice.Tests
 
         private static readonly TimeSpan Settle = TimeSpan.FromSeconds(10);
 
+        [NeedsPlugin(JanusPluginKind.Any)]
         [Test]
         public async Task EstateRoom_ProvisionJoinsARoomOnTheGateway()
         {
@@ -58,6 +59,7 @@ namespace osWebRtcVoice.Tests
             await region.LogoutAsync(a);
         }
 
+        [NeedsPlugin(JanusPluginKind.Any)]
         [Test]
         public async Task ParcelRoom_IsADifferentRoomFromTheEstateRoom()
         {
@@ -78,6 +80,7 @@ namespace osWebRtcVoice.Tests
             await region.LogoutAsync(b);
         }
 
+        [NeedsPlugin(JanusPluginKind.Any)]
         [Test]
         public async Task SecondProvisionIntoTheSameRoom_SharesIt()
         {
@@ -96,6 +99,7 @@ namespace osWebRtcVoice.Tests
             await region.LogoutAsync(b);
         }
 
+        [NeedsPlugin(JanusPluginKind.Any)]
         [Test]
         public async Task Leave_RemovesTheParticipantAndKeepsTheOther()
         {
@@ -119,6 +123,7 @@ namespace osWebRtcVoice.Tests
         // The slvoice mixer clears an emptied room on its own after its grace period. The stock AudioBridge plugin never
         // does, so the service removes the rooms it created once they have stood empty for EmptyRoomGraceSeconds (set
         // short here so the test does not wait a minute and a half). Either way the room is gone afterwards.
+        [NeedsPlugin(JanusPluginKind.Any)]
         [Test]
         public async Task EmptiedRoom_AfterTheGracePeriod_IsGoneFromTheGateway()
         {
@@ -138,6 +143,7 @@ namespace osWebRtcVoice.Tests
         }
 
         // A room the service did not create is never removed by it, however long it stands empty.
+        [NeedsPlugin(JanusPluginKind.Stock)]
         [Test]
         public async Task EmptiedRoom_ThatTheServiceDidNotCreate_IsLeftInPlace()
         {
@@ -168,6 +174,7 @@ namespace osWebRtcVoice.Tests
             }
         }
 
+        [NeedsPlugin(JanusPluginKind.Any)]
         [Test]
         public async Task Audio_TwoPeersHearEachOther_AndNotThemselves()
         {
@@ -198,6 +205,7 @@ namespace osWebRtcVoice.Tests
             await region.LogoutAsync(b);
         }
 
+        [NeedsPlugin(JanusPluginKind.Any)]
         [Test]
         public async Task Audio_AParcelRoomDoesNotCarryTheEstateRoomsVoice()
         {

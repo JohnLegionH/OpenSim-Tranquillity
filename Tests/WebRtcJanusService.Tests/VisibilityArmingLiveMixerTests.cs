@@ -32,6 +32,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using OpenMetaverse;
 using OpenSim.Framework;
+using osWebRtcVoice.Tests.StockJanus;
 using osWebRtcVoice;
 
 namespace osWebRtcVoice.Tests
@@ -143,6 +144,7 @@ namespace osWebRtcVoice.Tests
                 return c.Lines.Any(l => l.Contains(fragment));
         }
 
+        [NeedsPlugin(JanusPluginKind.Mixer)]
         [Test]
         public async Task RealSimPath_ArmsHeartbeatsAndDetectsAMixerRestart()
         {

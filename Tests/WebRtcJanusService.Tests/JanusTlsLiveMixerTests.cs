@@ -27,6 +27,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using OpenMetaverse.StructuredData;
 using OpenSim.Framework;
+using osWebRtcVoice.Tests.StockJanus;
 
 namespace osWebRtcVoice.Tests
 {
@@ -54,6 +55,7 @@ namespace osWebRtcVoice.Tests
             return (created, reply.Body);
         }
 
+        [NeedsPlugin(JanusPluginKind.Mixer)]
         [Test]
         public async Task TheApiAndTheAdminApiAreReachedOverHttpsWhenTheKeyNamesTheCertificate()
         {
@@ -68,6 +70,7 @@ namespace osWebRtcVoice.Tests
             TestContext.Out.WriteLine("admin API answered: " + body.Replace(Env("LVM_TLS_ADMIN_SECRET"), "<admin secret>"));
         }
 
+        [NeedsPlugin(JanusPluginKind.Mixer)]
         [Test]
         public async Task TheMixersCertificateIsRefusedWhenTheKeyIsUnset()
         {
