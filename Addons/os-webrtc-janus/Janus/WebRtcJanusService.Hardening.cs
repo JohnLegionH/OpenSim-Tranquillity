@@ -48,6 +48,10 @@ public partial class WebRtcJanusService
     // inlined, so no runtime assembly/ALC crossing) instead of duplicating the 495 literal.
     public const int JANUS_ROOM_FULL_ERROR_CODE = 495;
 
+    /// <summary>Janus core's "No such session" (`janus: error`, code 458): the session id is gone, as it is for every
+    /// session after the mixer restarts.</summary>
+    public const int JANUS_NO_SUCH_SESSION_ERROR_CODE = 458;
+
     /// <summary>: the mixer's "No such room" on a join (`Request error 485: No such room (n)`).</summary>
     public const int JANUS_NO_SUCH_ROOM_ERROR_CODE = 485;
 
