@@ -674,10 +674,20 @@ public class GroupsMessagingModule : ISharedRegionModule, IGroupsMessagingModule
             if (m_debugEnabled)
                 m_log.LogDebug("[Groups.Messaging]: Send message to session for group {0} with session ID {1}", GroupID, im.imSessionID.ToString());
 
-            //If this agent is sending a message, then they want to be in the session
-            AgentInvitedToGroupChatSession(AgentID.ToString(), GroupID);
+            // Take this only when the id is a real group. Other session ids (an ad-hoc conference's
+            // text session, for example) are not the groups module's to deliver or to echo back.
+            if (GroupChatSessionGuard.TakesSessionSend(
+                    GroupID, id => m_groupData.GetGroupRecord(UUID.Zero.ToString(), id, null)))
+            {
+                //If this agent is sending a message, then they want to be in the session
+                AgentInvitedToGroupChatSession(AgentID.ToString(), GroupID);
 
-            SendMessageToGroup(im, GroupID);
+                SendMessageToGroup(im, GroupID);
+            }
+            else if (m_debugEnabled)
+            {
+                m_log.LogDebug("[Groups.Messaging]: SessionSend for {0} is not a group session; leaving it alone", GroupID);
+            }
         }
     }
 
