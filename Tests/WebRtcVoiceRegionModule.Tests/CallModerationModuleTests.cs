@@ -55,8 +55,16 @@ namespace osWebRtcVoice.Tests
             }
         }
 
-        private sealed class FakeVoice : IWebRtcVoiceService, INonSpatialParticipantMute
+        internal sealed class FakeVoice : IWebRtcVoiceService, INonSpatialParticipantMute, INonSpatialParticipantRemoval
         {
+            /// Every call to DropCallParticipants: the agent and the room.
+            public readonly List<(UUID Agent, int Room)> Drops = new();
+            public int DropAnswer = 1;
+            public int DropCallParticipants(UUID pAgentID, int pRoomNumber)
+            {
+                lock (Drops) Drops.Add((pAgentID, pRoomNumber));
+                return DropAnswer;
+            }
             public readonly List<(UUID Agent, int Room, bool Muted)> Mutes = new();
             public ParticipantMuteResult Answer = ParticipantMuteResult.Applied;
 
@@ -73,16 +81,26 @@ namespace osWebRtcVoice.Tests
                 return Answer;
             }
             public bool HasCallParticipant(UUID pAgentID, int pRoomNumber) => !NoParticipant.Contains(pAgentID);
-            public OSDMap ProvisionVoiceAccountRequest(OSDMap pRequest, UUID pUserID, UUID pScene) => null;
+            private int m_provisions;
+
+            /// What a real provision answers with: the success map carrying the viewer session and the room.
+            private OSDMap Provisioned() => new OSDMap
+            {
+                ["viewer_session"] = OSD.FromString("vs-p" + System.Threading.Interlocked.Increment(ref m_provisions)),
+                ["room"] = OSD.FromInteger(68971284),
+                ["jsep"] = new OSDMap { ["type"] = OSD.FromString("answer"), ["sdp"] = OSD.FromString("v=0") },
+            };
+            public OSDMap ProvisionVoiceAccountRequest(OSDMap pRequest, UUID pUserID, UUID pScene) => Provisioned();
             public OSDMap VoiceSignalingRequest(OSDMap pRequest, UUID pUserID, UUID pScene) => null;
-            public OSDMap ProvisionVoiceAccountRequest(IVoiceViewerSession pVSession, OSDMap pRequest, UUID pUserID, UUID pScene) => null;
+            public OSDMap ProvisionVoiceAccountRequest(IVoiceViewerSession pVSession, OSDMap pRequest, UUID pUserID, UUID pScene) => Provisioned();
             public OSDMap VoiceSignalingRequest(IVoiceViewerSession pVSession, OSDMap pRequest, UUID pUserID, UUID pScene) => null;
             public IVoiceViewerSession CreateViewerSession(OSDMap pRequest, UUID pUserID, UUID pScene) => null;
             public int? EnsureSpatialRoom(UUID pSceneID, int pParcelLocalID) => null;
         }
 
-        private sealed class Queue : IEventQueue
+        internal sealed class Queue : IEventQueue
         {
+            public readonly List<(UUID To, UUID Session, string Reason)> Closes = new();
             public readonly List<(UUID To, UUID Session, List<GroupChatListAgentUpdateData> Updates)> Lists = new();
             public readonly List<(UUID To, UUID Session, bool Moderated)> Modes = new();
             public bool Enqueue(byte[] o, UUID avatarID) => true;
@@ -103,7 +121,10 @@ namespace osWebRtcVoice.Tests
             {
                 lock (Modes) Modes.Add((toAgent, sessionID, voiceModerated));
             }
-            public void ChatterBoxForceClose(UUID toAgent, UUID sessionID, string reason) { }
+            public void ChatterBoxForceClose(UUID toAgent, UUID sessionID, string reason)
+            {
+                lock (Closes) Closes.Add((toAgent, sessionID, reason));
+            }
             public void GroupMembershipData(UUID receiverAgent, GroupMembershipData[] data) { }
             public void ScriptRunningEvent(UUID objectID, UUID itemID, bool running, UUID avatarID) { }
             public void partPhysicsProperties(uint localID, byte physhapetype, float density, float friction, float bounce, float gravmod, UUID avatarID) { }
@@ -117,7 +138,7 @@ namespace osWebRtcVoice.Tests
             public byte[] EndEventToBytes(osUTF8 sb) => throw new NotSupportedException();
         }
 
-        private sealed class Region : IDisposable
+        internal sealed class Region : IDisposable
         {
             public Scene Scene;
             public WebRtcVoiceRegionModule Module;

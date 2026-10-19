@@ -609,7 +609,7 @@ public partial class WebRtcVoiceRegionModule
         m_nonSpatial = grid;
         m_gridRenewer = new GridSeatRenewer(grid, PresentAgents,
             (message, e) => m_log.LogWarning(e, "{LogHeader} {Message}", logHeader, message),
-            TimeSpan.FromSeconds(store.RenewSeconds));
+            TimeSpan.FromSeconds(store.RenewSeconds), seatRemoved: OnGridSeatRemoved);
         m_log.LogInformation("{LogHeader} non-spatial sessions are kept by the grid session store at {Uri} "
             + "(timeout {Timeout} ms, seats renewed every {Renew} s, up to {Queue} departures queued for {Age} s, "
             + "refusing calls for {Open} s after {Failures} failures in {Window} s)", logHeader, store.ServerUri, store.TimeoutMs,

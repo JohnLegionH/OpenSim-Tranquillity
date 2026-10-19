@@ -382,12 +382,31 @@ public partial class WebRtcVoiceRegionModule
         out ProvisionAdmission admission)
     {
         admission = null;
+        map.TryGetString("channel", out string gch);
+        // A member who was removed from the call gets the same refusal for every retry the viewer makes, so it is read
+        // back from a small cache before the record, the groups service or the store is asked for anything.
+        if (m_callModeration.IsUsable && !string.IsNullOrEmpty(gch)
+            && m_removalRefusals.TryGetRefusal(agentID, RemovalCacheKey(gch), out _))
+        {
+            response.RawBuffer = llsdUndefAnswerBytes;
+            response.StatusCode = (int)HttpStatusCode.Forbidden;
+            return false;
+        }
         NonSpatialProvisionResult g = NonSpatialProvisionAdmission.Decide(
             map, agentID, m_groupVoice, m_nonSpatial, scene.RegionInfo.RegionID, m_adhocVoiceEnabled);
-        map.TryGetString("channel", out string gch);
         m_log.LogDebug("{LogHeader} {Line}", logHeader,
             NonSpatialProvisionAdmission.Line(agentID, scene.Name, gch,
                 map.TryGetString("credentials", out string gcr) && !string.IsNullOrEmpty(gcr), g.Decision));
+        if (!g.Admitted && (g.Decision == NonSpatialProvisionAdmission.DecisionRemoved
+                            || g.Decision == NonSpatialProvisionAdmission.DecisionAdhocRemoved))
+        {
+            // Logged in full once for each window the viewer keeps trying; the retries in between are cached and counted.
+            NoteRemovalRefusal(agentID, gch, g.Decision, scene);
+            m_log.LogWarning($"{logHeader}[ProvisionVoice]: refusing group provision ({g.Decision}) from agent {agentID} in region \"{scene.Name}\"");
+            response.RawBuffer = llsdUndefAnswerBytes;
+            response.StatusCode = g.Status;
+            return false;
+        }
         if (!g.Admitted)
         {
             m_log.LogWarning($"{logHeader}[ProvisionVoice]: refusing group provision ({g.Decision}) from agent {agentID} in region \"{scene.Name}\"");
@@ -431,6 +450,13 @@ public partial class WebRtcVoiceRegionModule
             string detail = $"room={admission.Channel} seats={m_nonSpatial.Get(gsess.SessionId)?.SeatsHeld}/{gsess.Cap}";
             if (pres.Ok)
                 SyncCallVoiceOnJoin(agentID, gsess);
+            else if (pres.Decision == SessionOutcome.Removed)
+            {
+                // The member was removed between the admission and the answer: the join that just happened is undone.
+                int undone = DropMemberFromCallMedia(gsess, agentID, ForceCloseReasonKey);
+                m_log.LogInformation("{LogHeader} [CALL REMOVAL] session={Session} target={Target} joined as they were removed; dropped={Dropped}",
+                    logHeader, gsess.SessionId, agentID, undone);
+            }
             m_log.LogDebug("{LogHeader} {Line}", logHeader,
                 conf ? AdhocVoiceChatSession.Line(agentID, gsess.SessionId, "adhoc-present-" + pres.Decision, detail)
                      : GroupVoiceChatSession.Line(agentID, gsess.Owner, "group-present-" + pres.Decision, detail));

@@ -41,6 +41,14 @@ public partial class JanusAudioBridge
 
     /// <summary>Reads the plugin's answer to a mute or unmute request.</summary>
     public static ParticipantMuteResult ClassifyMuteReply(AudioBridgeResp pResp)
+        => ClassifyModeratorReply(pResp, "mute");
+
+    /// <summary>
+    /// Reads the plugin's answer to a moderator request that names a room and a participant (mute, unmute, kick).
+    /// A success is Applied. 485 (no such room) and 492 (no such user) mean the participant is not there. 482 means the
+    /// plugin does not know the request. Anything else, and no answer, is a failure that is logged by what it said.
+    /// </summary>
+    public static ParticipantMuteResult ClassifyModeratorReply(AudioBridgeResp pResp, string pRequest)
     {
         if (pResp is null)
             return ParticipantMuteResult.Failed;
@@ -54,7 +62,7 @@ public partial class JanusAudioBridge
             case NO_SUCH_USER_ERROR_CODE:
                 return ParticipantMuteResult.NotInRoom;
             default:
-                m_log.LogWarning("{0} mute request was refused: {1}", LogHeader, pResp.ToString());
+                m_log.LogWarning("{0} {1} request was refused: {2}", LogHeader, pRequest, pResp.ToString());
                 return ParticipantMuteResult.Failed;
         }
     }

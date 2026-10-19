@@ -79,6 +79,10 @@ namespace osWebRtcVoice.NonSpatial
         VoiceTeardown = 3,
         PresenceLost = 4,
         Expired = 5,
+        /// <summary>A moderator or an operator removed the member from the call (see <see cref="ModerationOp.Remove"/>).</summary>
+        Removed = 6,
+        /// <summary>A group member no longer held the powers the call needs, so the call let them go (no removal is recorded).</summary>
+        PowerLost = 7,
     }
 
     /// <summary>What a moderation request changes in the record.</summary>
@@ -90,6 +94,32 @@ namespace osWebRtcVoice.NonSpatial
         TextMute = 1,
         /// <summary>The whole call's voice ("mute all" / "unmute all").</summary>
         VoiceModerated = 2,
+        /// <summary>
+        /// Remove one agent from the call (on) or let them back (off). A removed agent is refused every way back into the
+        /// call until the call ends, or for the lifetime the removal was given.
+        /// </summary>
+        Remove = 3,
+    }
+
+    /// <summary>Why and until when an agent may not rejoin one call.</summary>
+    public sealed class CallRemoval
+    {
+        public UUID By { get; }
+        public DateTime AtUtc { get; }
+        public string Reason { get; }
+
+        /// <summary>When the removal ends. Null: when the call ends.</summary>
+        public DateTime? ExpiresUtc { get; }
+
+        public CallRemoval(UUID by, DateTime atUtc, string reason, DateTime? expiresUtc)
+        {
+            By = by;
+            AtUtc = atUtc;
+            Reason = reason ?? string.Empty;
+            ExpiresUtc = expiresUtc;
+        }
+
+        public bool IsLive(DateTime nowUtc) => ExpiresUtc is null || nowUtc < ExpiresUtc.Value;
     }
 
     /// <summary>One agent's membership of one non-spatial voice session. Mutated only under the store's lock.</summary>
@@ -249,7 +279,73 @@ namespace osWebRtcVoice.NonSpatial
         public bool IsVoiceMuted(UUID agent)
             => _voiceMuted.Contains(agent) || (VoiceModerated && !_voiceAllowed.Contains(agent));
 
-        public bool HasModeration => VoiceModerated || _voiceMuted.Count > 0 || _textMuted.Count > 0;
+        public bool HasModeration => VoiceModerated || _voiceMuted.Count > 0 || _textMuted.Count > 0 || HasLongRemoval;
+
+        // ---- removal ---------------------------------------------------------------------------
+        //
+        // An agent a moderator or an operator removed. A removal with no end time lasts until the call ends: the moment
+        // the last seat is released (EndRingCycle) it goes with the call. One given a lifetime outlasts the call and
+        // keeps the record until it runs out.
+
+        private readonly Dictionary<UUID, CallRemoval> _removed = new Dictionary<UUID, CallRemoval>();
+
+        /// <summary>Every removal in the record, live or not yet cleared.</summary>
+        public IReadOnlyDictionary<UUID, CallRemoval> Removed => _removed;
+
+        /// <summary>True while a removal that outlasts the call stands.</summary>
+        public bool HasLongRemoval
+        {
+            get
+            {
+                foreach (CallRemoval r in _removed.Values)
+                    if (r.ExpiresUtc is not null) return true;
+                return false;
+            }
+        }
+
+        /// <summary>Whether the agent is barred from this call at <paramref name="nowUtc"/>.</summary>
+        public bool IsRemoved(UUID agent, DateTime nowUtc)
+            => _removed.TryGetValue(agent, out CallRemoval r) && r.IsLive(nowUtc);
+
+        public CallRemoval RemovalOf(UUID agent) => _removed.TryGetValue(agent, out CallRemoval r) ? r : null;
+
+        /// <summary>Records a removal. True when it changed something (the generation moves).</summary>
+        internal bool ApplyRemoval(UUID target, UUID by, string reason, DateTime nowUtc, DateTime? expiresUtc)
+        {
+            PurgeRemovals(nowUtc);
+            if (IsRemoved(target, nowUtc)) return false;
+            _removed[target] = new CallRemoval(by, nowUtc, reason, expiresUtc);
+            ModerationGeneration++;
+            return true;
+        }
+
+        /// <summary>Lets the agent back. True when a removal stood (the generation moves).</summary>
+        internal bool ClearRemoval(UUID target, DateTime nowUtc)
+        {
+            bool live = IsRemoved(target, nowUtc);
+            bool had = _removed.Remove(target);
+            if (live) ModerationGeneration++;
+            return had && live;
+        }
+
+        internal bool RemovalFull(DateTime nowUtc)
+        {
+            PurgeRemovals(nowUtc);
+            return _removed.Count >= MaxModerationEntries;
+        }
+
+        /// <summary>Forgets removals that have run out.</summary>
+        internal void PurgeRemovals(DateTime nowUtc)
+        {
+            List<UUID> over = null;
+            foreach (KeyValuePair<UUID, CallRemoval> kv in _removed)
+                if (!kv.Value.IsLive(nowUtc))
+                    (over ??= new List<UUID>()).Add(kv.Key);
+            if (over != null)
+                foreach (UUID a in over) _removed.Remove(a);
+        }
+
+        internal void RestoreRemoval(UUID target, CallRemoval removal) => _removed[target] = removal;
 
         /// <summary>Applies one change. True when it changed something (and the generation moved).</summary>
         internal bool ApplyModeration(ModerationOp op, UUID target, bool on)
@@ -338,6 +434,13 @@ namespace osWebRtcVoice.NonSpatial
             _invited.Clear();
             _ringsUsed.Clear();
             RingSent = false;
+            // The call is over, so removals that last as long as the call are over with it. One given a lifetime stands.
+            List<UUID> callBound = null;
+            foreach (KeyValuePair<UUID, CallRemoval> kv in _removed)
+                if (kv.Value.ExpiresUtc is null)
+                    (callBound ??= new List<UUID>()).Add(kv.Key);
+            if (callBound != null)
+                foreach (UUID a in callBound) _removed.Remove(a);
         }
 
         internal NonSpatialVoiceSession(NonSpatialSessionType type, UUID sessionId, UUID tempSessionId,
@@ -391,6 +494,8 @@ namespace osWebRtcVoice.NonSpatial
                 // A group's mute-all (and the names muted) outlive an empty room: the group's session is made again
                 // when the room refills, and the moderators' decision has to still stand. It goes with the idle sweep.
                 if (Type == NonSpatialSessionType.Group && HasModeration) return false;
+                // A removal given a lifetime outlasts the call, whatever kind of call it was.
+                if (HasLongRemoval) return false;
                 foreach (NonSpatialMember m in _members.Values)
                     if (m.State == MemberState.Invited || m.HoldsSeat || (m.InChat && Type != NonSpatialSessionType.P2P)) return false;
                 return true;

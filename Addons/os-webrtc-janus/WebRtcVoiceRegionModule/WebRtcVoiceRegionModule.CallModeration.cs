@@ -55,13 +55,15 @@ public partial class WebRtcVoiceRegionModule
         }
 
         m_callGridId = JanusAudioBridge.ReadGridId(config);
+        InitialiseCallRemovalCache();
         m_callModeration = new CallModerationPolicy { Settings = settings, IsMember = GroupIsMember, Powers = GroupPowersOf };
         m_callChatGate = new CallGroupChatGate(m_nonSpatial, cache: m_gridSessions is not null);
         m_log.LogInformation("{LogHeader} CALL MODERATION enabled ([WebRtcVoice] CallModerationEnabled): moderators of a group call "
             + "(Moderate Group Chat) can mute a member's voice or text, or the whole call's voice. Voice mutes use {Path}. "
-            + "Roster flags are re-checked every {Seconds} s", logHeader,
+            + "Roster flags are re-checked every {Seconds} s. A removal lasts {Lasts}", logHeader,
             m_stockPlugin ? "the stock AudioBridge's own per-participant mute" : "the slvoice mixer's mute channel",
-            settings.RevalidateSeconds);
+            settings.RevalidateSeconds,
+            settings.RemovalMinutes > 0 ? settings.RemovalMinutes + " minutes" : "until the call ends");
     }
 
     // A scene joins or leaves: the group chat check is offered to the groups module through the scene.
@@ -305,6 +307,13 @@ public partial class WebRtcVoiceRegionModule
                 NonSpatialVoiceSession session = m_nonSpatial.Get(sessionId, agent);
                 NonSpatialMember member = session?.Find(agent);
                 if (session is null || member is null || !member.HoldsSeat || !here.Contains(agent))
+                {
+                    lock (m_callFlagsSent)
+                        m_callFlagsSent.Remove((sessionId, agent));
+                    continue;
+                }
+                // A member who no longer holds the powers the call needs is let go of first.
+                if (DropIfCallPowerLost(session, agent))
                 {
                     lock (m_callFlagsSent)
                         m_callFlagsSent.Remove((sessionId, agent));

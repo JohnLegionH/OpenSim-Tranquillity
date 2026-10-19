@@ -81,6 +81,9 @@ namespace osWebRtcVoice.NonSpatial
 
         /// <summary>The call's moderation list is full, or the request names nobody.</summary>
         public const string ModerationRefused = "refused-moderation";
+
+        /// <summary>The agent was removed from the call and is not let back in until the removal ends.</summary>
+        public const string Removed = "refused-removed";
     }
 
     public sealed class NonSpatialVoiceSessionEngine : INonSpatialSessions
@@ -376,7 +379,7 @@ namespace osWebRtcVoice.NonSpatial
                     NonSpatialMember me = sess.Find(creator);
                     if (me == null || me.State == MemberState.Departed)
                     {
-                        if (sess.Creator == creator && !sess.IsFull)
+                        if (sess.Creator == creator && !sess.IsFull && !sess.IsRemoved(creator, now))
                             sess.Upsert(creator, MemberState.Accepted, originRegion, now).InChat = true;
                     }
                     else
@@ -463,6 +466,8 @@ namespace osWebRtcVoice.NonSpatial
             // refusal now rather than a disappointment later.
             return _store.Mutate(sessionId, sess =>
             {
+                if (sess.IsRemoved(invitee, now))
+                    return SessionOutcome.Fail(SessionOutcome.Removed, sess);
                 NonSpatialMember existing = sess.Find(invitee);
                 if (existing != null && existing.HoldsSeat)
                 {
@@ -497,6 +502,10 @@ namespace osWebRtcVoice.NonSpatial
             {
                 if (LapseIfExpired(sess, now))
                     return SessionOutcome.Fail(SessionOutcome.NoSuchSession);
+                // Decided inside the mutation, so a removal made at the same moment either lands first and refuses this
+                // accept, or lands after it and takes the seat it just made.
+                if (sess.IsRemoved(agent, now))
+                    return SessionOutcome.Fail(SessionOutcome.Removed, sess);
                 NonSpatialMember m = sess.Find(agent);
                 if (m != null && m.HoldsSeat)
                 {
@@ -538,6 +547,8 @@ namespace osWebRtcVoice.NonSpatial
             {
                 if (LapseIfExpired(sess, now))
                     return SessionOutcome.Fail(SessionOutcome.NoSuchSession);
+                if (sess.IsRemoved(agent, now))
+                    return SessionOutcome.Fail(SessionOutcome.Removed, sess);
                 NonSpatialMember m = sess.Find(agent);
                 if (m == null || m.State == MemberState.Departed || m.State == MemberState.Declined)
                     return SessionOutcome.Fail(SessionOutcome.AlreadyDeparted, sess);
@@ -807,12 +818,15 @@ namespace osWebRtcVoice.NonSpatial
         /// engine trusts <paramref name="by"/>: whether that agent may moderate is the region's decision. Idempotent;
         /// a request that changes nothing says so and leaves the generation alone. Never for a call between two people.
         /// </summary>
-        public SessionOutcome Moderate(UUID sessionId, UUID by, ModerationOp op, UUID target, bool on)
+        public SessionOutcome Moderate(UUID sessionId, UUID by, ModerationOp op, UUID target, bool on,
+                                       string reason = null, TimeSpan? lifetime = null)
         {
             if (!Enum.IsDefined(typeof(ModerationOp), op) || by == UUID.Zero
                 || (op != ModerationOp.VoiceModerated && target == UUID.Zero))
                 return SessionOutcome.Fail(SessionOutcome.ModerationRefused);
             DateTime now = _clock();
+            if (op == ModerationOp.Remove)
+                return Remove(sessionId, by, target, on, reason, lifetime, now);
             return _store.Mutate(sessionId, sess =>
             {
                 if (sess.Type == NonSpatialSessionType.P2P)
@@ -824,6 +838,55 @@ namespace osWebRtcVoice.NonSpatial
                 return new SessionOutcome(true, changed ? SessionOutcome.ModerationChanged : SessionOutcome.ModerationUnchanged, sess);
             }, SessionOutcome.Fail(SessionOutcome.NoSuchSession));
         }
+
+        /// <summary>
+        /// Remove the agent from the call (<paramref name="on"/>), or let them back. A removal drops the member's seat and
+        /// records that they may not come back by call, accept, invite or provision until the call ends, or until
+        /// <paramref name="lifetime"/> has passed when one is given. A conference member leaves the conference text with
+        /// the seat; a group member stays in the group's chat, which belongs to the group. Idempotent: removing someone
+        /// already removed changes nothing and does not extend the removal.
+        /// </summary>
+        private SessionOutcome Remove(UUID sessionId, UUID by, UUID target, bool on, string reason, TimeSpan? lifetime, DateTime now)
+        {
+            return _store.Mutate(sessionId, sess =>
+            {
+                if (sess.Type == NonSpatialSessionType.P2P)
+                    return SessionOutcome.Fail(SessionOutcome.ModerationRefused, sess);
+                if (!on)
+                {
+                    bool let = sess.ClearRemoval(target, now);
+                    if (let) sess.LastSeenUtc = now;
+                    return new SessionOutcome(true, let ? SessionOutcome.ModerationChanged : SessionOutcome.ModerationUnchanged, sess);
+                }
+                if (!sess.IsRemoved(target, now) && sess.RemovalFull(now))
+                    return SessionOutcome.Fail(SessionOutcome.ModerationRefused, sess);
+                DateTime? ends = lifetime is TimeSpan l && l > TimeSpan.Zero ? now + l : null;
+                bool recorded = sess.ApplyRemoval(target, by, reason, now, ends);
+                if (!recorded)
+                    return new SessionOutcome(true, SessionOutcome.ModerationUnchanged, sess);
+
+                // The seat goes with it. The record is made first and in the same mutation, so a join racing this one
+                // either sees the removal or finds the seat already gone.
+                NonSpatialMember m = sess.Find(target);
+                if (m != null && m.State != MemberState.Departed)
+                {
+                    m.State = MemberState.Departed;
+                    m.Departure = DepartureReason.Removed;
+                    m.ViewerSession = null;
+                    m.LastSeenUtc = now;
+                    if (sess.Type == NonSpatialSessionType.Adhoc) m.InChat = false;
+                }
+                sess.ClearInvited(target);
+                sess.LastSeenUtc = now;
+                return new SessionOutcome(true, SessionOutcome.ModerationChanged, sess);
+            }, SessionOutcome.Fail(SessionOutcome.NoSuchSession));
+        }
+
+        /// <summary>Whether the agent is barred from the session as it stands now.</summary>
+        public bool IsRemoved(NonSpatialVoiceSession session, UUID agent) => session != null && session.IsRemoved(agent, _clock());
+
+        /// <summary>The calls this process knows of: all of them in a process that holds the record itself.</summary>
+        public IReadOnlyList<NonSpatialVoiceSession> Listing() => _store.All();
 
         // ---- credentials -----------------------------------------------------------------------
 

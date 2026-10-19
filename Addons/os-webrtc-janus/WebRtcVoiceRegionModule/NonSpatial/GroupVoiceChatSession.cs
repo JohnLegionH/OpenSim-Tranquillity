@@ -58,6 +58,9 @@ namespace osWebRtcVoice.NonSpatial
         public const string DecisionNotMember = "group-refused-not-a-member";
         public const string DecisionNoPower = "group-refused-no-power";
         public const string DecisionFull = "group-refused-capacity";
+
+        /// <summary>The agent was removed from this call and is not let back in until the removal ends.</summary>
+        public const string DecisionRemoved = "group-refused-removed";
         public const string InstrumentTag = "[GROUP VOICE]";
 
         /// <summary>
@@ -103,7 +106,8 @@ namespace osWebRtcVoice.NonSpatial
                 HttpStatusCode code = seat.Decision == SessionOutcome.Capacity
                     ? (HttpStatusCode)NonSpatialCaps.CapacityHttpStatus
                     : HttpStatusCode.Forbidden;
-                string word = seat.Decision == SessionOutcome.Capacity ? DecisionFull : "group-refused-" + seat.Decision;
+                string word = seat.Decision == SessionOutcome.Capacity ? DecisionFull
+                    : seat.Decision == SessionOutcome.Removed ? DecisionRemoved : "group-refused-" + seat.Decision;
                 outcome = Refuse(code, agentID, s.Owner, word, seat.Decision);
                 return true;
             }
@@ -167,7 +171,8 @@ namespace osWebRtcVoice.NonSpatial
                 HttpStatusCode code = seat.Decision == SessionOutcome.Capacity
                     ? (HttpStatusCode)NonSpatialCaps.CapacityHttpStatus
                     : HttpStatusCode.Forbidden;
-                string word = seat.Decision == SessionOutcome.Capacity ? DecisionFull : "group-refused-" + seat.Decision;
+                string word = seat.Decision == SessionOutcome.Capacity ? DecisionFull
+                    : seat.Decision == SessionOutcome.Removed ? DecisionRemoved : "group-refused-" + seat.Decision;
                 return Refuse(code, agentID, groupID, word, seat.Decision);
             }
 

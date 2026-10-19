@@ -52,8 +52,16 @@ namespace osWebRtcVoice.NonSpatial
         /// <summary>[WebRtcVoice] CallModerationRevalidateSeconds. How often the moderator flags in the roster are re-checked.</summary>
         public const int DefaultRevalidateSeconds = 60;
 
+        /// <summary>
+        /// [WebRtcVoice] CallRemovalMinutes. How long a removal lasts when it should outlast the call. 0 (the default):
+        /// a removal lasts until the call ends. The call-end rule applies to a conference too; a longer removal keeps the
+        /// call's record for that long.
+        /// </summary>
+        public const int DefaultRemovalMinutes = 0;
+
         public bool Enabled { get; init; }
         public int RevalidateSeconds { get; init; } = DefaultRevalidateSeconds;
+        public int RemovalMinutes { get; init; } = DefaultRemovalMinutes;
 
         public static CallModerationSettings Off => new CallModerationSettings { Enabled = false };
 
@@ -65,6 +73,7 @@ namespace osWebRtcVoice.NonSpatial
             {
                 Enabled = config.GetBoolean("CallModerationEnabled", DefaultEnabled),
                 RevalidateSeconds = seconds < 0 ? DefaultRevalidateSeconds : seconds,
+                RemovalMinutes = Math.Clamp(config.GetInt("CallRemovalMinutes", DefaultRemovalMinutes), 0, VoiceSessionService.MaxRemovalMinutes),
             };
         }
     }

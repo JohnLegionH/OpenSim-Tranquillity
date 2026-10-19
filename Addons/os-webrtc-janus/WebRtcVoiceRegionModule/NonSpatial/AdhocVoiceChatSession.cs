@@ -359,7 +359,8 @@ namespace osWebRtcVoice.NonSpatial
                 HttpStatusCode code = seat.Decision == SessionOutcome.Capacity
                     ? (HttpStatusCode)NonSpatialCaps.CapacityHttpStatus
                     : HttpStatusCode.Forbidden;
-                string word = seat.Decision == SessionOutcome.Capacity ? DecisionFull : "adhoc-refused-" + seat.Decision;
+                string word = seat.Decision == SessionOutcome.Capacity ? DecisionFull
+                    : seat.Decision == SessionOutcome.Removed ? NonSpatialProvisionAdmission.DecisionAdhocRemoved : "adhoc-refused-" + seat.Decision;
                 return new ChatSessionOutcome
                 {
                     Status = code,
