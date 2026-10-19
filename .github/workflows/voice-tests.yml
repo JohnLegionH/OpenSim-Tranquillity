@@ -1,0 +1,97 @@
+# Copyright (c) 2026 Legion Builds
+#
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+# Builds the WebRTC voice addon's test projects and runs their suites on Windows x64 and Linux x64 in Release.
+# It runs only when a change touches the voice addon, its tests, the NPC module the voice tests exercise, or this file.
+name: Voice tests
+
+on:
+  pull_request:
+    paths:
+      - 'Addons/os-webrtc-janus/**'
+      - 'Tests/WebRtcJanusService.Tests/**'
+      - 'Tests/WebRtcVoiceRegionModule.Tests/**'
+      - 'Source/OpenSim.Region.OptionalModules/World/NPC/**'
+      - 'Directory.Build.props'
+      - 'global.json'
+      - '.github/workflows/voice-tests.yml'
+  push:
+    branches:
+      - develop
+      - lane/voice
+    paths:
+      - 'Addons/os-webrtc-janus/**'
+      - 'Tests/WebRtcJanusService.Tests/**'
+      - 'Tests/WebRtcVoiceRegionModule.Tests/**'
+      - 'Source/OpenSim.Region.OptionalModules/World/NPC/**'
+      - 'Directory.Build.props'
+      - 'global.json'
+      - '.github/workflows/voice-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same pull request or branch replaces a run that is still going.
+concurrency:
+  group: voice-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+  VOICE_TEST_PROJECTS: >-
+    WebRtcJanusService.Tests
+    WebRtcVoiceRegionModule.Tests
+
+jobs:
+  test:
+    name: Voice suites ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-22.04]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The version stamp (Nerdbank.GitVersioning) needs the history.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up .NET from global.json
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Build the voice test projects
+        run: |
+          for project in $VOICE_TEST_PROJECTS; do
+            dotnet build "Tests/$project" -c Release --disable-build-servers -nodeReuse:false -p:UseSharedCompilation=false || exit 1
+          done
+
+      - name: Run the voice suites
+        run: |
+          status=0
+          for project in $VOICE_TEST_PROJECTS; do
+            dotnet test "Tests/$project" -c Release --no-build \
+              --logger "console;verbosity=normal" --logger "trx;LogFileName=$project.trx" \
+              --results-directory "$RUNNER_TEMP/voice-results" || status=1
+          done
+          exit $status
+
+      - name: Upload the test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: voice-results-${{ matrix.os }}
+          path: ${{ runner.temp }}/voice-results
+          if-no-files-found: ignore
