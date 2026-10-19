@@ -27,6 +27,7 @@
 // Adapted 2026 by Legion Builds
 
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using System.Net;
 using System.Reflection;
 
@@ -71,7 +72,12 @@ public partial class WebRtcVoiceRegionModule
     // without touching anything here.
     private readonly InMemoryNonSpatialSessionStore m_nonSpatialStore = new();
 
-    private NonSpatialVoiceSessionEngine m_nonSpatial;
+    private INonSpatialSessions m_nonSpatial;
+
+    // Set only when [WebRtcVoice] SessionStoreMode is grid: the region's client for the grid session service,
+    // and the timer that keeps this region's seats alive there.
+    private GridNonSpatialSessions m_gridSessions;
+    private GridSeatRenewer m_gridRenewer;
 
     // [WebRtcVoice] CarrierSecret signs and verifies the two cross-process carriers (the ring and the
     // conference text line). Unset, or shorter than CarrierAuth.MinSecretLength, it is off: no carrier is
@@ -439,11 +445,11 @@ public partial class WebRtcVoiceRegionModule
             // seat inside Start -- there is no other accept to hang it on. Placed AFTER the re-key
             // event so a ring failure can never cost the initiator the reply it is blocked on.
             if (outcome.StartedRinging)
-                RingAdhocMembers(m_nonSpatial?.Store.Get(outcome.Reply.SessionId), agentID, sp.Name, null);
+                RingAdhocMembers(m_nonSpatial?.Get(outcome.Reply.SessionId), agentID, sp.Name, null);
             // The creator took the first seat inside Start, so the roster exists from
             // this moment. One entry, the creator's own -- which is what the group path also sends
             // to an agent opening a voice session (GroupsMessagingModule.cs:661-664).
-            SendConferenceRoster(m_nonSpatial?.Store.Get(outcome.Reply.SessionId), agentID, joined: true);
+            SendConferenceRoster(m_nonSpatial?.Get(outcome.Reply.SessionId), agentID, joined: true);
         }
 
         ApplyChatSessionOutcome(outcome, response);
@@ -483,22 +489,71 @@ public partial class WebRtcVoiceRegionModule
 
         // The SAME grid id the room numbers are hashed from, so a group room
         // key derived here and a room number derived in the bridge agree across the grid.
-        m_nonSpatial = new NonSpatialVoiceSessionEngine(
+        INonSpatialAdmission[] admissions =
+            { new P2PAdmission(), new AdhocAdmission(), m_groupVoice.ToAdmissionOrNull() };
+
+        SessionStoreSettings store = SessionStoreSettings.Read(m_Config);
+        if (store.Problem is not null)
+            m_log.LogError("{LogHeader} [WebRtcVoice] {Problem}; non-spatial sessions stay in this process", logHeader, store.Problem);
+        if (store.Grid)
+        {
+            InitialiseGridSessions(config, store, admissions);
+            return;
+        }
+
+        NonSpatialVoiceSessionEngine engine = new NonSpatialVoiceSessionEngine(
             m_nonSpatialStore,
-            new INonSpatialAdmission[] { new P2PAdmission(), new AdhocAdmission(), m_groupVoice.ToAdmissionOrNull() },
+            admissions,
             JanusAudioBridge.ReadGridId(config),
             limits: ReadNonSpatialLimits(m_Config));
+        m_nonSpatial = engine;
 
-        m_nonSpatial.IsAgentPresent = AgentIsHere;
+        engine.IsAgentPresent = AgentIsHere;
 
-        m_nonSpatial.LimitRefused += (agent, decision, detail) =>
+        engine.LimitRefused += (agent, decision, detail) =>
             m_log.LogWarning("{LogHeader} non-spatial session limit: agent={AgentId} decision={Decision} {Detail}",
                 logHeader, agent, decision, detail);
 
-        m_nonSpatialMaintenance = new NonSpatialMaintenance(m_nonSpatial,
+        m_nonSpatialMaintenance = new NonSpatialMaintenance(engine,
             line => m_log.LogDebug("{LogHeader} {Line}", logHeader, line),
             (message, e) => m_log.LogWarning(e, "{LogHeader} {Message}", logHeader, message));
         m_nonSpatialMaintenance.Start();
+    }
+
+    // [WebRtcVoice] SessionStoreMode = grid: every session operation goes to the grid session service in Robust.
+    // The service decides the seat cap, the ring-once latch and the start races, and sweeps expired sessions, so
+    // none of that runs here. When it does not answer a request is refused; there is no fallback to a store in
+    // this process.
+    private void InitialiseGridSessions(IConfigSource config, SessionStoreSettings store, INonSpatialAdmission[] admissions)
+    {
+        string authProblem = VoiceSessionServerConnector.CheckAuthConfig(config, "WebRtcVoice");
+        if (authProblem is not null)
+            m_log.LogError("{LogHeader} grid session store: {Problem}; the service will refuse these calls", logHeader, authProblem);
+
+        VoiceSessionServicesConnector service = new(config, "WebRtcVoice", store.ServerUri, store.TimeoutMs);
+        GridNonSpatialSessions grid = new(service, admissions);
+        grid.Unavailable += operation =>
+            m_log.LogWarning("{LogHeader} grid session store did not answer {Operation} at {Uri}; new calls are refused until it does",
+                logHeader, operation, store.ServerUri);
+        m_gridSessions = grid;
+        m_nonSpatial = grid;
+        m_gridRenewer = new GridSeatRenewer(grid, PresentAgents,
+            (message, e) => m_log.LogWarning(e, "{LogHeader} {Message}", logHeader, message),
+            TimeSpan.FromSeconds(store.RenewSeconds));
+        m_log.LogInformation("{LogHeader} non-spatial sessions are kept by the grid session store at {Uri} "
+            + "(timeout {Timeout} ms, seats renewed every {Renew} s)", logHeader, store.ServerUri, store.TimeoutMs, store.RenewSeconds);
+    }
+
+    // The agents with a root presence in a scene this module serves; the grid store keeps their seats.
+    private IReadOnlyList<UUID> PresentAgents()
+    {
+        List<Scene> scenes;
+        lock (m_scenes)
+            scenes = new List<Scene>(m_scenes);
+        HashSet<UUID> agents = new();
+        foreach (Scene scene in scenes)
+            scene.ForEachRootScenePresence(sp => agents.Add(sp.UUID));
+        return new List<UUID>(agents);
     }
 
     // Whether an agent has a root presence in a scene this module serves. The engine asks this before it
@@ -521,6 +576,7 @@ public partial class WebRtcVoiceRegionModule
     private void StopNonSpatialMaintenance()
     {
         m_nonSpatialMaintenance?.Stop();
+        m_gridRenewer?.Stop();
     }
 
     // Tracks the scenes this shared module serves, for callee resolution on THIS instance (the group
@@ -531,6 +587,27 @@ public partial class WebRtcVoiceRegionModule
             if (!m_scenes.Contains(scene))
                 m_scenes.Add(scene);
         m_nonSpatialMaintenance?.Start();
+        m_gridRenewer?.Start();
+        ReleaseSeatsOfStartedRegion(scene);
+    }
+
+    // A region that has just started holds no viewers, so any seat the grid store still has for it is stale (the
+    // process before it ended without leaving). Asked once per region, off the loading thread, since the store
+    // may be slow to answer.
+    private void ReleaseSeatsOfStartedRegion(Scene scene)
+    {
+        GridNonSpatialSessions grid = m_gridSessions;
+        if (grid is null)
+            return;
+        UUID region = scene.RegionInfo.RegionID;
+        string name = scene.RegionInfo.RegionName;
+        Task.Run(() =>
+        {
+            int released = grid.DepartRegion(region);
+            if (released > 0)
+                m_log.LogInformation("{LogHeader} grid session store: released {Seats} seat(s) left by an earlier run of region {Region}",
+                    logHeader, released, name);
+        });
     }
 
     private void UnregisterSceneForVoiceSessions(Scene scene)

@@ -417,12 +417,12 @@ public partial class WebRtcVoiceRegionModule
         // Ad-hoc takes this SAME arm, and it has to. Leaving conferences out would
         // repeat the exact defect found for groups -- a hang-up holding its seat until
         // the 8 h idle TTL, with the cap load-bearing.
-        NonSpatialVoiceSession gsess = m_nonSpatial?.Store.GetByRoomKey(admission.Channel);
+        NonSpatialVoiceSession gsess = m_nonSpatial?.GetByRoomKey(admission.Channel);
         if (gsess is not null)
         {
             SessionOutcome pres = m_nonSpatial.MarkPresent(gsess.SessionId, agentID, scene.RegionInfo.RegionID, groupVs);
             bool conf = gsess.Type == NonSpatialSessionType.Adhoc;
-            string detail = $"room={admission.Channel} seats={m_nonSpatial.Store.Get(gsess.SessionId)?.SeatsHeld}/{gsess.Cap}";
+            string detail = $"room={admission.Channel} seats={m_nonSpatial.Get(gsess.SessionId)?.SeatsHeld}/{gsess.Cap}";
             m_log.LogDebug("{LogHeader} {Line}", logHeader,
                 conf ? AdhocVoiceChatSession.Line(agentID, gsess.SessionId, "adhoc-present-" + pres.Decision, detail)
                      : GroupVoiceChatSession.Line(agentID, gsess.Owner, "group-present-" + pres.Decision, detail));
@@ -472,7 +472,7 @@ public partial class WebRtcVoiceRegionModule
             m_log.LogDebug("{LogHeader} {Line}", logHeader, groupOutcome.Instrument);
             ApplyChatSessionOutcome(groupOutcome, response);
             if (groupOutcome.StartedRinging)
-                RingGroupMembers(m_nonSpatial.Store.Get(GroupSessionIdOf(reqmap)), agentID, sp.Name, GroupNameOf(GroupSessionIdOf(reqmap)));
+                RingGroupMembers(m_nonSpatial.Get(GroupSessionIdOf(reqmap)), agentID, sp.Name, GroupNameOf(GroupSessionIdOf(reqmap)));
             return true;
         }
 
@@ -486,7 +486,7 @@ public partial class WebRtcVoiceRegionModule
             m_log.LogDebug("{LogHeader} {Line}", logHeader, acceptOutcome.Instrument);
             ApplyChatSessionOutcome(acceptOutcome, response);
             if (acceptOutcome.StartedRinging)
-                RingGroupMembers(m_nonSpatial.Store.Get(GroupSessionIdOf(reqmap)), agentID, sp.Name, GroupNameOf(GroupSessionIdOf(reqmap)));
+                RingGroupMembers(m_nonSpatial.Get(GroupSessionIdOf(reqmap)), agentID, sp.Name, GroupNameOf(GroupSessionIdOf(reqmap)));
             return true;
         }
         return false;

@@ -92,7 +92,7 @@ namespace osWebRtcVoice.NonSpatial
         /// other body belongs to <see cref="A2AProvisionAdmission.Decide"/>, untouched.
         /// </summary>
         public static NonSpatialProvisionResult Decide(OSDMap map, UUID agentID, GroupVoicePolicy policy,
-                                                       NonSpatialVoiceSessionEngine engine, UUID originRegion,
+                                                       INonSpatialSessions engine, UUID originRegion,
                                                        bool adhocEnabled = false)
         {
             map.TryGetString("channel", out string channel);
@@ -100,7 +100,7 @@ namespace osWebRtcVoice.NonSpatial
             if (engine == null)
                 return Refuse(DecisionNoSession, 403);
 
-            NonSpatialVoiceSession s = engine.Store.GetByRoomKey(channel);
+            NonSpatialVoiceSession s = engine.GetByRoomKey(channel);
 
             // Dispatch on the OWN type of the voice session rather than assuming group. The room key tag
             // and the stored type must agree -- they are both derived from the same Start -- so this
@@ -151,7 +151,7 @@ namespace osWebRtcVoice.NonSpatial
         /// greppable word.
         /// </summary>
         private static NonSpatialProvisionResult DecideAdhoc(OSDMap map, UUID agentID,
-                                                             NonSpatialVoiceSessionEngine engine, UUID originRegion,
+                                                             INonSpatialSessions engine, UUID originRegion,
                                                              bool adhocEnabled, NonSpatialVoiceSession s)
         {
             if (!adhocEnabled)

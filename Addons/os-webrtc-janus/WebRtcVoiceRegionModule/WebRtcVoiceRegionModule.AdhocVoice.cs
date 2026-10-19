@@ -138,7 +138,7 @@ public partial class WebRtcVoiceRegionModule
                                                 out string decision, out bool stillSeated))
             return;   // a group or P2P leave -- not ours, and every other subscriber still sees it
 
-        NonSpatialVoiceSession session = m_nonSpatial.Store.Get(sessionId);
+        NonSpatialVoiceSession session = m_nonSpatial.Get(sessionId);
         m_log.LogDebug("{LogHeader} {Line}", logHeader,
             AdhocChatMembership.Line(agent, sessionId, decision, stillSeated,
                 $"region=\"{client?.Scene?.RegionInfo?.RegionName ?? string.Empty}\" "
@@ -494,12 +494,12 @@ public partial class WebRtcVoiceRegionModule
             m_log.LogDebug("{LogHeader} {Line}", logHeader, adhocCall.Instrument);
             ApplyChatSessionOutcome(adhocCall, response);
             if (adhocCall.StartedRinging)
-                RingAdhocMembers(m_nonSpatial.Store.Get(GroupSessionIdOf(reqmap)), agentID, sp.Name, null);
+                RingAdhocMembers(m_nonSpatial.Get(GroupSessionIdOf(reqmap)), agentID, sp.Name, null);
             // This arm seats the caller, so the roster moved. AFTER the response is
             // applied, for the same reason the ring is: a roster send must never cost the caller
             // the answer it is blocked on.
             if (adhocCall.Status == HttpStatusCode.OK)
-                SendConferenceRoster(m_nonSpatial.Store.Get(GroupSessionIdOf(reqmap)), agentID, joined: true);
+                SendConferenceRoster(m_nonSpatial.Get(GroupSessionIdOf(reqmap)), agentID, joined: true);
             return true;
         }
 
@@ -509,11 +509,11 @@ public partial class WebRtcVoiceRegionModule
             m_log.LogDebug("{LogHeader} {Line}", logHeader, adhocAccept.Instrument);
             ApplyChatSessionOutcome(adhocAccept, response);
             if (adhocAccept.StartedRinging)
-                RingAdhocMembers(m_nonSpatial.Store.Get(GroupSessionIdOf(reqmap)), agentID, sp.Name, null);
+                RingAdhocMembers(m_nonSpatial.Get(GroupSessionIdOf(reqmap)), agentID, sp.Name, null);
             // Accepting IS the join (llimview.cpp:3382-3385), so this is the roster's
             // main event -- the invitee's panel gets the whole room and the room gets the invitee.
             if (adhocAccept.Status == HttpStatusCode.OK)
-                SendConferenceRoster(m_nonSpatial.Store.Get(GroupSessionIdOf(reqmap)), agentID, joined: true);
+                SendConferenceRoster(m_nonSpatial.Get(GroupSessionIdOf(reqmap)), agentID, joined: true);
             return true;
         }
 
@@ -526,7 +526,7 @@ public partial class WebRtcVoiceRegionModule
             m_log.LogDebug("{LogHeader} {Line}", logHeader, inviteOutcome.Instrument);
             ApplyChatSessionOutcome(inviteOutcome, response);
             if (addedToCall.Count > 0)
-                RingAdhocMembers(m_nonSpatial.Store.Get(GroupSessionIdOf(reqmap)), agentID, sp.Name, addedToCall);
+                RingAdhocMembers(m_nonSpatial.Get(GroupSessionIdOf(reqmap)), agentID, sp.Name, addedToCall);
             return true;
         }
 

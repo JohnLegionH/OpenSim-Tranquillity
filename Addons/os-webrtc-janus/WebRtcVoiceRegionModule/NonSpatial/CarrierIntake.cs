@@ -66,7 +66,7 @@ namespace osWebRtcVoice.NonSpatial
         public const string DecisionCarrierOff = "carrier-off-no-secret";
         public const string DecisionRoomKeyMismatch = "refused-room-key-mismatch";
 
-        public static RingIntake AcceptRing(GridInstantMessage msg, CarrierAuth auth, NonSpatialVoiceSessionEngine engine,
+        public static RingIntake AcceptRing(GridInstantMessage msg, CarrierAuth auth, INonSpatialSessions engine,
                                             bool groupUsable, int groupCap, bool adhocEnabled)
         {
             if (!GroupVoiceRingTransport.TryParse(msg, out UUID target, out UUID groupId, out OSDMap body, out OSDMap authBlock))
@@ -97,7 +97,7 @@ namespace osWebRtcVoice.NonSpatial
             };
         }
 
-        public static TextIntake AcceptText(GridInstantMessage msg, CarrierAuth auth, NonSpatialVoiceSessionEngine engine)
+        public static TextIntake AcceptText(GridInstantMessage msg, CarrierAuth auth, INonSpatialSessions engine)
         {
             if (!AdhocTextTransport.TryParse(msg, out UUID target, out UUID sessionId, out string message,
                                              out string fromName, out _, out string roomKey, out OSDMap authBlock))
@@ -116,7 +116,7 @@ namespace osWebRtcVoice.NonSpatial
             // Authentic. The sender's instance decided the sender is a member; this instance holds its own
             // copy of the session and checks again, and the room key the sender signed must be the one this
             // instance derives for the session.
-            NonSpatialVoiceSession session = engine.Store.Get(sessionId);
+            NonSpatialVoiceSession session = engine.Get(sessionId);
             if (session is null || session.Type != NonSpatialSessionType.Adhoc)
                 return new TextIntake { Claimed = true, Decision = SessionOutcome.NoSuchSession, Target = target, SessionId = sessionId };
             if (string.IsNullOrEmpty(roomKey) || !string.Equals(roomKey, session.RoomKey, StringComparison.Ordinal))
