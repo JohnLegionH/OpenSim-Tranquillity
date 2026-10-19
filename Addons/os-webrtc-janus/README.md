@@ -207,6 +207,60 @@ using the Janus server, and the configuration for the Janus server itself.
 One can configure multiple Robust services to distribute the load of services
 and a Robust server with only `VoiceServiceConnector` in its ServiceList is possible.
 
+<a id="Configure_Session_Store"></a>
+## Sharing call sessions between region servers
+
+Group, conference and avatar-to-avatar calls are sessions kept by the region server. A grid with
+more than one region server process has one record of each call per process unless the processes
+share a store: each process counts its own seat limit, each rings the group itself, and a call
+between people on different processes depends on `CarrierSecret`. The grid voice session service
+keeps one record of every call instead. It is off by default and nothing changes until both sides
+are configured.
+
+In `Robust.ini` (or `GridServer.ini`), add the connector to `[ServiceList]` and enable the service.
+The service refuses to load without HTTP basic authentication and a password of at least 32 characters:
+
+```
+[ServiceList]
+    VoiceSessionConnector = "${Const|PrivatePort}/WebRtcVoice.dll:VoiceSessionServerConnector"
+
+[WebRtcVoiceSessionService]
+    Enabled = true
+    AuthType = "BasicHttpAuthentication"
+    HttpAuthUsername = "voice-sessions"
+    HttpAuthPassword = "a-password-of-at-least-32-characters-kept-out-of-version-control"
+```
+
+In the voice settings of every region server, with the same user and password:
+
+```
+[WebRtcVoice]
+    SessionStoreMode = grid
+    SessionStoreServerURI = http://robust.example.org:8003
+    AuthType = "BasicHttpAuthentication"
+    HttpAuthUsername = "voice-sessions"
+    HttpAuthPassword = "a-password-of-at-least-32-characters-kept-out-of-version-control"
+```
+
+Set it on all region servers or none: a call started on a server that keeps its own record is not
+seen by the others. Calls are kept in the service's memory and end when Robust restarts.
+
+- A region that cannot reach the service refuses new calls rather than keeping its own record. A
+  viewer asking to join an avatar-to-avatar call while the service is unreachable is answered
+  "service unavailable" and may try again, and only a service that says the call does not exist
+  gives "not found".
+- A region checks the service once when it starts and logs whether it answered. A wrong address, a
+  Robust without the service and a wrong password are all reported there.
+- Seats are renewed by the region that holds them and released by the service when the region stops
+  renewing them, or when it restarts.
+- Group and conference rings are checked by the service, so they need no `CarrierSecret`. Conference
+  text lines between processes still do.
+- A call is not ended for being idle while someone in it is still on the grid.
+
+The console command `show voice sessions` prints where the region keeps its sessions, the service
+address, whether it answered, the circuit breaker state, and the seats and queued departures this
+region holds.
+
 <a id="Configure_Standalone"></a>
 ## Configure Standalone Region
 
@@ -246,6 +300,9 @@ This is a growing section and will be added to over time.
 **janus info** -- list many details of the Janus-Gateway configuration. Very ugly, non-formated JSON.
 
 **janus list rooms** -- list the rooms that have been allocated in the `AudioBridge` Janus plugin
+
+**show voice sessions** -- show where this region keeps its call sessions (in this process, or in the grid
+voice session service) and, for the service, whether it is answering
 
 [SecondLife WebRTC Voice]: https://wiki.secondlife.com/wiki/WebRTC_Voice
 [OpenSimulator]: http://opensimulator.org
