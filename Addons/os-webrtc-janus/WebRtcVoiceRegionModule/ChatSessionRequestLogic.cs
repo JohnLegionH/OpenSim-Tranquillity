@@ -260,13 +260,19 @@ namespace osWebRtcVoice
         private static ChatSessionOutcome Call(OSDMap reqmap, UUID agentID, string callerName, UUID sessionID, A2ACalls calls)
         {
             string vst = reqmap.TryGetOSDMap("alt_params", out OSDMap alt) && alt.TryGetString("preferred_voice_server_type", out string v) ? v : "-";
-            A2ASession s = calls.IssueToken(sessionID, agentID);
+            A2ASession s = calls.IssueToken(sessionID, agentID, out bool unavailable);
             if (s == null)
             {
+                // A store that could not be reached has not said the call is gone, so answer as "start p2p voice"
+                // does when the store does not take a call: 503, and the viewer can try again.
+                if (unavailable)
+                    return Fail(HttpStatusCode.ServiceUnavailable, agentID, MethodCall, sessionID, $"the call session store did not answer alt.preferred_voice_server_type={vst}");
                 // Policy is real now. A live session whose parties do not include this agent is
                 // 403 -> the viewer shows VoiceNotAllowed (llvoicechannel.cpp:660-666). An unknown or
                 // expired session stays 404 -> VoiceCallGenericError (:668-673).
-                A2ASession live = calls.TryGet(sessionID, UUID.Zero);
+                A2ASession live = calls.TryGet(sessionID, UUID.Zero, out unavailable);
+                if (unavailable)
+                    return Fail(HttpStatusCode.ServiceUnavailable, agentID, MethodCall, sessionID, $"the call session store did not answer alt.preferred_voice_server_type={vst}");
                 if (live != null && !live.IsParty(agentID))
                     return Fail(HttpStatusCode.Forbidden, agentID, MethodCall, sessionID, $"not a party of this session alt.preferred_voice_server_type={vst}");
                 return Fail(HttpStatusCode.NotFound, agentID, MethodCall, sessionID, $"no live invitation for this agent alt.preferred_voice_server_type={vst}");

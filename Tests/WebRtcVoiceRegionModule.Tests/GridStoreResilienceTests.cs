@@ -31,6 +31,10 @@ namespace osWebRtcVoice.Tests
         {
             public readonly VoiceSessionService Inner;
             public bool Up = true;
+            /// <summary>When set, only the operation of this name goes unanswered; the rest are answered.</summary>
+            public string DownOnly;
+            /// <summary>When set, a call that would go unanswered throws this instead, as a timeout or a refused connection does.</summary>
+            public Exception FailWith;
             public int Calls;
             public readonly List<string> Delivered = new List<string>();
 
@@ -39,7 +43,11 @@ namespace osWebRtcVoice.Tests
             private SessionReply Pass(string what, Func<SessionReply> call)
             {
                 Calls++;
-                if (!Up) return null;
+                if (!Up || what == DownOnly)
+                {
+                    if (FailWith != null) throw FailWith;
+                    return null;
+                }
                 Delivered.Add(what);
                 return call();
             }

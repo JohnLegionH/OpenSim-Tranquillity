@@ -25,6 +25,13 @@ namespace osWebRtcVoice.NonSpatial
         /// </summary>
         NonSpatialVoiceSession Get(UUID sessionId, UUID agent = default);
 
+        /// <summary>
+        /// As <see cref="Get(UUID, UUID)"/>, and says whether a null result is because the store could not be
+        /// reached (no answer, a timeout, a refused connection or an open breaker) rather than because it holds
+        /// no such session. The in-process engine always answers.
+        /// </summary>
+        NonSpatialVoiceSession Get(UUID sessionId, UUID agent, out bool unavailable);
+
         NonSpatialVoiceSession GetByRoomKey(string roomKey, UUID agent = default);
 
         SessionOutcome Start(NonSpatialSessionType type, UUID creator, UUID otherOrOwner,
@@ -56,6 +63,9 @@ namespace osWebRtcVoice.NonSpatial
                                        NonSpatialSessionType type = NonSpatialSessionType.Group);
 
         string IssueToken(UUID sessionId, UUID agent);
+
+        /// <summary>As <see cref="IssueToken(UUID, UUID)"/>, and says whether a null result is because the store could not be reached.</summary>
+        string IssueToken(UUID sessionId, UUID agent, out bool unavailable);
 
         void MarkInvited(UUID sessionId, IEnumerable<UUID> agents);
 

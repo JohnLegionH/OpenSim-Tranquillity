@@ -160,6 +160,12 @@ namespace osWebRtcVoice.NonSpatial
             return s;
         }
 
+        public NonSpatialVoiceSession Get(UUID sessionId, UUID agent, out bool unavailable)
+        {
+            unavailable = false;
+            return Get(sessionId, agent);
+        }
+
         public NonSpatialVoiceSession GetByRoomKey(string roomKey, UUID agent = default) => _store.GetByRoomKey(roomKey);
         public TimeSpan InviteTtl => _inviteTtl;
         public TimeSpan IdleTtl => _idleTtl;
@@ -795,6 +801,12 @@ namespace osWebRtcVoice.NonSpatial
         /// does not invalidate credentials already in a viewer's hands. Returns null when the agent
         /// is not a member of the voice session, so a token can never be handed to a stranger.
         /// </summary>
+        public string IssueToken(UUID sessionId, UUID agent, out bool unavailable)
+        {
+            unavailable = false;
+            return IssueToken(sessionId, agent);
+        }
+
         public string IssueToken(UUID sessionId, UUID agent)
         {
             DateTime now = _clock();

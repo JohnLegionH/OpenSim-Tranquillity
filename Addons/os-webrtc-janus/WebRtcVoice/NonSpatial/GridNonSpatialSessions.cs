@@ -58,6 +58,13 @@ namespace osWebRtcVoice.NonSpatial
             return r != null && r.Ok ? SessionWire.FromData(r.Session) : null;
         }
 
+        public NonSpatialVoiceSession Get(UUID sessionId, UUID agent, out bool unavailable)
+        {
+            SessionReply r = Reached(_service.Get(sessionId, agent), "get");
+            unavailable = r == null;
+            return r != null && r.Ok ? SessionWire.FromData(r.Session) : null;
+        }
+
         public NonSpatialVoiceSession GetByRoomKey(string roomKey, UUID agent = default)
         {
             SessionReply r = Reached(_service.GetByRoomKey(roomKey, agent), "getbyroomkey");
@@ -170,9 +177,12 @@ namespace osWebRtcVoice.NonSpatial
             return new SessionOutcome(true, "ring-session-held", s);
         }
 
-        public string IssueToken(UUID sessionId, UUID agent)
+        public string IssueToken(UUID sessionId, UUID agent) => IssueToken(sessionId, agent, out _);
+
+        public string IssueToken(UUID sessionId, UUID agent, out bool unavailable)
         {
             SessionReply r = Reached(_service.IssueToken(sessionId, agent), "issuetoken");
+            unavailable = r == null;
             return r != null && r.Ok ? r.Text : null;
         }
 

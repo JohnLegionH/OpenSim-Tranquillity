@@ -160,17 +160,27 @@ namespace osWebRtcVoice
         /// Mint (or return the existing) credential for a party's "call". Returns the call as the party sees it, or
         /// null when the call is unknown or over, or the agent is not one of its parties.
         /// </summary>
-        public A2ASession IssueToken(UUID sessionId, UUID agent)
+        public A2ASession IssueToken(UUID sessionId, UUID agent) => IssueToken(sessionId, agent, out _);
+
+        /// <summary>
+        /// As <see cref="IssueToken(UUID, UUID)"/>. <paramref name="unavailable"/> is true when the null result is
+        /// because the store could not be reached, so the call may well exist; false when the store answered or
+        /// there is no store at all.
+        /// </summary>
+        public A2ASession IssueToken(UUID sessionId, UUID agent, out bool unavailable)
         {
+            unavailable = false;
             INonSpatialSessions sessions = _sessions();
+            if (sessions == null)
+                return null;
             // Look first: only a call between two people is issued here, never a group or a conference that
             // happens to carry the same id.
-            A2ASession live = TryGet(sessionId, agent);
+            A2ASession live = TryGet(sessionId, agent, out unavailable);
             if (live == null || !live.IsParty(agent))
                 return null;
-            if (string.IsNullOrEmpty(sessions.IssueToken(sessionId, agent)))
+            if (string.IsNullOrEmpty(sessions.IssueToken(sessionId, agent, out unavailable)))
                 return null;
-            return TryGet(sessionId, agent);
+            return TryGet(sessionId, agent, out unavailable);
         }
 
         /// <summary>
@@ -250,6 +260,18 @@ namespace osWebRtcVoice
         {
             INonSpatialSessions sessions = _sessions();
             return sessions == null ? null : Live(sessions.Get(sessionId, reader));
+        }
+
+        /// <summary>As <see cref="TryGet(UUID, UUID)"/>, saying whether a null result is because the store could not be reached.</summary>
+        public A2ASession TryGet(UUID sessionId, UUID reader, out bool unavailable)
+        {
+            INonSpatialSessions sessions = _sessions();
+            if (sessions == null)
+            {
+                unavailable = false;
+                return null;
+            }
+            return Live(sessions.Get(sessionId, reader, out unavailable));
         }
 
         /// <summary>The call, when the session is a call between two people that has not ended.</summary>
