@@ -3,9 +3,58 @@
   <PropertyGroup>
     <Version>2.1.1</Version>
     <AssemblyName>WebRtcVoiceRegionModule</AssemblyName>
+    <!-- Manual source items: a new .cs that is not listed below will NOT compile.
+         Deliberate (the silent-absence footgun made loud) - add every new file here. -->
+    <EnableDefaultItems>false</EnableDefaultItems>
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="PluginRegistration.cs" />
+    <Compile Include="WebRtcVoiceRegionModule.cs" />
+    <Compile Include="LandBan.cs" />
+    <Compile Include="ProvisionParcelResolver.cs" />
+    <Compile Include="FeederWorldFromScene.cs" />
+    <Compile Include="FeederResumeLatch.cs" />
+    <Compile Include="VoiceVisibilityService.cs" />
+    <Compile Include="AgentRoomTable.cs" />
+    <Compile Include="VoiceModerationStore.cs" />
+    <Compile Include="VoiceModerationAuth.cs" />
+    <Compile Include="VoiceModerationTargets.cs" />
+    <Compile Include="VoiceModerationCommands.cs" />
+    <Compile Include="VoiceVisibilityCommands.cs" />
+    <Compile Include="VisibilityBatchSender.cs" />
+    <Compile Include="JanusPeerCtlBatchSink.cs" />
+    <Compile Include="VisAuthority.cs" />
+    <Compile Include="A2ASessionRegistry.cs" />
+    <Compile Include="ChatSessionRequestLogic.cs" />
+    <Compile Include="A2AAgentListDelivery.cs" />
+    <Compile Include="A2AInviteDelivery.cs" />
+    <Compile Include="A2AProvisionAdmission.cs" />
+    <Compile Include="NonSpatial/NonSpatialVoiceSession.cs" />
+    <Compile Include="NonSpatial/NonSpatialRoomKey.cs" />
+    <Compile Include="NonSpatial/NonSpatialCaps.cs" />
+    <Compile Include="NonSpatial/INonSpatialAdmission.cs" />
+    <Compile Include="NonSpatial/INonSpatialSessionStore.cs" />
+    <Compile Include="NonSpatial/NonSpatialVoiceSessionEngine.cs" />
+    <Compile Include="NonSpatial/GroupVoicePolicy.cs" />
+    <Compile Include="NonSpatial/GroupVoiceChatSession.cs" />
+    <Compile Include="NonSpatial/NonSpatialProvisionAdmission.cs" />
+    <Compile Include="NonSpatial/GroupVoiceInvite.cs" />
+    <Compile Include="NonSpatial/GroupVoiceRingTransport.cs" />
+    <Compile Include="NonSpatial/AdhocVoiceChatSession.cs" />
+    <Compile Include="NonSpatial/AdhocVoiceInvite.cs" />
+    <Compile Include="NonSpatial/AdhocTextTransport.cs" />
+    <Compile Include="NonSpatial/AdhocTextSession.cs" />
+    <Compile Include="NonSpatial/AdhocConferenceRoster.cs" />
+    <Compile Include="NonSpatial/AdhocChatMembership.cs" />
+    <Compile Include="VoiceConnector/ConnectorIdentity.cs" />
+    <Compile Include="VoiceConnector/VoiceConnectorRecord.cs" />
+    <Compile Include="VoiceConnector/VoiceConnectorRegistry.cs" />
+    <Compile Include="VoiceConnector/VoiceConnectorRegistrar.cs" />
+    <Compile Include="VoiceConnector/VoiceConnectorJoinCapEndpoint.cs" />
+    <Compile Include="VoiceConnector/ConnectorRoomResolver.cs" />
+    <Compile Include="VoiceConnector/VoiceConnectorDisclosure.cs" />
+    <Compile Include="VoiceConnector/VoiceConnectorModule.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -18,6 +67,13 @@
     <ProjectReference Include="../../../Source/OpenSim.Services.Connectors/OpenSim.Services.Connectors.csproj" />
     <ProjectReference Include="../../../Source/OpenSim.Services.Interfaces/OpenSim.Services.Interfaces.csproj" />
     <ProjectReference Include="../../../Addons/os-webrtc-janus/WebRtcVoice/WebRtcVoice.csproj" />
+    <ProjectReference Include="../../../Addons/os-webrtc-janus/Visibility/Visibility.csproj" />
+    <!-- The region module OWNS the peer_ctl_batch sink so construction
+         and use live in ONE plugin ALC. JanusAdminClient + CalcRoomNumber come from
+         WebRtcJanusService.dll (already in the default context via ServerUtils.LoadPlugin ->
+         Assembly.LoadFrom, so PreferSharedTypes shares it — no private copy). Acyclic:
+         WebRtcJanusService does not reference this module. -->
+    <ProjectReference Include="../../../Addons/os-webrtc-janus/Janus/WebRtcJanusService.csproj" />
   </ItemGroup>
 
   <ItemGroup>

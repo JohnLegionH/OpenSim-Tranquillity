@@ -121,14 +121,21 @@ public class JanusMessage
     {
         return m_message.ToString();
     }
+    /// <summary>How a request is serialized for a LOG line, as opposed to for the wire. The default is
+    /// ToJson; PluginMsgReq overrides it so a join capability is never printed at any level.</summary>
+    public virtual string ToJsonForLog()
+    {
+        return ToJson();
+    }
     public override string ToString()
     {
         return m_message.ToString();
     }
     // Utility function to convert an OSD object to an long. The OSD object can be an OSDInteger
     //    or an OSDArray of 4 or 8 integers. 
-    // This exists because the JSON to OSD parser can return an OSDArray for a long number
-    //    since there is not an OSDLong type.
+    // This exists because the JSON to OSD parser can encode a long number in several
+    //    ways: OSDType.Long on the ported libOMV (the common case for Janus ids), or
+    //    historically an OSDArray/OSDBinary of 4 or 8 bytes on older libOMV builds.
     // The design of the OSD conversion functions kinda needs one to know how the number
     //    is stored in order to extract it. Like, if it's stored as a long value (8 bytes)
     //    and one fetches it with .AsInteger(), it will return the first 4 bytes as an integer
@@ -141,6 +148,14 @@ public class JanusMessage
         {
             case OSDType.Integer:
                 ret = (long)(pIn as OSDInteger).AsInteger();
+                break;
+            case OSDType.Long:
+                // The ported libOMV (GH NuGet, PR #172) added OSDType.Long, and the
+                // JSON->OSD parser now returns it for any number that exceeds int32
+                // (e.g. Janus session/handle ids). AsInteger() would truncate to the
+                // low 32 bits (yielding a wrong/negative value, or 0 here via the
+                // default), so extract the full value with AsLong().
+                ret = pIn.AsLong();
                 break;
             case OSDType.Binary:
                 byte[] value = (pIn as OSDBinary).value;
@@ -325,9 +340,10 @@ public class TrickleReq : JanusMessageReq
         };
 
     }
+    // The viewer's candidates, per the Janus trickle API: an array goes as "candidates", a single
+    // candidate object as "candidate". No other members (the old "viewer_session" is not part of the API).
     public TrickleReq(JanusViewerSession pVSession, OSD pCandidates) : base("trickle")
     {
-        m_message["viewer_session"] = pVSession.ViewerSessionID;
         if (pCandidates is OSDArray)
             m_message["candidates"] = pCandidates;
         else
@@ -409,6 +425,19 @@ public class PluginMsgReq : JanusMessageReq
     {
         m_message["body"] = m_body;
         return base.ToJson();
+    }
+
+    /// <summary>The same body with the join capability replaced, for the [JanusWebRtcVoice]
+    /// MessageDetails debug line — the one place a request body is logged. It replaces the exact minted string, so
+    /// no part of a capability can survive into a log, and leaves every other field (the session id included)
+    /// as it is: those are not secrets and are what an operator correlates on.</summary>
+    public override string ToJsonForLog()
+    {
+        string json = ToJson();
+        if (!m_body.ContainsKey("join_cap"))
+            return json;
+        string capability = m_body["join_cap"].AsString();
+        return string.IsNullOrEmpty(capability) ? json : json.Replace(capability, "<redacted join_cap>");
     }
 }
 // A plugin response is formatted like:
@@ -495,7 +524,12 @@ public class AudioBridgeCreateRoomReq : PluginMsgReq
     public AudioBridgeCreateRoomReq(int pRoomId) : this(pRoomId, false, null)
     {
     }
-    public AudioBridgeCreateRoomReq(int pRoomId, bool pSpatial, string pDesc) : base(new OSDMap() {
+    public AudioBridgeCreateRoomReq(int pRoomId, bool pSpatial, string pDesc) : this(pRoomId, pSpatial, pDesc, false)
+    {
+    }
+    /// <param name="pVisAuthority">Declare that a sim authority arms
+    /// this room's listeners, adding "vis_authority": true after every other key. False omits the field.</param>
+    public AudioBridgeCreateRoomReq(int pRoomId, bool pSpatial, string pDesc, bool pVisAuthority) : base(new OSDMap() {
                                             { "room", pRoomId },
                                             { "request", "create" },
                                             { "is_private", false },
@@ -508,6 +542,14 @@ public class AudioBridgeCreateRoomReq : PluginMsgReq
     {
         if (!String.IsNullOrEmpty(pDesc))
             AddStringToBody("description", pDesc);
+        if (pVisAuthority)
+            AddBoolToBody("vis_authority", true);
+        // Every room the SIM creates says so, spatial and "multiagent" alike. The mixer's
+        // join-capability requirement keys on this rather than on vis_authority, so an undeclared sim room - an
+        // agent-to-agent call or an ad-hoc conference - is gated too, instead of admitting anything that holds the API
+        // secret. Sent unconditionally: an older mixer reads its create fields by name and ignores the rest
+        // (janus_slvoice.c, the "create" arm), so an old mixer behind a new sim is unaffected.
+        AddBoolToBody("sim_created", true);
     }
 }
 // ==============================================================
@@ -530,6 +572,17 @@ public class AudioBridgeJoinRoomReq : PluginMsgReq
                                             { "display", pAgentName }
                                         })
     {
+    }
+
+    /// <summary>Carry the sim-issued join capability and the
+    /// viewer session it is bound to. Added after every other key, so a join body without a capability is unchanged
+    /// and an older mixer ignores both keys. NEVER logged.</summary>
+    public void SetJoinCapability(string pCapability, string pViewerSessionId)
+    {
+        if (string.IsNullOrEmpty(pCapability) || string.IsNullOrEmpty(pViewerSessionId))
+            return;
+        AddStringToBody("join_cap", pCapability);
+        AddStringToBody("session_id", pViewerSessionId);
     }
 }
 // A successful response contains the participant ID and the SDP

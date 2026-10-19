@@ -27,6 +27,7 @@
 
 using System.Reflection;
 
+using OpenSim.Framework;
 using OpenSim.Region.Framework.Scenes;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Server.Base;
@@ -37,7 +38,6 @@ using OpenMetaverse.StructuredData;
 using Nini.Config;
 
 using Microsoft.Extensions.Logging;
-using OpenSim.Framework;
 
 namespace osWebRtcVoice;
 
@@ -56,10 +56,17 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
     private static string LogHeader = "[WEBRTC VOICE SERVICE MODULE]";
 
     private static bool m_Enabled = false;
+    private static bool m_allowNpcVoice = false;   // [WebRtcVoice] AllowNpcVoice, default deny
+    // Replays a failed provision's answer to the viewer's immediate retries (RefusalCacheSeconds).
+    private ProvisionRefusalCache m_refusalCache = new ProvisionRefusalCache(TimeSpan.FromSeconds(ProvisionRefusalCache.DefaultSeconds));
     private IConfigSource m_Config;
 
     private IWebRtcVoiceService m_spatialVoiceService;
     private IWebRtcVoiceService m_nonSpatialVoiceService;
+
+    // Scenes this shared module serves, for resolving a Scene from the pSceneID the provision
+    // path carries — needed to read the provisioning client's SessionId (the generation token).
+    private readonly Dictionary<UUID, Scene> m_scenes = new Dictionary<UUID, Scene>();
 
     // =====================================================================
 
@@ -73,6 +80,14 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
         if (moduleConfig is not null)
         {
             m_Enabled = moduleConfig.GetBoolean("Enabled", false);
+            // NPC voice is refused by default -- an NPC presence provisions voice only as a
+            // registered connector identity or when the operator opts the whole surface open.
+            // Enforced in the provision path.
+            m_allowNpcVoice = moduleConfig.GetBoolean("AllowNpcVoice", false);
+            // [WebRtcVoice] RefusalCacheSeconds (default 5; 0 disables) - how long a failed provision's
+            // answer is replayed to the viewer's immediate retries without creating a voice session or calling Janus.
+            int refusalSeconds = moduleConfig.GetInt("RefusalCacheSeconds", ProvisionRefusalCache.DefaultSeconds);
+            m_refusalCache = new ProvisionRefusalCache(TimeSpan.FromSeconds(Math.Max(0, refusalSeconds)));
             if (m_Enabled)
             {
                 // Get the DLLs for the two voice services
@@ -112,10 +127,21 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
                         m_Enabled = false;
                     }
                 }
+                else
+                {
+                    // Identical DLL names mean ONE service serving both roles -- share the
+                    // instance. This branch used to leave m_nonSpatialVoiceService NULL, so the first
+                    // non-"local" provision (the admitted A2A multiagent) threw NullReferenceException
+                    // at the CreateViewerSession dispatch below -- swallowed unlogged by the caps
+                    // wrapper's bare catch (SimpleStreamHandler.cs:91-101): the viewer saw an empty
+                    // 500 with no viewer_session/jsep and sat in VOICE_STATE_SESSION_RETRY forever.
+                    m_nonSpatialVoiceService = m_spatialVoiceService;
+                }
 
                 if (m_Enabled)
                 {
                     m_log.LogInformation($"{LogHeader} WebRtcVoiceService enabled");
+                    RegisterConsoleCommands();
                 }
             }
         }
@@ -151,18 +177,18 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
             m_log.LogDebug($"{LogHeader} Adding WebRtcVoiceService to region {scene.Name}");
             scene.RegisterModuleInterface<IWebRtcVoiceService>(this);
 
-            // TODO: figure out what events we care about
-            // When new client (child or root) is added to scene, before OnClientLogin
-            // scene.EventManager.OnNewClient         += Event_OnNewClient;
-            // When client is added on login.
-            // scene.EventManager.OnClientLogin       += Event_OnClientLogin;
-            // New presence is added to scene. Child, root, and NPC. See Scene.AddNewAgent()
-            // scene.EventManager.OnNewPresence       += Event_OnNewPresence;
-            // scene.EventManager.OnRemovePresence    += Event_OnRemovePresence;
-            // update to client position (either this or 'significant')
-            // scene.EventManager.OnClientMovement    += Event_OnClientMovement;
-            // "significant" update to client position
-            // scene.EventManager.OnSignificantClientMovement += Event_OnSignificantClientMovement;
+            lock (m_scenes)
+                m_scenes[scene.RegionInfo.RegionID] = scene;
+
+            // Close-time voice teardown. OnClientClosed (NOT OnRemovePresence) because it fires
+            // while the presence is still resolvable, so the handler can classify child-vs-root
+            // and read the dying login's SessionId itself — no core EventManager change needed
+            // (KnownDefects OnRemovePresence entry, external review 2026-08-22).
+            scene.EventManager.OnClientClosed += Event_OnClientClosed;
+
+            // Other candidate events, considered and not needed:
+            // scene.EventManager.OnNewClient / OnClientLogin / OnNewPresence — provision-driven
+            // scene.EventManager.OnClientMovement / OnSignificantClientMovement — feeder-driven
         }
 
     }
@@ -172,6 +198,9 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
     {
         if (m_Enabled)
         {
+            scene.EventManager.OnClientClosed -= Event_OnClientClosed;
+            lock (m_scenes)
+                m_scenes.Remove(scene.RegionInfo.RegionID);
             scene.UnregisterModuleInterface<IWebRtcVoiceService>(this);
         }
     }
@@ -182,54 +211,360 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
     }
 
     // =====================================================================
-    // Thought about doing this but currently relying on the voice service
-    //     event ("hangup") to remove the viewer session.
-    private void Event_OnRemovePresence(UUID pAgentID)
+    // Close-time voice teardown. Replaces the never-wired Event_OnRemovePresence, which was
+    // broken three ways as written: it enumerated a deferred registry query outside the lock,
+    // mutated the registry inside that enumeration, and fire-and-forgot Shutdown unobserved.
+    //
+    // This handler runs INSIDE Scene.RemoveClient under the (global) removal lock, after
+    // TriggerClientClosed fires and BEFORE the presence is removed — so the presence is
+    // resolvable here and only here. Everything up to the capture must complete synchronously
+    // and cheaply; the Janus cleanup must never run on this thread.
+    private void Event_OnClientClosed(UUID pClientID, Scene pScene)
     {
-        // When a presence is removed, remove the viewer sessions for that agent
-        IEnumerable<KeyValuePair<string, IVoiceViewerSession>> vSessions;
-        if (VoiceViewerSession.TryGetViewerSessionByAgentId(pAgentID, out vSessions))
+        ScenePresence sp = pScene.GetScenePresence(pClientID);
+        if (sp == null || sp.IsChildAgent)
+            return;   // child teardown (border crossing / draw distance) — the agent's voice lives in its root region
+
+        // The dying login's SessionId — the generation token captured at provision. Selection is
+        // token-strict so a successor login's freshly-provisioned session can never be captured,
+        // even if that provision races this close.
+        UUID generation = sp.ControllingClient is not null ? sp.ControllingClient.SessionId : UUID.Zero;
+
+        // Retry hook FIRST, capture SECOND — deliberate and load-bearing. CaptureSessionsForClose
+        // parks its captures in ClosingSessions in the same locked statement, so reading the
+        // closing-set AFTER capturing observes this handler's own just-parked work and logs a
+        // false "prior teardown pending/failed (age 0s)" WARN on every clean logout (observed
+        // live 2026-08-22). Snapshot-before-capture is stateless and race-free: genuinely stale
+        // entries (parked by an earlier failed close) still surface with honest ages, the
+        // just-captured set cannot appear, and no per-agent suppression window exists to
+        // wrongly swallow a genuine second close of a different session generation.
+        List<IVoiceViewerSession> toShutdown = new List<IVoiceViewerSession>();
+        foreach ((IVoiceViewerSession s, long ageMs) in VoiceViewerSession.GetClosingSessions(pClientID))
         {
-            foreach(KeyValuePair<string, IVoiceViewerSession> v in vSessions)
+            m_log.LogWarning("{LogHeader} Event_OnClientClosed: prior teardown for {ClientId} still pending/failed (session {ViewerSessionId}, age {AgeSeconds:F0}s) - retrying",
+                LogHeader, pClientID, s.ViewerSessionID, ageMs / 1000.0);
+            toShutdown.Add(s);
+        }
+
+        // A ROOT close captures the agent's voice sessions in EVERY region of this instance, not only
+        // pScene's. The neighbour-region sessions (the viewer opens one spatial connection per adjacent
+        // region) belong to the same dying viewer, and the viewer does NOT reliably log them out on Quit
+        // (observed: a neighbour-region session survived an ordinary quit as a ghost holding a
+        // mixer slot, because the neighbour's close is a CHILD close and the guard above ignores it).
+        // Teleport cannot lose the new root's session to this: EntityTransferModule flags the source child
+        // (TransferAgent_V2 :1194, crossing :1855) before the destination becomes root and closes the
+        // source only after MakeChildAgent (:1232 -> :1260), so that close is a child close. As a guard
+        // that does not depend on that ordering, regions where this module sees the agent ROOT right now
+        // are skipped.
+        HashSet<UUID> rootElsewhere = RegionsWhereAgentIsRoot(pClientID, pScene.RegionInfo.RegionID);
+        List<IVoiceViewerSession> captured = CaptureForClientClose(pClientID, sp.IsChildAgent, generation, rootElsewhere);
+        foreach (IVoiceViewerSession s in captured)
+        {
+            if (!toShutdown.Contains(s))
+                toShutdown.Add(s);
+        }
+
+        if (toShutdown.Count == 0)
+            return;
+
+        List<UUID> regions = new List<UUID>();
+        foreach (IVoiceViewerSession s in captured)
+        {
+            if (!regions.Contains(s.RegionId))
+                regions.Add(s.RegionId);
+        }
+        foreach (UUID region in regions)
+        {
+            int n = captured.Count(s => s.RegionId == region);
+            m_log.LogDebug("{LogHeader} Event_OnClientClosed: captured {CapturedSessionCount} voice session(s) for {ClientId} in {SceneName}",
+                LogHeader, n, pClientID, RegionName(region));
+        }
+        foreach (UUID region in rootElsewhere)
+            m_log.LogDebug("{LogHeader} Event_OnClientClosed: {ClientId} is root in {SceneName}; its voice session(s) there are kept",
+                LogHeader, pClientID, RegionName(region));
+        m_log.LogDebug("{LogHeader} Event_OnClientClosed: root close of {ClientId} in {SceneName} captured {CapturedSessionCount} voice session(s) across {RegionCount} region(s)",
+            LogHeader, pClientID, pScene.Name, toShutdown.Count, regions.Count);
+
+        // Asynchronous, on the captured references only — never a re-query by avatar, so a
+        // session provisioned after the capture is untouchable by this teardown.
+        _ = Task.Run(() => ShutdownCapturedSessions(toShutdown, $"client close {pClientID}"));
+    }
+
+    /// The close-time capture decision, Scene-free so it unit-tests. A child close (border
+    /// crossing, draw distance, the source of a completed teleport) captures nothing. A root close
+    /// captures the dying login's sessions in every region except pRootRegionsElsewhere.
+    public static List<IVoiceViewerSession> CaptureForClientClose(UUID pAgentId, bool pClosingPresenceIsChild,
+        UUID pGeneration, ICollection<UUID> pRootRegionsElsewhere)
+    {
+        if (pClosingPresenceIsChild)
+            return new List<IVoiceViewerSession>();
+        return VoiceViewerSession.CaptureSessionsForCloseAllRegions(pAgentId, pGeneration, pRootRegionsElsewhere);
+    }
+
+    // Regions (other than the closing one) where this module's scenes hold the agent as a ROOT presence.
+    private HashSet<UUID> RegionsWhereAgentIsRoot(UUID pAgentId, UUID pClosingRegionId)
+    {
+        List<Scene> scenes;
+        lock (m_scenes)
+            scenes = new List<Scene>(m_scenes.Values);
+        HashSet<UUID> result = new HashSet<UUID>();
+        foreach (Scene scene in scenes)
+        {
+            if (scene.RegionInfo.RegionID == pClosingRegionId)
+                continue;
+            ScenePresence other = scene.GetScenePresence(pAgentId);
+            if (other is not null && !other.IsChildAgent)
+                result.Add(scene.RegionInfo.RegionID);
+        }
+        return result;
+    }
+
+    private string RegionName(UUID pRegionId)
+    {
+        lock (m_scenes)
+            return m_scenes.TryGetValue(pRegionId, out Scene scene) ? scene.Name : pRegionId.ToString();
+    }
+
+    // Observed asynchronous teardown of captured sessions. Per-session failure isolation: one
+    // failure is logged and that voice session stays parked in ClosingSessions — discoverable and
+    // retried by the provision/close hooks — while the rest proceed. Never remove-and-forget.
+    private async Task ShutdownCapturedSessions(List<IVoiceViewerSession> pSessions, string pReason)
+    {
+        foreach (IVoiceViewerSession s in pSessions)
+        {
+            try
             {
-                m_log.LogDebug("{0} Event_OnRemovePresence: removing viewer session {1}", LogHeader, v.Key);
-                VoiceViewerSession.RemoveViewerSession(v.Key);
-                v.Value.Shutdown();
+                await s.Shutdown();
+                VoiceViewerSession.CloseCompleted(s);
+                m_log.LogDebug("{LogHeader} voice-session teardown complete ({TeardownReason}): session {ViewerSessionId} agent {AgentId}",
+                    LogHeader, pReason, s.ViewerSessionID, s.AgentId);
+            }
+            catch (Exception e)
+            {
+                // Record the cause on the parked entry (console: "show voice closing") and log the
+                // FULL exception - type, message, stack, inners - via the (Exception, message)
+                // overload. A parked session with no recorded cause was the gap this closes.
+                VoiceViewerSession.RecordCloseFailure(s, $"{e.GetType().Name}: {e.Message}");
+                m_log.LogWarning(e, $"{LogHeader} voice-session teardown FAILED ({pReason}): session {s.ViewerSessionID} agent {s.AgentId} region {s.RegionId} - retained for retry");
             }
         }
+    }
+
+    // Read-only console observability for the closing-set: "show voice closing" lists every
+    // parked session with agent, session id, age, and the last recorded failure. Closes the gap
+    // that ClosingSessions was otherwise inspectable only by log-accounting inference.
+    private void RegisterConsoleCommands()
+    {
+        if (MainConsole.Instance == null)
+            return;   // unit tests / embedded hosts have no console
+        MainConsole.Instance.Commands.AddCommand("Voice", false, "show voice closing",
+            "show voice closing",
+            "Show voice sessions parked in the closing-set (teardown in flight or failed), with age and last failure reason",
+            HandleShowVoiceClosing);
+    }
+
+    private void HandleShowVoiceClosing(string module, string[] args)
+    {
+        List<(UUID AgentId, string SessionId, long AgeMs, string LastFailure)> snap =
+            VoiceViewerSession.GetClosingSnapshot();
+        if (snap.Count == 0)
+        {
+            MainConsole.Instance.Output("No voice sessions in closing state.");
+            return;
+        }
+        MainConsole.Instance.Output("{0} voice session(s) in closing state:", snap.Count);
+        foreach ((UUID agentId, string sessionId, long ageMs, string lastFailure) in snap)
+            MainConsole.Instance.Output("  agent {0} session {1} age {2:F0}s failure: {3}",
+                agentId, sessionId, ageMs / 1000.0, lastFailure ?? "(none - first attempt in flight)");
+    }
+
+    // Capture the generation token onto a freshly-created session: the provisioning client's
+    // login SessionId, read from the live presence. Runs before AddViewerSession so the voice session
+    // enters the registry fully formed. UUID.Zero (capture failed) makes the voice session sweepable
+    // by ANY close for its agent — logged loudly because it should not happen in practice.
+    private void CaptureGenerationToken(IVoiceViewerSession pSession, UUID pUserID, UUID pSceneID)
+    {
+        Scene scene;
+        lock (m_scenes)
+            m_scenes.TryGetValue(pSceneID, out scene);
+        ScenePresence sp = scene?.GetScenePresence(pUserID);
+        pSession.ClientSessionId = sp?.ControllingClient?.SessionId ?? UUID.Zero;
+        if (pSession.ClientSessionId == UUID.Zero)
+            m_log.LogWarning("{LogHeader} provision for {UserId}: could not capture client SessionId (scene {SceneState}, presence {PresenceState}) - session sweepable by any close for this agent",
+                LogHeader, pUserID, scene is null ? "unresolved" : "resolved", sp is null ? "absent" : "present");
     }
     // =====================================================================
     // IWebRtcVoiceService
 
+    // Binds a viewer_session id to the requesting agent. VoiceViewerSession.TryGetViewerSession
+    // looks up by id string only, so any agent presenting another agent's viewer_session id could
+    // drive that voice session (re-provision it, feed it ICE, log it out). Every registered session
+    // carries the agent it was created for (WebRtcJanusService.CreateViewerSession sets AgentId
+    // from the cap-bound requester), so both cap sites resolve through here: found AND owned by
+    // the requester, else exactly the caller's existing not-found path -- no new error shape, and
+    // the voice session itself is untouched. A mismatch is a spoof attempt or a viewer bug, so it is
+    // logged at WARN naming both agents; a plain miss is not (the call sites keep their ERROR).
+    // UUID.Zero is never a wildcard. Static and logger-injected so it is unit-testable.
+    public static bool TryGetViewerSessionFor(string pViewerSessionId, UUID pRequester, string pSite, ILogger pLog, out IVoiceViewerSession pSession)
+    {
+        pSession = null;
+        if (!VoiceViewerSession.TryGetViewerSession(pViewerSessionId, out IVoiceViewerSession found) || found is null)
+            return false;
+        if (pRequester == UUID.Zero || found.AgentId != pRequester)
+        {
+            pLog?.LogWarning("{LogHeader} {Site}: viewer session {ViewerSessionId} is bound to agent {BoundAgentId} but was presented by agent {RequesterId} - treated as not found",
+                LogHeader, pSite, pViewerSessionId, found.AgentId, pRequester);
+            return false;
+        }
+        pSession = found;
+        return true;
+    }
+
+    // A viewer_session that is absent, empty, or the zero UUID indicates an INITIAL
+    // provision request (no session created yet), NOT a lookup of an existing session.
+    // NOTE: OSDMap.TryGetString returns true for a *present* OSDUUID(UUID.Zero), yielding
+    // "00000000-0000-0000-0000-000000000000" -- so a present-but-zero value must be
+    // treated as "no session yet", otherwise the first provision is routed to the lookup
+    // branch and fails with "viewer session 00000000-... not found". Registered session
+    // ids are UUID strings (see VoiceViewerSession ctor), so parse and reject UUID.Zero.
+    public static bool HasRealViewerSession(OSDMap pRequest, out string viewerSessionId)
+    {
+        viewerSessionId = null;
+        if (!pRequest.TryGetString("viewer_session", out string vs))
+            return false;                                      // absent
+        if (string.IsNullOrEmpty(vs))
+            return false;                                      // empty
+        if (UUID.TryParse(vs, out UUID vsid) && vsid == UUID.Zero)
+            return false;                                      // zero UUID
+        viewerSessionId = vs;
+        return true;
+    }
+
+    // The AllowNpcVoice decision, pure and side-effect-free so it is unit-testable without a Scene (NpcProvisionGuardTests — the
+    // IsProvisionableChannelType / HasRealViewerSession extraction pattern). Refuse iff the
+    // presence is an NPC AND the operator has not opened the surface AND the id is not a
+    // registered voice-connector identity. A non-NPC presence is never refused here.
+    public static bool IsNpcProvisionRefused(bool pIsNpcPresence, bool pAllowNpcVoice, bool pIsConnectorIdentity)
+    {
+        return pIsNpcPresence && !pAllowNpcVoice && !pIsConnectorIdentity;
+    }
+
+    // The failure signature of a provision response — no map, or a map without viewer_session
+    // (only ProvisionResponseBuilder.BuildSuccess carries one).
+    public static bool IsFailedProvision(OSDMap pResponse)
+    {
+        return pResponse is null || !pResponse.ContainsKey("viewer_session");
+    }
+
+    // The cached failure answer is copied in and out, so no caller can alter what later retries receive.
+    private static OSDMap CopyAnswer(OSDMap pAnswer)
+    {
+        if (pAnswer is null)
+            return null;
+        OSDMap copy = new OSDMap();
+        foreach (KeyValuePair<string, OSD> kvp in pAnswer)
+            copy[kvp.Key] = kvp.Value;
+        return copy;
+    }
+
     // IWebRtcVoiceService.ProvisionVoiceAccountRequest
         public OSDMap ProvisionVoiceAccountRequest(OSDMap pRequest, UUID pUserID, UUID pSceneID)
     {
+        // Retry hook (remove-and-forget guard): if an earlier close-time teardown for this agent
+        // FAILED, its sessions are parked in ClosingSessions. A new provision is exactly the
+        // moment that residue would become a duplicate handle in the mixer, so re-drive the
+        // teardown first — observed, asynchronous, on the parked references only.
+        List<(IVoiceViewerSession Session, long AgeMs)> stale = VoiceViewerSession.GetClosingSessions(pUserID);
+        if (stale.Count > 0)
+        {
+            foreach ((IVoiceViewerSession s, long ageMs) in stale)
+                m_log.LogWarning("{LogHeader} provision for {UserId}: prior voice-session teardown still pending/failed (session {ViewerSessionId}, age {AgeSeconds:F0}s) - retrying",
+                    LogHeader, pUserID, s.ViewerSessionID, ageMs / 1000.0);
+            List<IVoiceViewerSession> retry = stale.Select(t => t.Session).ToList();
+            _ = Task.Run(() => ShutdownCapturedSessions(retry, $"provision retry {pUserID}"));
+        }
+
         OSDMap response = null;
         IVoiceViewerSession vSession = null;
-        if (pRequest.TryGetString("viewer_session", out string viewerSessionId))
+        bool createdHere = false;   // true when this call created and registered vSession
+        // A teardown that cannot name a live session -- viewer_session absent, the zero
+        // UUID (observed live from a viewer backing out of provision retries), or an id nothing
+        // holds -- has nothing to tear down HERE. Answer the shape a successful logout answers
+        // ({ response: "closed" }, ProvisionResponseBuilder.BuildClosed's map) instead of falling
+        // into the create branch and erroring "no channel_type in request".
+        bool isLogout = pRequest.TryGetBool("logout", out bool lg) && lg;
+        if (isLogout)
+            m_refusalCache.Clear(pUserID, pSceneID);   // a logout ends any cached refusal for this region
+        if (HasRealViewerSession(pRequest, out string viewerSessionId))
         {
-            // request has a viewer session. Use that to find the voice service
-            if (!VoiceViewerSession.TryGetViewerSession(viewerSessionId, out vSession))
+            // request has a real viewer session. Use that to find the voice service -- it must be
+            // this agent's own session; another agent's id resolves to nothing.
+            if (!TryGetViewerSessionFor(viewerSessionId, pUserID, "ProvisionVoiceAccountRequest", m_log, out vSession))
             {
-                m_log.LogError($"{0} ProvisionVoiceAccountRequest: viewer session {viewerSessionId} not found");
+                if (isLogout)
+                {
+                    m_log.LogDebug("{LogHeader} ProvisionVoiceAccountRequest: logout for unknown viewer session {ViewerSessionId} from {UserId} - nothing to close",
+                        LogHeader, viewerSessionId, pUserID);
+                    return new OSDMap { { "response", "closed" } };
+                }
+                m_log.LogError($"{LogHeader} ProvisionVoiceAccountRequest: viewer session {viewerSessionId} not found");
             }
-        }   
+        }
+        else if (isLogout)
+        {
+            m_log.LogDebug("{LogHeader} ProvisionVoiceAccountRequest: logout with no usable viewer session from {UserId} - nothing to close",
+                LogHeader, pUserID);
+            return new OSDMap { { "response", "closed" } };
+        }
         else
         {
-            // the request does not have a viewer session. See if it's an initial request
+            // The AllowNpcVoice guard runs
+            // BEFORE any session is created. An NPC presence gets voice only when the operator
+            // opened the surface ([WebRtcVoice] AllowNpcVoice=true) or the id is a registered
+            // voice-connector identity (IVoiceConnectorRegistry on the scene; null registry ==
+            // no connector identities). Real-avatar presences never enter the predicate's refuse
+            // arm. The decision is the pure IsNpcProvisionRefused so it is unit-testable
+            // (NpcProvisionGuardTests) — the same extraction pattern as IsProvisionableChannelType.
+            Scene npcScene;
+            lock (m_scenes)
+                m_scenes.TryGetValue(pSceneID, out npcScene);
+            ScenePresence npcSp = npcScene?.GetScenePresence(pUserID);
+            if (npcSp is not null && IsNpcProvisionRefused(
+                    npcSp.PresenceType == PresenceType.Npc,
+                    m_allowNpcVoice,
+                    npcScene.RequestModuleInterface<IVoiceConnectorRegistry>()?.IsConnectorIdentity(pUserID) ?? false))
+            {
+                m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} region={RegionName} decision=refused-npc",
+                    LogHeader, pUserID, npcScene.Name);
+                m_log.LogWarning("{LogHeader} refusing NPC voice provision from agent {AgentId} in region \"{RegionName}\" (AllowNpcVoice=false, not a connector identity)",
+                    LogHeader, pUserID, npcScene.Name);
+                return null;
+            }
+
+            // The viewer re-provisions immediately after a failed provision. Inside RefusalCacheSeconds a
+            // repeat attempt gets the same failure answer again, without creating a voice session or calling the
+            // voice service (Janus); the window's single log line is written when the refusal is re-evaluated.
+            if (m_refusalCache.TryGetRefusal(pUserID, pSceneID, out object cachedRefusal))
+                return CopyAnswer(cachedRefusal as OSDMap);
+
+            // no (usable) viewer session -> this is an initial request
             if (pRequest.TryGetString("channel_type", out string channelType))
             {
                 if (channelType == "local")
                 {
                     // TODO: check if this userId is making a new session (case that user is reconnecting)
                     vSession = m_spatialVoiceService.CreateViewerSession(pRequest, pUserID, pSceneID);
+                    CaptureGenerationToken(vSession, pUserID, pSceneID);
                     VoiceViewerSession.AddViewerSession(vSession);
+                    createdHere = true;
                 }
                 else
                 {
                     // TODO: check if this userId is making a new session (case that user is reconnecting)
                     vSession = m_nonSpatialVoiceService.CreateViewerSession(pRequest, pUserID, pSceneID);
+                    CaptureGenerationToken(vSession, pUserID, pSceneID);
                     VoiceViewerSession.AddViewerSession(vSession);
+                    createdHere = true;
                 }
             }
             else
@@ -240,6 +575,42 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
         if (vSession is not null)
         {
                 response = vSession.VoiceService.ProvisionVoiceAccountRequest(vSession, pRequest, pUserID, pSceneID);
+
+            // A voice session THIS call created and registered must not outlive a failed
+            // provision. The viewer was never told its id, so it can never log it out; its Janus session and
+            // plugin handle would stay alive and IsAgentInRegion would report the agent voiced — one more set
+            // per viewer retry. Remove it and shut down its voice-service side (the pair
+            // DisconnectViewerSession uses). A pre-existing session (the viewer holds its id) is left alone.
+            if (createdHere && !IsFailedProvision(response))
+            {
+                m_refusalCache.Clear(pUserID, pSceneID);   // a successful provision ends any cached refusal
+            }
+            if (createdHere && IsFailedProvision(response))
+            {
+                // Remember this answer for the viewer's immediate retries (RefusalCacheSeconds). The count of
+                // retries the previous window suppressed is logged as one line per (agent, region) per window.
+                int suppressed = m_refusalCache.RecordRefusal(pUserID, pSceneID, CopyAnswer(response));
+                if (suppressed > 0)
+                    m_log.LogInformation("{LogHeader} ProvisionVoiceAccountRequest: provision from {UserId} in {RegionId} refused again (cached, {Suppressed} retries suppressed)",
+                        LogHeader, pUserID, pSceneID, suppressed);
+                IVoiceViewerSession failed = vSession;
+                m_log.LogDebug("{LogHeader} ProvisionVoiceAccountRequest: provision failed for new viewer session {ViewerSessionId} of {UserId} ({Error}) - removing it",
+                    LogHeader, failed.ViewerSessionID, pUserID,
+                    response is not null && response.TryGetString("error", out string provError) ? provError : "no response");
+                VoiceViewerSession.RemoveViewerSession(failed.ViewerSessionID);
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await failed.Shutdown().ConfigureAwait(false);
+                    }
+                    catch (Exception e)
+                    {
+                        m_log.LogWarning("{LogHeader} ProvisionVoiceAccountRequest: shutdown of failed-provision viewer session {ViewerSessionId} threw: {Exception}",
+                            LogHeader, failed.ViewerSessionID, e.Message);
+                    }
+                });
+            }
         }
         return response;
     }
@@ -251,8 +622,9 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
         IVoiceViewerSession vSession = null;
         if (pRequest.TryGetString("viewer_session", out string viewerSessionId))
         {
-            // request has a viewer session. Use that to find the voice service
-            if (VoiceViewerSession.TryGetViewerSession(viewerSessionId, out vSession))
+            // request has a viewer session. Use that to find the voice service -- it must be this
+            // agent's own session; another agent's id resolves to nothing.
+            if (TryGetViewerSessionFor(viewerSessionId, pUserID, "VoiceSignalingRequest", m_log, out vSession))
             {
                     response = vSession.VoiceService.VoiceSignalingRequest(vSession, pRequest, pUserID, pSceneID);
             }
@@ -280,8 +652,20 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
         throw new NotImplementedException();
     }
 
+    // Rooms are a spatial-service concern, so this goes to the spatial leaf whatever the
+    // request's channel_type would have been.
+    public int? EnsureSpatialRoom(UUID pSceneID, int pParcelLocalID)
+        => m_spatialVoiceService?.EnsureSpatialRoom(pSceneID, pParcelLocalID);
+
+    // Dispatch to the configured service by channel_type, mirroring the provision path's
+    // local/non-local split. Creating a viewer session touches no Janus state
+    // (WebRtcJanusService.CreateViewerSession just builds the object), so this is safe to call
+    // for an identity that will never send an offer — the connector registration path, which
+    // pairs it with VoiceViewerSession.AddViewerSession.
     public IVoiceViewerSession CreateViewerSession(OSDMap pRequest, UUID pUserID, UUID pSceneID)
     {
-        throw new NotImplementedException();
+        bool isSpatial = pRequest.TryGetString("channel_type", out string ct) && ct == "local";
+        IWebRtcVoiceService service = isSpatial ? m_spatialVoiceService : m_nonSpatialVoiceService;
+        return service?.CreateViewerSession(pRequest, pUserID, pSceneID);
     }
 }

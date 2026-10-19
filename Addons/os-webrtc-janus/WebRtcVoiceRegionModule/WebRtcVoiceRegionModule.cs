@@ -25,6 +25,7 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+using System.Collections.Generic;
 using System.Net;
 using System.Reflection;
 
@@ -41,6 +42,8 @@ using OSDMap = OpenMetaverse.StructuredData.OSDMap;
 
 using Nini.Config;
 using Microsoft.Extensions.Logging;
+using OpenSim.Services.Interfaces;   // IPresenceService, for the online-only ring filter
+using osWebRtcVoice.NonSpatial;   // the non-spatial engine and the group arm
 
 namespace osWebRtcVoice;
 
@@ -64,10 +67,118 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     private static byte[] llsdUndefAnswerBytes = Util.UTF8.GetBytes("<llsd><undef /></llsd>"); 
     private bool _MessageDetails = false;
 
+    // Replays a provision refusal (403/404/501) to the viewer's immediate retries for RefusalCacheSeconds
+    // without re-running the estate/parcel checks. Replaced from config in Initialise.
+    private ProvisionRefusalCache m_refusalCache = new ProvisionRefusalCache(TimeSpan.FromSeconds(ProvisionRefusalCache.DefaultSeconds));
+
     // Control info
     private static bool m_Enabled = false;
 
     private IConfig m_Config;
+
+    // Comma-separated STUN URIs advertised to viewers as SimulatorFeatures
+    // "stun-servers"; empty => the key is not emitted.
+    private string m_StunServers = string.Empty;
+
+    // [WebRtcVoice] VisibilityFeederEnabled / VisibilityEmitEnabled. Off by default: the feeder pushes
+    // peer_ctl batches, which only a mixer that implements them understands.
+    public const bool DefaultVisibilityFeederEnabled = false;
+    public const bool DefaultVisibilityEmitEnabled = false;
+
+    public static bool ReadVisibilityFeederEnabled(IConfig pConfig)
+        => pConfig.GetBoolean("VisibilityFeederEnabled", DefaultVisibilityFeederEnabled);
+
+    public static bool ReadVisibilityEmitEnabled(IConfig pConfig)
+        => pConfig.GetBoolean("VisibilityEmitEnabled", DefaultVisibilityEmitEnabled);
+
+    // [WebRtcVoice] VisibilityArmingEnabled. Arming, room epochs, generations, heartbeats and
+    // acting on the mixer's reply. DISABLED by default: with the key
+    // absent or false the sim emits exactly the payloads it sent before arming existed (VisibilityKnobOffGoldenTests).
+    // Arming deliberately does not ride VisibilityEmitEnabled: that key is already true on existing
+    // grids, so riding it would have changed the wire on deploy.
+    public const bool DefaultVisibilityArmingEnabled = false;
+
+    public static bool ReadVisibilityArmingEnabled(IConfig pConfig)
+        => pConfig.GetBoolean("VisibilityArmingEnabled", DefaultVisibilityArmingEnabled);
+
+    // [WebRtcVoice] GroupVoiceEnabled. OFF by default, so an install that never sets
+    // it behaves exactly as it does today -- a group "call" falls through to the A2A arm and 404s,
+    // and a group provision cannot exist because no room key was ever handed out. Opt-in only.
+    public const bool DefaultGroupVoiceEnabled = false;
+
+    public static bool ReadGroupVoiceEnabled(IConfig pConfig)
+        => pConfig.GetBoolean("GroupVoiceEnabled", DefaultGroupVoiceEnabled);
+
+    // [WebRtcVoice] A2AVoiceEnabled: avatar-to-avatar calls (the "call" and "start p2p voice" chat session
+    // requests answered with an invitation registry and per-session credentials). Off by default: the
+    // chat session handler then answers as it did before the feature existed.
+    public const bool DefaultA2AVoiceEnabled = false;
+
+    public static bool ReadA2AVoiceEnabled(IConfig pConfig)
+        => pConfig.GetBoolean("A2AVoiceEnabled", DefaultA2AVoiceEnabled);
+
+    // [WebRtcVoice] VoiceModerationEnabled: parcel voice moderation (the SpatialVoiceModerationRequest
+    // capability and the moderation console commands). Off by default: the capability is not advertised.
+    public const bool DefaultVoiceModerationEnabled = false;
+
+    public static bool ReadVoiceModerationEnabled(IConfig pConfig)
+        => pConfig.GetBoolean("VoiceModerationEnabled", DefaultVoiceModerationEnabled);
+
+    // [WebRtcVoice] GroupVoiceRequireVoicePower. The viewer separates GP_SESSION_JOIN (may be in the
+    // session, roles_constants.h:144) from GP_SESSION_VOICE (may hear/talk, :145); we require both by
+    // default so a role explicitly denied voice is not admitted. False requires JOIN only.
+    public const bool DefaultGroupVoiceRequireVoicePower = true;
+
+    public static bool ReadGroupVoiceRequireVoicePower(IConfig pConfig)
+        => pConfig.GetBoolean("GroupVoiceRequireVoicePower", DefaultGroupVoiceRequireVoicePower);
+
+    // [WebRtcVoice] GroupVoiceCap. Clamped by NonSpatialCaps.Effective to the mixer's SLV_MAX_MIX.
+    public static int ReadGroupVoiceCap(IConfig pConfig)
+        => pConfig.GetInt("GroupVoiceCap", NonSpatialCaps.DefaultConferenceCap);
+
+    // [WebRtcVoice] AdhocVoiceEnabled. OFF by default, so this deploy changes nothing until
+    // it is set: "start conference" keeps its earlier 200-and-no-body behaviour and the viewer
+    // keeps timing out exactly as it does today. Opt-in only.
+    public const bool DefaultAdhocVoiceEnabled = false;
+
+    public static bool ReadAdhocVoiceEnabled(IConfig pConfig)
+        => pConfig.GetBoolean("AdhocVoiceEnabled", DefaultAdhocVoiceEnabled);
+
+    // Per-listener visibility feeder, one service per region. Off by default.
+    private bool m_VisibilityFeederEnabled = DefaultVisibilityFeederEnabled;
+    private int m_VisibilityTickMs = 250;
+    // Emit the matrix to the mixer (peer_ctl_batch), separate from running the matrix. Off by default;
+    // false runs the feeder matrix-only for diagnostics.
+    private bool m_VisibilityEmitEnabled = DefaultVisibilityEmitEnabled;
+    // Arming (see ReadVisibilityArmingEnabled). Off by default.
+    private bool m_VisibilityArmingEnabled = DefaultVisibilityArmingEnabled;
+    // [JanusWebRtcVoice] admin endpoint/secret for the peer_ctl_batch sink this module now OWNS
+    // (option c-new): the sink is constructed here and handed directly to the feeder's sender, so
+    // sink and sender share one ALC and IPeerCtlBatchSink identity matches.
+    private string m_JanusAdminUri = string.Empty;
+    private string m_JanusAdminToken = string.Empty;
+    private int m_AdminTimeoutMs = 5000;
+    private int m_VisibilityRoomSendConcurrency = JanusPeerCtlBatchSink.DefaultRoomSendConcurrency;
+    private readonly Dictionary<Scene, VoiceVisibilityService> m_visibilityServices = new();
+
+    // Avatar-to-avatar invitation registry. One per module
+    // instance (one per region-server process), shared by every scene this shared module serves; thread-safe
+    // because ChatSessionRequest arrives on cap HTTP threads. Cross-instance A2A is out of scope.
+    private readonly A2ASessionRegistry m_a2aSessions = new();
+
+    // The non-spatial engine and the group policy. The engine is constructed
+    // unconditionally and costs nothing when idle; the POLICY is what gates every group arm, and it
+    // is GroupVoicePolicy.Disabled unless [WebRtcVoice] GroupVoiceEnabled is set. The store is the
+    // in-process one; a service-backed store can replace it behind INonSpatialSessionStore
+    // without touching anything here.
+    private readonly InMemoryNonSpatialSessionStore m_nonSpatialStore = new();
+    private NonSpatialVoiceSessionEngine m_nonSpatial;
+    private GroupVoicePolicy m_groupVoice = GroupVoicePolicy.Disabled;
+
+    /// <summary>[WebRtcVoice] AdhocVoiceEnabled. False keeps the earlier stub behaviour.</summary>
+    private bool m_adhocVoiceEnabled = DefaultAdhocVoiceEnabled;
+    private bool m_a2aVoiceEnabled = DefaultA2AVoiceEnabled;
+    private bool m_moderationEnabled = DefaultVoiceModerationEnabled;
 
     // ISharedRegionModule.Initialize
     public void Initialise(IConfigSource config)
@@ -79,10 +190,83 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             if (m_Enabled)
             {
                 _MessageDetails = m_Config.GetBoolean("MessageDetails", false);
+                // [WebRtcVoice] RefusalCacheSeconds (default 5; 0 disables).
+                m_refusalCache = new ProvisionRefusalCache(TimeSpan.FromSeconds(
+                    Math.Max(0, m_Config.GetInt("RefusalCacheSeconds", ProvisionRefusalCache.DefaultSeconds))));
+                m_StunServers = m_Config.GetString("StunServers", string.Empty);
+                m_VisibilityFeederEnabled = ReadVisibilityFeederEnabled(m_Config);
+                m_VisibilityTickMs = m_Config.GetInt("VisibilityTickMs", 250);
+                m_VisibilityEmitEnabled = ReadVisibilityEmitEnabled(m_Config);
+                m_VisibilityArmingEnabled = ReadVisibilityArmingEnabled(m_Config);
+                m_a2aVoiceEnabled = ReadA2AVoiceEnabled(m_Config);
+                m_moderationEnabled = ReadVoiceModerationEnabled(m_Config);
+
+                // Group voice, opt-in. The membership and power lookups are bound per-request
+                // to the scene's IGroupsModule (grid state via the groups service, so the same answer
+                // on every region and every host), not captured here, because scenes are added later.
+                if (ReadGroupVoiceEnabled(m_Config))
+                {
+                    m_groupVoice = new GroupVoicePolicy
+                    {
+                        Enabled = true,
+                        RequireVoicePower = ReadGroupVoiceRequireVoicePower(m_Config),
+                        Cap = ReadGroupVoiceCap(m_Config),
+                        IsMember = GroupIsMember,
+                        Powers = GroupPowersOf,
+                    };
+                    m_log.LogInformation(
+                        "{LogHeader} GROUP VOICE enabled ([WebRtcVoice] GroupVoiceEnabled): cap {Cap}, required powers 0x{Mask:X}{Note}",
+                        logHeader, NonSpatialCaps.Effective(NonSpatialSessionType.Group, m_groupVoice.Cap),
+                        m_groupVoice.RequiredMask,
+                        m_groupVoice.RequireVoicePower ? " (GP_SESSION_JOIN + GP_SESSION_VOICE)" : " (GP_SESSION_JOIN only)");
+                }
+
+                m_adhocVoiceEnabled = ReadAdhocVoiceEnabled(m_Config);
+                if (m_adhocVoiceEnabled)
+                    m_log.LogInformation("{LogHeader} ADHOC VOICE enabled ([WebRtcVoice] AdhocVoiceEnabled): "
+                        + "\"start conference\" answers with an event-queue ChatterBoxSessionStartReply", logHeader);
+
+                // The SAME grid id the room numbers are hashed from, so a group room
+                // key derived here and a room number derived in the bridge agree across the grid.
+                m_nonSpatial = new NonSpatialVoiceSessionEngine(
+                    m_nonSpatialStore,
+                    new INonSpatialAdmission[] { new P2PAdmission(), new AdhocAdmission(), m_groupVoice.ToAdmissionOrNull() },
+                    JanusAudioBridge.ReadGridId(config));
+                // Rooms addressed concurrently within one send. A latency budget, not a
+                // throughput knob � see JanusPeerCtlBatchSink.DefaultRoomSendConcurrency.
+                m_VisibilityRoomSendConcurrency = m_Config.GetInt("VisibilityRoomSendConcurrency",
+                    JanusPeerCtlBatchSink.DefaultRoomSendConcurrency);
+
+                // Sink endpoint from [JanusWebRtcVoice] (the same section the Janus service reads).
+                IConfig janusCfg = config.Configs["JanusWebRtcVoice"];
+                if (janusCfg is not null)
+                {
+                    m_JanusAdminUri = janusCfg.GetString("JanusGatewayAdminURI", string.Empty);
+                    m_JanusAdminToken = janusCfg.GetString("AdminAPIToken", string.Empty);
+                    m_AdminTimeoutMs = janusCfg.GetInt("AdminTimeoutMs", 5000);
+                }
+
+                // Console surfaces. The moderation commands are registered only with moderation enabled, and the
+                // peer_ctl counters only with the visibility feeder enabled; with the feeder off the commands
+                // would have nothing to report.
+                if (m_moderationEnabled)
+                    new VoiceModerationCommands(SnapshotVisibilityServices).Register();
+                if (m_VisibilityFeederEnabled)
+                    new VoiceVisibilityCommands(SnapshotVisibilityServices).Register();
 
                 m_log.LogInformation($"{logHeader}: enabled");
             }
         }
+    }
+
+    // A copy of the per-region service map for the console commands. A copy, not the live
+    // dictionary: a console handler resolves names, enumerates parcels and writes to a terminal,
+    // and none of that may happen while holding the lock that the CAP handler and RegionLoaded
+    // contend for.
+    private List<KeyValuePair<Scene, VoiceVisibilityService>> SnapshotVisibilityServices()
+    {
+        lock (m_visibilityServices)
+            return new List<KeyValuePair<Scene, VoiceVisibilityService>>(m_visibilityServices);
     }
 
     // ISharedRegionModule.PostInitialize
@@ -90,15 +274,33 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     {
     }
 
+    // Scenes this shared module serves, for callee resolution on THIS instance (the group
+    // module's m_sceneList / GetActiveClient pattern). Cross-instance A2A is out of scope.
+    private readonly List<Scene> m_scenes = new();
+
     // ISharedRegionModule.AddRegion
     public void AddRegion(Scene scene)
     {
-        // todo register module to get parcels changes etc
+        lock (m_scenes)
+            if (!m_scenes.Contains(scene))
+                m_scenes.Add(scene);
     }
 
     // ISharedRegionModule.RemoveRegion
     public void RemoveRegion(Scene scene)
     {
+        lock (m_scenes)
+            m_scenes.Remove(scene);
+
+        lock (m_visibilityServices)
+        {
+            if (m_visibilityServices.TryGetValue(scene, out VoiceVisibilityService svc))
+            {
+                svc.Stop();
+                m_visibilityServices.Remove(scene);
+                scene.UnregisterModuleInterface<VoiceVisibilityService>(svc);
+            }
+        }
     }
 
     // ISharedRegionModule.RegionLoaded
@@ -110,15 +312,128 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             {
                 OnRegisterCaps(scene, agentID, caps);
             };
+            // A client that drops without a logout provision (crash, kill)
+            // would otherwise leave its Active A2A record until the idle backstop, suppressing a re-ring
+            // between the same pair. Treat the close as that party gone from every record it is in;
+            // the record is removed only when the other party is gone too (both-logout semantics), and a
+            // later admitted provision re-marks the party present, so this is reversible.
+            // Incoming group voice rings from ANOTHER region-server process arrive as
+            // grid instant messages; this is the receive half of GroupVoiceRingTransport.
+            scene.EventManager.OnIncomingInstantMessage += OnIncomingGroupRing;
+            // Conference TEXT from another region server arrives the same way a ring does. The
+            // two are told apart by the bucket magic, never by dialog -- AdhocTextTransport's header
+            // has the whole argument. Order of these two subscriptions is irrelevant: the magics are
+            // distinct prefixes, so at most one of the two parsers can claim any given message.
+            scene.EventManager.OnIncomingInstantMessage += OnIncomingConferenceText;
+            // A member's OWN typed line is a CLIENT IM, not a grid IM, so it needs the client
+            // hook -- the same one GroupsMessagingModule uses for group chat (:427-436). Root only:
+            // a child agent's client would deliver the line a second time on every border crossing.
+            scene.EventManager.OnMakeRootAgent += OnMakeRootAgentConferenceText;
+            scene.EventManager.OnMakeChildAgent += OnMakeChildAgentConferenceText;
+            scene.EventManager.OnClientClosed += delegate (UUID clientID, Scene s)
+            {
+                // Look the presence up in the scene the close fired for. OnClientClosed runs
+                // inside Scene.RemoveClient before the presence is removed, so it is resolvable here. Same guard
+                // as WebRtcVoiceServiceModule.Event_OnClientClosed.
+                Scene closedIn = s ?? scene;
+                ScenePresence sp = closedIn.GetScenePresence(clientID);
+                if (!A2ASessionRegistry.ShouldMarkGone(sp != null, sp != null && sp.IsChildAgent))
+                    return;   // child teardown (border crossing / draw distance) — the agent's voice lives in its root region
+                foreach (A2ASession gone in m_a2aSessions.MarkGoneSessions(clientID, null))
+                {
+                    m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} session-id={SessionId} region={RegionName} decision=removed-client-closed",
+                        logHeader, clientID, gone.SessionId, s?.Name ?? scene.Name);
+                    // Tell the remaining party the departed one LEFT (if reachable here).
+                    List<Scene> scenesSnap;
+                    lock (m_scenes)
+                        scenesSnap = new List<Scene>(m_scenes);
+                    string line = A2AAgentListDelivery.SendLeave(scenesSnap, gone, clientID, null);
+                    if (line != null)
+                        m_log.LogDebug("{LogHeader} {Line}", logHeader, line);
+                }
+                // A ROOT presence closing releases the agent's group seats too. Same guard as
+                // above (ShouldMarkGone): a child teardown is a border crossing, not a departure, and
+                // must not free a seat the agent still holds from its root region. This is the
+                // presence backstop -- departure never waits on a POST that may never come.
+                foreach (NonSpatialVoiceSession gone in
+                         m_nonSpatial?.DepartAll(clientID, DepartureReason.PresenceLost)
+                         ?? (IReadOnlyList<NonSpatialVoiceSession>)Array.Empty<NonSpatialVoiceSession>())
+                {
+                    m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                        GroupVoiceChatSession.Line(clientID, gone.Owner, "group-seat-released-client-closed",
+                            $"room={gone.RoomKey} region={s?.Name ?? scene.Name} seats={gone.SeatsHeld}/{gone.Cap}"));
+                    // The presence backstop is a departure like any other, so the
+                    // conference roster has to lose the name here too -- otherwise a crashed member
+                    // sits in everyone's panel until the idle TTL.
+                    SendConferenceRoster(gone, clientID, joined: false);
+                }
+            };
 
             ISimulatorFeaturesModule simFeatures = scene.RequestModuleInterface<ISimulatorFeaturesModule>();
             simFeatures?.AddFeature("VoiceServerType", OSD.FromString("webrtc"));
+
+            // Advertise STUN servers to viewers so their WebRTC ICE config is non-empty.
+            // The viewer's OpenSim path reads SimulatorFeatures["stun-servers"] as a
+            // comma-separated string of full ICE URIs (llviewerregion.cpp). Absent config
+            // => omit the key. Stock viewers REQUIRE a non-empty valid entry or
+            // CreatePeerConnection fails "ICE server parsing failed: Empty uri".
+            if (!string.IsNullOrWhiteSpace(m_StunServers))
+            {
+                simFeatures?.AddFeature("stun-servers", OSD.FromString(m_StunServers));
+            }
+
+            // Start the per-listener visibility feeder for this region (opt-in).
+            if (m_VisibilityFeederEnabled)
+            {
+                // Build the sink HERE and hand it directly to the service — same ALC, no scene
+                // registry (option c-new). Null when emission is off or admin config is missing;
+                // the service/sender then runs matrix-only and logs once.
+                IPeerCtlBatchSink sink = BuildPeerCtlSinkOrNull(scene);
+                VoiceVisibilityService svc = new VoiceVisibilityService(scene, m_VisibilityTickMs, m_VisibilityEmitEnabled, sink,
+                    TimeSpan.FromMilliseconds(m_AdminTimeoutMs), m_VisibilityArmingEnabled);
+                svc.Start();
+                lock (m_visibilityServices)
+                    m_visibilityServices[scene] = svc;
+                // The connector module (same assembly, separate module instance) reaches
+                // the per-region service — room record + moderation store — through the scene, the
+                // same way it reaches INPCModule. Concrete type, deliberately: no other assembly
+                // needs it.
+                scene.RegisterModuleInterface<VoiceVisibilityService>(svc);
+            }
         }
+    }
+
+    // Construct the Janus peer_ctl_batch sink for this scene, or null to run matrix-only.
+    // Null when emission is disabled (no log — intentional) or when [JanusWebRtcVoice] admin
+    // endpoint/secret is absent (one loud WARN — the config saved us before, keep it loud).
+    private IPeerCtlBatchSink BuildPeerCtlSinkOrNull(Scene scene)
+    {
+        if (!m_VisibilityEmitEnabled)
+            return null;
+
+        if (string.IsNullOrEmpty(m_JanusAdminUri) || string.IsNullOrEmpty(m_JanusAdminToken))
+        {
+            m_log.LogWarning($"{logHeader}[Visibility]: VisibilityEmitEnabled but [JanusWebRtcVoice] " +
+                $"JanusGatewayAdminURI/AdminAPIToken missing; region \"{scene.RegionInfo.RegionName}\" runs matrix-only (no emission)");
+            return null;
+        }
+
+        // The sink logs its fallback room number once at Info, and the service hands it the room
+        // resolver in the service constructor immediately below this call.
+        return new JanusPeerCtlBatchSink(m_JanusAdminUri, m_JanusAdminToken,
+            TimeSpan.FromMilliseconds(m_AdminTimeoutMs), scene.RegionInfo.RegionID, scene.RegionInfo.RegionName,
+            m_VisibilityRoomSendConcurrency);
     }
 
     // ISharedRegionModule.Close
     public void Close()
     {
+        lock (m_visibilityServices)
+        {
+            foreach (VoiceVisibilityService svc in m_visibilityServices.Values)
+                svc.Stop();
+            m_visibilityServices.Clear();
+        }
     }
 
     // ISharedRegionModule.Name
@@ -173,7 +488,136 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                 {
                     ChatSessionRequest(httpRequest, httpResponse, agentID, scene);
                 }));
+
+        // Parcel voice moderation (parity with SL viewer 26.1), only when [WebRtcVoice] VoiceModerationEnabled is
+        // set. RegisterSimpleHandler both ADVERTISES the capability in the seed set (the viewer's getCapability
+        // resolves it) and routes the POST, identical to the three above.
+        if (m_moderationEnabled)
+            caps.RegisterSimpleHandler("SpatialVoiceModerationRequest",
+                    new SimpleStreamHandler("/" + UUID.Random(), (IOSHttpRequest httpRequest, IOSHttpResponse httpResponse) =>
+                    {
+                        SpatialVoiceModerationRequest(httpRequest, httpResponse, agentID, scene);
+                    }));
     }
+
+    /// <summary>
+    /// Handles the viewer's SpatialVoiceModerationRequest CAP (parity with SL viewer 26.1 parcel
+    /// voice moderation). First half: authorise and record sticky per-parcel moderation
+    /// state in memory. NOTHING consumes the store yet — the matrix enforcement rule is a separate
+    /// commit. The body shape is fixed by the viewer (llnearbyvoicemoderation.cpp):
+    ///   individual: { "operand": "mute" | "unmute", "agent_id": &lt;uuid&gt; }
+    ///   everyone:   { "operand": "mute_all" | "unmute_all" }
+    /// The body carries NO parcel id, so scope is resolved from the requester's position — this is
+    /// what makes moderation parcel-bound rather than viewer-declared.
+    /// </summary>
+    public void SpatialVoiceModerationRequest(IOSHttpRequest request, IOSHttpResponse response, UUID agentID, Scene scene)
+    {
+        if (request.HttpMethod != "POST")
+        {
+            m_log.LogDebug($"{logHeader}[Moderation]: not a POST request. Agent={agentID}");
+            response.StatusCode = (int)HttpStatusCode.NotFound;
+            return;
+        }
+
+        OSDMap map = BodyToMap(request, "SpatialVoiceModerationRequest");
+        if (map is null)
+        {
+            m_log.LogError($"{logHeader}[Moderation]: no request data. Agent={agentID}");
+            response.StatusCode = (int)HttpStatusCode.NoContent;
+            return;
+        }
+
+        // (2) Operand — conform to the viewer's shape exactly; reject anything else. mute/unmute
+        // carry an agent_id; mute_all/unmute_all do not. No other fields are read.
+        if (!map.TryGetString("operand", out string operand))
+        {
+            m_log.LogWarning($"{logHeader}[Moderation]: missing 'operand'. Agent={agentID}");
+            response.StatusCode = (int)HttpStatusCode.BadRequest;
+            return;
+        }
+        bool everyoneOp   = operand == "mute_all" || operand == "unmute_all";
+        bool individualOp = operand == "mute" || operand == "unmute";
+        if (!everyoneOp && !individualOp)
+        {
+            m_log.LogWarning($"{logHeader}[Moderation]: unknown operand \"{operand}\". Agent={agentID}");
+            response.StatusCode = (int)HttpStatusCode.BadRequest;
+            return;
+        }
+        UUID targetAgent = UUID.Zero;
+        if (individualOp)
+        {
+            if (!map.ContainsKey("agent_id") || (targetAgent = map["agent_id"].AsUUID()).IsZero())
+            {
+                m_log.LogWarning($"{logHeader}[Moderation]: operand \"{operand}\" without a valid agent_id. Agent={agentID}");
+                response.StatusCode = (int)HttpStatusCode.BadRequest;
+                return;
+            }
+        }
+
+        // (3) Resolve the target parcel from the REQUESTER's position. The body names no parcel,
+        // so this is the only trustworthy scope and it pins mute_all to the moderator's own parcel
+        // rather than a viewer-declared region.
+        if (scene.LandChannel is null || !scene.TryGetScenePresence(agentID, out ScenePresence sp))
+        {
+            m_log.LogWarning($"{logHeader}[Moderation]: cannot resolve requester presence/land in region \"{scene.Name}\". Agent={agentID}");
+            response.StatusCode = (int)HttpStatusCode.NotFound;
+            return;
+        }
+        ILandObject parcel = scene.LandChannel.GetLandObject(sp.AbsolutePosition.X, sp.AbsolutePosition.Y);
+        LandData land = parcel?.LandData;
+        if (land is null)
+        {
+            m_log.LogWarning($"{logHeader}[Moderation]: could not resolve a parcel at the requester's position. Agent={agentID}");
+            response.StatusCode = (int)HttpStatusCode.NotFound;
+            return;
+        }
+
+        // (4) Authorise server-side; never trust the viewer's own isNearbyChatModerator() gate.
+        // Compose owner / estate-manager / group-ModerateChat, the pieces the ban path uses.
+        if (!MayModerateVoice(scene, land, agentID))
+        {
+            m_log.LogWarning($"{logHeader}[Moderation]: DENIED {operand} on parcel {land.GlobalID} (\"{land.Name}\") for {agentID}: not owner, estate manager, or group moderator");
+            response.StatusCode = (int)HttpStatusCode.Forbidden;
+            return;
+        }
+
+        // (5) The store lives on the per-region visibility service. The matrix is the single
+        // enforcement point, so if the feeder is disabled there is no way to enforce a mute —
+        // refuse loudly rather than silently accept an unenforceable one.
+        VoiceVisibilityService svc;
+        lock (m_visibilityServices)
+            m_visibilityServices.TryGetValue(scene, out svc);
+        if (svc is null)
+        {
+            m_log.LogWarning($"{logHeader}[Moderation]: {operand} authorised on parcel {land.GlobalID} but the visibility feeder is disabled in region \"{scene.Name}\"; cannot enforce, not recorded.");
+            response.StatusCode = (int)HttpStatusCode.NotImplemented;
+            return;
+        }
+
+        switch (operand)
+        {
+            case "mute_all":   svc.Moderation.SetMuteEveryone(land.GlobalID, true);  break;
+            case "unmute_all": svc.Moderation.SetMuteEveryone(land.GlobalID, false); break;
+            case "mute":       svc.Moderation.MuteAgent(land.GlobalID, targetAgent);   break;
+            case "unmute":     svc.Moderation.UnmuteAgent(land.GlobalID, targetAgent); break;
+        }
+
+        // (6) Diagnosable from day one — accepted op with parcel GlobalID, operand, requester.
+        if (individualOp)
+            m_log.LogInformation($"{logHeader}[Moderation]: {operand} agent {targetAgent} on parcel {land.GlobalID} (\"{land.Name}\") by {agentID}");
+        else
+            m_log.LogInformation($"{logHeader}[Moderation]: {operand} on parcel {land.GlobalID} (\"{land.Name}\") by {agentID}");
+
+        response.RawBuffer = llsdUndefAnswerBytes;
+        response.StatusCode = (int)HttpStatusCode.OK;
+    }
+
+    // SL's three authorisation cases: land owner, estate manager/owner, or a member with
+    // GroupPowers.ModerateChat on a group-owned parcel. The composition now lives in the shared
+    // VoiceModerationAuth so the matrix's moderator-exemption uses exactly the same rule; behaviour
+    // is unchanged. Server-side only — the viewer's own gate is UI and spoofable.
+    private bool MayModerateVoice(Scene scene, LandData land, UUID agentID)
+        => VoiceModerationAuth.MayModerate(scene, land, agentID);
 
     /// <summary>
     /// Callback for a client request for Voice Account Details
@@ -185,7 +629,61 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     /// <param name="agentID"></param>
     /// <param name="caps"></param>
     /// <returns></returns>
+    /// <summary>Fail-closed channel-type admission for voice provisioning. Voice
+    /// authorization -- parcel/estate ban &amp; restrict -- is only implemented for the "local"
+    /// channel; a request with any other channel_type, or none, must be REFUSED before it reaches
+    /// the voice service, or it would provision past those checks. "multiagent" is RESERVED for the
+    /// future avatar-to-avatar feature, which must bring its OWN authorization; this is a deliberate
+    /// deny, not a stub to remove. Returns true iff channel_type is present and exactly "local";
+    /// <paramref name="channelType"/> is the value seen (empty string when absent) for the caller's
+    /// refusal log. Pure and side-effect-free so it is unit-testable (ProvisionChannelTypeGuardTests).</summary>
+    public static bool IsProvisionableChannelType(OSDMap map, out string channelType)
+    {
+        channelType = map.TryGetString("channel_type", out string ct) ? ct : string.Empty;
+        return channelType == "local";
+    }
+
+    // What one provision call decided, read back by the wrapper once the handler has answered.
+    private sealed class ProvisionCallContext
+    {
+        public ProvisionKind? Kind;          // set once admission has decided (null: refused earlier)
+        public bool AnsweredFromCache;       // the refusal cache answered this call
+        public bool Provisioned;             // the voice service returned a success map (viewer_session)
+    }
+
+    // A cached region-level refusal (the exact status and body the viewer got).
+    private sealed record CachedRefusal(int StatusCode, byte[] Body);
+
+    private static bool IsCacheableRefusalStatus(int pStatusCode) =>
+        pStatusCode == (int)HttpStatusCode.Forbidden || pStatusCode == (int)HttpStatusCode.NotFound
+        || pStatusCode == (int)HttpStatusCode.NotImplemented;
+
+    // Refusal throttle: the stock viewer re-provisions immediately after ANY refusal (~2 Hz live). The
+    // handler below is unchanged except that, for an admitted "local" provision, a refusal recorded within
+    // RefusalCacheSeconds for this (agent, region) is answered again from the cache before the estate/parcel
+    // checks run. This wrapper records a fresh 403/404/501 refusal of a "local" provision, and clears the
+    // entry on a successful provision or a logout. At most one INFO line per (agent, region) per window.
     public void ProvisionVoiceAccountRequest(IOSHttpRequest request, IOSHttpResponse response, UUID agentID, Scene scene)
+    {
+        var ctx = new ProvisionCallContext();
+        ProvisionVoiceAccountRequestCore(request, response, agentID, scene, ctx);
+
+        UUID regionId = scene.RegionInfo.RegionID;
+        if (ctx.Kind == ProvisionKind.Logout || ctx.Provisioned)
+        {
+            m_refusalCache.Clear(agentID, regionId);
+        }
+        else if (ctx.Kind == ProvisionKind.Local && !ctx.AnsweredFromCache && IsCacheableRefusalStatus(response.StatusCode))
+        {
+            int suppressed = m_refusalCache.RecordRefusal(agentID, regionId, new CachedRefusal(response.StatusCode, response.RawBuffer));
+            if (suppressed > 0)
+                m_log.LogInformation("{LogHeader}[ProvisionVoice]: provision from {AgentId} in \"{RegionName}\" refused again (cached, {Suppressed} retries suppressed)",
+                    logHeader, agentID, scene.Name, suppressed);
+        }
+    }
+
+    private void ProvisionVoiceAccountRequestCore(IOSHttpRequest request, IOSHttpResponse response, UUID agentID, Scene scene,
+        ProvisionCallContext ctx)
     {
         // Get the voice service. If it doesn't exist, return an error.
         IWebRtcVoiceService voiceService = scene.RequestModuleInterface<IWebRtcVoiceService>();
@@ -217,7 +715,8 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         {
             if (vstosd is OSDString vst && !((string)vst).Equals("webrtc", StringComparison.OrdinalIgnoreCase))
             {
-                m_log.LogWarning($"{logHeader}[ProvisionVoice]: voice_server_type is not 'webrtc'. Request: {map}");
+                // Firestorm's Vivox module probes this cap twice per login; refused as before, logged at DEBUG.
+                m_log.LogDebug($"{logHeader}[ProvisionVoice]: voice_server_type is not 'webrtc' (viewer Vivox probe, expected). Request: {map}");
                 response.RawBuffer = llsdUndefAnswerBytes;
                 response.StatusCode = (int)HttpStatusCode.OK;
                 return;
@@ -226,7 +725,95 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
 
         if (_MessageDetails) m_log.LogDebug($"{logHeader}[ProvisionVoice]: request: {map}");
 
-        if (map.TryGetString("channel_type", out string channelType))
+        // FAIL CLOSED: voice authorization -- the parcel/estate ban & restrict
+        // checks below -- is only implemented for the "local" channel, and those checks are nested
+        // under `channel_type == "local"`. A request whose channel_type is ANYTHING ELSE, or is
+        // missing, would skip every one of them and provision voice past a parcel or estate ban.
+        // Refuse it here, BEFORE room selection and BEFORE any Janus session creation, with the
+        // SAME response an unauthorized local request gets (llsd <undef/> + 403 Forbidden; see the
+        // ban/restrict branch below). "multiagent" is RESERVED for the future avatar-to-avatar
+        // feature, which must bring its OWN authorization when it is built -- this deny is
+        // DELIBERATE, not a stub to remove.
+        // Admission. "local" -> IsProvisionableChannelType (unchanged predicate) -> the
+        // parcel/estate checks below. "multiagent" -> the invitation registry: the body's `channel`
+        // (NOT channel_id) names a live session, the agent is a named party, `credentials` equals the
+        // session token; else 403. A teardown body ({logout, viewer_session}, no channel_type) is routed to
+        // the voice service by viewer_session -- the guard had been refusing every logout provision
+        // since it shipped (live logs: 'refusing provision with channel_type ""' at each teardown), leaving
+        // mixer teardown to the close-capture path. Everything else stays refused exactly as left it.
+        // A GROUP provision is a "multiagent" body whose `channel` is one of our room keys
+        // ("nsv1:group:<uuid>"), which can never be an A2A channel because that lookup is
+        // UUID.TryParse. Anything else -- every body that exists today -- goes to the untouched
+        // A2AProvisionAdmission.Decide below with the same arguments it has always had.
+        ProvisionAdmission admission;
+        if (NonSpatialProvisionAdmission.IsGroupProvision(map))
+        {
+            NonSpatialProvisionResult g = NonSpatialProvisionAdmission.Decide(
+                map, agentID, m_groupVoice, m_nonSpatial, scene.RegionInfo.RegionID, m_adhocVoiceEnabled);
+            map.TryGetString("channel", out string gch);
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                NonSpatialProvisionAdmission.Line(agentID, scene.Name, gch,
+                    map.TryGetString("credentials", out string gcr) && !string.IsNullOrEmpty(gcr), g.Decision));
+            if (!g.Admitted)
+            {
+                m_log.LogWarning($"{logHeader}[ProvisionVoice]: refusing group provision ({g.Decision}) from agent {agentID} in region \"{scene.Name}\"");
+                response.RawBuffer = llsdUndefAnswerBytes;
+                response.StatusCode = g.Status;
+                return;
+            }
+            // Admitted. Hand the rest of the request to the SAME flow an admitted A2A multiagent
+            // provision takes: it skips the parcel/estate checks (their authorization is the
+            // registry / the group service) and calls the voice service with the body unchanged,
+            // which selects the room by (gridId, channel, "multiagent") using the existing bridge.
+            // Nothing below this line knows or needs to know that it was a group.
+            admission = new ProvisionAdmission
+            {
+                // The kind follows the type of the voice session, so a conference seat is never logged or
+                // torn down as a group one.
+                Kind = g.Session?.Type == NonSpatialSessionType.Adhoc ? ProvisionKind.Adhoc : ProvisionKind.Group,
+                Decision = g.Decision,
+                ChannelType = A2AProvisionAdmission.ChannelTypeMultiagent,
+                Channel = gch ?? "-",
+            };
+        }
+        else
+        {
+            admission = A2AProvisionAdmission.Decide(map, agentID, m_a2aSessions);
+        }
+        string channelType = admission.ChannelType;
+        string a2aVs = map.TryGetString("viewer_session", out string vsRaw) && !string.IsNullOrEmpty(vsRaw) ? vsRaw : "-";
+
+        // Permanent instrument: one greppable DEBUG line per provision
+        // naming the fields the A2A authorization decides on; the token itself is never logged.
+        m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} region={RegionName} channel_type=\"{ChannelType}\" channel={Channel} credentials={Credentials} viewer_session={ViewerSession} logout={Logout} decision={Decision}",
+            logHeader, agentID, scene.Name, channelType, admission.Channel,
+            map.TryGetString("credentials", out string a2aCreds) && !string.IsNullOrEmpty(a2aCreds) ? "present" : "absent",
+            a2aVs, admission.Kind == ProvisionKind.Logout, admission.Decision);
+
+        if (!admission.Admitted)
+        {
+            m_log.LogWarning($"{logHeader}[ProvisionVoice]: refusing provision with channel_type \"{channelType}\" ({admission.Decision}) from agent {agentID} in region \"{scene.Name}\"");
+            response.RawBuffer = llsdUndefAnswerBytes;
+            response.StatusCode = (int)HttpStatusCode.Forbidden;
+            return;
+        }
+
+        // Record what admission decided for the wrapper, and answer a repeat of a refusal this (agent, region)
+        // got within RefusalCacheSeconds straight from the cache - before the estate/parcel checks run.
+        ctx.Kind = admission.Kind;
+        if (admission.Kind == ProvisionKind.Local
+            && m_refusalCache.TryGetRefusal(agentID, scene.RegionInfo.RegionID, out object cachedRefusal)
+            && cachedRefusal is CachedRefusal cached)
+        {
+            ctx.AnsweredFromCache = true;
+            response.RawBuffer = cached.Body;
+            response.StatusCode = cached.StatusCode;
+            return;
+        }
+
+        // channel_type is "local": the parcel/estate authorization below is UNCHANGED. A multiagent or
+        // logout request skips it (its authorization is the registry / the viewer session).
+        if (admission.Kind == ProvisionKind.Local)
         {
             //do fully not trust viewers voice parcel requests
             if (channelType == "local")
@@ -254,23 +841,52 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                     return;
                 }
 
-                if(map.TryGetInt("parcel_local_id", out int parcelID))
+                // For a ROOT agent the parcel is derived from the avatar's position, as
+                // Vivox/FreeSwitch do (scene.GetLandData(avatar.AbsolutePosition)). It used to be looked up
+                // by the viewer's parcel_local_id, so a client could name another parcel and join its room.
+                // The client id is now a hint: logged on mismatch, never refused (a viewer mid-crossing can
+                // be stale).
+                // A CHILD agent (the viewer's neighbour-region provision) is positioned outside this
+                // region, so position finds no parcel. It keeps the pre-slice-1 path: a client id selects the
+                // parcel and every check runs against it; no id (the stock viewer, estate channel) means no
+                // parcel checks and the service's -999 estate room. ProvisionParcelResolver decides.
+                int? clientParcelId = map.TryGetInt("parcel_local_id", out int c) ? c : null;
+                ParcelResolveInput resolveInput = new ParcelResolveInput(clientParcelId, sp.IsChildAgent);
+
+                ILandObject parcel = null;
+                if (ProvisionParcelResolver.DerivesFromPosition(resolveInput))
+                    parcel = scene.LandChannel.GetLandObject(sp.AbsolutePosition.X, sp.AbsolutePosition.Y);
+                ParcelResolution res = ProvisionParcelResolver.Resolve(resolveInput, parcel?.LandData?.LocalID);
+                if (res.Source == ParcelSource.ClientHint)
+                    parcel = scene.LandChannel.GetLandObject(res.LocalId.Value);
+
+                LandData land = parcel?.LandData;
+                bool estateChan = land != null && (land.Flags & (uint)ParcelFlags.UseEstateVoiceChan) != 0;
+
+                // Every path logs this line, including the refusals below and the child/no-hint estate path,
+                // so no provision outcome is silent, the NotFound arm included.
+                m_log.LogDebug("{LogHeader} [PARCEL RESOLVE] agent={AgentId} region={RegionName} child={Child} source={Source} client={ClientId} server={ServerLocalId} parcel={ParcelId} estate_chan={EstateChan} mismatch={Mismatch}",
+                    logHeader, agentID, scene.Name, sp.IsChildAgent, res.Source, clientParcelId?.ToString() ?? "-",
+                    res.ServerLocalId?.ToString() ?? "-", land?.LocalID.ToString() ?? "-",
+                    land == null ? "-" : estateChan.ToString(), res.ClientMismatch);
+
+                // ParcelSource.None: child agent, no client id -- no parcel checks, parcel_local_id stays
+                // absent, the service defaults to the estate room. The normal neighbour-region path.
+                if (res.Source != ParcelSource.None)
                 {
-                    ILandObject parcel = scene.LandChannel.GetLandObject(parcelID);
-                    if (parcel == null)
-                    {
-                        response.RawBuffer = llsdUndefAnswerBytes;
-                        response.StatusCode = (int)HttpStatusCode.NotFound;
-                        return;
-                    }
-                    
-                    LandData land = parcel.LandData;
                     if (land == null)
                     {
+                        if (res.Source == ParcelSource.ServerPosition)
+                            m_log.LogWarning("{LogHeader}[ProvisionVoice]: no parcel at position for root agent {AgentId} in \"{RegionName}\" — refusing",
+                                logHeader, agentID, scene.Name);
                         response.RawBuffer = llsdUndefAnswerBytes;
                         response.StatusCode = (int)HttpStatusCode.NotFound;
                         return;
                     }
+
+                    if (res.ClientMismatch)
+                        m_log.LogWarning("{LogHeader}[ProvisionVoice]: parcel_local_id {ClientId} from agent {AgentId} does not match the avatar's parcel {ServerLocalId} in \"{RegionName}\" — using the server parcel",
+                            logHeader, clientParcelId, agentID, res.ServerLocalId, scene.Name);
 
                     if (!scene.RegionInfo.EstateSettings.TaxFree && (land.Flags & (uint)ParcelFlags.AllowVoiceChat) == 0)
                     {
@@ -280,11 +896,25 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                         return;
                     }
 
-                    if ((land.Flags & (uint)ParcelFlags.UseEstateVoiceChan) != 0)
+                    if (estateChan)
                     {
                         map.Remove("parcel_local_id"); // estate channel
                     }
-                    else if(parcel.IsRestrictedFromLand(agentID) || parcel.IsBannedFromLand(agentID))
+                    else if (res.Source == ParcelSource.ServerPosition)
+                    {
+                        // The service hashes this into the mixer room (CalcRoomNumber). An honest viewer sends
+                        // the same number, so no live room renumbers.
+                        map["parcel_local_id"] = OSD.FromInteger(land.LocalID);
+                    }
+                    // else ParcelSource.ClientHint: the client's parcel_local_id is forwarded unchanged (pre-slice-1).
+
+                    // This
+                    // check used to be chained as the "else" of the UseEstateVoiceChan branch
+                    // above, so setting the estate-channel flag skipped ban/restrict enforcement
+                    // entirely. Room selection (which Janus room to route to) and access control
+                    // (may this agent have voice here at all) are independent decisions, so the
+                    // check now runs on both the estate-channel and per-parcel paths.
+                    if(parcel.IsRestrictedFromLand(agentID) || parcel.IsBannedFromLand(agentID))
                     {
                         // check Z distance?
                         m_log.LogDebug($"{logHeader}[ProvisionVoice]:agent not allowed on parcel");
@@ -302,13 +932,136 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         if(resp is not null)
         {
             if (_MessageDetails) m_log.LogDebug($"{logHeader}[ProvisionVoice]: response: {resp}");
-
-            // TODO: check for errors and package the response
+            ctx.Provisioned = resp.ContainsKey("viewer_session");   // a success map clears the refusal cache
 
             // Convert the OSD to LLSDXml for the response
             string xmlResp = OSDParser.SerializeLLSDXmlString(resp);
             response.RawBuffer = Util.UTF8.GetBytes(xmlResp);
-            response.StatusCode = (int)HttpStatusCode.OK;
+            // A capacity rejection carries the mixer's ROOM_FULL code; return HTTP 409 Conflict,
+            // which the viewer maps to ERROR_CHANNEL_FULL (llvoicewebrtc.cpp:2901). Closes the
+            // pre-existing "check for errors" TODO for the capacity case ONLY — every other
+            // failure map carries no error_code and keeps its OK status. Referencing the service
+            // constant keeps the 495 in one place (WebRtcJanusService.JANUS_ROOM_FULL_ERROR_CODE).
+            if (resp.TryGetInt("error_code", out int provErrorCode) && provErrorCode == WebRtcJanusService.JANUS_ROOM_FULL_ERROR_CODE)
+                response.StatusCode = (int)HttpStatusCode.Conflict;
+            else
+                response.StatusCode = (int)HttpStatusCode.OK;
+
+            // A successful provision means this agent will join the mixer
+            // room — hand it to the visibility sender's pending-join path so its full exclusion
+            // column is (re)sent once it is present (the mixer silently drops a batch for a listener
+            // not yet in the room). Estate-channel scoped; harmless for a per-parcel-channel agent
+            // (its replace targets the estate room and the bounded re-send simply gives up loudly).
+            // The success map also carries the mixer room the service actually joined.
+            // Record it per agent so batches can be addressed per room. A failure or logout map has
+            // no "room" -> null -> the service leaves any earlier record untouched.
+            // ONLY a spatial ("local") provision is recorded. An A2A room is
+            // not the agent's spatial room -- recording it would point the visibility batches at the
+            // A2A room and the spatial exclusions would silently miss. The pending-join re-send is
+            // therefore never armed for an A2A join either. A logout map has no room and is excluded
+            // by the same gate (the service keeps its earlier record; the close/leave path clears it).
+            if (A2AProvisionAdmission.RecordsListenerRoom(admission.Kind))
+            {
+                int? provisionedRoom = resp.TryGetInt("room", out int provRoom) ? provRoom : (int?)null;
+                VoiceVisibilityService svc;
+                lock (m_visibilityServices)
+                    m_visibilityServices.TryGetValue(scene, out svc);
+                svc?.OnListenerProvisioned(agentID, provisionedRoom);
+            }
+            else if (A2AProvisionAdmission.RecordsA2ASession(admission) && resp.TryGetString("viewer_session", out string provVs) && !string.IsNullOrEmpty(provVs))
+            {
+                // Admitted AND joined -- only the service's success map carries viewer_session
+                // (ProvisionResponseBuilder.BuildSuccess); a failure map ({response:"failed"}, with or
+                // without error_code) leaves the record as it was. The callee's admitted provision is
+                // the accept (Invited -> Active).
+                string vs = provVs;
+                bool wasActive = admission.Session.State == A2ASessionState.Active;
+                A2ASession s = m_a2aSessions.MarkProvisioned(admission.Session.SessionId, agentID, vs);
+                // The mixer room the service derived (grid id + channel + type) rides on the
+                // success map as `room`; surfaced here so an A2A join is auditable end to end.
+                m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} session-id={SessionId} viewer_session={ViewerSession} room={Room} state={State} decision=provisioned",
+                    logHeader, agentID, admission.Session.SessionId, vs ?? "-",
+                    resp.TryGetInt("room", out int a2aRoom) ? a2aRoom.ToString() : "-",
+                    s?.State.ToString() ?? "gone");
+                // On the TRANSITION to Active (the callee's accept), both parties'
+                // IM panels get ChatterBoxSessionAgentListUpdates -- each receives the other's ENTER
+                // plus its own entry, can_voice_chat:true by construction (false hangs up the call,
+                // llimview.cpp:4366-4382). Not re-sent on a reconnect re-provision of an already-
+                // Active record. This is the participant/moderation surface only; the caller's
+                // connected state comes from mixer presence.
+                if (!wasActive && s != null && s.State == A2ASessionState.Active)
+                {
+                    List<Scene> scenes;
+                    lock (m_scenes)
+                        scenes = new List<Scene>(m_scenes);
+                    foreach (string line in A2AAgentListDelivery.SendActivePair(scenes, s, null))
+                        m_log.LogDebug("{LogHeader} {Line}", logHeader, line);
+                }
+            }
+            else if ((admission.Kind == ProvisionKind.Group || admission.Kind == ProvisionKind.Adhoc)
+                     && resp.TryGetString("viewer_session", out string groupVs) && !string.IsNullOrEmpty(groupVs))
+            {
+                // The viewer_session exists only in the SERVICE's success map, so this is the
+                // first moment the seat can be tagged with it -- and tagging it is what makes the
+                // logout teardown able to find the seat later (DepartByViewerSession). Also promotes
+                // Accepted -> Present: the agent is now actually in the mixer room.
+                //
+                // Ad-hoc takes this SAME arm, and it has to. Leaving conferences out would
+                // repeat the exact defect found for groups -- a hang-up holding its seat until
+                // the 8 h idle TTL, with the cap load-bearing.
+                NonSpatialVoiceSession gsess = m_nonSpatial?.Store.GetByRoomKey(admission.Channel);
+                if (gsess is not null)
+                {
+                    SessionOutcome pres = m_nonSpatial.MarkPresent(gsess.SessionId, agentID, scene.RegionInfo.RegionID, groupVs);
+                    bool conf = gsess.Type == NonSpatialSessionType.Adhoc;
+                    string detail = $"room={admission.Channel} seats={m_nonSpatial.Store.Get(gsess.SessionId)?.SeatsHeld}/{gsess.Cap}";
+                    m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                        conf ? AdhocVoiceChatSession.Line(agentID, gsess.SessionId, "adhoc-present-" + pres.Decision, detail)
+                             : GroupVoiceChatSession.Line(agentID, gsess.Owner, "group-present-" + pres.Decision, detail));
+                }
+            }
+            else if (admission.Kind == ProvisionKind.Logout && a2aVs != "-")
+            {
+                // Teardown by viewer session: only the record this party joined under that session is
+                // affected; a spatial logout matches nothing and is a no-op here. Both parties gone
+                // removes the Active record (both-logout). The remaining party (if still on
+                // this instance) gets the departed party's LEAVE.
+                foreach (A2ASession gone in m_a2aSessions.MarkGoneSessions(agentID, a2aVs))
+                {
+                    m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} session-id={SessionId} viewer_session={ViewerSession} decision=removed-both-logout",
+                        logHeader, agentID, gone.SessionId, a2aVs);
+                    List<Scene> scenes;
+                    lock (m_scenes)
+                        scenes = new List<Scene>(m_scenes);
+                    string line = A2AAgentListDelivery.SendLeave(scenes, gone, agentID, null);
+                    if (line != null)
+                        m_log.LogDebug("{LogHeader} {Line}", logHeader, line);
+                }
+
+                // The SAME teardown releases a group seat. Before this, the logout arm knew
+                // only about A2A records, so a group member who hung up held their seat until the
+                // 8 h idle TTL -- with the 50 cap load-bearing, enough hang-ups would lock a group
+                // out of its own room. Keyed by viewer session, so it frees exactly the seat this
+                // logout is for and never another region's.
+                foreach (NonSpatialVoiceSession gone in
+                         m_nonSpatial?.DepartByViewerSession(agentID, a2aVs, DepartureReason.VoiceTeardown)
+                         ?? (IReadOnlyList<NonSpatialVoiceSession>)Array.Empty<NonSpatialVoiceSession>())
+                {
+                    // The same teardown already covered conferences -- DepartByViewerSession is
+                    // type-blind and always was -- but it logged every release as a group one. The
+                    // line now names what actually ended.
+                    string releaseDetail = $"room={gone.RoomKey} viewer_session={a2aVs} seats={gone.SeatsHeld}/{gone.Cap}";
+                    m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                        gone.Type == NonSpatialSessionType.Adhoc
+                            ? AdhocVoiceChatSession.Line(agentID, gone.SessionId, "adhoc-seat-released", releaseDetail)
+                            : GroupVoiceChatSession.Line(agentID, gone.Owner, "group-seat-released", releaseDetail));
+                    // The voice teardown deliberately sends no roster LEAVE: that would
+                    // conflate lifecycles (3) and (1), because hanging up would take the member out of everyone's
+                    // participant panel although they were still in the conversation and could still
+                    // type. The seat is released above; the roster is deliberately NOT touched. The
+                    // member leaves the roster only on a chat leave (dialog 18) or a presence close.
+                }
+            }
         }
         else
         {
@@ -391,6 +1144,17 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             return;
         }
 
+        // A ring must come from the agent's ROOT region, the same presence rule the close path uses
+        // (sp == null || sp.IsChildAgent). A child agent's request is refused before any registry state.
+        // Only applies when a non-spatial feature is enabled: otherwise the request is answered as it
+        // always was.
+        if (sp.IsChildAgent && (m_a2aVoiceEnabled || m_groupVoice.IsUsable || m_adhocVoiceEnabled))
+        {
+            m_log.LogWarning($"{logHeader} ChatSessionRequest: refusing child agent {agentID} in region \"{scene.RegionInfo.RegionName}\" (chat session requests come from the agent's root region)");
+            response.StatusCode = (int)HttpStatusCode.Forbidden;
+            return;
+        }
+
         OSDMap reqmap = BodyToMap(request, "[ChatSessionRequest]");
         if (reqmap is null)
         {
@@ -399,8 +1163,189 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             return;
         }
 
-        m_log.LogDebug($"{logHeader} ChatSessionRequest");
+        // Permanent instrument: the body the viewer actually sent,
+        // single-line and greppable, BEFORE any decision. Never carries a token (the request has none).
+        m_log.LogDebug("{LogHeader} {Tag} agent={AgentId} region={RegionName} body={Body}",
+            logHeader, ChatSessionRequestLogic.InstrumentTag, agentID, scene.RegionInfo.RegionName,
+            OSDParser.SerializeJsonString(reqmap));
 
+        // A GROUP voice "call" is answered here, BEFORE the A2A arm, and only when group voice
+        // is enabled and the voice session-id names a group this agent belongs to. TryHandleCall returns
+        // false having done nothing for everything else, so the A2A path below is reached with
+        // exactly the arguments and the state it would have had. A group "call" from a NON-member
+        // falls through on purpose: it reaches the A2A arm and 404s there, which is the pre-slice
+        // answer for an unknown session and the one the viewer already survives.
+        if (GroupVoiceChatSession.TryHandleCall(reqmap, agentID, m_groupVoice, m_nonSpatial,
+                                                scene.RegionInfo.RegionID, out ChatSessionOutcome groupOutcome))
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader, groupOutcome.Instrument);
+            ApplyChatSessionOutcome(groupOutcome, response);
+            if (groupOutcome.StartedRinging)
+                RingGroupMembers(m_nonSpatial.Store.Get(GroupSessionIdOf(reqmap)), agentID, sp.Name, GroupNameOf(GroupSessionIdOf(reqmap)));
+            return;
+        }
+
+        // The popup's Accept posts "accept invitation", which the A2A arm answers
+        // with 400 (it has no case for it), and a failed accept makes the viewer clear the invitation
+        // and never call startCall. Handled here for a group session only; everything else still
+        // falls through untouched.
+        if (GroupVoiceChatSession.TryHandleAcceptInvitation(reqmap, agentID, m_groupVoice, m_nonSpatial,
+                                                            out ChatSessionOutcome acceptOutcome))
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader, acceptOutcome.Instrument);
+            ApplyChatSessionOutcome(acceptOutcome, response);
+            if (acceptOutcome.StartedRinging)
+                RingGroupMembers(m_nonSpatial.Store.Get(GroupSessionIdOf(reqmap)), agentID, sp.Name, GroupNameOf(GroupSessionIdOf(reqmap)));
+            return;
+        }
+
+        // The decision is pure and unit-tested (ChatSessionRequestLogic); this adapter applies it.
+        // "start p2p voice" records the pair in the invitation registry (params = callee; absent -> 400,
+        // replacing the old UUID.Random fallback); "call" mints the per-session token and answers in the
+        // HTTP body with voice_credentials { channel_uri, channel_credentials } (llvoicechannel.cpp:687).
+        // Nothing in this method admits a multiagent provision; that is decided in ProvisionVoiceAccountRequest.
+        // "start conference" opens the ADHOC session and produces the two ids the viewer is
+        // waiting on. Deliberately NOT an early return like the group arms: the outcome falls into
+        // the shared tail below, whose Reply path already sends the event-queue
+        // ChatterBoxSessionStartReply. One sender for that event, not two.
+        // Voice on an ad-hoc conference -- the same two methods the group arms above answer,
+        // for a conference id instead of a group id.
+        //
+        // Order does not matter here, and that is worth stating rather than relying on. The group
+        // arms take a "call" only when the voice session-id is a GROUP THIS AGENT BELONGS TO; a conference
+        // id is a server-minted random UUID and is never a group id, so they always decline it. These
+        // arms take it only when the store holds a genuinely AD-HOC session with this agent as a
+        // member, so they can never capture a group call either. The two discriminators are disjoint
+        // by construction, not by sequence.
+        if (AdhocVoiceChatSession.TryHandleCall(reqmap, agentID, m_nonSpatial, scene.RegionInfo.RegionID,
+                                                m_adhocVoiceEnabled, out ChatSessionOutcome adhocCall))
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader, adhocCall.Instrument);
+            ApplyChatSessionOutcome(adhocCall, response);
+            if (adhocCall.StartedRinging)
+                RingAdhocMembers(m_nonSpatial.Store.Get(GroupSessionIdOf(reqmap)), agentID, sp.Name, null);
+            // This arm seats the caller, so the roster moved. AFTER the response is
+            // applied, for the same reason the ring is: a roster send must never cost the caller
+            // the answer it is blocked on.
+            if (adhocCall.Status == HttpStatusCode.OK)
+                SendConferenceRoster(m_nonSpatial.Store.Get(GroupSessionIdOf(reqmap)), agentID, joined: true);
+            return;
+        }
+
+        if (AdhocVoiceChatSession.TryHandleAcceptInvitation(reqmap, agentID, m_nonSpatial, scene.RegionInfo.RegionID,
+                                                            m_adhocVoiceEnabled, out ChatSessionOutcome adhocAccept))
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader, adhocAccept.Instrument);
+            ApplyChatSessionOutcome(adhocAccept, response);
+            if (adhocAccept.StartedRinging)
+                RingAdhocMembers(m_nonSpatial.Store.Get(GroupSessionIdOf(reqmap)), agentID, sp.Name, null);
+            // Accepting IS the join (llimview.cpp:3382-3385), so this is the roster's
+            // main event -- the invitee's panel gets the whole room and the room gets the invitee.
+            if (adhocAccept.Status == HttpStatusCode.OK)
+                SendConferenceRoster(m_nonSpatial.Store.Get(GroupSessionIdOf(reqmap)), agentID, joined: true);
+            return;
+        }
+
+        // "invite" adds people to a conference already running. Early return like the group
+        // arms, because the ring list is the arm's own output and there is nothing for the shared
+        // tail to do with it.
+        if (AdhocVoiceChatSession.TryHandleInvite(reqmap, agentID, m_nonSpatial, m_adhocVoiceEnabled,
+                                                  out ChatSessionOutcome inviteOutcome, out List<UUID> addedToCall))
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader, inviteOutcome.Instrument);
+            ApplyChatSessionOutcome(inviteOutcome, response);
+            if (addedToCall.Count > 0)
+                RingAdhocMembers(m_nonSpatial.Store.Get(GroupSessionIdOf(reqmap)), agentID, sp.Name, addedToCall);
+            return;
+        }
+
+        // "decline invitation" for a conference. No ring, no seat, nothing to fan out.
+        if (AdhocVoiceChatSession.TryHandleDeclineInvitation(reqmap, agentID, m_nonSpatial, m_adhocVoiceEnabled,
+                                                             out ChatSessionOutcome declineOutcome))
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader, declineOutcome.Instrument);
+            ApplyChatSessionOutcome(declineOutcome, response);
+            return;
+        }
+
+        if (!AdhocVoiceChatSession.TryHandleStartConference(reqmap, agentID, m_nonSpatial,
+                                                            scene.RegionInfo.RegionID, m_adhocVoiceEnabled,
+                                                            out ChatSessionOutcome outcome))
+        {
+            if (!m_a2aVoiceEnabled)
+            {
+                LegacyChatSessionRequest(reqmap, agentID, sp, scene, response);
+                return;
+            }
+            outcome = ChatSessionRequestLogic.Decide(reqmap, agentID, sp.Name, m_a2aSessions);
+        }
+
+        m_log.LogDebug("{LogHeader} {Line}", logHeader, outcome.Instrument);
+
+        // "call" produced an invitation for the other party. Deliver it as a generic
+        // ChatterBoxInvitation event (BuildEvent + Enqueue) to the callee on THIS instance; an
+        // unreachable callee (offline / another region server) gets nothing and the caller rings out.
+        // Never affects this request's outcome: the caller's credentials are returned regardless.
+        if (outcome.Invite is not null)
+        {
+            List<Scene> scenes;
+            lock (m_scenes)
+                scenes = new List<Scene>(m_scenes);
+            string decision = A2AInviteDelivery.Deliver(scenes, outcome.Invite.Callee, outcome.Invite.Body, null, out string calleeRegion);
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                A2AInviteDelivery.Line(outcome.Invite.Callee, outcome.Invite.Caller, outcome.Invite.SessionId, calleeRegion, decision));
+            // One ring per Invited record. Marked only on a confirmed enqueue, so a
+            // callee-unreachable delivery leaves the flag clear and a caller retry can ring later.
+            if (decision == A2AInviteDelivery.DecisionSent)
+                m_a2aSessions.MarkInviteSent(outcome.Invite.SessionId);
+        }
+
+        if (outcome.Reply is not null)
+        {
+            IEventQueue queue = scene.RequestModuleInterface<IEventQueue>();
+            if (queue is null)
+            {
+                m_log.LogError("{0}: no event queue for scene {1}", logHeader, scene.RegionInfo.RegionName);
+                response.StatusCode = (int)HttpStatusCode.InternalServerError;
+                return;
+            }
+
+            // The viewer reads only success / temp_session_id / session_id from this event; it never reads
+            // voice_enabled, session_name or type (wire trace). Values kept as before for stock viewers.
+            queue.ChatterBoxSessionStartReply(
+                    outcome.Reply.SessionId,
+                    sp.Name,
+                    2,
+                    false,
+                    true,
+                    outcome.Reply.TempSessionId,
+                    true,
+                    string.Empty,
+                    agentID);
+
+            // The conference just opened, so ring the invitees the viewer named in `params`.
+            // Fired on the engine's 0 -> 1 seat transition, which for AD-HOC is the creator's own
+            // seat inside Start -- there is no other accept to hang it on. Placed AFTER the re-key
+            // event so a ring failure can never cost the initiator the reply it is blocked on.
+            if (outcome.StartedRinging)
+                RingAdhocMembers(m_nonSpatial?.Store.Get(outcome.Reply.SessionId), agentID, sp.Name, null);
+            // The creator took the first seat inside Start, so the roster exists from
+            // this moment. One entry, the creator's own -- which is what the group path also sends
+            // to an agent opening a voice session (GroupsMessagingModule.cs:661-664).
+            SendConferenceRoster(m_nonSpatial?.Store.Get(outcome.Reply.SessionId), agentID, joined: true);
+        }
+
+        ApplyChatSessionOutcome(outcome, response);
+    }
+
+    /// <summary>
+    /// The chat session request handling used when [WebRtcVoice] A2AVoiceEnabled is off: "start p2p voice"
+    /// is answered with a ChatterBoxSessionStartReply carrying a new session id, the methods the sim does not
+    /// act on ("decline p2p voice", "decline invitation", "start conference", "fetch history") get 200 OK,
+    /// and anything else gets 400.
+    /// </summary>
+    private void LegacyChatSessionRequest(OSDMap reqmap, UUID agentID, ScenePresence sp, Scene scene, IOSHttpResponse response)
+    {
         if (!reqmap.TryGetString("method", out string method))
         {
             m_log.LogWarning($"{logHeader} ChatSessionRequest: missing required 'method' field in request for agent {agentID}");
@@ -417,16 +1362,12 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
 
         switch (method.ToLower())
         {
-            // Several different method requests that we don't know how to handle.
-            // Just return OK for now.
             case "decline p2p voice":
             case "decline invitation":
             case "start conference":
             case "fetch history":
                 response.StatusCode = (int)HttpStatusCode.OK;
                 break;
-            // Asking to start a P2P voice session. We need to generate a new session ID and return
-            //     it to the client in a ChatterBoxSessionStartReply event.
             case "start p2p voice":
                 UUID newSessionID;
                 if (reqmap.TryGetUUID("params", out UUID otherID))
@@ -459,6 +1400,706 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             default:
                 response.StatusCode = (int)HttpStatusCode.BadRequest;
                 break;
+        }
+    }
+
+    /// <summary>
+    /// Write a ChatSessionRequest outcome's body and status. Extracted verbatim from the tail of
+    /// <see cref="ChatSessionRequest"/> so the group arm answers through exactly the same code
+    /// the A2A arm does; it carries no event-queue or invitation work, which only the A2A arm has.
+    /// </summary>
+    private static void ApplyChatSessionOutcome(ChatSessionOutcome outcome, IOSHttpResponse response)
+    {
+        if (outcome.Body is not null)
+            response.RawBuffer = Util.UTF8.GetBytes(OSDParser.SerializeLLSDXmlString(outcome.Body));
+        // "fetch history" answers with an ARRAY, which the viewer type-checks before reading
+        // (llimview.cpp:816-822). Same serialiser, different root node.
+        else if (outcome.BodyArray is not null)
+            response.RawBuffer = Util.UTF8.GetBytes(OSDParser.SerializeLLSDXmlString(outcome.BodyArray));
+
+        response.StatusCode = (int)outcome.Status;
+    }
+
+    /// <summary>
+    /// Ring every eligible member in THIS process when a group call begins.
+    ///
+    /// Fired only on the engine's 0 -> 1 seat transition, which the engine claims inside its own
+    /// mutation, so two simultaneous first-joiners cannot both ring. Targets are agents present in
+    /// any scene this module serves, holding both powers, excluding the initiator and anyone already
+    /// seated or already rung this cycle. Delivery reuses A2AInviteDelivery, which already walks
+    /// every scene in the process and prefers a root presence -- that is what makes the ring reach
+    /// all three regions and not just the initiator's.
+    ///
+    /// Cross-HOST delivery is separate: a member on another region server has no presence here and is
+    /// simply not rung, exactly as the A2A path behaves today.
+    /// </summary>
+    /// <summary>
+    /// Ring the members this process CANNOT reach -- those on another region server.
+    ///
+    /// The roster comes from the groups service through the INITIATOR's own client, which is present
+    /// here by construction (it just started the call). IGroupsModule.GroupMembersRequest
+    /// dereferences its IClientAPI (GroupsModule.cs:741,743), so a null is not an option and the
+    /// initiator's client is the correct requester anyway.
+    ///
+    /// Anyone already rung locally is excluded, so a member never gets two popups: the local walk and
+    /// this list are disjoint by construction, and both are marked invited in the same cycle.
+    /// </summary>
+    private void RingRemoteGroupMembers(NonSpatialVoiceSession session, UUID initiator, string initiatorName,
+                                        OSDMap body, List<UUID> alreadyRungLocally)
+    {
+        if (session is null || !m_groupVoice.IsUsable || body is null)
+            return;
+
+        List<Scene> scenes;
+        lock (m_scenes)
+            scenes = new List<Scene>(m_scenes);
+
+        IMessageTransferModule transfer = null;
+        Scene originScene = null;
+        foreach (Scene sc in scenes)
+        {
+            transfer ??= sc.RequestModuleInterface<IMessageTransferModule>();
+            if (sc.GetScenePresence(initiator) is not null) originScene = sc;
+        }
+        if (transfer is null)
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                GroupVoiceRingTransport.Line(UUID.Zero, session.Owner, GroupVoiceRingTransport.DecisionNoTransfer));
+            return;
+        }
+
+        List<GroupMembersData> roster;
+        try
+        {
+            IClientAPI client = originScene?.GetScenePresence(initiator)?.ControllingClient;
+            if (client is null) return;
+            roster = GroupsModule()?.GroupMembersRequest(client, session.Owner);
+        }
+        catch (Exception e)
+        {
+            m_log.LogWarning(e, "{LogHeader} group roster lookup failed for {GroupId}; no cross-instance ring",
+                logHeader, session.Owner);
+            return;
+        }
+        if (roster is null) return;
+
+        HashSet<UUID> local = new HashSet<UUID>(alreadyRungLocally ?? new List<UUID>());
+        HashSet<UUID> presentHere = new HashSet<UUID>(GroupVoiceInvite.PresentAgents(scenes));
+        List<UUID> remote = new List<UUID>();
+        foreach (GroupMembersData m in roster)
+        {
+            if (m.AgentID == UUID.Zero || m.AgentID == initiator) continue;
+            if (local.Contains(m.AgentID) || presentHere.Contains(m.AgentID)) continue;   // the local walk has them
+            if (session.Find(m.AgentID)?.HoldsSeat == true) continue;
+            if (session.WasInvited(m.AgentID)) continue;
+            if ((m.AgentPowers & m_groupVoice.RequiredMask) != m_groupVoice.RequiredMask) continue;
+            remote.Add(m.AgentID);
+        }
+        if (remote.Count == 0)
+            return;
+
+        // (a) Only members the PRESENCE SERVICE reports online somewhere. An offline member cannot
+        // answer a ring, and a ring delivered at their next login announces a call that ended hours
+        // ago. The offline modules would not store this dialog anyway (see below), but not sending
+        // is the correct behaviour rather than relying on the receiver to discard it.
+        IPresenceService presence = null;
+        foreach (Scene sc in scenes)
+        {
+            presence = sc.PresenceService;
+            if (presence is not null) break;
+        }
+        int before = remote.Count;
+        remote = GroupVoiceInvite.OnlineOnly(remote, agent =>
+        {
+            if (presence is null) return UUID.Zero;          // no presence service: send nothing
+            OpenSim.Services.Interfaces.PresenceInfo[] found = presence.GetAgents(new[] { agent.ToString() });
+            return found is { Length: > 0 } ? found[0].RegionID : UUID.Zero;
+        });
+        if (remote.Count != before)
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                GroupVoiceRingTransport.Line(UUID.Zero, session.Owner, GroupVoiceInvite.DecisionOffline,
+                    $"{before - remote.Count} of {before} candidate(s) are offline"));
+        if (remote.Count == 0)
+            return;
+
+        UUID originRegion = originScene?.RegionInfo?.RegionID ?? UUID.Zero;
+        foreach (UUID target in remote)
+        {
+            try
+            {
+                GridInstantMessage im = GroupVoiceRingTransport.Build(target, initiator, initiatorName,
+                                                                      session.Owner, originRegion, body);
+                transfer.SendInstantMessage(im, _ => { });
+                m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                    GroupVoiceRingTransport.Line(target, session.Owner, GroupVoiceRingTransport.DecisionSent));
+            }
+            catch (Exception e)
+            {
+                m_log.LogWarning(e, "{LogHeader} cross-instance ring to {Target} failed", logHeader, target);
+            }
+        }
+        m_nonSpatial?.MarkInvited(session.SessionId, remote);
+    }
+
+    /// <summary>
+    /// A ring arrived from another region server. Adopt the voice session locally so the accept
+    /// that follows can be admitted here, then deliver the invitation exactly as a local ring would
+    /// -- same body, same A2AInviteDelivery, so the viewer cannot tell the two paths apart.
+    ///
+    /// This instance never fans out from an adopted session: AdoptRemoteRing latches RingSent.
+    /// </summary>
+    private void OnIncomingGroupRing(GridInstantMessage msg)
+    {
+        if (m_nonSpatial is null || (!m_groupVoice.IsUsable && !m_adhocVoiceEnabled))
+            return;
+        if (!GroupVoiceRingTransport.TryParse(msg, out UUID target, out UUID groupID, out OSDMap body))
+            return;   // not ours: every other subscriber still sees it untouched
+
+        OSDMap voice = body.TryGetOSDMap("voice", out OSDMap v) ? v : null;
+        string roomKey = voice is not null && voice.TryGetString("channel_uri", out string ru) ? ru : null;
+        string token = voice is not null && voice.TryGetString("channel_credentials", out string tk) ? tk : null;
+        body.TryGetUUID("from_id", out UUID caller);
+
+        // Group and conference rings share the carrier, and invitation_type is what tells them
+        // apart -- it is already in the body the viewer will receive, so nothing new goes on the wire.
+        // Reading it from the BODY rather than adding a transport field also means the discriminator
+        // and the thing the viewer acts on can never disagree.
+        bool isConference = voice is not null
+                            && voice.TryGetValue("invitation_type", out OSD invType)
+                            && invType.AsInteger() == AdhocVoiceInvite.InvitationTypeConference;
+        NonSpatialSessionType ringType = isConference ? NonSpatialSessionType.Adhoc : NonSpatialSessionType.Group;
+
+        if (isConference ? !m_adhocVoiceEnabled : !m_groupVoice.IsUsable)
+            return;   // that half is switched off on this instance
+
+        SessionOutcome adopted = m_nonSpatial.AdoptRemoteRing(groupID, roomKey, token,
+                                                              isConference ? NonSpatialCaps.DefaultConferenceCap
+                                                                           : m_groupVoice.Cap,
+                                                              caller, new[] { target }, ringType);
+        if (!adopted.Ok)
+        {
+            m_log.LogWarning("{LogHeader} {Line}", logHeader,
+                GroupVoiceRingTransport.Line(target, groupID, adopted.Decision,
+                    "carried room key does not match this instance's derivation - check GatekeeperURI on both"));
+            return;
+        }
+
+        List<Scene> scenes;
+        lock (m_scenes)
+            scenes = new List<Scene>(m_scenes);
+        string decision = A2AInviteDelivery.Deliver(scenes, target, body, null, out string region);
+        m_log.LogDebug("{LogHeader} {Line}", logHeader,
+            GroupVoiceRingTransport.Line(target, groupID, decision, "region=\"" + region + "\" adopted=" + adopted.Decision));
+    }
+
+    // ---- ad-hoc conference TEXT -------------------------------------------------------------
+
+    private void OnMakeRootAgentConferenceText(ScenePresence sp)
+    {
+        if (sp?.ControllingClient is not null)
+            sp.ControllingClient.OnInstantMessage += OnViewerConferenceText;
+    }
+
+    private void OnMakeChildAgentConferenceText(ScenePresence sp)
+    {
+        if (sp?.ControllingClient is not null)
+            sp.ControllingClient.OnInstantMessage -= OnViewerConferenceText;
+    }
+
+    /// <summary>
+    /// A member typed into a conference. The viewer sends ImprovedInstantMessage with
+    /// dialog SessionSend and the AUTHORITATIVE session id (the start reply re-keyed it), and before
+    /// this slice nothing claimed it -- InstantMessageModule drops SessionSend in its default arm
+    /// and GroupsMessagingModule only takes a GROUP id.
+    ///
+    /// GROUP TEXT IS UNTOUCHED: TryPlan returns false for any id the engine does not hold as ADHOC,
+    /// and this handler then does nothing at all, so GroupsMessagingModule sees the event exactly as
+    /// it does today.
+    /// </summary>
+    private void OnViewerConferenceText(IClientAPI client, GridInstantMessage im)
+    {
+        if (im is null || m_nonSpatial is null)
+            return;
+
+        // The chat-session LEAVE. Dialog 18 is IM_SESSION_LEAVE and libomv's
+        // SessionDrop at once -- one value, two names, measured from the deployed enum -- so this
+        // single arm covers both. It releases CHAT membership and never the voice seat.
+        if (im.dialog == AdhocChatMembership.DialogSessionLeave)
+        {
+            OnViewerConferenceChatLeave(client, im);
+            return;
+        }
+
+        if (im.dialog != AdhocTextSession.DialogSessionSend)
+            return;
+
+        UUID sessionId = new UUID(im.imSessionID);
+        UUID sender = new UUID(im.fromAgentID);
+        if (!AdhocTextSession.TryPlan(m_nonSpatial, m_adhocVoiceEnabled, sessionId, sender, im.message,
+                                      out AdhocTextPlan plan, out string decision))
+            return;   // not a conference of ours -- the group module and everyone else still see it
+
+        if (plan is null)
+        {
+            // A non-member's SessionSend for this voice session is refused AND LOGGED. Warning,
+            // not debug: a stranger addressing a conference id is worth seeing without turning
+            // debug on.
+            m_log.LogWarning("{LogHeader} {Line}", logHeader,
+                AdhocTextSession.Line(sender, sessionId, decision,
+                    "region=\"" + (client?.Scene?.RegionInfo?.RegionName ?? string.Empty) + "\""));
+            return;
+        }
+
+        FanOutConferenceText(plan, client?.Name ?? im.fromAgentName,
+                             client?.Scene?.RegionInfo?.RegionID ?? UUID.Zero, decision);
+    }
+
+    /// <summary>
+    /// The viewer left the conference CHAT (UDP dialog 18). The member leaves the roster and
+    /// KEEPS THEIR VOICE SEAT -- the lifecycles are independent, and this is lifecycle (1)
+    /// alone. The roster update goes out after the engine has recorded it, so the departing member
+    /// is already off the roster and is not sent their own LEAVE.
+    /// </summary>
+    private void OnViewerConferenceChatLeave(IClientAPI client, GridInstantMessage im)
+    {
+        UUID sessionId = new UUID(im.imSessionID);
+        UUID agent = new UUID(im.fromAgentID);
+
+        if (!AdhocChatMembership.TryHandleLeave(m_nonSpatial, m_adhocVoiceEnabled, sessionId, agent,
+                                                out string decision, out bool stillSeated))
+            return;   // a group or P2P leave -- not ours, and every other subscriber still sees it
+
+        NonSpatialVoiceSession session = m_nonSpatial.Store.Get(sessionId);
+        m_log.LogDebug("{LogHeader} {Line}", logHeader,
+            AdhocChatMembership.Line(agent, sessionId, decision, stillSeated,
+                $"region=\"{client?.Scene?.RegionInfo?.RegionName ?? string.Empty}\" "
+                + $"roster={(session is null ? 0 : AdhocConferenceRoster.Roster(session).Count)} "
+                + $"seats={session?.SeatsHeld ?? 0}"));
+
+        if (decision == AdhocChatMembership.DecisionLeft)
+            SendConferenceRoster(session, agent, joined: false);
+    }
+
+    /// <summary>
+    /// Deliver one conference line to every other seat holder: local clients directly, everyone else
+    /// over the carrier with the text magic. The SENDER IS NEVER IN Recipients, so
+    /// there is no echo -- a deliberate divergence from the group path, which does echo; see
+    /// AdhocTextSession's header for why.
+    /// </summary>
+    private void FanOutConferenceText(AdhocTextPlan plan, string fromName, UUID originRegion, string decision)
+    {
+        if (plan is null)
+            return;
+
+        List<Scene> scenes;
+        lock (m_scenes)
+            scenes = new List<Scene>(m_scenes);
+
+        m_log.LogDebug("{LogHeader} {Line}", logHeader,
+            AdhocTextSession.Line(plan.Sender, plan.Session.SessionId, decision,
+                $"recipients={plan.Recipients.Count}"));
+        if (plan.Recipients.Count == 0)
+            return;
+
+        // Local vs remote by the same presence test the ring fan-out uses, so text and ring agree
+        // about who is reachable in this process.
+        HashSet<UUID> presentHere = new HashSet<UUID>(GroupVoiceInvite.PresentAgents(scenes));
+        List<UUID> remote = new List<UUID>();
+        foreach (UUID target in plan.Recipients)
+        {
+            if (!presentHere.Contains(target))
+            {
+                remote.Add(target);
+                continue;
+            }
+            DeliverConferenceTextLocally(scenes, target, plan.Sender, fromName, plan.Session.SessionId,
+                                         originRegion, plan.Message);
+        }
+
+        SendRemoteConferenceText(plan, fromName, originRegion, scenes, remote);
+    }
+
+    /// <summary>Hand one rebuilt SessionSend to a client in this process.</summary>
+    private void DeliverConferenceTextLocally(List<Scene> scenes, UUID target, UUID sender, string fromName,
+                                              UUID sessionId, UUID originRegion, string message)
+    {
+        Scene scene = A2AInviteDelivery.ResolveCalleeScene(scenes, target, out _);
+        IClientAPI to = scene?.GetScenePresence(target)?.ControllingClient;
+        if (to is null)
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                AdhocTextSession.Line(sender, sessionId, A2AAgentListDelivery.DecisionNoPresence,
+                    "target=" + target));
+            return;
+        }
+        try
+        {
+            to.SendInstantMessage(AdhocTextSession.BuildForViewer(target, sender, fromName, sessionId,
+                                                                  originRegion, message));
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                AdhocTextSession.Line(sender, sessionId, AdhocTextSession.DecisionDelivered,
+                    "target=" + target + " path=local"));
+        }
+        catch (Exception e)
+        {
+            m_log.LogWarning(e, "{LogHeader} local conference text to {Target} failed", logHeader, target);
+        }
+    }
+
+    /// <summary>
+    /// Carry the line to members on another region server. Same transport family as the ring, same
+    /// online-only rule: an offline member is simply not sent to. Nothing is stored for them -- both
+    /// offline-IM allowlists reject SessionSend (OfflineMessageModule.cs:228-233,
+    /// OfflineIMRegionModule.cs:195-199) and the carrier sets offline = 0 besides.
+    /// </summary>
+    private void SendRemoteConferenceText(AdhocTextPlan plan, string fromName, UUID originRegion,
+                                          List<Scene> scenes, List<UUID> candidates)
+    {
+        if (candidates is null || candidates.Count == 0)
+            return;
+
+        IMessageTransferModule transfer = null;
+        foreach (Scene sc in scenes)
+        {
+            transfer ??= sc.RequestModuleInterface<IMessageTransferModule>();
+            if (transfer is not null) break;
+        }
+        if (transfer is null)
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                AdhocTextTransport.Line(UUID.Zero, plan.Session.SessionId, AdhocTextTransport.DecisionNoTransfer));
+            return;
+        }
+
+        IPresenceService presence = null;
+        foreach (Scene sc in scenes)
+        {
+            presence = sc.PresenceService;
+            if (presence is not null) break;
+        }
+        List<UUID> online = GroupVoiceInvite.OnlineOnly(candidates, agent =>
+        {
+            if (presence is null) return UUID.Zero;
+            OpenSim.Services.Interfaces.PresenceInfo[] found = presence.GetAgents(new[] { agent.ToString() });
+            return found is { Length: > 0 } ? found[0].RegionID : UUID.Zero;
+        });
+
+        foreach (UUID target in online)
+        {
+            try
+            {
+                transfer.SendInstantMessage(
+                    AdhocTextTransport.Build(target, plan.Sender, fromName, plan.Session.SessionId,
+                                             originRegion, plan.Message), _ => { });
+                m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                    AdhocTextTransport.Line(target, plan.Session.SessionId, AdhocTextTransport.DecisionSent));
+            }
+            catch (Exception e)
+            {
+                m_log.LogWarning(e, "{LogHeader} cross-instance conference text to {Target} failed", logHeader, target);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Receive half: a conference line arrived from another region server. Rebuild the
+    /// viewer's SessionSend locally so the two paths are indistinguishable at the client.
+    ///
+    /// THE MEMBERSHIP RE-CHECK IS NOT REDUNDANT. The sending instance already decided the sender is
+    /// a member, but this instance holds its own adopted copy of the voice session, and a carrier is a
+    /// grid IM anyone could in principle synthesise. Re-checking here means a forged carrier cannot
+    /// inject text into a conference on this host.
+    /// </summary>
+    private void OnIncomingConferenceText(GridInstantMessage msg)
+    {
+        if (m_nonSpatial is null || !m_adhocVoiceEnabled)
+            return;
+        if (!AdhocTextTransport.TryParse(msg, out UUID target, out UUID sessionId, out string message,
+                                         out string fromName, out _))
+            return;   // not ours -- a ring lands here and falls straight through
+
+        UUID sender = new UUID(msg.fromAgentID);
+        NonSpatialVoiceSession session = m_nonSpatial.Store.Get(sessionId);
+        if (session is null || session.Type != NonSpatialSessionType.Adhoc)
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                AdhocTextTransport.Line(target, sessionId, SessionOutcome.NoSuchSession));
+            return;
+        }
+        NonSpatialMember from = session.Find(sender);
+        NonSpatialMember to = session.Find(target);
+        if (from is null || !from.HoldsSeat || to is null || !to.HoldsSeat)
+        {
+            m_log.LogWarning("{LogHeader} {Line}", logHeader,
+                AdhocTextTransport.Line(target, sessionId, AdhocTextSession.DecisionNotMember,
+                    "from=" + sender));
+            return;
+        }
+
+        List<Scene> scenes;
+        lock (m_scenes)
+            scenes = new List<Scene>(m_scenes);
+        DeliverConferenceTextLocally(scenes, target, sender, fromName, sessionId,
+                                     new UUID(msg.RegionID), message);
+    }
+
+    /// <summary>
+    /// Push the participant list after a seat changed hands. Local-only by nature -- the
+    /// event queue is per-instance -- and every recipient's outcome is logged, so an unreachable
+    /// member is visible rather than silent.
+    /// </summary>
+    private void SendConferenceRoster(NonSpatialVoiceSession session, UUID who, bool joined)
+    {
+        if (session is null || session.Type != NonSpatialSessionType.Adhoc || !m_adhocVoiceEnabled)
+            return;
+
+        List<Scene> scenes;
+        lock (m_scenes)
+            scenes = new List<Scene>(m_scenes);
+
+        List<string> lines = joined
+            ? AdhocConferenceRoster.SendJoin(scenes, session, who)
+            : AdhocConferenceRoster.SendLeave(scenes, session, who);
+        foreach (string line in lines)
+            m_log.LogDebug("{LogHeader} {Line}", logHeader, line);
+    }
+
+    /// <summary>The voice session-id a ChatSessionRequest body carries, or Zero.</summary>
+    private static UUID GroupSessionIdOf(OSDMap reqmap)
+        => reqmap is not null && reqmap.TryGetUUID("session-id", out UUID id) ? id : UUID.Zero;
+
+    /// <summary>
+    /// The group's name for the callee's incoming-call UI. Best effort: the groups service knows it,
+    /// and a blank name is survivable (GroupVoiceInvite.BuildBody substitutes a default) whereas an
+    /// exception here would lose the ring.
+    /// </summary>
+    private string GroupNameOf(UUID groupID)
+    {
+        try
+        {
+            return GroupsModule()?.GetGroupRecord(groupID)?.GroupName ?? string.Empty;
+        }
+        catch (Exception e)
+        {
+            m_log.LogWarning(e, "{LogHeader} group name lookup failed for {GroupId}", logHeader, groupID);
+            return string.Empty;
+        }
+    }
+
+    private void RingGroupMembers(NonSpatialVoiceSession session, UUID initiator, string initiatorName, string groupName)
+    {
+        if (session is null || m_nonSpatial is null || !m_groupVoice.IsUsable)
+            return;
+
+        List<Scene> scenes;
+        lock (m_scenes)
+            scenes = new List<Scene>(m_scenes);
+
+        List<UUID> targets = GroupVoiceInvite.Targets(GroupVoiceInvite.PresentAgents(scenes), session,
+                                                      initiator, m_groupVoice);
+        bool noLocalTargets = targets.Count == 0;
+        if (noLocalTargets)
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                GroupVoiceInvite.Line(UUID.Zero, session.Owner, "-", "no-local-targets"));
+
+        string token = m_nonSpatial.IssueToken(session.SessionId, initiator);
+        if (string.IsNullOrEmpty(token))
+        {
+            m_log.LogWarning("{LogHeader} group ring for {GroupId} has no token; not ringing", logHeader, session.Owner);
+            return;
+        }
+
+        OSDMap body = GroupVoiceInvite.BuildBody(session, token, initiator, initiatorName, groupName);
+        foreach (UUID target in targets)
+        {
+            string decision = A2AInviteDelivery.Deliver(scenes, target, body, null, out string region);
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                GroupVoiceInvite.Line(target, session.Owner, region, decision));
+        }
+        // Marked whatever the delivery said: a member we could not reach must not be re-rung on
+        // every later join. One ring per member per cycle; the cycle resets when the room empties.
+        m_nonSpatial.MarkInvited(session.SessionId, targets);
+
+        // Everyone the local walk could not reach -- i.e. on another region server.
+        RingRemoteGroupMembers(session, initiator, initiatorName, body, targets);
+    }
+
+    /// <summary>
+    /// Ring an ad-hoc conference's invitees -- local first, then anyone this process cannot
+    /// reach, over the group ring carrier.
+    ///
+    /// SIMPLER THAN THE GROUP FAN-OUT IN ONE IMPORTANT WAY: there is no roster to consult. An ad-hoc
+    /// conference's membership IS its invitation list, so the targets come from the voice session itself
+    /// and the groups service is never touched. That is also why the target list and
+    /// AdhocAdmission.CanJoin agree by construction -- both read the same records.
+    ///
+    /// <paramref name="only"/> narrows the ring to specific agents, which is what "invite" needs:
+    /// adding one person to a running call must ring that person and nobody already in it.
+    /// </summary>
+    private void RingAdhocMembers(NonSpatialVoiceSession session, UUID initiator, string initiatorName,
+                                  List<UUID> only)
+    {
+        if (session is null || m_nonSpatial is null || !m_adhocVoiceEnabled)
+            return;
+
+        List<UUID> targets = AdhocVoiceInvite.Targets(session, initiator, only);
+        if (targets.Count == 0)
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                AdhocVoiceInvite.Line(UUID.Zero, session.SessionId, "no-targets"));
+            return;
+        }
+
+        string token = m_nonSpatial.IssueToken(session.SessionId, initiator);
+        if (string.IsNullOrEmpty(token))
+        {
+            m_log.LogWarning("{LogHeader} conference ring for {SessionId} has no token; not ringing",
+                logHeader, session.SessionId);
+            return;
+        }
+
+        List<Scene> scenes;
+        lock (m_scenes)
+            scenes = new List<Scene>(m_scenes);
+
+        OSDMap body = AdhocVoiceInvite.BuildBody(session, token, initiator, initiatorName);
+
+        // (a) anyone with a presence in THIS process, exactly as a group ring reaches them
+        HashSet<UUID> presentHere = new HashSet<UUID>(GroupVoiceInvite.PresentAgents(scenes));
+        List<UUID> local = new List<UUID>();
+        List<UUID> remote = new List<UUID>();
+        foreach (UUID t in targets)
+            (presentHere.Contains(t) ? local : remote).Add(t);
+
+        foreach (UUID target in local)
+        {
+            string decision = A2AInviteDelivery.Deliver(scenes, target, body, null, out string region);
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                AdhocVoiceInvite.Line(target, session.SessionId, decision, "region=\"" + region + "\""));
+        }
+
+        // (b) everyone else: another region server, or offline. The presence service decides which,
+        // and an offline invitee is simply not rung -- a conference ring is worthless once stored and
+        // replayed at the next login, announcing a call that ended hours ago.
+        RingRemoteAdhocMembers(session, initiator, initiatorName, body, scenes, remote);
+
+        // Marked whatever delivery said, local and remote alike: a member we could not reach must not
+        // be re-rung by every later join. One ring per member per cycle.
+        m_nonSpatial.MarkInvited(session.SessionId, local);
+    }
+
+    /// <summary>
+    /// Carry a conference ring to invitees on another region server, over exactly the transport
+    /// used for groups. Nothing in GroupVoiceRingTransport is group-specific -- it is a
+    /// module-to-module carrier -- so the only thing that distinguishes the two on receipt is the
+    /// invitation_type already inside the body.
+    /// </summary>
+    private void RingRemoteAdhocMembers(NonSpatialVoiceSession session, UUID initiator, string initiatorName,
+                                        OSDMap body, List<Scene> scenes, List<UUID> candidates)
+    {
+        if (candidates is null || candidates.Count == 0 || body is null)
+            return;
+
+        IMessageTransferModule transfer = null;
+        Scene originScene = null;
+        foreach (Scene sc in scenes)
+        {
+            transfer ??= sc.RequestModuleInterface<IMessageTransferModule>();
+            if (sc.GetScenePresence(initiator) is not null) originScene = sc;
+        }
+        if (transfer is null)
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                GroupVoiceRingTransport.Line(UUID.Zero, session.SessionId, GroupVoiceRingTransport.DecisionNoTransfer));
+            return;
+        }
+
+        IPresenceService presence = null;
+        foreach (Scene sc in scenes)
+        {
+            presence = sc.PresenceService;
+            if (presence is not null) break;
+        }
+        int before = candidates.Count;
+        List<UUID> online = GroupVoiceInvite.OnlineOnly(candidates, agent =>
+        {
+            if (presence is null) return UUID.Zero;          // no presence service: send nothing
+            OpenSim.Services.Interfaces.PresenceInfo[] found = presence.GetAgents(new[] { agent.ToString() });
+            return found is { Length: > 0 } ? found[0].RegionID : UUID.Zero;
+        });
+        if (online.Count != before)
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                AdhocVoiceInvite.Line(UUID.Zero, session.SessionId, GroupVoiceInvite.DecisionOffline,
+                    $"{before - online.Count} of {before} candidate(s) are offline"));
+        if (online.Count == 0)
+            return;
+
+        UUID originRegion = originScene?.RegionInfo?.RegionID ?? UUID.Zero;
+        foreach (UUID target in online)
+        {
+            try
+            {
+                GridInstantMessage im = GroupVoiceRingTransport.Build(target, initiator, initiatorName,
+                                                                      session.SessionId, originRegion, body);
+                transfer.SendInstantMessage(im, _ => { });
+                m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                    GroupVoiceRingTransport.Line(target, session.SessionId, GroupVoiceRingTransport.DecisionSent));
+            }
+            catch (Exception e)
+            {
+                m_log.LogWarning(e, "{LogHeader} cross-instance conference ring to {Target} failed", logHeader, target);
+            }
+        }
+        m_nonSpatial?.MarkInvited(session.SessionId, online);
+    }
+
+    // ---- group membership and powers, resolved as GRID state ------------------------------
+    //
+    // IGroupsModule answers through the groups service (local or remote connector), so these are the
+    // same on every region of the grid and on every host -- which is what lets the voice session be
+    // grid-wide while admission stays correct wherever the agent happens to be standing. Any scene in
+    // this process can answer; the first one with the module wins. No scene means no groups, which is
+    // a refusal, never an admission.
+
+    private IGroupsModule GroupsModule()
+    {
+        List<Scene> scenes;
+        lock (m_scenes)
+            scenes = new List<Scene>(m_scenes);
+        foreach (Scene s in scenes)
+        {
+            IGroupsModule g = s.RequestModuleInterface<IGroupsModule>();
+            if (g is not null)
+                return g;
+        }
+        return null;
+    }
+
+    private bool GroupIsMember(UUID agentID, UUID groupID)
+    {
+        try
+        {
+            return GroupsModule()?.GetMembershipData(groupID, agentID) is not null;
+        }
+        catch (Exception e)
+        {
+            m_log.LogWarning(e, "{LogHeader} group membership lookup failed for agent {AgentId} group {GroupId}; refusing",
+                logHeader, agentID, groupID);
+            return false;
+        }
+    }
+
+    private ulong GroupPowersOf(UUID agentID, UUID groupID)
+    {
+        try
+        {
+            return GroupsModule()?.GetFullGroupPowers(agentID, groupID) ?? 0UL;
+        }
+        catch (Exception e)
+        {
+            m_log.LogWarning(e, "{LogHeader} group power lookup failed for agent {AgentId} group {GroupId}; refusing",
+                logHeader, agentID, groupID);
+            return 0UL;
         }
     }
 

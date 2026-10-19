@@ -51,4 +51,11 @@ public interface IWebRtcVoiceService
 
     // Create a viewer session with all the variables needed for the underlying implementation
     public IVoiceViewerSession CreateViewerSession(OSDMap pRequest, UUID pUserID, UUID pScene);
+
+    // Make sure the spatial "local" room for this parcel exists, created exactly as a
+    // viewer's provision creates it (same flags, declared when the sim arms). A room is otherwise created on ONE
+    // path only - a viewer provisioning voice - so a connector peer has no room to join until an avatar turns up.
+    // Returns the room number, or null when it cannot be created (no Janus, or an implementation that does not own
+    // rooms). Idempotent: an existing room is reused, never re-created.
+    public int? EnsureSpatialRoom(UUID pSceneID, int pParcelLocalID);
 }

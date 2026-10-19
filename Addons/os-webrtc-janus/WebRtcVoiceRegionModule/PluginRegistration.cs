@@ -35,6 +35,7 @@ public class PluginRegistration : IPluginRegistryProvider
     public void RegisterPlugins(PluginRegistry registry)
     {
         RegisterByName(registry, "/OpenSim/RegionModules", "WebRtcVoiceRegionModule", "osWebRtcVoice.WebRtcVoiceRegionModule", "WebRtcVoiceRegionModule", "1.0");
+        RegisterByName(registry, "/OpenSim/RegionModules", "VoiceConnectorModule", "osWebRtcVoice.VoiceConnectorModule", "VoiceConnectorModule", "1.0");
     }
 
     private static void RegisterByName(PluginRegistry registry, string extensionPath, string id, string typeName, string displayName, string version)

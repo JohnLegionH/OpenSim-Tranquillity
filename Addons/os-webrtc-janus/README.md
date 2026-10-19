@@ -43,50 +43,64 @@ features like muting and individual avatar volume are not yet implemented.
 And probably more found at [os-webrtc-janus issues](https://github.com/Misterblue/os-webrtc-janus/issues).
 
 <a id="Building"></a>
-## Building Plugin into OpenSimulator
+## Installing voice
 
-`os-webrtc-janus` is integrated as a source build into [OpenSimulator].
-It uses the [OpenSimulator] addon-module feature which makes the
-build as easy as cloning the `os-webrtc-janus` sources into the
-[OpenSimulator] source tree, running the build configuration script,
-and then building OpenSimulator.
+Working voice needs:
+- the region server built with this addon;
+- two INI sections in the region server's config;
+- a Janus gateway reachable from the region server, running either Janus's stock AudioBridge plugin
+  (the default) or a spatial mixer that implements the `janus.plugin.slvoice` protocol.
 
-The steps are:
+Optional features (avatar-to-avatar calls, group voice, ad-hoc voice, visibility, join capability,
+moderation, connectors) are off until their switches are set; see `Docs/voice/README.md` and
+`Docs/voice/configuration.md`.
+
+### 1. Build the region server
+
+In this tree the addon is a project reference of the region server, so the normal build includes it:
 
 ```
-# Get the OpenSimulator sources
-git clone git://opensimulator.org/git/opensim
-cd opensim     # cd into the top level OpenSim directory
-
-# Fetch the WebRtc addon
-cd addon-modules
-git clone https://github.com/Misterblue/os-webrtc-janus.git
-cd ..
-
-# Build the project files
-./runprebuild.sh
-
-# Compile OpenSimulator with the webrtc addon
-./compile.sh
-
-# Copy the INI file for webrtc into a config dir that is read at boot
-mkdir bin/config
-cp addon-modules/os-webrtc-janus/os-webrtc-janus.ini bin/config
+dotnet build Source/OpenSim.Server.RegionServer/OpenSim.Server.RegionServer.csproj --configuration Release
 ```
 
-These building steps create several `.dll` files for `os-webrtc-janus`
-in `bin/WebRtc*.dll`. Some adventurous people have found that, rather
-than building the [OpenSimulator] sources, you can just copy the `.dll`s
-into an existing `/bin` directory. Just make sure the `WebRtc*.dll` files
-were built on the same version of [OpenSimulator] you are running.
+### 2. Configure the region server: two INI sections
+
+Copy `os-webrtc-janus.ini` into the `config` folder under the directory the region server runs from.
+The region server reads every `.ini` file in that folder at startup; the folder name is
+`[Startup] inidirectory`, default `config`. The file has two sections, `[WebRtcVoice]` and
+`[JanusWebRtcVoice]`, and a region using its own Janus gateway needs both.
+
+**Keys with no working default. You must set these:**
+
+| Key | Section | Shipped value | Set it to |
+|---|---|---|---|
+| `Enabled` | `[WebRtcVoice]` | `false` | `true` |
+| `JanusGatewayURI` | `[JanusWebRtcVoice]` | placeholder | the gateway's voice URI, for example `http://janus.example.org:14223/voice` |
+| `APIToken` | `[JanusWebRtcVoice]` | placeholder | the gateway's API secret |
+| `JanusGatewayAdminURI` | `[JanusWebRtcVoice]` | placeholder | the gateway's admin URI |
+| `AdminAPIToken` | `[JanusWebRtcVoice]` | placeholder | the gateway's admin secret |
+
+**Keys with defaults.** The shipped file lists them commented out with their defaults:
+
+| Key | Section | Default | Notes |
+|---|---|---|---|
+| `PluginName` | `[JanusWebRtcVoice]` | `janus.plugin.audiobridge` | `janus.plugin.slvoice` selects a spatial mixer that implements that plugin. |
+| `StunServers` | `[WebRtcVoice]` | empty | Comma-separated STUN URIs advertised to viewers as the `stun-servers` simulator feature. Stock viewers need a valid entry. |
+| `VisibilityFeederEnabled`, `VisibilityEmitEnabled` | `[WebRtcVoice]` | `false` | Send per-listener visibility to a mixer that understands it. Need `JanusGatewayAdminURI` and `AdminAPIToken`. |
+
+### Upgrading
+
+With every optional switch left off, the region behaves as the previous release did, except for
+the hardening of existing code (bounded Janus requests, provision refusal handling). To keep a spatial
+mixer after upgrading from a build whose default plugin was `janus.plugin.slvoice`, set
+`PluginName = janus.plugin.slvoice` and the visibility keys explicitly.
 
 <a id="Configure_Simulator"></a>
 ## Configure a Region for Voice
 
-The last step in [Building](#Building) copied `os-webrtc-janus.ini` into 
-the `bin/config` directory. [OpenSimulator] reads all the `.ini` files
-in that directory so this copy operation adds the configuration for `os-webrtc-janus`
-and this is what needs to be configured for the simulator and region.
+Step 2 of [Installing](#Building) copied `os-webrtc-janus.ini` into the `config` directory. The
+region server reads every `.ini` file in that directory, so this copy adds the configuration for
+`os-webrtc-janus`. That file is what you configure for the simulator and region.
 
 The sample `.ini` file has two sections: `[WebRtcVoice]` and `[JanusWebRtcVoice]`.
 The `WebRtcVoice` section configures the what services the simulator uses
