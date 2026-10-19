@@ -183,6 +183,10 @@ namespace osWebRtcVoice.NonSpatial
         /// <summary>Whether a refusal that brought a reason's count to <paramref name="count"/> is worth a log line.</summary>
         public static bool ShouldLog(long count) => count == 1 || count % 100 == 0;
 
+        /// <summary>The Debug line for a carrier that passed authentication: ids and type only, never contents.</summary>
+        public static string AcceptedLine(string kind, UUID session, NonSpatialSessionType type, UUID originRegion)
+            => "carrier accepted: kind=" + kind + " session=" + session + " type=" + type + " from=" + originRegion;
+
         /// <summary>How many nonces are held now (for tests).</summary>
         public int NonceCount
         {

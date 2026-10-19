@@ -292,6 +292,8 @@ public partial class WebRtcVoiceRegionModule
         TextIntake text = CarrierIntake.AcceptText(msg, m_carrierAuth, m_nonSpatial);
         if (!text.Claimed)
             return;   // not ours -- a ring lands here and falls straight through
+        if (text.Authenticated)
+            LogCarrierAccepted(CarrierAuth.KindText, text.SessionId, NonSpatialSessionType.Adhoc, text.OriginRegion);
         if (text.Reason is not null)
         {
             LogCarrierRefusal(CarrierAuth.KindText, text.Reason, text.RefusalCount);

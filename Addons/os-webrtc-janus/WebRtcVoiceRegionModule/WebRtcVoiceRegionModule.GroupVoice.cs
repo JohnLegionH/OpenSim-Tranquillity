@@ -214,6 +214,8 @@ public partial class WebRtcVoiceRegionModule
                                                    m_groupVoice.Cap, m_adhocVoiceEnabled);
         if (!ring.Claimed)
             return;   // not ours: every other subscriber still sees it untouched
+        if (ring.Authenticated)
+            LogCarrierAccepted(CarrierAuth.KindRing, ring.GroupId, ring.Type, ring.OriginRegion);
         if (ring.Reason is not null)
         {
             LogCarrierRefusal(CarrierAuth.KindRing, ring.Reason, ring.RefusalCount);
