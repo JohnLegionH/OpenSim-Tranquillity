@@ -38,7 +38,7 @@ using Microsoft.Extensions.Logging;
 
 namespace osWebRtcVoice;
 
-public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
+public partial class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
 {
     private static readonly ILogger _log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
     private static readonly string LogHeader = "[JANUS WEBRTC SERVICE]";
@@ -51,16 +51,6 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
     /// <summary>: the mixer's "No such room" on a join (`Request error 485: No such room (n)`).</summary>
     public const int JANUS_NO_SUCH_ROOM_ERROR_CODE = 485;
 
-
-
-    // The Janus plugin the sim attaches its handles to. The default is the stock AudioBridge plugin;
-    // set PluginName = janus.plugin.slvoice to drive a spatial mixer that implements that plugin.
-    public const string DefaultPluginName = "janus.plugin.audiobridge";
-
-    // [JanusWebRtcVoice] PluginName, or DefaultPluginName when the key is absent.
-    public static string ReadPluginName(IConfig pJanusConfig)
-        => pJanusConfig.GetString("PluginName", DefaultPluginName);
-
     private readonly IConfigSource _Config;
     private bool _Enabled = false;
 
@@ -68,10 +58,6 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
     private string _JanusAPIToken = string.Empty;
     private string _JanusAdminURI = string.Empty;
     private string _JanusAdminToken = string.Empty;
-
-    // Janus plugin (mixer) to attach handles to. Configurable via
-    // [JanusWebRtcVoice] PluginName; defaults to the stock AudioBridge plugin (DefaultPluginName).
-    private string _JanusPluginName = DefaultPluginName;
 
     // The grid's identity folded into every non-spatial room number so
     // two grids on a shared mixer cannot collide on the same channel. Read once from the region's
@@ -128,9 +114,7 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                 _JanusAPIToken = janusConfig.GetString("APIToken", string.Empty);
                 _JanusAdminURI = janusConfig.GetString("JanusGatewayAdminURI", string.Empty);
                 _JanusAdminToken = janusConfig.GetString("AdminAPIToken", string.Empty);
-                // Which Janus plugin (mixer) to attach handles to.
-                _JanusPluginName = ReadPluginName(janusConfig);
-                _log.LogInformation($"{LogHeader} Janus plugin (mixer) = {_JanusPluginName}");
+                ReadPluginNameConfig(janusConfig);
                 _GridId = JanusAudioBridge.ReadGridId(_Config);
                 if (string.IsNullOrEmpty(_GridId))
                     _log.LogWarning($"{LogHeader} no GatekeeperURI in [Hypergrid]/[Startup]/[Const] (nor [GatekeeperService] ExternalName / [GridService] Gatekeeper): multiagent rooms are derived without a grid id");
@@ -772,6 +756,5 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
         // m_log.LogInformation(msg, args);
         MainConsole.Instance.Output(msg, args);
     }
-
 
 }

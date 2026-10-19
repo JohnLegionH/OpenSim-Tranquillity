@@ -59,7 +59,7 @@ namespace osWebRtcVoice;
 /// The capabilities then pass the user request information to the IWebRtcVoiceService interface
 /// that has been registered for the reqion.
 /// </summary>
-public class WebRtcVoiceRegionModule : ISharedRegionModule
+public partial class WebRtcVoiceRegionModule : ISharedRegionModule
 {
     private static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
     private static readonly string logHeader = "[REGION WEBRTC VOICE]";
@@ -75,10 +75,6 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     private static bool m_Enabled = false;
 
     private IConfig m_Config;
-
-    // Comma-separated STUN URIs advertised to viewers as SimulatorFeatures
-    // "stun-servers"; empty => the key is not emitted.
-    private string m_StunServers = string.Empty;
 
     // [WebRtcVoice] VisibilityFeederEnabled / VisibilityEmitEnabled. Off by default: the feeder pushes
     // peer_ctl batches, which only a mixer that implements them understands.
@@ -193,7 +189,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                 // [WebRtcVoice] RefusalCacheSeconds (default 5; 0 disables).
                 m_refusalCache = new ProvisionRefusalCache(TimeSpan.FromSeconds(
                     Math.Max(0, m_Config.GetInt("RefusalCacheSeconds", ProvisionRefusalCache.DefaultSeconds))));
-                m_StunServers = m_Config.GetString("StunServers", string.Empty);
+                InitialiseStunServers();
                 m_VisibilityFeederEnabled = ReadVisibilityFeederEnabled(m_Config);
                 m_VisibilityTickMs = m_Config.GetInt("VisibilityTickMs", 250);
                 m_VisibilityEmitEnabled = ReadVisibilityEmitEnabled(m_Config);
@@ -372,15 +368,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             ISimulatorFeaturesModule simFeatures = scene.RequestModuleInterface<ISimulatorFeaturesModule>();
             simFeatures?.AddFeature("VoiceServerType", OSD.FromString("webrtc"));
 
-            // Advertise STUN servers to viewers so their WebRTC ICE config is non-empty.
-            // The viewer's OpenSim path reads SimulatorFeatures["stun-servers"] as a
-            // comma-separated string of full ICE URIs (llviewerregion.cpp). Absent config
-            // => omit the key. Stock viewers REQUIRE a non-empty valid entry or
-            // CreatePeerConnection fails "ICE server parsing failed: Empty uri".
-            if (!string.IsNullOrWhiteSpace(m_StunServers))
-            {
-                simFeatures?.AddFeature("stun-servers", OSD.FromString(m_StunServers));
-            }
+            AdvertiseStunServers(simFeatures);
 
             // Start the per-listener visibility feeder for this region (opt-in).
             if (m_VisibilityFeederEnabled)

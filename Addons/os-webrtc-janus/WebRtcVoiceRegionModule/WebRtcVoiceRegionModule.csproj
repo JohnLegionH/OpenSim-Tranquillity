@@ -11,6 +11,7 @@
   <ItemGroup>
     <Compile Include="PluginRegistration.cs" />
     <Compile Include="WebRtcVoiceRegionModule.cs" />
+    <Compile Include="WebRtcVoiceRegionModule.Stun.cs" />
     <Compile Include="LandBan.cs" />
     <Compile Include="ProvisionParcelResolver.cs" />
     <Compile Include="FeederWorldFromScene.cs" />
