@@ -218,14 +218,19 @@ namespace osWebRtcVoice.NonSpatial
                 return SessionOutcome.Fail(SessionOutcome.TooManyInvitees);
             }
 
-            NonSpatialVoiceSession prior = FindAdhocByTemp(creator, tempSessionId);
-            if (prior != null)
+            // Find-then-create as one step. A viewer retries a start with the same temp id, and two
+            // retries that both looked before either created would each open a conference.
+            lock (_startGate)
             {
-                Touch(prior.SessionId);
-                return new SessionOutcome(true, "start-idempotent", prior, created: false);
+                NonSpatialVoiceSession prior = FindAdhocByTemp(creator, tempSessionId);
+                if (prior != null)
+                {
+                    Touch(prior.SessionId);
+                    return new SessionOutcome(true, "start-idempotent", prior, created: false);
+                }
+                return StartWithId(NonSpatialSessionType.Adhoc, UUID.Random(), tempSessionId, creator, UUID.Zero,
+                                   originRegion, requestedCap, distinct);
             }
-            return StartWithId(NonSpatialSessionType.Adhoc, UUID.Random(), tempSessionId, creator, UUID.Zero,
-                               originRegion, requestedCap, distinct);
         }
 
         /// <summary>
