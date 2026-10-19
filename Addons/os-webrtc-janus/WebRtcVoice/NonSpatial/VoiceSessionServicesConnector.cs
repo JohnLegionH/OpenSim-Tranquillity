@@ -78,8 +78,8 @@ namespace osWebRtcVoice.NonSpatial
         public SessionReply DepartRegion(UUID region)
             => Call("departregion", ("region", region));
 
-        public SessionReply RenewSeats(IReadOnlyList<UUID> agents)
-            => Call("renewseats", ("agents", Join(agents)));
+        public SessionReply RenewSeats(IReadOnlyList<SeatKey> seats)
+            => Call("renewseats", ("seats", JoinSeats(seats)));
 
         public SessionReply MarkInvited(UUID sessionId, IReadOnlyList<UUID> agents)
             => Call("markinvited", ("session", sessionId), ("agents", Join(agents)));
@@ -95,6 +95,19 @@ namespace osWebRtcVoice.NonSpatial
 
         public SessionReply GetByRoomKey(string roomKey, UUID agent = default)
             => Call("getbyroomkey", ("roomkey", roomKey ?? string.Empty), ("agent", agent));
+
+        // session:agent pairs, comma separated
+        private static string JoinSeats(IEnumerable<SeatKey> seats)
+        {
+            if (seats == null) return string.Empty;
+            StringBuilder sb = new StringBuilder();
+            foreach (SeatKey seat in seats)
+            {
+                if (sb.Length > 0) sb.Append(',');
+                sb.Append(seat.Session.ToString()).Append(':').Append(seat.Agent.ToString());
+            }
+            return sb.ToString();
+        }
 
         private static string Join(IEnumerable<UUID> ids)
         {

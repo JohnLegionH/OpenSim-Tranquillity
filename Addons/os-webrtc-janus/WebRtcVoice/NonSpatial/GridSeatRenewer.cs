@@ -6,9 +6,11 @@
  */
 
 /*
- * Keeps this region's seats alive in the grid session service. On a timer it sends the agents that
- * are still in the region; the service releases a seat nobody has renewed for its lease, which is
- * how the seats of a region that crashed or lost its connection come back.
+ * Keeps this region's seats alive in the grid session service. On a timer it sends the seats the region
+ * still holds whose agent is still in the region; the service releases a seat nobody has renewed for its
+ * lease, which is how the seats of a region that crashed or lost its connection come back, and how a seat
+ * whose departure never reached the service comes back while the agent stays here. A seat the region has
+ * departed is never sent.
  */
 using System;
 using System.Collections.Generic;
@@ -65,8 +67,18 @@ namespace osWebRtcVoice.NonSpatial
                 return true;
             try
             {
-                IReadOnlyList<UUID> agents = _presentAgents();
-                return agents == null || agents.Count == 0 || _sessions.RenewSeats(agents);
+                IReadOnlyList<SeatKey> held = _sessions.HeldSeats();
+                if (held.Count == 0)
+                    return true;
+                IReadOnlyList<UUID> present = _presentAgents();
+                if (present == null || present.Count == 0)
+                    return true;
+                HashSet<UUID> here = new HashSet<UUID>(present);
+                List<SeatKey> renew = new List<SeatKey>();
+                foreach (SeatKey seat in held)
+                    if (here.Contains(seat.Agent))
+                        renew.Add(seat);
+                return renew.Count == 0 || _sessions.RenewSeats(renew);
             }
             catch (Exception e)
             {

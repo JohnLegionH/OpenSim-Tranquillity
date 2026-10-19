@@ -27,7 +27,7 @@ namespace osWebRtcVoice.Tests
         private static readonly UUID GroupId = NonSpatialIdentityTests.Group;
 
         /// <summary>A real service that can be made to stop answering, and counts the calls that reach it.</summary>
-        private sealed class FlakyService : IVoiceSessionService
+        internal sealed class FlakyService : IVoiceSessionService
         {
             public readonly VoiceSessionService Inner;
             public bool Up = true;
@@ -56,7 +56,7 @@ namespace osWebRtcVoice.Tests
             public SessionReply DepartByViewerSession(UUID agent, string viewerSession, int reason) => Pass("departbyviewer:" + agent, () => Inner.DepartByViewerSession(agent, viewerSession, reason));
             public SessionReply DepartAll(UUID agent, int reason) => Pass("departall:" + agent, () => Inner.DepartAll(agent, reason));
             public SessionReply DepartRegion(UUID region) => Pass("departregion", () => Inner.DepartRegion(region));
-            public SessionReply RenewSeats(IReadOnlyList<UUID> agents) => Pass("renewseats", () => Inner.RenewSeats(agents));
+            public SessionReply RenewSeats(IReadOnlyList<SeatKey> seats) => Pass("renewseats", () => Inner.RenewSeats(seats));
             public SessionReply MarkInvited(UUID sessionId, IReadOnlyList<UUID> agents) => Pass("markinvited", () => Inner.MarkInvited(sessionId, agents));
             public SessionReply IssueToken(UUID sessionId, UUID agent) => Pass("issuetoken", () => Inner.IssueToken(sessionId, agent));
             public SessionReply TakeConferenceRequest(UUID agent) => Pass("takeconferencerequest", () => Inner.TakeConferenceRequest(agent));
@@ -64,17 +64,17 @@ namespace osWebRtcVoice.Tests
             public SessionReply GetByRoomKey(string roomKey, UUID agent = default) => Pass("getbyroomkey", () => Inner.GetByRoomKey(roomKey, agent));
         }
 
-        private static FakeClock Clock() => new FakeClock();
+        internal static FakeClock Clock() => new FakeClock();
 
-        private static VoiceSessionService NewReal(FakeClock clock) => new VoiceSessionService("example-grid", clock: clock.Get);
+        internal static VoiceSessionService NewReal(FakeClock clock) => new VoiceSessionService("example-grid", clock: clock.Get);
 
         private static SessionCircuitBreaker NewBreaker(FakeClock clock, int failures = 5, int windowSeconds = 10, int openSeconds = 5)
             => new SessionCircuitBreaker(failures, TimeSpan.FromSeconds(windowSeconds), TimeSpan.FromSeconds(openSeconds), clock.Get);
 
-        private static DepartOutbox NewOutbox(IVoiceSessionService service, FakeClock clock, int max = 256, int ageSeconds = 60)
+        internal static DepartOutbox NewOutbox(IVoiceSessionService service, FakeClock clock, int max = 256, int ageSeconds = 60)
             => new DepartOutbox(service, max, TimeSpan.FromSeconds(ageSeconds), clock.Get);
 
-        private static GridNonSpatialSessions NewRegion(IVoiceSessionService service, DepartOutbox outbox = null, FakeClock clock = null)
+        internal static GridNonSpatialSessions NewRegion(IVoiceSessionService service, DepartOutbox outbox = null, FakeClock clock = null)
             => new GridNonSpatialSessions(service, new INonSpatialAdmission[]
             {
                 new P2PAdmission(),
@@ -82,7 +82,7 @@ namespace osWebRtcVoice.Tests
                 new GroupAdmission((agent, group) => true, (agent, group) => true),
             }, clock == null ? null : clock.Get, outbox);
 
-        private static bool Holds(VoiceSessionService service, UUID session, UUID agent)
+        internal static bool Holds(VoiceSessionService service, UUID session, UUID agent)
             => service.Get(session).Session.Members.Any(m => m.Agent == agent.ToString()
                 && (m.State == (int)MemberState.Accepted || m.State == (int)MemberState.Present));
 

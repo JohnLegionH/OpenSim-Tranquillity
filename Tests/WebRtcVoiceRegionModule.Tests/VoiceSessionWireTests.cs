@@ -190,7 +190,7 @@ namespace osWebRtcVoice.Tests
             Assert.That(region.Depart(id, Alice, DepartureReason.VoiceTeardown).Ok, Is.True);
             Assert.That(region.DepartAll(dave, DepartureReason.PresenceLost), Has.Count.EqualTo(1), "the invited member leaves everything");
             Assert.That(region.DepartRegion(RegionA), Is.GreaterThanOrEqualTo(0));
-            Assert.That(region.RenewSeats(new List<UUID> { Alice }), Is.True);
+            Assert.That(region.RenewSeats(new List<SeatKey> { new SeatKey(id, Alice) }), Is.True);
             Assert.That(region.GetByRoomKey(region.Get(id).RoomKey)?.SessionId, Is.EqualTo(id));
         }
 
@@ -278,7 +278,7 @@ namespace osWebRtcVoice.Tests
         [TestCase("METHOD=start&type=2&creator=not-a-uuid&other=99999999-9999-9999-9999-999999999999&temp=99999999-9999-9999-9999-999999999999&origin=99999999-9999-9999-9999-999999999999&cap=0")]
         [TestCase("METHOD=accept&session=99999999-9999-9999-9999-999999999999")]
         [TestCase("METHOD=startadhoc&creator=11111111-1111-1111-1111-111111111111&temp=22222222-2222-2222-2222-222222222222&origin=33333333-3333-3333-3333-333333333333&cap=0&invitees=11111111-1111-1111-1111-111111111111,garbage")]
-        [TestCase("METHOD=renewseats&agents=garbage")]
+        [TestCase("METHOD=renewseats&seats=garbage")]
         [TestCase("METHOD=depart&session=99999999-9999-9999-9999-999999999999&agent=11111111-1111-1111-1111-111111111111&reason=banana")]
         [TestCase("METHOD=getbyroomkey&roomkey=")]
         public void AMalformedRequestIsAFailureAndChangesNothing(string body)
@@ -303,7 +303,7 @@ namespace osWebRtcVoice.Tests
             VoiceSessionPostHandler handler = NewHandler(service);
             TestOSHttpRequest request = new TestOSHttpRequest();
             request.Headers["Authorization"] = "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes(User + ":" + Password));
-            string body = "METHOD=renewseats&agents=" + new string('a', VoiceSessionPostHandler.MaxBodyChars + 1);
+            string body = "METHOD=renewseats&seats=" + new string('a', VoiceSessionPostHandler.MaxBodyChars + 1);
 
             byte[] reply = handler.Handle(VoiceSessionPostHandler.HandlerPath, new MemoryStream(Encoding.UTF8.GetBytes(body)),
                                           request, new TestOSHttpResponse());

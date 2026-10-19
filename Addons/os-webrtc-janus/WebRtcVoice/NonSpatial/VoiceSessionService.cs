@@ -13,9 +13,10 @@
  * Group membership and power checks stay with the region, which has the groups service; the service
  * keeps the checks that need only the session itself (who is a party, who was invited).
  *
- * Seats belong to regions that can disappear, so a seat has a lease: a region renews the agents it
- * still has (RenewSeats) and a seat nobody renews for the lease is released by Sweep with the
- * PresenceLost reason. A region that starts up asks for the seats naming it to be released
+ * Seats belong to regions that can disappear, so a seat has a lease: a region renews the seats it
+ * still holds (RenewSeats) and a seat nobody renews for the lease is released by Sweep with the
+ * PresenceLost reason. A seat is renewed by name, not by its agent, so a seat a region has let go of is not
+ * kept by the other seats the same agent holds. A region that starts up asks for the seats naming it to be released
  * (DepartRegion), since a fresh process holds no viewers.
  */
 using System;
@@ -28,14 +29,17 @@ namespace osWebRtcVoice.NonSpatial
     {
         public static readonly TimeSpan DefaultSeatLease = TimeSpan.FromSeconds(180);
 
-        /// <summary>Most agents one RenewSeats call is read for.</summary>
-        public const int MaxRenewAgents = 20000;
+        /// <summary>Most seats one RenewSeats call is read for.</summary>
+        public const int MaxRenewSeats = 10000;
 
         private readonly NonSpatialVoiceSessionEngine _engine;
         private readonly INonSpatialSessionStore _store;
         private readonly Func<DateTime> _clock;
         private readonly TimeSpan _seatLease;
-        private readonly Dictionary<UUID, DateTime> _renewed = new Dictionary<UUID, DateTime>();
+        // When each seat was last renewed, and when any seat of each agent was: the second answers whether an agent
+        // is still here, which keeps a call with a renewed member from being collected as idle.
+        private readonly Dictionary<SeatKey, DateTime> _renewed = new Dictionary<SeatKey, DateTime>();
+        private readonly Dictionary<UUID, DateTime> _renewedAgent = new Dictionary<UUID, DateTime>();
 
         public event Action<UUID, string, string> LimitRefused
         {
@@ -125,17 +129,18 @@ namespace osWebRtcVoice.NonSpatial
             return new SessionReply { Ok = true, Decision = "region-departed", Count = released };
         }
 
-        public SessionReply RenewSeats(IReadOnlyList<UUID> agents)
+        public SessionReply RenewSeats(IReadOnlyList<SeatKey> seats)
         {
             DateTime now = _clock();
             int n = 0;
-            if (agents != null)
+            if (seats != null)
                 lock (_renewed)
-                    foreach (UUID a in agents)
+                    foreach (SeatKey seat in seats)
                     {
-                        if (n >= MaxRenewAgents) break;
-                        if (a == UUID.Zero) continue;
-                        _renewed[a] = now;
+                        if (n >= MaxRenewSeats) break;
+                        if (seat.Agent == UUID.Zero || seat.Session == UUID.Zero) continue;
+                        _renewed[seat] = now;
+                        _renewedAgent[seat.Agent] = now;
                         n++;
                     }
             return new SessionReply { Ok = true, Decision = "renewed", Count = n };
@@ -222,7 +227,7 @@ namespace osWebRtcVoice.NonSpatial
                 {
                     DateTime last = seat.Value;
                     lock (_renewed)
-                        if (_renewed.TryGetValue(seat.Key, out DateTime renewed) && renewed > last)
+                        if (_renewed.TryGetValue(new SeatKey(s.SessionId, seat.Key), out DateTime renewed) && renewed > last)
                             last = renewed;
                     if (now - last >= _seatLease && _engine.Depart(s.SessionId, seat.Key, DepartureReason.PresenceLost).Ok)
                         released++;
@@ -234,7 +239,7 @@ namespace osWebRtcVoice.NonSpatial
         private bool IsRenewed(UUID agent)
         {
             lock (_renewed)
-                return _renewed.TryGetValue(agent, out DateTime at) && _clock() - at < _seatLease;
+                return _renewedAgent.TryGetValue(agent, out DateTime at) && _clock() - at < _seatLease;
         }
 
         private void PruneRenewals()
@@ -242,11 +247,16 @@ namespace osWebRtcVoice.NonSpatial
             DateTime now = _clock();
             lock (_renewed)
             {
-                List<UUID> stale = new List<UUID>();
-                foreach (KeyValuePair<UUID, DateTime> kv in _renewed)
+                List<SeatKey> stale = new List<SeatKey>();
+                foreach (KeyValuePair<SeatKey, DateTime> kv in _renewed)
                     if (now - kv.Value > _seatLease + _seatLease)
                         stale.Add(kv.Key);
-                foreach (UUID k in stale) _renewed.Remove(k);
+                foreach (SeatKey k in stale) _renewed.Remove(k);
+                List<UUID> staleAgents = new List<UUID>();
+                foreach (KeyValuePair<UUID, DateTime> kv in _renewedAgent)
+                    if (now - kv.Value > _seatLease + _seatLease)
+                        staleAgents.Add(kv.Key);
+                foreach (UUID k in staleAgents) _renewedAgent.Remove(k);
             }
         }
 

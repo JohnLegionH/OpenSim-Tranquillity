@@ -217,7 +217,7 @@ namespace osWebRtcVoice.Tests
             a.Accept(GroupId, Bob, RegionA);
 
             clock.Now += TimeSpan.FromSeconds(120);
-            a.RenewSeats(new List<UUID> { Alice });
+            a.RenewSeats(new List<SeatKey> { new SeatKey(GroupId, Alice) });
             clock.Now += TimeSpan.FromSeconds(100);          // 220 s since Bob was seated, 100 s since Alice renewed
             VoiceSessionService.SweepResult swept = service.Sweep();
 
@@ -240,7 +240,7 @@ namespace osWebRtcVoice.Tests
                 for (int step = 0; step < 6; step++)
                 {
                     clock.Now += TimeSpan.FromMinutes(10);
-                    a.RenewSeats(new List<UUID> { Alice });
+                    a.RenewSeats(new List<SeatKey> { new SeatKey(GroupId, Alice) });
                     service.Sweep();
                 }
             }
@@ -266,7 +266,7 @@ namespace osWebRtcVoice.Tests
             public SessionReply DepartByViewerSession(UUID agent, string viewerSession, int reason) => Down();
             public SessionReply DepartAll(UUID agent, int reason) => Down();
             public SessionReply DepartRegion(UUID region) => Down();
-            public SessionReply RenewSeats(IReadOnlyList<UUID> agents) => Down();
+            public SessionReply RenewSeats(IReadOnlyList<SeatKey> seats) => Down();
             public SessionReply MarkInvited(UUID sessionId, IReadOnlyList<UUID> agents) => Down();
             public SessionReply IssueToken(UUID sessionId, UUID agent) => Down();
             public SessionReply TakeConferenceRequest(UUID agent) => Down();

@@ -33,7 +33,7 @@ namespace osWebRtcVoice.NonSpatial
 
         public const string HandlerPath = "/voicesessions";
 
-        /// <summary>Largest request body read. A renewal of the most agents it accepts is about 750 KB.</summary>
+        /// <summary>Largest request body read. A renewal of the most seats it accepts is about 730 KB.</summary>
         public const int MaxBodyChars = 1024 * 1024;
 
         private readonly IVoiceSessionService m_service;
@@ -104,9 +104,9 @@ namespace osWebRtcVoice.NonSpatial
                 case "departregion":
                     return Ids(r, out s, "region") ? m_service.DepartRegion(s[0]) : null;
                 case "renewseats":
-                    return List(r, "agents", out List<UUID> agents) ? m_service.RenewSeats(agents) : null;
+                    return Seats(r, "seats", out List<SeatKey> seats) ? m_service.RenewSeats(seats) : null;
                 case "markinvited":
-                    return Ids(r, out s, "session") && List(r, "agents", out agents) ? m_service.MarkInvited(s[0], agents) : null;
+                    return Ids(r, out s, "session") && List(r, "agents", out List<UUID> agents) ? m_service.MarkInvited(s[0], agents) : null;
                 case "issuetoken":
                     return Ids(r, out s, "session", "agent") ? m_service.IssueToken(s[0], s[1]) : null;
                 case "takeconferencerequest":
@@ -159,6 +159,21 @@ namespace osWebRtcVoice.NonSpatial
             {
                 if (!UUID.TryParse(part, out UUID id)) return false;
                 ids.Add(id);
+            }
+            return true;
+        }
+
+        /// <summary>A comma separated list of session:agent pairs; absent or empty is an empty list, a bad entry refuses the request.</summary>
+        private static bool Seats(Dictionary<string, object> r, string key, out List<SeatKey> seats)
+        {
+            seats = new List<SeatKey>();
+            string text = Str(r, key);
+            if (string.IsNullOrEmpty(text)) return true;
+            foreach (string part in text.Split(','))
+            {
+                string[] pair = part.Split(':');
+                if (pair.Length != 2 || !UUID.TryParse(pair[0], out UUID session) || !UUID.TryParse(pair[1], out UUID agent)) return false;
+                seats.Add(new SeatKey(session, agent));
             }
             return true;
         }

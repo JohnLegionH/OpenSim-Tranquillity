@@ -31,6 +31,13 @@ namespace osWebRtcVoice.NonSpatial
         private readonly Func<DateTime> _clock;
         private readonly DepartOutbox _outbox;
 
+        // The seats this region took and has not let go of: the seat, and the viewer session it was tagged with. These
+        // are the only seats the region renews. An entry goes when the region departs the seat (or declines the
+        // invitation), whether or not the service received that, so a departure that was lost cannot leave a seat
+        // that keeps being renewed.
+        private readonly object _heldLock = new object();
+        private readonly Dictionary<SeatKey, string> _held = new Dictionary<SeatKey, string>();
+
         /// <summary>Raised at most once a minute when the service did not answer. Carries the operation name.</summary>
         public event Action<string> Unavailable;
 
@@ -105,12 +112,16 @@ namespace osWebRtcVoice.NonSpatial
             => SeatTaken(Outcome(_service.MarkPresent(sessionId, agent, originRegion, viewerSession), "markpresent"), agent);
 
         public SessionOutcome Decline(UUID sessionId, UUID agent)
-            => Outcome(_service.Decline(sessionId, agent), "decline");
+        {
+            Forget(sessionId, agent);
+            return Outcome(_service.Decline(sessionId, agent), "decline");
+        }
 
         // A departure the service did not receive is kept in the outbox, when the region has one, and sent when the
         // service answers again. The caller is told the service was unavailable all the same.
         public SessionOutcome Depart(UUID sessionId, UUID agent, DepartureReason reason)
         {
+            Forget(sessionId, agent);
             SessionReply r = Reached(_service.Depart(sessionId, agent, (int)reason), "depart");
             if (r == null) _outbox?.EnqueueDepart(sessionId, agent, (int)reason);
             return SessionWire.ToOutcome(r);
@@ -126,6 +137,7 @@ namespace osWebRtcVoice.NonSpatial
         public IReadOnlyList<NonSpatialVoiceSession> DepartByViewerSession(UUID agent, string viewerSession, DepartureReason reason)
         {
             if (string.IsNullOrEmpty(viewerSession)) return new List<NonSpatialVoiceSession>();
+            ForgetByViewerSession(agent, viewerSession);
             SessionReply r = Reached(_service.DepartByViewerSession(agent, viewerSession, (int)reason), "departbyviewer");
             if (r == null) _outbox?.EnqueueDepartByViewerSession(agent, viewerSession, (int)reason);
             return SessionWire.ToSessions(r);
@@ -133,6 +145,7 @@ namespace osWebRtcVoice.NonSpatial
 
         public IReadOnlyList<NonSpatialVoiceSession> DepartAll(UUID agent, DepartureReason reason)
         {
+            ForgetAll(agent);
             SessionReply r = Reached(_service.DepartAll(agent, (int)reason), "departall");
             if (r == null) _outbox?.EnqueueDepartAll(agent, (int)reason);
             return SessionWire.ToSessions(r);
@@ -188,11 +201,30 @@ namespace osWebRtcVoice.NonSpatial
             return r != null && r.Ok ? r.Count : -1;
         }
 
-        /// <summary>Tell the service these agents are still here, so their seats are kept. False when it did not answer.</summary>
-        public bool RenewSeats(IReadOnlyList<UUID> agents)
+        /// <summary>The seats this region took and still holds.</summary>
+        public IReadOnlyList<SeatKey> HeldSeats()
         {
-            SessionReply r = Reached(_service.RenewSeats(agents), "renewseats");
-            return r != null && r.Ok;
+            lock (_heldLock)
+                return new List<SeatKey>(_held.Keys);
+        }
+
+        /// <summary>
+        /// Tell the service these seats are still held, so their leases restart. The service is asked in batches no
+        /// larger than it reads. False when it did not answer.
+        /// </summary>
+        public bool RenewSeats(IReadOnlyList<SeatKey> seats)
+        {
+            if (seats == null) return true;
+            bool all = true;
+            for (int from = 0; from < seats.Count; from += VoiceSessionService.MaxRenewSeats)
+            {
+                List<SeatKey> batch = new List<SeatKey>();
+                for (int i = from; i < seats.Count && i < from + VoiceSessionService.MaxRenewSeats; i++)
+                    batch.Add(seats[i]);
+                SessionReply r = Reached(_service.RenewSeats(batch), "renewseats");
+                all &= r != null && r.Ok;
+            }
+            return all;
         }
 
         // ---- helpers -----------------------------------------------------------------------------
@@ -202,12 +234,49 @@ namespace osWebRtcVoice.NonSpatial
                 ? a
                 : throw new InvalidOperationException("no admission policy registered for " + type);
 
-        // The agent holds a seat again, so a departure queued for it earlier is out of date (see DepartOutbox.Supersede).
+        // The agent holds a seat again, so a departure queued for it earlier is out of date (see DepartOutbox.Supersede),
+        // and the seat is one this region holds and renews.
         private SessionOutcome SeatTaken(SessionOutcome outcome, UUID agent)
         {
-            if (_outbox != null && outcome.Ok && outcome.Session != null)
-                _outbox.Supersede(agent, outcome.Session.SessionId);
+            if (outcome.Ok && outcome.Session != null)
+            {
+                _outbox?.Supersede(agent, outcome.Session.SessionId);
+                NonSpatialMember member = outcome.Session.Find(agent);
+                if (member != null && member.HoldsSeat)
+                    lock (_heldLock)
+                        _held[new SeatKey(outcome.Session.SessionId, agent)] = member.ViewerSession;
+            }
             return outcome;
+        }
+
+        private void Forget(UUID sessionId, UUID agent)
+        {
+            lock (_heldLock)
+                _held.Remove(new SeatKey(sessionId, agent));
+        }
+
+        private void ForgetByViewerSession(UUID agent, string viewerSession)
+        {
+            lock (_heldLock)
+            {
+                List<SeatKey> gone = new List<SeatKey>();
+                foreach (KeyValuePair<SeatKey, string> held in _held)
+                    if (held.Key.Agent == agent && string.Equals(held.Value, viewerSession, StringComparison.Ordinal))
+                        gone.Add(held.Key);
+                foreach (SeatKey k in gone) _held.Remove(k);
+            }
+        }
+
+        private void ForgetAll(UUID agent)
+        {
+            lock (_heldLock)
+            {
+                List<SeatKey> gone = new List<SeatKey>();
+                foreach (SeatKey k in _held.Keys)
+                    if (k.Agent == agent)
+                        gone.Add(k);
+                foreach (SeatKey k in gone) _held.Remove(k);
+            }
         }
 
         private SessionOutcome Outcome(SessionReply reply, string operation)

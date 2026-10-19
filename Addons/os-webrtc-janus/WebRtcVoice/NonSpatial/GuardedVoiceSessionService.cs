@@ -82,8 +82,8 @@ namespace osWebRtcVoice.NonSpatial
         public SessionReply DepartRegion(UUID region)
             => Run(() => _inner.DepartRegion(region));
 
-        public SessionReply RenewSeats(IReadOnlyList<UUID> agents)
-            => Run(() => _inner.RenewSeats(agents));
+        public SessionReply RenewSeats(IReadOnlyList<SeatKey> seats)
+            => Run(() => _inner.RenewSeats(seats));
 
         public SessionReply MarkInvited(UUID sessionId, IReadOnlyList<UUID> agents)
             => Run(() => _inner.MarkInvited(sessionId, agents));

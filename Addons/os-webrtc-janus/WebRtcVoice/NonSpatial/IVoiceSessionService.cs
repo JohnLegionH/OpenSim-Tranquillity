@@ -19,6 +19,9 @@ using OpenMetaverse;
 
 namespace osWebRtcVoice.NonSpatial
 {
+    /// <summary>One seat: the agent's place in one session.</summary>
+    public readonly record struct SeatKey(UUID Session, UUID Agent);
+
     public interface IVoiceSessionService
     {
         SessionReply Start(int type, UUID creator, UUID otherOrOwner, UUID tempSessionId, UUID originRegion, int requestedCap);
@@ -36,8 +39,11 @@ namespace osWebRtcVoice.NonSpatial
         /// <summary>Release every seat that names this region as where it was taken. Count = seats released.</summary>
         SessionReply DepartRegion(UUID region);
 
-        /// <summary>The region still has these agents; their seats' leases restart. Count = agents recorded.</summary>
-        SessionReply RenewSeats(IReadOnlyList<UUID> agents);
+        /// <summary>
+        /// The region still holds these seats; their leases restart. A seat that is not named keeps the lease it had,
+        /// whoever else is named. Count = seats recorded.
+        /// </summary>
+        SessionReply RenewSeats(IReadOnlyList<SeatKey> seats);
 
         SessionReply MarkInvited(UUID sessionId, IReadOnlyList<UUID> agents);
         SessionReply IssueToken(UUID sessionId, UUID agent);
