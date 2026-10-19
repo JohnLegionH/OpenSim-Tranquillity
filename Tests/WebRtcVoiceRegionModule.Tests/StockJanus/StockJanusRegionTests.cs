@@ -17,6 +17,7 @@
 using System;
 using System.Collections.Generic;
 using System.Net;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using OpenMetaverse;
 using OpenMetaverse.StructuredData;
@@ -115,32 +116,56 @@ namespace osWebRtcVoice.Tests
             Assert.That(await _janus.WaitForParticipantsAsync(room, 0, Settle), Is.True, "and none after the second leaves");
         }
 
-        // A mixer that sweeps empty rooms (the slvoice plugin's grace period) clears the room on its own. The stock
-        // AudioBridge plugin never destroys an empty room by itself, and the service never sends a destroy, so on the
-        // stock plugin an emptied room stays for the life of the gateway.
-        // This test states both facts so a change in either shows up here.
+        // The slvoice mixer clears an emptied room on its own after its grace period. The stock AudioBridge plugin never
+        // does, so the service removes the rooms it created once they have stood empty for EmptyRoomGraceSeconds (set
+        // short here so the test does not wait a minute and a half). Either way the room is gone afterwards.
         [Test]
-        public async Task EmptiedRoom_AfterTheGracePeriod_FollowsThePluginsRoomLifetime()
+        public async Task EmptiedRoom_AfterTheGracePeriod_IsGoneFromTheGateway()
         {
-            using var region = StockRegion.Create();
+            using var region = StockRegion.Create((voice, janus) => janus.Set("EmptyRoomGraceSeconds", "5"));
             region.AddAvatar(Alice, StockRegion.InEstateChannelParcel);
             using Joined a = await region.JoinAsync(Alice, o => StockRegion.LocalBody(o));
             int room = a.Answer.Room;
             await region.LogoutAsync(a);
             Assert.That(await _janus.WaitForParticipantsAsync(room, 0, Settle), Is.True, "emptied");
 
-            DateTime until = DateTime.UtcNow.AddSeconds(StockJanusEnvironment.GraceSeconds);
+            DateTime until = DateTime.UtcNow.AddSeconds(Math.Max(StockJanusEnvironment.GraceSeconds, 60));
             while (await _janus.RoomExistsAsync(room) && DateTime.UtcNow < until)
                 await Task.Delay(2000);
 
-            bool stillThere = await _janus.RoomExistsAsync(room);
-            if (StockJanusEnvironment.PluginName == "janus.plugin.audiobridge")
-                Assert.That(stillThere, Is.True,
-                    "the stock plugin does not remove an emptied room and the service does not ask it to; if this now fails, " +
-                    "room cleanup has been added and this test should expect the room to be gone");
-            else
-                Assert.That(stillThere, Is.False,
-                    $"room {room} is still on the gateway {StockJanusEnvironment.GraceSeconds} s after its last participant left");
+            Assert.That(await _janus.RoomExistsAsync(room), Is.False,
+                $"room {room} is still on the gateway after its last participant left and the grace passed");
+        }
+
+        // A room the service did not create is never removed by it, however long it stands empty.
+        [Test]
+        public async Task EmptiedRoom_ThatTheServiceDidNotCreate_IsLeftInPlace()
+        {
+            StockJanusEnvironment.IgnoreUnlessAudioBridge();
+            using var region = StockRegion.Create((voice, janus) => janus.Set("EmptyRoomGraceSeconds", "3"));
+            region.AddAvatar(Alice, StockRegion.InEstateChannelParcel);
+            int room = JanusAudioBridge.CalcRoomNumber(string.Empty, region.Scene.RegionInfo.RegionID.ToString(), "local",
+                JanusAudioBridge.REGION_ROOM_ID, string.Empty);
+            JsonObject made = await _janus.PluginRequestAsync(new JsonObject
+            {
+                ["request"] = "create", ["room"] = room, ["permanent"] = false, ["description"] = "operator room"
+            });
+            Assert.That(made["audiobridge"]?.GetValue<string>(), Is.EqualTo("created"), "precondition: the operator made the room");
+            try
+            {
+                using Joined a = await region.JoinAsync(Alice, o => StockRegion.LocalBody(o));
+                Assert.That(a.Answer.Room, Is.EqualTo(room), "precondition: the service joined that room");
+                await region.LogoutAsync(a);
+                Assert.That(await _janus.WaitForParticipantsAsync(room, 0, Settle), Is.True, "emptied");
+
+                await Task.Delay(TimeSpan.FromSeconds(40));   // well past the grace and several sweeps
+
+                Assert.That(await _janus.RoomExistsAsync(room), Is.True, "the operator's room is still there");
+            }
+            finally
+            {
+                await _janus.PluginRequestAsync(new JsonObject { ["request"] = "destroy", ["room"] = room, ["permanent"] = false });
+            }
         }
 
         [Test]

@@ -70,6 +70,13 @@ namespace osWebRtcVoice.Tests.StockJanus
                 NUnit.Framework.Assert.Ignore("WEBRTC_JANUS_TEST_PYTHON is not set: this test needs a real WebRTC peer (aiortc)");
         }
 
+        /// <summary>Skips the calling test unless the plugin under test is the stock AudioBridge.</summary>
+        public static void IgnoreUnlessAudioBridge()
+        {
+            if (PluginName != "janus.plugin.audiobridge")
+                NUnit.Framework.Assert.Ignore("this test is about the stock AudioBridge plugin");
+        }
+
         public static void IgnoreUnlessRestartable()
         {
             if (string.IsNullOrEmpty(Container))

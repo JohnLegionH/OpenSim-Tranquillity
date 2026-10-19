@@ -568,11 +568,15 @@ public class AudioBridgeCreateRoomReq : PluginMsgReq
 // ==============================================================
 public class AudioBridgeDestroyRoomReq : PluginMsgReq
 {
-    public AudioBridgeDestroyRoomReq(int pRoomId) : base(new OSDMap() {
+    public AudioBridgeDestroyRoomReq(int pRoomId) : this(pRoomId, true)
+    {
+    }
+    /// <param name="pPermanent">Also remove the room from the plugin's config file. False for a room made at run time.</param>
+    public AudioBridgeDestroyRoomReq(int pRoomId, bool pPermanent) : base(new OSDMap() {
                                             { "request", "destroy" },
                                             { "room", pRoomId },
-                                            { "permanent", true }
-                                        })  
+                                            { "permanent", pPermanent }
+                                        })
     {
     }
 }

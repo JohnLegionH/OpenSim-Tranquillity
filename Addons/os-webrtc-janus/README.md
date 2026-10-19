@@ -85,6 +85,7 @@ The region server reads every `.ini` file in that folder at startup; the folder 
 | Key | Section | Default | Notes |
 |---|---|---|---|
 | `PluginName` | `[JanusWebRtcVoice]` | `janus.plugin.audiobridge` | `janus.plugin.slvoice` selects a spatial mixer that implements that plugin. |
+| `RemoveEmptyRooms`, `EmptyRoomGraceSeconds` | `[JanusWebRtcVoice]` | `true`, `60` | Remove a room this service created once it has stood empty for the grace period. The stock AudioBridge never removes an emptied room. Rooms the service did not create are never removed, and the slvoice mixer removes its own. |
 | `StunServers` | `[WebRtcVoice]` | empty | Comma-separated STUN URIs advertised to viewers as the `stun-servers` simulator feature. Stock viewers need a valid entry. |
 | `VisibilityFeederEnabled`, `VisibilityEmitEnabled` | `[WebRtcVoice]` | `false` | Send per-listener visibility to a mixer that understands it. Need `JanusGatewayAdminURI` and `AdminAPIToken`. |
 

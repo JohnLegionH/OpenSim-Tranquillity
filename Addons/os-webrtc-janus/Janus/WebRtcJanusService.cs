@@ -90,6 +90,7 @@ public partial class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                 ReadPluginNameConfig(janusConfig);
                 ReadGridIdConfig();
                 ReadArmingConfig(webRtcVoiceConfig, janusConfig);
+                ReadRoomReaperConfig(janusConfig);
                 // Debugging options
                 _MessageDetails = janusConfig.GetBoolean("MessageDetails", false);
                 ReadRequestTimeoutConfig(janusConfig);
@@ -110,6 +111,7 @@ public partial class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                         return;
                     }
                     RegisterConsoleCommands();
+                    StartRoomReaper();
                     _log.LogInformation($"{LogHeader} Enabled");
                 }
             }
@@ -152,6 +154,8 @@ public partial class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                 // What JanusRoom.JoinRoom mints with. Both stay at their defaults with the knob off.
                 JoinCapabilityEnabled = _JoinCapabilityEnabled,
                 JoinCapabilitySecret = _JoinCapabilitySecret,
+                // Rooms this bridge creates are watched by the empty-room reaper (null when it is off).
+                RoomCreated = _roomReaper is null ? null : _roomReaper.NoteCreated,
             };
 
             if (await audioBridge.Activate(_Config).ConfigureAwait(false))
