@@ -57,6 +57,12 @@ namespace osWebRtcVoice.NonSpatial
         public const string NoSuchSession = "refused-no-session";
         public const string Capacity = "refused-capacity";
         public const string AlreadyDeparted = "refused-departed";
+
+        /// <summary>The process already holds the most sessions it is configured to.</summary>
+        public const string GlobalSessionCap = "session-cap-global";
+
+        /// <summary>The agent already has the most live sessions it may have started.</summary>
+        public const string AgentSessionCap = "session-cap-agent";
     }
 
     public sealed class NonSpatialVoiceSessionEngine
@@ -73,13 +79,26 @@ namespace osWebRtcVoice.NonSpatial
         private readonly Func<DateTime> _clock;
         private readonly TimeSpan _inviteTtl;
         private readonly TimeSpan _idleTtl;
+        private readonly NonSpatialLimits _limits;
+        private readonly RefusalLogGate _refusalGate = new RefusalLogGate();
+
+        // Held across the check-then-create of every start, so the session caps and the ad-hoc
+        // (creator, temp id) lookup are decided and applied as one step.
+        private readonly object _startGate = new object();
+
+        /// <summary>
+        /// Raised when a limit refuses a request, at most once per agent per minute so a loop of refused
+        /// requests cannot flood the log. Carries counts and the decision only, never lists of ids.
+        /// </summary>
+        public event Action<UUID, string, string> LimitRefused;
 
         public NonSpatialVoiceSessionEngine(INonSpatialSessionStore store,
                                             IEnumerable<INonSpatialAdmission> admissions,
                                             string gridId,
                                             Func<DateTime> clock = null,
                                             TimeSpan? inviteTtl = null,
-                                            TimeSpan? idleTtl = null)
+                                            TimeSpan? idleTtl = null,
+                                            NonSpatialLimits limits = null)
         {
             _store = store ?? throw new ArgumentNullException(nameof(store));
             _admission = new Dictionary<NonSpatialSessionType, INonSpatialAdmission>();
@@ -90,7 +109,10 @@ namespace osWebRtcVoice.NonSpatial
             _clock = clock ?? (() => DateTime.UtcNow);
             _inviteTtl = inviteTtl ?? DefaultInviteTtl;
             _idleTtl = idleTtl ?? DefaultIdleTtl;
+            _limits = limits ?? NonSpatialLimits.Default;
         }
+
+        public NonSpatialLimits Limits => _limits;
 
         public INonSpatialSessionStore Store => _store;
         public TimeSpan InviteTtl => _inviteTtl;
@@ -179,20 +201,32 @@ namespace osWebRtcVoice.NonSpatial
             int cap = NonSpatialCaps.Effective(type, requestedCap);
             string roomKey = NonSpatialRoomKey.Derive(_gridId, type, sessionId);
 
-            NonSpatialVoiceSession s = _store.StartOrGet(sessionId, () =>
+            NonSpatialVoiceSession s;
+            bool created;
+            lock (_startGate)
             {
-                NonSpatialVoiceSession made = new NonSpatialVoiceSession(type, sessionId, tempSessionId, roomKey,
-                                                                         owner, creator, cap, now);
-                // the creator takes its seat at start; it is the one party that never needs inviting.
-                // Taking the first seat also JOINS THE CONVERSATION. The two axes are
-                // separate from here on -- a later voice hang-up clears the seat and leaves this.
-                made.Upsert(creator, MemberState.Accepted, originRegion, now).InChat = true;
-                if (invitees != null)
-                    foreach (UUID a in invitees)
-                        if (a != UUID.Zero && a != creator)
-                            made.Upsert(a, MemberState.Invited, UUID.Zero, now);
-                return made;
-            }, out bool created);
+                // A start that finds its session already there creates nothing, so only a genuinely
+                // new session is counted against the caps.
+                if (_store.Get(sessionId) == null)
+                {
+                    SessionOutcome refused = CheckSessionCaps(creator);
+                    if (!refused.Ok) return refused;
+                }
+                s = _store.StartOrGet(sessionId, () =>
+                {
+                    NonSpatialVoiceSession made = new NonSpatialVoiceSession(type, sessionId, tempSessionId, roomKey,
+                                                                             owner, creator, cap, now);
+                    // the creator takes its seat at start; it is the one party that never needs inviting.
+                    // Taking the first seat also JOINS THE CONVERSATION. The two axes are
+                    // separate from here on -- a later voice hang-up clears the seat and leaves this.
+                    made.Upsert(creator, MemberState.Accepted, originRegion, now).InChat = true;
+                    if (invitees != null)
+                        foreach (UUID a in invitees)
+                            if (a != UUID.Zero && a != creator)
+                                made.Upsert(a, MemberState.Invited, UUID.Zero, now);
+                    return made;
+                }, out created);
+            }
 
             if (!created)
             {
@@ -228,6 +262,50 @@ namespace osWebRtcVoice.NonSpatial
             bool ring = ClaimRing(sessionId);
             return new SessionOutcome(true, created ? "started" : "start-idempotent", s, created, ring);
         }
+
+        /// <summary>
+        /// Refuse a new session when the process already holds the most it is configured to, or when
+        /// the creator already has the most live sessions it may have started. Called with the start
+        /// gate held, so two simultaneous starts cannot both slip under a cap.
+        /// </summary>
+        private SessionOutcome CheckSessionCaps(UUID creator)
+        {
+            IReadOnlyList<NonSpatialVoiceSession> all = _store.All();
+            if (all.Count >= _limits.MaxNonSpatialSessions)
+            {
+                NoteRefusal(creator, SessionOutcome.GlobalSessionCap, $"sessions={all.Count} limit={_limits.MaxNonSpatialSessions}");
+                return SessionOutcome.Fail(SessionOutcome.GlobalSessionCap);
+            }
+            int started = 0;
+            foreach (NonSpatialVoiceSession existing in all)
+                if (existing.Creator == creator && !_store.Mutate(existing.SessionId, sess => sess.IsDead, true))
+                    started++;
+            if (started >= _limits.MaxSessionsPerAgent)
+            {
+                NoteRefusal(creator, SessionOutcome.AgentSessionCap, $"started={started} limit={_limits.MaxSessionsPerAgent}");
+                return SessionOutcome.Fail(SessionOutcome.AgentSessionCap);
+            }
+            return new SessionOutcome(true, "caps-ok", null);
+        }
+
+        /// <summary>Report a limit refusal, once per agent per minute. The detail carries counts only.</summary>
+        private void NoteRefusal(UUID agent, string decision, string detail)
+        {
+            if (_refusalGate.ShouldLog(agent, _clock()))
+                LimitRefused?.Invoke(agent, decision, detail);
+        }
+
+        /// <summary>
+        /// Drop per-agent bookkeeping nobody has touched for a while. Called from the maintenance pass so
+        /// the tables stay as small as the set of agents active recently.
+        /// </summary>
+        public void PruneTransientState()
+        {
+            _refusalGate.Prune(_clock(), TransientStateMaxAge);
+        }
+
+        /// <summary>How long an agent can go unseen before its bookkeeping is dropped.</summary>
+        public static readonly TimeSpan TransientStateMaxAge = TimeSpan.FromMinutes(10);
 
         // ---- invite / accept / decline ---------------------------------------------------------
 

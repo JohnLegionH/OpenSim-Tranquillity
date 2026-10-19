@@ -73,6 +73,20 @@ public partial class WebRtcVoiceRegionModule
 
     private NonSpatialVoiceSessionEngine m_nonSpatial;
 
+    // [WebRtcVoice] MaxNonSpatialSessions / MaxSessionsPerAgent: how many non-spatial sessions this process
+    // holds, and how many live ones one agent may have started. A value below 1 is not a usable
+    // ceiling, so it reads as the default.
+    public static NonSpatialLimits ReadNonSpatialLimits(IConfig pConfig)
+        => new NonSpatialLimits
+        {
+            MaxNonSpatialSessions = PositiveOrDefault(pConfig.GetInt("MaxNonSpatialSessions", NonSpatialLimits.DefaultMaxNonSpatialSessions),
+                                                      NonSpatialLimits.DefaultMaxNonSpatialSessions),
+            MaxSessionsPerAgent = PositiveOrDefault(pConfig.GetInt("MaxSessionsPerAgent", NonSpatialLimits.DefaultMaxSessionsPerAgent),
+                                                    NonSpatialLimits.DefaultMaxSessionsPerAgent),
+        };
+
+    private static int PositiveOrDefault(int value, int fallback) => value >= 1 ? value : fallback;
+
     // Drives the engine's Sweep() so invitations lapse and idle sessions are collected. Created with the
     // engine, running while this module serves at least one region, disposed when the last region is
     // removed and when the module closes.
@@ -417,7 +431,12 @@ public partial class WebRtcVoiceRegionModule
         m_nonSpatial = new NonSpatialVoiceSessionEngine(
             m_nonSpatialStore,
             new INonSpatialAdmission[] { new P2PAdmission(), new AdhocAdmission(), m_groupVoice.ToAdmissionOrNull() },
-            JanusAudioBridge.ReadGridId(config));
+            JanusAudioBridge.ReadGridId(config),
+            limits: ReadNonSpatialLimits(m_Config));
+
+        m_nonSpatial.LimitRefused += (agent, decision, detail) =>
+            m_log.LogWarning("{LogHeader} non-spatial session limit: agent={AgentId} decision={Decision} {Detail}",
+                logHeader, agent, decision, detail);
 
         m_nonSpatialMaintenance = new NonSpatialMaintenance(m_nonSpatial,
             line => m_log.LogDebug("{LogHeader} {Line}", logHeader, line),

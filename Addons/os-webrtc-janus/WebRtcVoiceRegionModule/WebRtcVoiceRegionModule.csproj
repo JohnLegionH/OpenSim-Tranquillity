@@ -44,6 +44,7 @@
     <Compile Include="NonSpatial/INonSpatialSessionStore.cs" />
     <Compile Include="NonSpatial/NonSpatialVoiceSessionEngine.cs" />
     <Compile Include="NonSpatial/NonSpatialMaintenance.cs" />
+    <Compile Include="NonSpatial/NonSpatialLimits.cs" />
     <Compile Include="NonSpatial/GroupVoicePolicy.cs" />
     <Compile Include="NonSpatial/GroupVoiceChatSession.cs" />
     <Compile Include="NonSpatial/NonSpatialProvisionAdmission.cs" />

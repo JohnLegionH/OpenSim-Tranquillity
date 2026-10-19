@@ -81,6 +81,7 @@ namespace osWebRtcVoice.NonSpatial
             try
             {
                 NonSpatialVoiceSessionEngine.SweepSummary s = _engine.SweepWithSummary();
+                _engine.PruneTransientState();
                 int expired = s.InvitationsExpired + s.Removed.Count;
                 if (expired > 0)
                     _debug?.Invoke($"[NONSPATIAL SWEEP] invitations={s.InvitationsExpired} sessions={s.Removed.Count} seats={s.SeatsReleased}");
