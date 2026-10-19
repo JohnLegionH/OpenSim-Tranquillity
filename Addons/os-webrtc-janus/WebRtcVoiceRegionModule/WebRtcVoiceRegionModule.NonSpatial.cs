@@ -489,6 +489,8 @@ public partial class WebRtcVoiceRegionModule
             JanusAudioBridge.ReadGridId(config),
             limits: ReadNonSpatialLimits(m_Config));
 
+        m_nonSpatial.IsAgentPresent = AgentIsHere;
+
         m_nonSpatial.LimitRefused += (agent, decision, detail) =>
             m_log.LogWarning("{LogHeader} non-spatial session limit: agent={AgentId} decision={Decision} {Detail}",
                 logHeader, agent, decision, detail);
@@ -497,6 +499,22 @@ public partial class WebRtcVoiceRegionModule
             line => m_log.LogDebug("{LogHeader} {Line}", logHeader, line),
             (message, e) => m_log.LogWarning(e, "{LogHeader} {Message}", logHeader, message));
         m_nonSpatialMaintenance.Start();
+    }
+
+    // Whether an agent has a root presence in a scene this module serves. The engine asks this before it
+    // ends a session for being idle, because a session with a present member is not idle.
+    private bool AgentIsHere(UUID agent)
+    {
+        List<Scene> scenes;
+        lock (m_scenes)
+            scenes = new List<Scene>(m_scenes);
+        foreach (Scene scene in scenes)
+        {
+            ScenePresence sp = scene.GetScenePresence(agent);
+            if (sp is not null && !sp.IsChildAgent && !sp.IsDeleted)
+                return true;
+        }
+        return false;
     }
 
     // Stops the session sweep timer. Start() brings it back when a region is added again.

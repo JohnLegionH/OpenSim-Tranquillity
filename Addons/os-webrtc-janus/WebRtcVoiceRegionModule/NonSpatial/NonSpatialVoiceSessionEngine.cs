@@ -136,6 +136,13 @@ namespace osWebRtcVoice.NonSpatial
             return false;
         }
 
+        /// <summary>
+        /// Whether an agent is still present on this instance. A session whose idle time is up is kept while
+        /// any member holding a seat is present, because someone in the call is activity however quiet the
+        /// session has been. Unset, no agent counts as present and idle expiry works on the clock alone.
+        /// </summary>
+        public Func<UUID, bool> IsAgentPresent { get; set; }
+
         public INonSpatialSessionStore Store => _store;
         public TimeSpan InviteTtl => _inviteTtl;
         public TimeSpan IdleTtl => _idleTtl;
@@ -810,6 +817,11 @@ namespace osWebRtcVoice.NonSpatial
             int seatsReleased = 0;
             foreach (NonSpatialVoiceSession s in _store.All())
             {
+                // A session is idle only when nobody who holds a seat in it is still here. A present seat
+                // holder is activity, so a long quiet call is not ended under the people in it.
+                if (now - s.LastSeenUtc >= _idleTtl && SeatHolderIsPresent(s.SessionId))
+                    Touch(s.SessionId);
+
                 int[] counts = _store.Mutate(s.SessionId, sess =>
                 {
                     int lapsed = 0;
@@ -854,6 +866,31 @@ namespace osWebRtcVoice.NonSpatial
         }
 
         // ---- helpers -------------------------------------------------------------------------
+
+        /// <summary>
+        /// True when a member holding a seat in the session is present on this instance. The lookup runs
+        /// outside the store's lock. A lookup that fails counts as present: ending a call with someone in it
+        /// is worse than keeping a dead one until the next pass.
+        /// </summary>
+        private bool SeatHolderIsPresent(UUID sessionId)
+        {
+            Func<UUID, bool> present = IsAgentPresent;
+            if (present == null) return false;
+            List<UUID> seated = _store.Mutate(sessionId, sess =>
+            {
+                List<UUID> ids = new List<UUID>();
+                foreach (NonSpatialMember m in sess.Members)
+                    if (m.HoldsSeat) ids.Add(m.AgentId);
+                return ids;
+            }, null);
+            if (seated == null) return false;
+            foreach (UUID agent in seated)
+            {
+                try { if (present(agent)) return true; }
+                catch { return true; }
+            }
+            return false;
+        }
 
         /// <summary>
         /// Record that these agents have been rung for the current ring cycle, so a later joiner's

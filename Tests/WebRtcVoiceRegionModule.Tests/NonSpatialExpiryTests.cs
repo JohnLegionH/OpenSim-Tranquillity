@@ -91,6 +91,97 @@ namespace osWebRtcVoice.Tests
         }
 
         [Test]
+        public void ALongCallWithAPresentMemberSurvivesPastTheIdleTtl()
+        {
+            FakeClock clock = new FakeClock();
+            NonSpatialVoiceSessionEngine e = NewEngine(clock, idleTtl: TimeSpan.FromHours(8));
+            HashSet<UUID> here = new() { Alice, Bob };
+            e.IsAgentPresent = here.Contains;
+            UUID id = e.StartAdhoc(Alice, UUID.Random(), RegionA, new List<UUID> { Bob }).Session.SessionId;
+            e.Accept(id, Bob, RegionA);
+            NonSpatialMaintenance pass = NewMaintenance(e, new Capture());
+
+            // Nobody speaks, types or joins for far longer than the idle time, and the pass runs throughout.
+            for (int hour = 1; hour <= 30; hour++)
+            {
+                clock.Now = clock.Now.AddHours(1);
+                pass.RunOnce();
+            }
+
+            NonSpatialVoiceSession kept = e.Store.Get(id);
+            Assert.That(kept, Is.Not.Null, "someone is still in the call");
+            Assert.That(kept.SeatsHeld, Is.EqualTo(2));
+            Assert.That(kept.Find(Alice).State, Is.Not.EqualTo(MemberState.Departed));
+        }
+
+        [Test]
+        public void ACallIsKeptWhileOneMemberIsPresentAndExpiresOnceTheLastOneLeaves()
+        {
+            FakeClock clock = new FakeClock();
+            NonSpatialVoiceSessionEngine e = NewEngine(clock, idleTtl: TimeSpan.FromHours(8));
+            HashSet<UUID> here = new() { Bob };   // Alice's viewer is gone; Bob is still there
+            e.IsAgentPresent = here.Contains;
+            UUID id = e.StartAdhoc(Alice, UUID.Random(), RegionA, new List<UUID> { Bob }).Session.SessionId;
+            e.Accept(id, Bob, RegionA);
+            NonSpatialMaintenance pass = NewMaintenance(e, new Capture());
+
+            clock.Now = clock.Now.AddHours(9);
+            pass.RunOnce();
+            Assert.That(e.Store.Get(id), Is.Not.Null, "Bob is present, so the call is live");
+
+            here.Clear();   // Bob goes too
+            clock.Now = clock.Now.AddHours(9);
+            pass.RunOnce();
+            Assert.That(e.Store.Get(id), Is.Null, "nobody is left, so the idle time applies");
+        }
+
+        [Test]
+        public void ACallWhoseMembersHaveAllGoneStillExpiresAndReleasesTheirSeats()
+        {
+            FakeClock clock = new FakeClock();
+            NonSpatialVoiceSessionEngine e = NewEngine(clock, idleTtl: TimeSpan.FromHours(8));
+            e.IsAgentPresent = _ => false;   // a crash or logout left both seats behind
+            UUID id = e.StartAdhoc(Alice, UUID.Random(), RegionA, new List<UUID> { Bob }).Session.SessionId;
+            e.Accept(id, Bob, RegionA);
+            NonSpatialVoiceSession held = e.Store.Get(id);
+            Assert.That(held.SeatsHeld, Is.EqualTo(2));
+
+            clock.Now = clock.Now.AddHours(9);
+            NewMaintenance(e, new Capture()).RunOnce();
+
+            Assert.That(e.Store.Get(id), Is.Null);
+            Assert.That(held.SeatsHeld, Is.EqualTo(0), "their seats are released");
+        }
+
+        [Test]
+        public void APresentPersonWhoHoldsNoSeatDoesNotKeepACallAlive()
+        {
+            FakeClock clock = new FakeClock();
+            NonSpatialVoiceSessionEngine e = NewEngine(clock, idleTtl: TimeSpan.FromHours(8));
+            e.IsAgentPresent = a => a == Bob;   // Bob is online but never accepted the invitation
+            UUID id = e.StartAdhoc(Alice, UUID.Random(), RegionA, new List<UUID> { Bob }).Session.SessionId;
+
+            clock.Now = clock.Now.AddHours(9);
+            NewMaintenance(e, new Capture()).RunOnce();
+
+            Assert.That(e.Store.Get(id), Is.Null);
+        }
+
+        [Test]
+        public void APresenceLookupThatFailsKeepsTheCall_NeverEndsItWithSomeoneInIt()
+        {
+            FakeClock clock = new FakeClock();
+            NonSpatialVoiceSessionEngine e = NewEngine(clock, idleTtl: TimeSpan.FromHours(8));
+            e.IsAgentPresent = _ => throw new InvalidOperationException("scene unavailable");
+            UUID id = e.StartAdhoc(Alice, UUID.Random(), RegionA).Session.SessionId;
+
+            clock.Now = clock.Now.AddHours(9);
+            NewMaintenance(e, new Capture()).RunOnce();
+
+            Assert.That(e.Store.Get(id), Is.Not.Null);
+        }
+
+        [Test]
         public void AnExpiredSessionReleasesItsSeats()
         {
             FakeClock clock = new FakeClock();

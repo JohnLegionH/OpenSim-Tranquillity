@@ -44,7 +44,7 @@
     ;AdhocVoiceEnabled = false
 
     ; Limits on non-spatial sessions (avatar-to-avatar, group and conference calls). Sessions and unanswered
-    ; invitations also expire by themselves: an invitation after 2 minutes, an idle session after 8 hours.
+    ; invitations also expire by themselves: an invitation after 2 minutes, an idle session after 8 hours (a session with someone still in it is never idle).
     ; Most sessions of all kinds this region server holds at once. A start beyond it is refused.
     ; Default: 5000.
     ;MaxNonSpatialSessions = 5000
