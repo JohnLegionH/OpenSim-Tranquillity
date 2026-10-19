@@ -42,7 +42,11 @@ namespace osWebRtcVoice.NonSpatial
         SessionReply MarkInvited(UUID sessionId, IReadOnlyList<UUID> agents);
         SessionReply IssueToken(UUID sessionId, UUID agent);
         SessionReply TakeConferenceRequest(UUID agent);
-        SessionReply Get(UUID sessionId);
-        SessionReply GetByRoomKey(string roomKey);
+        /// <summary>
+        /// The session as the named agent may see it. The call's credential is in the copy only when that
+        /// agent is a member of the session or was invited to it; with no agent (or a stranger) it is left out.
+        /// </summary>
+        SessionReply Get(UUID sessionId, UUID agent = default);
+        SessionReply GetByRoomKey(string roomKey, UUID agent = default);
     }
 }

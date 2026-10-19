@@ -66,43 +66,43 @@ namespace osWebRtcVoice.NonSpatial
         {
             if (!IsStartableType(type) || creator == UUID.Zero)
                 return SessionReply.Fail("refused-bad-request");
-            return Reply(_engine.Start((NonSpatialSessionType)type, creator, otherOrOwner, tempSessionId, originRegion, requestedCap));
+            return Reply(_engine.Start((NonSpatialSessionType)type, creator, otherOrOwner, tempSessionId, originRegion, requestedCap), creator);
         }
 
         public SessionReply StartAdhoc(UUID creator, UUID tempSessionId, UUID originRegion, IReadOnlyList<UUID> invitees, int requestedCap)
-            => Reply(_engine.StartAdhoc(creator, tempSessionId, originRegion, invitees, requestedCap));
+            => Reply(_engine.StartAdhoc(creator, tempSessionId, originRegion, invitees, requestedCap), creator);
 
         public SessionReply CheckInviteCount(UUID sessionId, UUID inviter, IReadOnlyList<UUID> asked)
-            => Reply(_engine.CheckInviteCount(sessionId, inviter, asked));
+            => Reply(_engine.CheckInviteCount(sessionId, inviter, asked), inviter);
 
         public SessionReply Invite(UUID sessionId, UUID inviter, UUID invitee)
-            => Reply(_engine.Invite(sessionId, inviter, invitee));
+            => Reply(_engine.Invite(sessionId, inviter, invitee), inviter);
 
         public SessionReply Accept(UUID sessionId, UUID agent, UUID originRegion, string viewerSession)
-            => Reply(_engine.Accept(sessionId, agent, originRegion, viewerSession));
+            => Reply(_engine.Accept(sessionId, agent, originRegion, viewerSession), agent);
 
         public SessionReply MarkPresent(UUID sessionId, UUID agent, UUID originRegion, string viewerSession)
-            => Reply(_engine.MarkPresent(sessionId, agent, originRegion, viewerSession));
+            => Reply(_engine.MarkPresent(sessionId, agent, originRegion, viewerSession), agent);
 
         public SessionReply Decline(UUID sessionId, UUID agent)
-            => Reply(_engine.Decline(sessionId, agent));
+            => Reply(_engine.Decline(sessionId, agent), agent);
 
         public SessionReply Depart(UUID sessionId, UUID agent, int reason)
             => IsReason(reason)
-                ? Reply(_engine.Depart(sessionId, agent, (DepartureReason)reason))
+                ? Reply(_engine.Depart(sessionId, agent, (DepartureReason)reason), agent)
                 : SessionReply.Fail("refused-bad-request");
 
         public SessionReply LeaveChat(UUID sessionId, UUID agent)
-            => Reply(_engine.LeaveChat(sessionId, agent));
+            => Reply(_engine.LeaveChat(sessionId, agent), agent);
 
         public SessionReply DepartByViewerSession(UUID agent, string viewerSession, int reason)
             => IsReason(reason)
-                ? Many(_engine.DepartByViewerSession(agent, viewerSession, (DepartureReason)reason))
+                ? Many(_engine.DepartByViewerSession(agent, viewerSession, (DepartureReason)reason), agent)
                 : SessionReply.Fail("refused-bad-request");
 
         public SessionReply DepartAll(UUID agent, int reason)
             => IsReason(reason)
-                ? Many(_engine.DepartAll(agent, (DepartureReason)reason))
+                ? Many(_engine.DepartAll(agent, (DepartureReason)reason), agent)
                 : SessionReply.Fail("refused-bad-request");
 
         public SessionReply DepartRegion(UUID region)
@@ -159,16 +159,16 @@ namespace osWebRtcVoice.NonSpatial
             return new SessionReply { Ok = true, Decision = ok ? "taken" : SessionOutcome.RateLimited, Flag = ok };
         }
 
-        public SessionReply Get(UUID sessionId)
+        public SessionReply Get(UUID sessionId, UUID agent = default)
         {
-            SessionData d = Snapshot(sessionId);
+            SessionData d = Snapshot(sessionId, agent);
             return d == null ? SessionReply.Fail(SessionOutcome.NoSuchSession) : new SessionReply { Ok = true, Decision = "found", Session = d };
         }
 
-        public SessionReply GetByRoomKey(string roomKey)
+        public SessionReply GetByRoomKey(string roomKey, UUID agent = default)
         {
             NonSpatialVoiceSession s = _store.GetByRoomKey(roomKey);
-            return s == null ? SessionReply.Fail(SessionOutcome.NoSuchSession) : Get(s.SessionId);
+            return s == null ? SessionReply.Fail(SessionOutcome.NoSuchSession) : Get(s.SessionId, agent);
         }
 
         // ---- upkeep ----------------------------------------------------------------------------
@@ -256,24 +256,36 @@ namespace osWebRtcVoice.NonSpatial
 
         private static bool IsReason(int reason) => Enum.IsDefined(typeof(DepartureReason), reason);
 
-        private SessionData Snapshot(UUID sessionId) => _store.Mutate<SessionData>(sessionId, SessionWire.ToData, null);
+        /// <summary>
+        /// A copy of the session for <paramref name="reader"/>. The call's credential is left out unless the
+        /// reader is a member of the session or was invited to it: anyone who can reach the service can ask
+        /// for a session, and the credential is what admits a viewer to the call's audio.
+        /// </summary>
+        private SessionData Snapshot(UUID sessionId, UUID reader)
+            => _store.Mutate<SessionData>(sessionId, s =>
+            {
+                SessionData d = SessionWire.ToData(s);
+                if (reader == UUID.Zero || (s.Find(reader) == null && !s.WasInvited(reader)))
+                    d.Token = null;
+                return d;
+            }, null);
 
-        private SessionReply Reply(SessionOutcome o)
+        private SessionReply Reply(SessionOutcome o, UUID reader)
             => new SessionReply
             {
                 Ok = o.Ok,
                 Decision = o.Decision,
                 Created = o.Created,
                 StartedRinging = o.StartedRinging,
-                Session = o.Session == null ? null : Snapshot(o.Session.SessionId),
+                Session = o.Session == null ? null : Snapshot(o.Session.SessionId, reader),
             };
 
-        private SessionReply Many(IReadOnlyList<NonSpatialVoiceSession> touched)
+        private SessionReply Many(IReadOnlyList<NonSpatialVoiceSession> touched, UUID reader)
         {
             SessionReply r = new SessionReply { Ok = true, Decision = "departed", Sessions = new List<SessionData>(), Count = touched.Count };
             foreach (NonSpatialVoiceSession s in touched)
             {
-                SessionData d = Snapshot(s.SessionId);
+                SessionData d = Snapshot(s.SessionId, reader);
                 if (d != null) r.Sessions.Add(d);
             }
             return r;

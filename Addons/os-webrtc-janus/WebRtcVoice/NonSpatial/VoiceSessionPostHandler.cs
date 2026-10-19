@@ -112,9 +112,10 @@ namespace osWebRtcVoice.NonSpatial
                 case "takeconferencerequest":
                     return Ids(r, out s, "agent") ? m_service.TakeConferenceRequest(s[0]) : null;
                 case "get":
-                    return Ids(r, out s, "session") ? m_service.Get(s[0]) : null;
+                    return Ids(r, out s, "session") && OptionalId(r, "agent", out UUID reader) ? m_service.Get(s[0], reader) : null;
                 case "getbyroomkey":
-                    return Str(r, "roomkey") is string key && key.Length > 0 && key.Length <= 256 ? m_service.GetByRoomKey(key) : null;
+                    return Str(r, "roomkey") is string key && key.Length > 0 && key.Length <= 256 && OptionalId(r, "agent", out reader)
+                        ? m_service.GetByRoomKey(key, reader) : null;
             }
             m_log.LogDebug("[VOICE SESSION HANDLER]: unknown method request: {Method}", method);
             return null;
@@ -138,6 +139,14 @@ namespace osWebRtcVoice.NonSpatial
                 if (!r.TryGetValue(keys[i], out object v) || !UUID.TryParse(v?.ToString(), out ids[i]))
                     return false;
             return true;
+        }
+
+        /// <summary>An id that may be absent or empty (then Zero); present but unreadable refuses the request.</summary>
+        private static bool OptionalId(Dictionary<string, object> r, string key, out UUID id)
+        {
+            id = UUID.Zero;
+            string text = Str(r, key);
+            return string.IsNullOrEmpty(text) || UUID.TryParse(text, out id);
         }
 
         /// <summary>A comma separated list of ids; absent or empty is an empty list, a bad entry refuses the request.</summary>

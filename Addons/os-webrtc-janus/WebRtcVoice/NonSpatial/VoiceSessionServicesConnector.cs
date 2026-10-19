@@ -90,11 +90,11 @@ namespace osWebRtcVoice.NonSpatial
         public SessionReply TakeConferenceRequest(UUID agent)
             => Call("takeconferencerequest", ("agent", agent));
 
-        public SessionReply Get(UUID sessionId)
-            => Call("get", ("session", sessionId));
+        public SessionReply Get(UUID sessionId, UUID agent = default)
+            => Call("get", ("session", sessionId), ("agent", agent));
 
-        public SessionReply GetByRoomKey(string roomKey)
-            => Call("getbyroomkey", ("roomkey", roomKey ?? string.Empty));
+        public SessionReply GetByRoomKey(string roomKey, UUID agent = default)
+            => Call("getbyroomkey", ("roomkey", roomKey ?? string.Empty), ("agent", agent));
 
         private static string Join(IEnumerable<UUID> ids)
         {

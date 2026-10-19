@@ -148,9 +148,9 @@ namespace osWebRtcVoice.NonSpatial
 
         public INonSpatialSessionStore Store => _store;
 
-        public NonSpatialVoiceSession Get(UUID sessionId) => _store.Get(sessionId);
+        public NonSpatialVoiceSession Get(UUID sessionId, UUID agent = default) => _store.Get(sessionId);
 
-        public NonSpatialVoiceSession GetByRoomKey(string roomKey) => _store.GetByRoomKey(roomKey);
+        public NonSpatialVoiceSession GetByRoomKey(string roomKey, UUID agent = default) => _store.GetByRoomKey(roomKey);
         public TimeSpan InviteTtl => _inviteTtl;
         public TimeSpan IdleTtl => _idleTtl;
 

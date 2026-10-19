@@ -123,7 +123,7 @@ namespace osWebRtcVoice.Tests
             SessionOutcome started = region.Start(NonSpatialSessionType.Group, Alice, GroupId, GroupId, RegionA);
             SessionOutcome joined = region.Accept(GroupId, Bob, RegionB, "viewer-one");
             string token = region.IssueToken(GroupId, Bob);
-            NonSpatialVoiceSession s = region.Get(GroupId);
+            NonSpatialVoiceSession s = region.Get(GroupId, Bob);
 
             Assert.That(started.Ok, Is.True, started.Decision);
             Assert.That(started.Created, Is.True);
@@ -136,6 +136,34 @@ namespace osWebRtcVoice.Tests
             Assert.That(s.Find(Bob).OriginRegion, Is.EqualTo(RegionB));
             Assert.That(s.Token, Is.EqualTo(token));
             Assert.That(service.SessionCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void TheCredentialCrossesTheWireOnlyToAMember()
+        {
+            VoiceSessionService service = VoiceSessionServiceTests.NewService();
+            using TestServer server = new TestServer(NewHandler(service));
+            GridNonSpatialSessions region = VoiceSessionServiceTests.NewRegion(NewClient(server));
+            region.Start(NonSpatialSessionType.Group, Alice, GroupId, GroupId, RegionA);
+            string token = region.IssueToken(GroupId, Alice);
+            string key = region.Get(GroupId).RoomKey;
+
+            Assert.That(region.Get(GroupId, Alice).Token, Is.EqualTo(token));
+            Assert.That(region.GetByRoomKey(key, Alice).Token, Is.EqualTo(token));
+            Assert.That(region.Get(GroupId).Token, Is.Null.Or.Empty, "no agent named");
+            Assert.That(region.Get(GroupId, Carol).Token, Is.Null.Or.Empty, "not a member");
+            Assert.That(region.GetByRoomKey(key, Carol).Token, Is.Null.Or.Empty, "not a member, by room key");
+        }
+
+        [Test]
+        public void AReadNamingAnUnreadableAgentIsRefused()
+        {
+            VoiceSessionService service = VoiceSessionServiceTests.NewService();
+            VoiceSessionPostHandler handler = NewHandler(service);
+            VoiceSessionServiceTests.NewRegion(service).Start(NonSpatialSessionType.Group, Alice, GroupId, GroupId, RegionA);
+
+            Assert.That(handler.Dispatch("get", new Dictionary<string, object> { ["session"] = GroupId.ToString(), ["agent"] = "not-an-id" }), Is.Null);
+            Assert.That(handler.Dispatch("get", new Dictionary<string, object> { ["session"] = GroupId.ToString() }), Is.Not.Null, "naming none is fine");
         }
 
         [Test]

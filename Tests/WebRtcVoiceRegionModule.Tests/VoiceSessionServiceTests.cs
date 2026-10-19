@@ -270,8 +270,8 @@ namespace osWebRtcVoice.Tests
             public SessionReply MarkInvited(UUID sessionId, IReadOnlyList<UUID> agents) => Down();
             public SessionReply IssueToken(UUID sessionId, UUID agent) => Down();
             public SessionReply TakeConferenceRequest(UUID agent) => Down();
-            public SessionReply Get(UUID sessionId) => Down();
-            public SessionReply GetByRoomKey(string roomKey) => Down();
+            public SessionReply Get(UUID sessionId, UUID agent) => Down();
+            public SessionReply GetByRoomKey(string roomKey, UUID agent) => Down();
         }
 
         [Test]
@@ -351,7 +351,7 @@ namespace osWebRtcVoice.Tests
             a.MarkInvited(started.Session.SessionId, new List<UUID> { Bob });
             string token = a.IssueToken(started.Session.SessionId, Alice);
 
-            NonSpatialVoiceSession s = a.Get(started.Session.SessionId);
+            NonSpatialVoiceSession s = a.Get(started.Session.SessionId, Alice);
 
             Assert.That(s.Type, Is.EqualTo(NonSpatialSessionType.Adhoc));
             Assert.That(s.Creator, Is.EqualTo(Alice));
@@ -374,6 +374,65 @@ namespace osWebRtcVoice.Tests
 
             Assert.That(a.IssueToken(GroupId, Alice), Is.Not.Null.And.Length.EqualTo(NonSpatialVoiceSessionEngine.TokenBytes * 2));
             Assert.That(a.IssueToken(GroupId, Carol), Is.Null, "not a member");
+        }
+
+        // ---- the credential goes only to the call's own people ---------------------------------------
+
+        [Test]
+        public void AMemberAndAnInviteeAreGivenTheCredential()
+        {
+            VoiceSessionService service = NewService();
+            GridNonSpatialSessions a = NewRegion(service);
+            SessionOutcome started = a.StartAdhoc(Alice, UUID.Random(), RegionA, new List<UUID> { Bob });
+            UUID id = started.Session.SessionId;
+            a.MarkInvited(id, new List<UUID> { Bob });
+            string token = a.IssueToken(id, Alice);
+
+            Assert.That(token, Is.Not.Null);
+            Assert.That(a.Get(id, Alice).Token, Is.EqualTo(token), "a member");
+            Assert.That(a.Get(id, Bob).Token, Is.EqualTo(token), "an invitee");
+            Assert.That(a.GetByRoomKey(started.Session.RoomKey, Alice).Token, Is.EqualTo(token), "found by room key");
+            Assert.That(service.Get(id, Alice).Session.Token, Is.EqualTo(token), "on the service's own reply");
+        }
+
+        [Test]
+        public void AStrangerAndARequestNamingNoAgentAreNotGivenTheCredential()
+        {
+            VoiceSessionService service = NewService();
+            GridNonSpatialSessions a = NewRegion(service);
+            SessionOutcome started = a.StartAdhoc(Alice, UUID.Random(), RegionA, new List<UUID> { Bob });
+            UUID id = started.Session.SessionId;
+            a.MarkInvited(id, new List<UUID> { Bob });
+            Assert.That(a.IssueToken(id, Alice), Is.Not.Null);
+
+            foreach (SessionReply r in new[]
+            {
+                service.Get(id), service.Get(id, Carol), service.Get(id, UUID.Zero),
+                service.GetByRoomKey(started.Session.RoomKey), service.GetByRoomKey(started.Session.RoomKey, Carol),
+            })
+            {
+                Assert.That(r.Ok, Is.True, "the session itself is still returned");
+                Assert.That(r.Session.Token, Is.Null.Or.Empty, "without the credential");
+                Assert.That(r.Session.Members, Has.Count.EqualTo(2));
+                Assert.That(r.Session.RoomKey, Is.EqualTo(started.Session.RoomKey));
+            }
+            Assert.That(a.Get(id).Token, Is.Null.Or.Empty, "the region client's copy, with no agent named");
+            Assert.That(a.Get(id, Carol).Token, Is.Null.Or.Empty, "and for a stranger");
+        }
+
+        [Test]
+        public void ARepliesCopyOfTheSessionDoesNotCarryTheCredentialToANonMember()
+        {
+            VoiceSessionService service = NewService();
+            GridNonSpatialSessions a = NewRegion(service);
+            a.Start(NonSpatialSessionType.Group, Alice, GroupId, GroupId, RegionA);
+            string token = a.IssueToken(GroupId, Alice);
+
+            // Members acting on the call see the credential; Carol, who is not in it, never does.
+            Assert.That(service.Accept(GroupId, Bob, RegionB, "v").Session.Token, Is.EqualTo(token));
+            Assert.That(service.Decline(GroupId, Carol).Session?.Token, Is.Null.Or.Empty);
+            Assert.That(service.Invite(GroupId, Carol, UUID.Random()).Session?.Token, Is.Null.Or.Empty);
+            Assert.That(service.CheckInviteCount(GroupId, Carol, new List<UUID> { UUID.Random() }).Session?.Token, Is.Null.Or.Empty);
         }
 
         [Test]

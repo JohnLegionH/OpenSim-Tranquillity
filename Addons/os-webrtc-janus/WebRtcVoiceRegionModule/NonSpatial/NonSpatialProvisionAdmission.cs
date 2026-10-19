@@ -100,7 +100,7 @@ namespace osWebRtcVoice.NonSpatial
             if (engine == null)
                 return Refuse(DecisionNoSession, 403);
 
-            NonSpatialVoiceSession s = engine.GetByRoomKey(channel);
+            NonSpatialVoiceSession s = engine.GetByRoomKey(channel, agentID);
 
             // Dispatch on the OWN type of the voice session rather than assuming group. The room key tag
             // and the stored type must agree -- they are both derived from the same Start -- so this

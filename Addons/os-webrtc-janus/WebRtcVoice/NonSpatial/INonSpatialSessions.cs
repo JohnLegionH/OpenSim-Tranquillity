@@ -18,9 +18,14 @@ namespace osWebRtcVoice.NonSpatial
 {
     public interface INonSpatialSessions
     {
-        NonSpatialVoiceSession Get(UUID sessionId);
+        /// <summary>
+        /// The session, for reading. <paramref name="agent"/> is who is asking: through the grid service the
+        /// call's credential is in the copy only when that agent is a member of the session or was invited
+        /// to it. The in-process engine holds the credential itself and ignores it.
+        /// </summary>
+        NonSpatialVoiceSession Get(UUID sessionId, UUID agent = default);
 
-        NonSpatialVoiceSession GetByRoomKey(string roomKey);
+        NonSpatialVoiceSession GetByRoomKey(string roomKey, UUID agent = default);
 
         SessionOutcome Start(NonSpatialSessionType type, UUID creator, UUID otherOrOwner,
                              UUID tempSessionId, UUID originRegion, int requestedCap = 0);

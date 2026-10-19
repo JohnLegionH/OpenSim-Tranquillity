@@ -42,15 +42,15 @@ namespace osWebRtcVoice.NonSpatial
                     if (a != null) _admission[a.Type] = a;
         }
 
-        public NonSpatialVoiceSession Get(UUID sessionId)
+        public NonSpatialVoiceSession Get(UUID sessionId, UUID agent = default)
         {
-            SessionReply r = Reached(_service.Get(sessionId), "get");
+            SessionReply r = Reached(_service.Get(sessionId, agent), "get");
             return r != null && r.Ok ? SessionWire.FromData(r.Session) : null;
         }
 
-        public NonSpatialVoiceSession GetByRoomKey(string roomKey)
+        public NonSpatialVoiceSession GetByRoomKey(string roomKey, UUID agent = default)
         {
-            SessionReply r = Reached(_service.GetByRoomKey(roomKey), "getbyroomkey");
+            SessionReply r = Reached(_service.GetByRoomKey(roomKey, agent), "getbyroomkey");
             return r != null && r.Ok ? SessionWire.FromData(r.Session) : null;
         }
 
