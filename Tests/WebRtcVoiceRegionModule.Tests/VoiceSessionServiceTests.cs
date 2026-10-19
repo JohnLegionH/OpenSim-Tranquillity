@@ -269,6 +269,7 @@ namespace osWebRtcVoice.Tests
             public SessionReply RenewSeats(IReadOnlyList<SeatKey> seats) => Down();
             public SessionReply MarkInvited(UUID sessionId, IReadOnlyList<UUID> agents) => Down();
             public SessionReply VerifyRing(UUID sessionId, UUID target, UUID claimedCaller, int type) => Down();
+            public SessionReply CarrierKey(UUID sessionId, UUID agent) => Down();
             public SessionReply IssueToken(UUID sessionId, UUID agent) => Down();
             public SessionReply TakeConferenceRequest(UUID agent) => Down();
             public SessionReply Get(UUID sessionId, UUID agent) => Down();

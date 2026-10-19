@@ -63,9 +63,10 @@
     ; than one process must set the SAME secret, at least 32 characters, on every region server for group
     ; and conference calls to ring across them. Unset (the default), nothing is sent across processes and
     ; every such message that arrives is refused; calls between regions of one process are not affected.
-    ; With SessionStoreMode = grid (below), group and conference rings do not need it: the receiving region
-    ; asks the voice session service whether the ring is genuine. Conference text lines still do. A region
-    ; that sets it anyway also signs and requires the signature on rings.
+    ; With SessionStoreMode = grid (below), neither is needed: the receiving region asks the voice session
+    ; service whether a ring is genuine, and conference text lines are signed with a key the service keeps for
+    ; each conference and gives only to its members. A region that sets a secret anyway also signs and
+    ; requires the signature on rings.
     ; Keep it out of version control. Separate from the join-capability secret.
     ;CarrierSecret =
 

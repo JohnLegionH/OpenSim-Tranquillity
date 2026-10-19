@@ -157,6 +157,12 @@ namespace osWebRtcVoice.NonSpatial
                 ? Reply(_engine.VerifyRing(sessionId, target, claimedCaller, (NonSpatialSessionType)type), target)
                 : SessionReply.Fail("refused-bad-request");
 
+        public SessionReply CarrierKey(UUID sessionId, UUID agent)
+        {
+            string key = _engine.CarrierKey(sessionId, agent);
+            return new SessionReply { Ok = key != null, Decision = key != null ? "carrier-key" : SessionOutcome.NoSuchSession, Text = key };
+        }
+
         public SessionReply IssueToken(UUID sessionId, UUID agent)
         {
             string token = _engine.IssueToken(sessionId, agent);

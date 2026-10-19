@@ -253,8 +253,8 @@ seen by the others. Calls are kept in the service's memory and end when Robust r
   Robust without the service and a wrong password are all reported there.
 - Seats are renewed by the region that holds them and released by the service when the region stops
   renewing them, or when it restarts.
-- Group and conference rings are checked by the service, so they need no `CarrierSecret`. Conference
-  text lines between processes still do.
+- Group and conference rings are checked by the service, and conference text lines are signed with a key the
+  service keeps for each conference and gives only to its members, so neither needs `CarrierSecret`.
 - A call is not ended for being idle while someone in it is still on the grid.
 
 The console command `show voice sessions` prints where the region keeps its sessions, the service

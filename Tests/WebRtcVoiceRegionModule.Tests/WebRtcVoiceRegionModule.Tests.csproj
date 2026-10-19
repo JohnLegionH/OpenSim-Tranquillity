@@ -34,6 +34,7 @@
     <Compile Include="A2AStoreUnavailableTests.cs" />
     <Compile Include="RingVerificationTests.cs" />
     <Compile Include="SessionStoreReportTests.cs" />
+    <Compile Include="CarrierKeyTests.cs" />
     <Compile Include="P2PCallRulesTests.cs" />
     <Compile Include="SeatRenewalTests.cs" />
     <Compile Include="VoiceConnectorRegistryTests.cs" />

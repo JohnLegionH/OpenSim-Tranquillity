@@ -57,12 +57,12 @@ namespace osWebRtcVoice.Tests
         }
 
         [Test]
-        public void GridMode_SaysConferenceTextStillNeedsASecret_UnlessOneIsSet()
+        public void GridMode_SaysConferenceTextIsKeyedByTheService_AndWhetherASecretIsAlsoSet()
         {
             string without = Text(new SessionStoreReport { Grid = true, ServerUri = "http://robust.example.org:8003" });
             string with = Text(new SessionStoreReport { Grid = true, ServerUri = "http://robust.example.org:8003", CarriersSigned = true });
 
-            Assert.That(without, Does.Contain("Conference text still needs a shared carrier secret"));
+            Assert.That(without, Does.Contain("Conference text: signed with a key the service keeps"));
             Assert.That(with, Does.Contain("also signed with the shared carrier secret"));
         }
 

@@ -110,6 +110,8 @@ namespace osWebRtcVoice.NonSpatial
                 case "verifyring":
                     return Ids(r, out s, "session", "target", "caller") && Int(r, "type", out int ringType)
                         ? m_service.VerifyRing(s[0], s[1], s[2], ringType) : null;
+                case "carrierkey":
+                    return Ids(r, out s, "session", "agent") ? m_service.CarrierKey(s[0], s[1]) : null;
                 case "issuetoken":
                     return Ids(r, out s, "session", "agent") ? m_service.IssueToken(s[0], s[1]) : null;
                 case "takeconferencerequest":

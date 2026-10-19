@@ -76,6 +76,18 @@ namespace osWebRtcVoice.NonSpatial
         /// </summary>
         SessionOutcome VerifyRing(UUID sessionId, UUID target, UUID claimedCaller, NonSpatialSessionType type);
 
+        /// <summary>
+        /// True when the store keeps the key that signs a conference's text lines across region servers, so those
+        /// regions need no shared secret. False for the in-process engine.
+        /// </summary>
+        bool StoreIssuesCarrierKeys { get; }
+
+        /// <summary>
+        /// The key a conference's text lines are signed with, for an agent who holds a seat in it; null for anyone
+        /// else, for a session that is not a conference, and when the store could not be reached.
+        /// </summary>
+        string CarrierKey(UUID sessionId, UUID agent);
+
         string IssueToken(UUID sessionId, UUID agent);
 
         /// <summary>As <see cref="IssueToken(UUID, UUID)"/>, and says whether a null result is because the store could not be reached.</summary>

@@ -91,6 +91,9 @@ namespace osWebRtcVoice.NonSpatial
         public SessionReply VerifyRing(UUID sessionId, UUID target, UUID claimedCaller, int type)
             => Run(() => _inner.VerifyRing(sessionId, target, claimedCaller, type));
 
+        public SessionReply CarrierKey(UUID sessionId, UUID agent)
+            => Run(() => _inner.CarrierKey(sessionId, agent));
+
         public SessionReply IssueToken(UUID sessionId, UUID agent)
             => Run(() => _inner.IssueToken(sessionId, agent));
 

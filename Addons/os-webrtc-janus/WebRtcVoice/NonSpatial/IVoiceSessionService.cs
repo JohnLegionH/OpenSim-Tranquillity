@@ -55,6 +55,12 @@ namespace osWebRtcVoice.NonSpatial
         /// </summary>
         SessionReply VerifyRing(UUID sessionId, UUID target, UUID claimedCaller, int type);
 
+        /// <summary>
+        /// The key a conference's text lines are signed with, for an agent who holds a seat in it. Text = the key.
+        /// Refused for anyone else, so a forger who is not in the conference never has it.
+        /// </summary>
+        SessionReply CarrierKey(UUID sessionId, UUID agent);
+
         SessionReply IssueToken(UUID sessionId, UUID agent);
         SessionReply TakeConferenceRequest(UUID agent);
         /// <summary>

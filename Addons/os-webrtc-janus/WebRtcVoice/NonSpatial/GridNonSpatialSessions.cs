@@ -179,6 +179,44 @@ namespace osWebRtcVoice.NonSpatial
 
         public bool StoreVerifiesRings => true;
 
+        public bool StoreIssuesCarrierKeys => true;
+
+        // A conference's key does not change while it lasts, and a text line asks for it once per target, so the keys this
+        // region has been given are kept for a while, and so is a refusal (briefly), so lines naming sessions the sender is
+        // not in cost the service one question and not one per line. An unreachable service is not kept.
+        private static readonly TimeSpan KeyKept = TimeSpan.FromMinutes(5);
+        private static readonly TimeSpan NoKeyKept = TimeSpan.FromSeconds(5);
+        private const int MaxKeptKeys = 1024;
+        private readonly object _keyLock = new object();
+        private readonly Dictionary<SeatKey, (string Key, DateTime Until)> _keys = new Dictionary<SeatKey, (string, DateTime)>();
+
+        public string CarrierKey(UUID sessionId, UUID agent)
+        {
+            SeatKey asked = new SeatKey(sessionId, agent);
+            DateTime now = _clock();
+            lock (_keyLock)
+                if (_keys.TryGetValue(asked, out (string Key, DateTime Until) kept) && kept.Until > now)
+                    return kept.Key;
+
+            SessionReply r = Reached(_service.CarrierKey(sessionId, agent), "carrierkey");
+            if (r == null)
+                return null;
+            string key = r.Ok && !string.IsNullOrEmpty(r.Text) ? r.Text : null;
+            lock (_keyLock)
+            {
+                if (_keys.Count >= MaxKeptKeys)
+                {
+                    List<SeatKey> gone = new List<SeatKey>();
+                    foreach (KeyValuePair<SeatKey, (string Key, DateTime Until)> kv in _keys)
+                        if (kv.Value.Until <= now) gone.Add(kv.Key);
+                    foreach (SeatKey g in gone) _keys.Remove(g);
+                    if (_keys.Count >= MaxKeptKeys) _keys.Clear();
+                }
+                _keys[asked] = (key, now + (key == null ? NoKeyKept : KeyKept));
+            }
+            return key;
+        }
+
         public SessionOutcome VerifyRing(UUID sessionId, UUID target, UUID claimedCaller, NonSpatialSessionType type)
             => Outcome(_service.VerifyRing(sessionId, target, claimedCaller, (int)type), "verifyring");
 

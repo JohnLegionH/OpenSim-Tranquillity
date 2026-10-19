@@ -63,7 +63,7 @@ namespace osWebRtcVoice.NonSpatial
             lines.Add($"  This region holds {HeldSeats} seat(s) and renews them; {QueuedDeparts} departure(s) waiting, {DroppedDeparts} given up.");
             lines.Add(CarriersSigned
                 ? "  Rings: checked by the service, and also signed with the shared carrier secret."
-                : "  Rings: checked by the service. Conference text still needs a shared carrier secret to cross regions.");
+                : "  Rings: checked by the service. Conference text: signed with a key the service keeps for each conference.");
             return lines;
         }
     }

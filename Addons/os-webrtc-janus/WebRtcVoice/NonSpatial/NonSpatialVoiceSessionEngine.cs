@@ -803,6 +803,24 @@ namespace osWebRtcVoice.NonSpatial
         /// </summary>
         public bool StoreVerifiesRings => false;
 
+        public bool StoreIssuesCarrierKeys => false;
+
+        /// <summary>
+        /// The key a conference's members sign the text lines they send across region servers with, minted on the first
+        /// request. Given only to an agent who holds a seat in a live conference; null for anyone else, so a forger who is
+        /// not in the conference never has it. It is not part of any copy of the session.
+        /// </summary>
+        public string CarrierKey(UUID sessionId, UUID agent)
+            => _store.Mutate<string>(sessionId, sess =>
+            {
+                if (sess.IsDead || sess.Type != NonSpatialSessionType.Adhoc)
+                    return null;
+                NonSpatialMember m = sess.Find(agent);
+                if (m == null || !m.HoldsSeat)
+                    return null;
+                return sess.CarrierKey ??= NewToken();
+            }, null);
+
         /// <summary>
         /// Whether a ring received for <paramref name="target"/> is genuine, judged from this engine's own record and
         /// nothing the ring carried. Group and conference rings only. Nothing is created or changed except that a

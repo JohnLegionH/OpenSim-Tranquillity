@@ -226,9 +226,19 @@ public partial class WebRtcVoiceRegionModule
     {
         if (candidates is null || candidates.Count == 0)
             return;
-        if (!m_carrierAuth.Enabled)
+        bool storeKeys = m_nonSpatial is { StoreIssuesCarrierKeys: true };
+        if (!m_carrierAuth.Enabled && !storeKeys)
         {
             LogCarrierOff(plan.Session.SessionId);
+            return;
+        }
+        // A store that keys conferences gives the sender's region the key to sign with; a sender who is not seated
+        // in the conference is given none and sends nothing across.
+        string sessionKey = storeKeys ? m_nonSpatial.CarrierKey(plan.Session.SessionId, plan.Sender) : null;
+        if (storeKeys && string.IsNullOrEmpty(sessionKey))
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                AdhocTextTransport.Line(UUID.Zero, plan.Session.SessionId, CarrierIntake.DecisionNoCarrierKey));
             return;
         }
 
@@ -264,7 +274,7 @@ public partial class WebRtcVoiceRegionModule
             {
                 transfer.SendInstantMessage(
                     AdhocTextTransport.Build(target, plan.Sender, fromName, plan.Session.SessionId,
-                                             originRegion, plan.Message, null, plan.Session.RoomKey, m_carrierAuth),
+                                             originRegion, plan.Message, null, plan.Session.RoomKey, m_carrierAuth, sessionKey),
                     _ => { });
                 m_log.LogDebug("{LogHeader} {Line}", logHeader,
                     AdhocTextTransport.Line(target, plan.Session.SessionId, AdhocTextTransport.DecisionSent));

@@ -65,6 +65,7 @@ namespace osWebRtcVoice.NonSpatial
         public const string DecisionFeatureOff = "feature-off";
         public const string DecisionCarrierOff = "carrier-off-no-secret";
         public const string DecisionRoomKeyMismatch = "refused-room-key-mismatch";
+        public const string DecisionNoCarrierKey = "refused-no-carrier-key";
 
         public static RingIntake AcceptRing(GridInstantMessage msg, CarrierAuth auth, INonSpatialSessions engine,
                                             bool groupUsable, int groupCap, bool adhocEnabled)
@@ -131,7 +132,16 @@ namespace osWebRtcVoice.NonSpatial
 
             UUID sender = new UUID(msg.fromAgentID);
             auth ??= CarrierAuth.Off();
-            string reason = auth.Verify(AdhocTextTransport.Fields(target, sessionId, sender, roomKey, message), authBlock);
+            // A store that keys conferences gives a seated member the key the line was signed with, so the line needs
+            // no shared secret; someone who is not in the conference is given none, and nothing they send checks out.
+            string sessionKey = null;
+            if (engine.StoreIssuesCarrierKeys)
+            {
+                sessionKey = engine.CarrierKey(sessionId, target);
+                if (string.IsNullOrEmpty(sessionKey))
+                    return new TextIntake { Claimed = true, Decision = DecisionNoCarrierKey, Target = target, SessionId = sessionId };
+            }
+            string reason = auth.Verify(AdhocTextTransport.Fields(target, sessionId, sender, roomKey, message), authBlock, sessionKey);
             if (reason != null)
                 return new TextIntake
                 {

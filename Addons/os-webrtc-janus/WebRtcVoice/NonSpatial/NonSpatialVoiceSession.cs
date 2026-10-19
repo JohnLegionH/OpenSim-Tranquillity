@@ -174,6 +174,12 @@ namespace osWebRtcVoice.NonSpatial
         /// </summary>
         public string Token { get; internal set; }
 
+        /// <summary>
+        /// The key a conference's members sign the text lines they send across region servers with. Minted on
+        /// first request by a member, and never part of a copy of the session.
+        /// </summary>
+        internal string CarrierKey { get; set; }
+
         private readonly Dictionary<UUID, NonSpatialMember> _members = new Dictionary<UUID, NonSpatialMember>();
 
         /// <summary>
