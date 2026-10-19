@@ -944,7 +944,7 @@ namespace osWebRtcVoice.NonSpatial
         // A call between two people keeps the rules the avatar-to-avatar invitation registry gave it, because a
         // viewer starts one for every instant-message window it opens and only some of them ever ring:
         //   - an invitation nobody has answered ends InviteTtl after the last activity on it; a call that has been
-        //     answered ends IdleTtl after the last activity, whether or not its parties are still here;
+        //     answered ends IdleTtl after the last activity, unless a party holding a seat is still present;
         //   - a call ends when either party declines, and when the callee has answered and neither party is joined
         //     (holds a seat the voice service has answered) any longer;
         //   - an ended call is gone for every purpose, and the next start naming the same two people makes a new one
@@ -955,8 +955,39 @@ namespace osWebRtcVoice.NonSpatial
         //   - calls are outside the session caps: they are many, short and cheap, and ending them is what the
         //     lapse above is for.
 
+        /// <summary>
+        /// Whether the call's time has run out. An answered call whose idle time is up is kept, and its clock
+        /// restarted, while either party holding a seat is still present, the same rule a group or conference
+        /// follows. Call inside a store mutation: it restarts the clock on the session it is given.
+        /// </summary>
         private bool P2PHasLapsed(NonSpatialVoiceSession sess, DateTime now)
-            => now - sess.LastSeenUtc > (sess.CalleeAnswered ? _idleTtl : _inviteTtl);
+        {
+            if (!sess.CalleeAnswered)
+                return now - sess.LastSeenUtc > _inviteTtl;
+            if (now - sess.LastSeenUtc <= _idleTtl)
+                return false;
+            if (!SeatedMemberIsPresent(sess))
+                return true;
+            sess.LastSeenUtc = now;
+            return false;
+        }
+
+        /// <summary>
+        /// True when any member of the session who holds a seat is present. A presence check that throws counts
+        /// as present, so a failing lookup never ends a call under its parties. Unset, nobody counts as present.
+        /// </summary>
+        private bool SeatedMemberIsPresent(NonSpatialVoiceSession sess)
+        {
+            Func<UUID, bool> present = IsAgentPresent;
+            if (present == null) return false;
+            foreach (NonSpatialMember m in sess.Members)
+            {
+                if (!m.HoldsSeat) continue;
+                try { if (present(m.AgentId)) return true; }
+                catch { return true; }
+            }
+            return false;
+        }
 
         /// <summary>
         /// True when the session is a call that is over, ending it first if its time ran out. Call inside a store

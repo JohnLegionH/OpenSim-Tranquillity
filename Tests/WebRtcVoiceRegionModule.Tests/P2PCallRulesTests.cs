@@ -10,6 +10,7 @@
  * the invitation's and the call's lifetimes, what ends a call, and what a call is not counted against.
  */
 using System;
+using System.Collections.Generic;
 using NUnit.Framework;
 using OpenMetaverse;
 using OpenMetaverse.StructuredData;
@@ -109,7 +110,7 @@ namespace osWebRtcVoice.Tests
         }
 
         [Test]
-        public void TheSweep_EndsAnAnsweredCallIdleForTheWholeBackstop_EvenWhenItsPartiesAreStillPresent()
+        public void TheSweep_KeepsAnAnsweredCallIdleForTheWholeBackstop_WhileAPartyIsPresent()
         {
             FakeClock clock = new FakeClock();
             A2ARegistry reg = New(clock);
@@ -119,10 +120,67 @@ namespace osWebRtcVoice.Tests
             reg.MarkProvisioned(CallId, Alice, "vs-alice");
             reg.MarkProvisioned(CallId, Bob, "vs-bob");
 
+            for (int hour = 1; hour <= 30; hour++)
+            {
+                clock.Now += TimeSpan.FromHours(1);
+                reg.Engine.Sweep();
+            }
+
+            Assert.That(reg.TryGet(CallId), Is.Not.Null, "someone in the call is still here, so it is not idle");
+            Assert.That(reg.Engine.Store.Get(CallId).SeatsHeld, Is.EqualTo(2));
+        }
+
+        [Test]
+        public void ALookUp_KeepsAnAnsweredCallIdleForTheWholeBackstop_WhileAPartyIsPresent()
+        {
+            FakeClock clock = new FakeClock();
+            A2ARegistry reg = New(clock);
+            HashSet<UUID> here = new() { Bob };
+            reg.Engine.IsAgentPresent = here.Contains;
+            reg.Record(Alice, Bob, out _);
+            reg.IssueToken(CallId, Alice);
+            reg.MarkProvisioned(CallId, Alice, "vs-alice");
+            reg.MarkProvisioned(CallId, Bob, "vs-bob");
+
+            clock.Now += NonSpatialVoiceSessionEngine.DefaultIdleTtl + TimeSpan.FromHours(1);
+
+            Assert.That(reg.TryGet(CallId), Is.Not.Null, "Bob is still here; Alice's viewer being gone does not end it");
+        }
+
+        [Test]
+        public void TheSweep_EndsAnAnsweredCallIdleForTheWholeBackstop_WhenBothPartiesHaveGone_AndReleasesTheirSeats()
+        {
+            FakeClock clock = new FakeClock();
+            A2ARegistry reg = New(clock);
+            reg.Engine.IsAgentPresent = _ => false;
+            reg.Record(Alice, Bob, out _);
+            reg.IssueToken(CallId, Alice);
+            reg.MarkProvisioned(CallId, Alice, "vs-alice");
+            reg.MarkProvisioned(CallId, Bob, "vs-bob");
+
+            clock.Now += NonSpatialVoiceSessionEngine.DefaultIdleTtl + TimeSpan.FromMinutes(1);
+            NonSpatialVoiceSessionEngine.SweepSummary summary = reg.Engine.SweepWithSummary();
+
+            Assert.That(reg.TryGet(CallId), Is.Null, "nobody is left, so the idle time applies");
+            Assert.That(summary.SeatsReleased, Is.EqualTo(2));
+            Assert.That(summary.Removed, Is.EqualTo(new[] { CallId }));
+        }
+
+        [Test]
+        public void APresenceCheckThatThrows_KeepsTheCall_AsItDoesForAGroup()
+        {
+            FakeClock clock = new FakeClock();
+            A2ARegistry reg = New(clock);
+            reg.Engine.IsAgentPresent = _ => throw new InvalidOperationException("scene lookup failed");
+            reg.Record(Alice, Bob, out _);
+            reg.IssueToken(CallId, Alice);
+            reg.MarkProvisioned(CallId, Alice, "vs-alice");
+            reg.MarkProvisioned(CallId, Bob, "vs-bob");
+
             clock.Now += NonSpatialVoiceSessionEngine.DefaultIdleTtl + TimeSpan.FromMinutes(1);
             reg.Engine.Sweep();
 
-            Assert.That(reg.TryGet(CallId), Is.Null, "an answered call that was idle for the whole backstop ends, present or not");
+            Assert.That(reg.TryGet(CallId), Is.Not.Null);
         }
 
         [Test]
