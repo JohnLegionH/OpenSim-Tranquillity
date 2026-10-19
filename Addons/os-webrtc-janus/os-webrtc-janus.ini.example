@@ -43,6 +43,18 @@
     ; the conference text session. Same plugin note as A2AVoiceEnabled.
     ;AdhocVoiceEnabled = false
 
+    ; Limits on non-spatial sessions (avatar-to-avatar, group and conference calls). Sessions and unanswered
+    ; invitations also expire by themselves: an invitation after 2 minutes, an idle session after 8 hours.
+    ; Most sessions of all kinds this region server holds at once. A start beyond it is refused.
+    ; Default: 5000.
+    ;MaxNonSpatialSessions = 5000
+    ; Most live sessions one agent may have started. A start beyond it is refused. Default: 20.
+    ;MaxSessionsPerAgent = 20
+    ; Per-agent rate limit shared by "start conference" and "invite": the number of requests allowed back to
+    ; back, and the seconds for one more to become available once they are used. Default: 5 and 10.
+    ;ConferenceRequestBurst = 5
+    ;ConferenceRequestRefillSeconds = 10
+
     ; Per-listener visibility: the region computes who may hear whom (estate and parcel bans, parcel
     ; "see avatars", voice moderation) and sends it to the mixer as peer_ctl batches. Default: false for
     ; both keys. Needs the slvoice mixer and JanusGatewayAdminURI and AdminAPIToken below. With the
