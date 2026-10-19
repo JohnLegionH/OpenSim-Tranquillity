@@ -76,9 +76,9 @@ The region server reads every `.ini` file in that folder at startup; the folder 
 |---|---|---|---|
 | `Enabled` | `[WebRtcVoice]` | `false` | `true` |
 | `JanusGatewayURI` | `[JanusWebRtcVoice]` | placeholder | the gateway's voice URI, for example `http://janus.example.org:14223/voice` |
-| `APIToken` | `[JanusWebRtcVoice]` | placeholder | the gateway's API secret |
+| `APIToken` | `[JanusWebRtcVoice]` | placeholder | the gateway's API secret: a random value of at least 32 characters (a shorter one logs a warning at startup) |
 | `JanusGatewayAdminURI` | `[JanusWebRtcVoice]` | placeholder | the gateway's admin URI |
-| `AdminAPIToken` | `[JanusWebRtcVoice]` | placeholder | the gateway's admin secret |
+| `AdminAPIToken` | `[JanusWebRtcVoice]` | placeholder | the gateway's admin secret: a random value of at least 32 characters (a shorter one logs a warning at startup) |
 
 **Keys with defaults.** The shipped file lists them commented out with their defaults:
 

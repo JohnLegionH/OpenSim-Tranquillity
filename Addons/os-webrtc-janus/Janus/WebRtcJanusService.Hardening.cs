@@ -51,6 +51,21 @@ public partial class WebRtcJanusService
     /// <summary>: the mixer's "No such room" on a join (`Request error 485: No such room (n)`).</summary>
     public const int JANUS_NO_SUCH_ROOM_ERROR_CODE = 485;
 
+    /// <summary>The shortest secret accepted for the join capability key, and the length below which the Janus API
+    /// and admin secrets draw a warning. Matches the connector capability secret's minimum.</summary>
+    public const int MinSecretLength = 32;
+
+    // A Janus secret shorter than MinSecretLength is easy to guess. The API and admin secrets already exist, so a
+    // short one warns and the service starts as before. The warning names the key only: neither the value nor its
+    // length goes into the log. An empty value is handled by the missing-fields check, not here.
+    private void WarnOnShortJanusSecrets()
+    {
+        if (!string.IsNullOrEmpty(_JanusAPIToken) && _JanusAPIToken.Length < MinSecretLength)
+            _log.LogWarning($"{LogHeader} [JanusWebRtcVoice] APIToken is shorter than {MinSecretLength} characters; use a longer random secret");
+        if (!string.IsNullOrEmpty(_JanusAdminToken) && _JanusAdminToken.Length < MinSecretLength)
+            _log.LogWarning($"{LogHeader} [JanusWebRtcVoice] AdminAPIToken is shorter than {MinSecretLength} characters; use a longer random secret");
+    }
+
     // [JanusWebRtcVoice] RequestTimeoutMs — how long an ack'd Janus request waits for its event.
     private int _JanusRequestTimeoutMs = JanusSession.DefaultRequestTimeoutMs;
 

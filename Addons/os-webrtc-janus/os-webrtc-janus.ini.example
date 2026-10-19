@@ -85,10 +85,12 @@
     ; URI to access the Janus Gateway
     JanusGatewayURI = http://janus.example.org:14223/voice
     ; APIKey to access the Janus Gateway. Must be set to the same value as the Janus Gateway.
+    ; Use a random secret of at least 32 characters; a shorter one is logged as a warning at startup.
     APIToken = APITokenToNeverCheckIn
     ; URI to access the admin port on Janus Gateway
     JanusGatewayAdminURI = http://janus.example.org/admin
     ; APIKey to access the admin port on the Janus Gateway. Must be set to the same value as the Janus Gateway.
+    ; Use a random secret of at least 32 characters; a shorter one is logged as a warning at startup.
     AdminAPIToken = AdminAPITokenToNeverCheckIn
     ; Debugging: output to log file messages sent and received from Janus. Very verbose.
     MessageDetails = false
@@ -103,7 +105,8 @@
     ; Milliseconds a request to the Janus admin API waits for its answer. Default: 5000.
     ;AdminTimeoutMs = 5000
     ; Secret the join capability is signed with. No default: JoinCapabilityEnabled needs it set, and it must
-    ; match the secret configured in the mixer.
+    ; match the secret configured in the mixer. It must be at least 32 characters; with JoinCapabilityEnabled
+    ; on, a shorter one is refused at startup and no capability is minted.
     ;JoinCapabilitySecret =
 
 ; Voice connector records. One [VoiceConnector.<name>] section per connector, used only with

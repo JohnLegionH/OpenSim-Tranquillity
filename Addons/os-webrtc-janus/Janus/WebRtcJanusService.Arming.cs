@@ -69,6 +69,13 @@ public partial class WebRtcJanusService
             _log.LogError($"{LogHeader} [WebRtcVoice] JoinCapabilityEnabled is true but [JanusWebRtcVoice] JoinCapabilitySecret is empty: no capability can be minted, so joins carry none");
             _JoinCapabilityEnabled = false;
         }
+        else if (_JoinCapabilityEnabled && _JoinCapabilitySecret.Length < MinSecretLength)
+        {
+            // Join capabilities are an HMAC over a known structure: anyone who sees one can test candidate keys
+            // offline, so a short key must not be used. Named by key only; the value and its length are not logged.
+            _log.LogError($"{LogHeader} [JanusWebRtcVoice] JoinCapabilitySecret is shorter than {MinSecretLength} characters: refusing to mint capabilities with it, so joins carry none");
+            _JoinCapabilityEnabled = false;
+        }
         else if (_JoinCapabilityEnabled)
             _log.LogInformation($"{LogHeader} join capability enabled: every join carries one, {JoinCapability.LifetimeSeconds} s lifetime ([WebRtcVoice] JoinCapabilityEnabled)");
     }

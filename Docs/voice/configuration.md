@@ -88,14 +88,14 @@ if it cannot connect to Janus at startup.
 | Key | Default | Meaning | Needs |
 |---|---|---|---|
 | `JanusGatewayURI` | empty (required) | URL of the Janus REST API, e.g. `http://janus.example.org:14223/voice`. | A running Janus gateway. |
-| `APIToken` | empty (required) | API secret for the Janus REST API. Must equal the gateway's. | - |
+| `APIToken` | empty (required) | API secret for the Janus REST API. Must equal the gateway's. Use a random value of at least 32 characters; a shorter one is logged as a warning at startup. | - |
 | `JanusGatewayAdminURI` | empty (required) | URL of the Janus admin API. Also used for visibility emission. | - |
-| `AdminAPIToken` | empty (required) | Admin API secret. Must equal the gateway's. | - |
+| `AdminAPIToken` | empty (required) | Admin API secret. Must equal the gateway's. Use a random value of at least 32 characters; a shorter one is logged as a warning at startup. | - |
 | `MessageDetails` | `false` | Write every message sent to and received from Janus to the log. Very verbose. | - |
 | `PluginName` | `janus.plugin.audiobridge` | Janus plugin the region attaches voice handles to. `janus.plugin.slvoice` selects a spatial mixer implementing that protocol. | The named plugin installed in Janus. |
 | `RequestTimeoutMs` | `5000` | Milliseconds an "ack"-answered Janus request waits for its result before failing. Zero or negative falls back to 5000. | - |
 | `AdminTimeoutMs` | `5000` | Milliseconds a Janus admin API request waits for its answer (used by visibility emission). | - |
-| `JoinCapabilitySecret` | empty | Secret used to sign join capabilities, for avatars and for connectors. Never logged. Must match the mixer. | Slvoice mixer. |
+| `JoinCapabilitySecret` | empty | Secret used to sign join capabilities, for avatars and for connectors. Never logged. Must match the mixer. At least 32 characters: with `JoinCapabilityEnabled` on, a shorter one is refused at startup and no capability is minted. | Slvoice mixer. |
 
 Grid identity: room numbers for non-spatial sessions are derived from the grid's gatekeeper address, so two grids
 sharing one mixer do not collide. It is read from `GatekeeperURI` (in `[Hypergrid]`, `[Startup]` or `[Const]`), else
