@@ -94,8 +94,10 @@ affects only that feature.
 ### STUN servers
 
 `StunServers` is a comma-separated list of full ICE URIs. It is advertised to viewers as the `stun-servers`
-simulator feature. Stock viewers fail to create a peer connection without a valid entry, so set it unless the
-core server already advertises one. Empty (the default) adds nothing. Works with either plugin.
+simulator feature. Stock viewers need at least one STUN server to connect from outside the grid's network, and
+fail to create a peer connection without a valid entry, so set it unless the core server already advertises one.
+The shipped `os-webrtc-janus.ini` lists it commented out with a public server as the example
+(`stun:stun.l.google.com:19302`). Empty (the default) adds nothing. Works with either plugin.
 
 ### Avatar-to-avatar calls
 

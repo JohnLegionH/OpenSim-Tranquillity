@@ -38,7 +38,7 @@ Conventions used below:
 
 | Key | Default | Meaning | Needs |
 |---|---|---|---|
-| `StunServers` | empty | Comma-separated full ICE URIs (scheme included, no quotes), e.g. `stun:stun.example.org:3478`. Advertised to viewers as the `stun-servers` simulator feature. Empty: the feature is not added by the addon. Whether the addon's value or the core server's own `StunServers` setting wins when both are set has not been verified. | Works with either plugin. |
+| `StunServers` | empty | Comma-separated full ICE URIs (scheme included, no quotes), e.g. `stun:stun.l.google.com:19302`. Stock viewers need one to connect from outside the grid's network. Advertised to viewers as the `stun-servers` simulator feature. Empty: the feature is not added by the addon. Whether the addon's value or the core server's own `StunServers` setting wins when both are set has not been verified. | Works with either plugin. |
 | `RefusalCacheSeconds` | `5` | After a voice provision is refused or fails, the same answer is replayed to that viewer's immediate retries for this many seconds without repeating the estate and parcel checks or calling Janus. `0` (or a negative value) turns the cache off. | - |
 | `AllowNpcVoice` | `false` | Allow any NPC presence to obtain voice. When `false`, an NPC is refused unless it is a registered connector identity (see `ConnectorsEnabled`). Real avatars are never affected. | - |
 
