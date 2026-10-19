@@ -51,16 +51,6 @@ public partial class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
     private string _JanusAdminURI = string.Empty;
     private string _JanusAdminToken = string.Empty;
 
-    // Create spatial "local" rooms with vis_authority=true. True
-    // only when the sim arms: [WebRtcVoice] VisibilityArmingEnabled (default false) with the feeder and emission on
-    // (default true), resolved exactly as WebRtcVoiceRegionModule resolves them.
-    private bool _DeclareVisAuthority = false;
-
-    // Mint a join capability for every join. Off by default;
-    // the key lives beside the other mixer credentials in [JanusWebRtcVoice] and is never logged.
-    private bool _JoinCapabilityEnabled = false;
-    private string _JoinCapabilitySecret = string.Empty;
-
     private bool _MessageDetails = false;
 
     // An extra "viewer session" that is created initially. Used to verify the service
@@ -97,22 +87,7 @@ public partial class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                 _JanusAdminToken = janusConfig.GetString("AdminAPIToken", string.Empty);
                 ReadPluginNameConfig(janusConfig);
                 ReadGridIdConfig();
-                _DeclareVisAuthority = webRtcVoiceConfig.GetBoolean("VisibilityArmingEnabled", false)
-                    && webRtcVoiceConfig.GetBoolean("VisibilityFeederEnabled", false)
-                    && webRtcVoiceConfig.GetBoolean("VisibilityEmitEnabled", false);
-                if (_DeclareVisAuthority)
-                    _log.LogInformation($"{LogHeader} spatial \"local\" rooms are created with vis_authority=true ([WebRtcVoice] VisibilityArmingEnabled)");
-                // The join capability. Enabling it without a secret mints nothing, so say so once and
-                // stay off rather than sending half a capability on every join.
-                _JoinCapabilityEnabled = webRtcVoiceConfig.GetBoolean("JoinCapabilityEnabled", false);
-                _JoinCapabilitySecret = janusConfig.GetString("JoinCapabilitySecret", string.Empty);
-                if (_JoinCapabilityEnabled && string.IsNullOrEmpty(_JoinCapabilitySecret))
-                {
-                    _log.LogError($"{LogHeader} [WebRtcVoice] JoinCapabilityEnabled is true but [JanusWebRtcVoice] JoinCapabilitySecret is empty: no capability can be minted, so joins carry none");
-                    _JoinCapabilityEnabled = false;
-                }
-                else if (_JoinCapabilityEnabled)
-                    _log.LogInformation($"{LogHeader} join capability enabled: every join carries one, {JoinCapability.LifetimeSeconds} s lifetime ([WebRtcVoice] JoinCapabilityEnabled)");
+                ReadArmingConfig(webRtcVoiceConfig, janusConfig);
                 // Debugging options
                 _MessageDetails = janusConfig.GetBoolean("MessageDetails", false);
                 ReadRequestTimeoutConfig(janusConfig);
