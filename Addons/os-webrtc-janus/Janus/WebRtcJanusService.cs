@@ -43,14 +43,6 @@ public partial class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
     private static readonly ILogger _log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
     private static readonly string LogHeader = "[JANUS WEBRTC SERVICE]";
 
-    // Mixer's JANUS_SLVOICE_ERROR_ROOM_FULL (janus_slvoice.c). ONLY this join-failure code
-    // becomes an HTTP 409 / ERROR_CHANNEL_FULL downstream; every other failure stays generic.
-    // Public so the region CAP handler references it (same namespace; a const is compile-time-
-    // inlined, so no runtime assembly/ALC crossing) instead of duplicating the 495 literal.
-    public const int JANUS_ROOM_FULL_ERROR_CODE = 495;
-    /// <summary>: the mixer's "No such room" on a join (`Request error 485: No such room (n)`).</summary>
-    public const int JANUS_NO_SUCH_ROOM_ERROR_CODE = 485;
-
     private readonly IConfigSource _Config;
     private bool _Enabled = false;
 
@@ -76,15 +68,9 @@ public partial class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
 
     private bool _MessageDetails = false;
 
-    // [JanusWebRtcVoice] RequestTimeoutMs — how long an ack'd Janus request waits for its event.
-    private int _JanusRequestTimeoutMs = JanusSession.DefaultRequestTimeoutMs;
-
     // An extra "viewer session" that is created initially. Used to verify the service
     //     is working and for a handle for the console commands.
     private JanusViewerSession _ViewerSession;
-
-    // Serializes EnsureServiceSessionAsync, so two console commands cannot both reconnect.
-    private readonly SemaphoreSlim _serviceSessionGate = new SemaphoreSlim(1, 1);
 
     // Test seam: builds the HttpMessageHandler for each JanusSession this service creates (null = the network).
     // A factory, not one handler, because disposing the HttpClient of a Janus session disposes its handler.
@@ -138,13 +124,7 @@ public partial class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                     _log.LogInformation($"{LogHeader} join capability enabled: every join carries one, {JoinCapability.LifetimeSeconds} s lifetime ([WebRtcVoice] JoinCapabilityEnabled)");
                 // Debugging options
                 _MessageDetails = janusConfig.GetBoolean("MessageDetails", false);
-                // Bound on every ack'd request (join/leave/create...); the provisioning.Result waits on it.
-                _JanusRequestTimeoutMs = janusConfig.GetInt("RequestTimeoutMs", JanusSession.DefaultRequestTimeoutMs);
-                if (_JanusRequestTimeoutMs <= 0)
-                {
-                    _log.LogWarning($"{LogHeader} RequestTimeoutMs = {_JanusRequestTimeoutMs} is not positive; using {JanusSession.DefaultRequestTimeoutMs}");
-                    _JanusRequestTimeoutMs = JanusSession.DefaultRequestTimeoutMs;
-                }
+                ReadRequestTimeoutConfig(janusConfig);
 
                 if (string.IsNullOrEmpty(_JanusServerURI) || string.IsNullOrEmpty(_JanusAPIToken) ||
                     string.IsNullOrEmpty(_JanusAdminURI) || string.IsNullOrEmpty(_JanusAdminToken))
@@ -235,17 +215,6 @@ public partial class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
         return false;
     }
 
-    // The long poll of a Janus session exited (GETERROR - e.g. the mixer restarted and the session id is
-    // gone). A viewer session takes the hangup path as before. The SERVICE session (console commands) was
-    // never found by that lookup, so it stayed "connected" and every later console command used a dead
-    // session until the region restarted; mark it disconnected so the next console command reconnects.
-    private void Handle_Disconnect(EventResp pResp)
-    {
-        if (MarkServiceSessionDisconnected(pResp))
-            return;
-        Handle_Hangup(pResp);
-    }
-
     private void Handle_Hangup(EventResp pResp)
     {
         if (pResp is not null)
@@ -261,67 +230,6 @@ public partial class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
             {
                 _log.LogDebug($"{LogHeader} Handle_Hangup: no session found. SessionId={sessionId}");
             }
-        }
-    }
-
-    // TRUE when the event names the service session; that Janus session is then marked disconnected.
-    private bool MarkServiceSessionDisconnected(EventResp pResp)
-    {
-        JanusSession service = _ViewerSession?.Session;
-        if (pResp is null || service is null || string.IsNullOrEmpty(pResp.sessionId) || pResp.sessionId != service.SessionId)
-            return false;
-        service.IsConnected = false;
-        _log.LogWarning($"{LogHeader} service session {service.SessionId} lost its long poll; the next console command reconnects it");
-        return true;
-    }
-
-    /// The Janus session id of the service (console) session, or null when there is none (diagnostics and tests).
-    public string ServiceSessionId => _ViewerSession?.Session?.SessionId;
-
-    /// Whether the service session is currently marked connected (diagnostics and tests).
-    public bool ServiceSessionIsConnected => _ViewerSession?.Session?.IsConnected ?? false;
-
-    // The console-side service session is lazy and self-healing. Returns the live service
-    // session, replacing it first when it is missing, marked disconnected (its long poll exited), or
-    // pForceReconnect says the caller just saw a request fail on it (a Janus session the restarted mixer no longer
-    // knows answers 458 without any disconnect event). The old session is shut down best-effort, and a fresh
-    // session + plugin handle is built by ConnectToSessionAndAudioBridge - the provisioning path. Null when
-    // Janus cannot be reached.
-    public async Task<JanusViewerSession> EnsureServiceSessionAsync(bool pForceReconnect = false)
-    {
-        await _serviceSessionGate.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            JanusViewerSession current = _ViewerSession;
-            if (!pForceReconnect && current?.Session is not null && current.Session.IsConnected && current.AudioBridge is not null)
-                return current;
-
-            if (current is not null)
-            {
-                try
-                {
-                    await current.Shutdown().ConfigureAwait(false);
-                }
-                catch (Exception e)
-                {
-                    _log.LogDebug($"{LogHeader} service session shutdown before reconnect threw: {e.Message}");
-                }
-            }
-
-            var fresh = new JanusViewerSession(this);
-            if (!await ConnectToSessionAndAudioBridge(fresh).ConfigureAwait(false))
-            {
-                _ViewerSession = null;
-                _log.LogWarning($"{LogHeader} service session could not be reconnected (Janus unreachable?)");
-                return null;
-            }
-            _ViewerSession = fresh;
-            _log.LogInformation($"{LogHeader} service session reconnected");
-            return fresh;
-        }
-        finally
-        {
-            _serviceSessionGate.Release();
         }
     }
 
@@ -354,22 +262,6 @@ public partial class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                 string.Empty).ConfigureAwait(false);
             if (room is not null)
                 return room.RoomId;
-        }
-        return null;
-    }
-
-    // "janus list rooms" through the service session. If the request fails on the current session it is
-    // retried ONCE on a forced reconnect, so a mixer restart heals on the next console command.
-    public async Task<AudioBridgeResp> ServiceListRoomsAsync()
-    {
-        for (int attempt = 0; attempt < 2; attempt++)
-        {
-            JanusViewerSession svc = await EnsureServiceSessionAsync(pForceReconnect: attempt > 0).ConfigureAwait(false);
-            if (svc?.AudioBridge is null)
-                return null;
-            AudioBridgeResp resp = await svc.AudioBridge.SendAudioBridgeMsg(new AudioBridgeListRoomsReq()).ConfigureAwait(false);
-            if (resp is not null && resp.isSuccess)
-                return resp;
         }
         return null;
     }

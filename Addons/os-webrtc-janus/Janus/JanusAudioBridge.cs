@@ -35,7 +35,7 @@ using OpenSim.Framework;
 namespace osWebRtcVoice;
 
 // Encapsulization of a Session to the Janus server
-public class JanusAudioBridge : JanusPlugin
+public partial class JanusAudioBridge : JanusPlugin
 {
     private static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
     private static readonly string LogHeader = "[JANUS AUDIO BRIDGE]";
@@ -159,63 +159,6 @@ public class JanusAudioBridge : JanusPlugin
         return ret;
     }
 
-    // Run a create attempt; if it comes back null (inconclusive), run it once more.
-    // Pure orchestration (no Janus dependency) so the retry policy is unit-testable.
-    public static async Task<JanusRoom> CreateWithRecheck(Func<Task<JanusRoom>> pAttempt)
-    {
-        JanusRoom ret = await pAttempt().ConfigureAwait(false);
-        if (ret is null)
-        {
-            // Inconclusive first attempt -> the room may already exist (a cross-process
-            // create won the race). Re-attempt; a now-existing room returns 486 -> reuse.
-            ret = await pAttempt().ConfigureAwait(false);
-        }
-        return ret;
-    }
-
-    // A single create attempt. Returns a JanusRoom on "created" or 486 (already exists
-    // -> reuse); null on any other error / unexpected return / exception (the caller
-    // may re-check for a cross-process create).
-    private async Task<JanusRoom> TryCreateRoomOnce(int pRoomId, bool pSpatial, string pRoomDesc, bool pVisAuthority)
-    {
-        JanusRoom ret = null;
-        try
-        {
-            JanusMessageResp resp = await SendPluginMsg(new AudioBridgeCreateRoomReq(pRoomId, pSpatial, pRoomDesc, pVisAuthority));
-            AudioBridgeResp abResp = new AudioBridgeResp(resp);
-
-            m_log.LogDebug("{0} CreateRoom. ReturnCode: {1}", LogHeader, abResp.AudioBridgeReturnCode);
-            switch (abResp.AudioBridgeReturnCode)
-            {
-                case "created":
-                    ret = new JanusRoom(this, pRoomId);
-                    break;
-                case "event":
-                    if (abResp.AudioBridgeErrorCode == 486)
-                    {
-                        // Every JSEP join is preceded by a create, so "already exists" is the normal
-                        // answer on almost every provision - success, and DEBUG, not a warning.
-                        m_log.LogDebug("{0} CreateRoom. Room {1} already exists. Reusing! {2}", LogHeader, pRoomId, abResp.ToString());
-                        // if room already exists, just use it
-                        ret = new JanusRoom(this, pRoomId);
-                    }
-                    else
-                    {
-                        m_log.LogError("{LogHeader} CreateRoom. XX Room creation inconclusive: {AudioBridgeResponse}", LogHeader, abResp.ToString());
-                    }
-                    break;
-                default:
-                    m_log.LogError("{LogHeader} CreateRoom. YY Room creation inconclusive: {AudioBridgeResponse}", LogHeader, abResp.ToString());
-                    break;
-            }
-        }
-        catch (Exception e)
-        {
-            m_log.LogError("{0} CreateRoom. Exception {1}", LogHeader, e);
-        }
-        return ret;
-    }
-
     public async Task<bool> DestroyRoom(JanusRoom janusRoom)
     {
         bool ret = false;
@@ -233,26 +176,6 @@ public class JanusAudioBridge : JanusPlugin
 
     // Constant used to denote that this is a spatial audio room for the region (as opposed to parcels)
     public const int REGION_ROOM_ID = -999;
-
-    // Room EXISTENCE is grid-global and Janus is the only source of truth for it.
-    //
-    // There is NO process-side "room exists" hint: the mixer's 60 s empty-room grace destroys rooms
-    // without telling the sim, so any cached answer goes stale, and a stale one makes the JSEP join
-    // draw error 485, which cannot be re-sent on the same handle. Every select therefore asks the mixer
-    // to create, "already exists" (486) counting as success, BEFORE the JSEP join is sent. What remains
-    // is a per-room gate that serializes creates of one room number within this
-    // process, so concurrent provisions send their creates one at a time (one "created", the rest 486) instead of all
-    // at once; the cross-process race is the 486 itself.
-    private static readonly ConcurrentDictionary<int, SemaphoreSlim> _roomCreateLocks = new();
-
-    // Without eviction the gate table would grow by one entry per room number ever selected (every parcel,
-    // every agent-to-agent pair) for the life of the process. Entries idle for RoomCreateLockIdle are swept at most once
-    // a minute from SelectRoomCoalesced. Evicting is safe: a swept gate is simply re-created on the next select;
-    // the one race - a caller that fetched a gate just before it was swept - can at worst send two creates at
-    // once, which the 486 absorbs.
-    public static readonly TimeSpan RoomCreateLockIdle = TimeSpan.FromMinutes(10);
-    private static readonly ConcurrentDictionary<int, long> _roomLastUseMs = new();
-    private static long _lastRoomLockSweepMs = Environment.TickCount64;
 
     // Calculate a room number for the given parameters. The room number is a hash of the parameters.
     // The attempt is to deterministicly create a room number so all regions will generate the
@@ -292,15 +215,6 @@ public class JanusAudioBridge : JanusPlugin
         int roomNumber = FoldHashToRoom(hashed.GetHashCode());
         return roomNumber;
     }
-
-    // Fold a 32-bit hash to a POSITIVE Janus room number. Math.Abs(int.MinValue) throws
-    // OverflowException (there is no positive int.MinValue), and because the hash inputs are stable
-    // per agent+parcel, one unlucky combination would crash provisioning on that parcel forever.
-    // Redirect ONLY int.MinValue to a valid positive room (int.MaxValue); every other value
-    // goes through Math.Abs, so no other (region,parcel)->room mapping is affected
-    // (int.MinValue cannot yield a room through Math.Abs -- it throws). Extracted so the guard is unit-testable.
-    public static int FoldHashToRoom(int hashCode)
-        => hashCode == int.MinValue ? int.MaxValue : Math.Abs(hashCode);
     /// <summary>The room for these parameters, made to exist by ASKING THE MIXER: a create is sent every time, and
     /// "already exists" (486) is success on every path. The viewer provision calls
     /// this before its JSEP join, so the join never meets a room this process merely believed in. Returns a JanusRoom
@@ -314,65 +228,6 @@ public class JanusAudioBridge : JanusPlugin
         return await SelectRoomCoalesced(roomNumber, () => CreateRoom(roomNumber, pSpatial, roomDesc, visAuthority))
             .ConfigureAwait(false);
     }
-
-    /// <summary>The connector ensure. It is exactly SelectRoom: every select asks
-    /// the mixer. Kept as a name so the ensure's call site says what it is for.</summary>
-    public Task<JanusRoom> EnsureRoom(string pRegionId, string pChannelType, bool pSpatial, int pParcelLocalID, string pChannelID)
-        => SelectRoom(pRegionId, pChannelType, pSpatial, pParcelLocalID, pChannelID);
-
-    /// <summary>Send the create for <paramref name="pRoomNumber"/> under its per-room gate: creates of one room number
-    /// from this process go one at a time, so concurrent provisions produce one "created" and 486s. Always creates -
-    /// there is nothing to skip on. Func-based and static so it is unit-testable without Janus.</summary>
-    public static async Task<JanusRoom> SelectRoomCoalesced(int pRoomNumber, Func<Task<JanusRoom>> pCreate)
-    {
-        long now = Environment.TickCount64;
-        MaybeSweepRoomCreateLocks(now);
-        _roomLastUseMs[pRoomNumber] = now;
-        SemaphoreSlim gate = _roomCreateLocks.GetOrAdd(pRoomNumber, _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            return await pCreate().ConfigureAwait(false);
-        }
-        finally
-        {
-            _roomLastUseMs[pRoomNumber] = Environment.TickCount64;
-            gate.Release();
-        }
-    }
-
-
-    // At most once a minute, drop the gate and the last-use time of every room number idle
-    // for RoomCreateLockIdle (see the field comment for why eviction is safe).
-    private static void MaybeSweepRoomCreateLocks(long pNowMs)
-    {
-        long last = Interlocked.Read(ref _lastRoomLockSweepMs);
-        if (pNowMs - last < 60_000 || Interlocked.CompareExchange(ref _lastRoomLockSweepMs, pNowMs, last) != last)
-            return;
-        SweepRoomCreateLocks(pNowMs, RoomCreateLockIdle);
-    }
-
-    /// Evict every room number whose last select is older than pIdle and whose gate is not held right now.
-    /// Returns how many were evicted. Public so the bound is unit-testable with an explicit clock.
-    public static int SweepRoomCreateLocks(long pNowMs, TimeSpan pIdle)
-    {
-        int evicted = 0;
-        foreach (KeyValuePair<int, long> kvp in _roomLastUseMs)
-        {
-            if (pNowMs - kvp.Value < (long)pIdle.TotalMilliseconds)
-                continue;
-            if (_roomCreateLocks.TryGetValue(kvp.Key, out SemaphoreSlim held) && held.CurrentCount == 0)
-                continue;   // a select for this room is in progress
-            _roomCreateLocks.TryRemove(kvp.Key, out _);
-            _roomLastUseMs.TryRemove(kvp.Key, out _);
-            evicted++;
-        }
-        return evicted;
-    }
-
-    /// Room numbers currently holding a create gate (diagnostics and tests).
-    public static int RoomCreateLockCount => _roomCreateLocks.Count;
-
 
     public override void Handle_Event(JanusMessageResp pResp)
     {

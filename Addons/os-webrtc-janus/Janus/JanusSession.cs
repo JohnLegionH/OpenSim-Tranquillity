@@ -36,7 +36,7 @@ using OpenSim.Framework;
 namespace osWebRtcVoice;
 
 // Encapsulization of a Session to the Janus server
-public class JanusSession : IDisposable
+public partial class JanusSession : IDisposable
 {
     private static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
     private static readonly string LogHeader = "[JANUS SESSION]";
@@ -61,17 +61,6 @@ public class JanusSession : IDisposable
     private HttpClient _HttpClient;
 
     public bool IsConnected { get; set; }
-
-    // How long an ack'd request waits for its completing event before SendToJanus returns a
-    // synthetic error. [JanusWebRtcVoice] RequestTimeoutMs (WebRtcJanusService), default 5000 ms.
-    public const int DefaultRequestTimeoutMs = 5000;
-    public TimeSpan JanusRequestTimeout { get; set; } = TimeSpan.FromMilliseconds(DefaultRequestTimeoutMs);
-
-    // Error.reason of the synthetic "error" responses SendToJanus returns for a request that
-    // never got its event. Callers see an ordinary Janus error (ReturnCode "error").
-    public const string RequestTimeoutReason = "timeout";
-    public const string SessionDestroyedReason = "session destroyed";
-    public const string LongPollExitedReason = "long poll exited";
 
     // Wrapper around the session connection to Janus-gateway
     public JanusSession(string pServerURI, string pAPIToken, string pAdminURI, string pAdminToken, bool pDebugMessages = false)
@@ -203,14 +192,6 @@ public class JanusSession : IDisposable
     {
         return await SendTrickle(pVSession, new TrickleReq(pVSession));
     }
-
-    // A trickle is a handle-level request: if the audiobridge is active, it is sent to its handle.
-    private async Task<JanusMessageResp> SendTrickle(JanusViewerSession pVSession, TrickleReq pReq)
-    {
-        if (pVSession.AudioBridge is null)
-            return await SendToJanusNoWait(pReq);
-        return await SendToJanusNoWait(pReq, pVSession.AudioBridge.PluginUri);
-    }
     // ====================================================================
     public Dictionary<string, JanusPlugin> _Plugins = new Dictionary<string, JanusPlugin>();
     public void AddPlugin(JanusPlugin pPlugin)
@@ -231,12 +212,6 @@ public class JanusSession : IDisposable
         public TaskCompletionSource<JanusMessageResp> TaskCompletionSource;
     }
     private Dictionary<string, OutstandingRequest> _OutstandingRequests = new Dictionary<string, OutstandingRequest>();
-
-    // Requests parked waiting for their event (diagnostics and tests).
-    public int OutstandingRequestCount
-    {
-        get { lock (_OutstandingRequests) return _OutstandingRequests.Count; }
-    }
 
     // Send a request directly to the Janus server.
     // NOTE: this is probably NOT what you want to do. This is a direct call that is outside the session.
@@ -414,58 +389,6 @@ public class JanusSession : IDisposable
             }
         }
         return ret;
-    }
-
-    // Remove pReq's entry under the lock, only if the entry for its transaction is still pReq
-    // (a duplicate-transaction Add that threw must not remove the original). TRUE if this call removed it.
-    private bool RemoveOutstanding(OutstandingRequest pReq)
-    {
-        lock (_OutstandingRequests)
-        {
-            if (_OutstandingRequests.TryGetValue(pReq.TransactionId, out OutstandingRequest current)
-                && ReferenceEquals(current, pReq))
-            {
-                return _OutstandingRequests.Remove(pReq.TransactionId);
-            }
-            return false;
-        }
-    }
-
-    // Complete every parked request with a synthetic error. Called when no event can arrive any
-    // more (DestroySession, long-poll exit). Snapshot-and-clear under the lock; complete outside it with
-    // TrySetResult, so an event that claimed an entry first simply wins.
-    private void FailOutstanding(string pReason)
-    {
-        List<OutstandingRequest> pending;
-        lock (_OutstandingRequests)
-        {
-            pending = new List<OutstandingRequest>(_OutstandingRequests.Values);
-            _OutstandingRequests.Clear();
-        }
-        if (pending.Count > 0)
-            m_log.LogDebug("{0} FailOutstanding: completing {1} pending request(s) with error \"{2}\"", LogHeader, pending.Count, pReason);
-        foreach (OutstandingRequest r in pending)
-            r.TaskCompletionSource.TrySetResult(MakeErrorResp(r.TransactionId, pReason));
-    }
-
-    // A Janus-shaped error ({"janus":"error","transaction":...,"error":{"code":0,"reason":...}}) for a
-    // request that never got its event. Code 0: synthetic, never sent by Janus; the reason distinguishes.
-    private static JanusMessageResp MakeErrorResp(string pTransactionId, string pReason)
-    {
-        var err = new ErrorResp();
-        err.TransactionId = pTransactionId;
-        err.SetError(0, pReason);
-        return err;
-    }
-
-    // "janus" op plus the plugin body's "request" when present, e.g. "message/join" (timeout log only).
-    private static string DescribeOp(JanusMessageReq pReq)
-    {
-        OSDMap body = pReq.RawBody;
-        string op = body.TryGetString("janus", out string janus) ? janus : "?";
-        if (body.TryGetOSDMap("body", out OSDMap pluginBody) && pluginBody.TryGetString("request", out string request))
-            op += "/" + request;
-        return op;
     }
 
     public Task<JanusMessageResp> SendToJanusAdmin(JanusMessageReq pReq)
