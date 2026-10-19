@@ -29,7 +29,86 @@ namespace osWebRtcVoice.NonSpatial
         public int MaxNonSpatialSessions { get; init; } = DefaultMaxNonSpatialSessions;
         public int MaxSessionsPerAgent { get; init; } = DefaultMaxSessionsPerAgent;
 
+        /// <summary>"Start conference" and "invite" requests one agent can make back to back.</summary>
+        public const int DefaultConferenceRequestBurst = 5;
+
+        /// <summary>Seconds for one more request to become available after the burst is spent.</summary>
+        public const double DefaultConferenceRequestRefillSeconds = 10;
+
+        public int ConferenceRequestBurst { get; init; } = DefaultConferenceRequestBurst;
+        public double ConferenceRequestRefillSeconds { get; init; } = DefaultConferenceRequestRefillSeconds;
+
         public static NonSpatialLimits Default => new NonSpatialLimits();
+    }
+
+    /// <summary>
+    /// A token bucket per agent. A bucket holds up to <c>burst</c> tokens and gains one every
+    /// <c>refillSeconds</c>; a request takes one, and is refused when none is left. State is kept only for
+    /// agents that have asked, and <see cref="Prune"/> drops the ones not seen for a while: a bucket left alone
+    /// that long is full again, so forgetting it changes nothing.
+    /// </summary>
+    public sealed class ConferenceRequestLimiter
+    {
+        private sealed class Bucket
+        {
+            public double Tokens;
+            public DateTime LastUtc;
+        }
+
+        private readonly int _burst;
+        private readonly double _refillSeconds;
+        private readonly Dictionary<UUID, Bucket> _buckets = new Dictionary<UUID, Bucket>();
+
+        public ConferenceRequestLimiter(int burst, double refillSeconds)
+        {
+            _burst = Math.Max(1, burst);
+            _refillSeconds = refillSeconds > 0 ? refillSeconds : NonSpatialLimits.DefaultConferenceRequestRefillSeconds;
+        }
+
+        /// <summary>Take a token for <paramref name="agent"/>; false when its bucket is empty.</summary>
+        public bool TryTake(UUID agent, DateTime nowUtc)
+        {
+            lock (_buckets)
+            {
+                if (!_buckets.TryGetValue(agent, out Bucket b))
+                {
+                    b = new Bucket { Tokens = _burst, LastUtc = nowUtc };
+                    _buckets[agent] = b;
+                }
+                else
+                {
+                    double elapsed = (nowUtc - b.LastUtc).TotalSeconds;
+                    if (elapsed > 0)
+                        b.Tokens = Math.Min(_burst, b.Tokens + elapsed / _refillSeconds);
+                    b.LastUtc = nowUtc;
+                }
+                if (b.Tokens < 1)
+                    return false;
+                b.Tokens -= 1;
+                return true;
+            }
+        }
+
+        /// <summary>How many agents have a bucket.</summary>
+        public int TrackedAgents
+        {
+            get { lock (_buckets) return _buckets.Count; }
+        }
+
+        /// <summary>Forget agents not seen for more than <paramref name="maxAge"/>. Returns how many.</summary>
+        public int Prune(DateTime nowUtc, TimeSpan maxAge)
+        {
+            lock (_buckets)
+            {
+                List<UUID> stale = new List<UUID>();
+                foreach (KeyValuePair<UUID, Bucket> kv in _buckets)
+                    if (nowUtc - kv.Value.LastUtc > maxAge)
+                        stale.Add(kv.Key);
+                foreach (UUID k in stale)
+                    _buckets.Remove(k);
+                return stale.Count;
+            }
+        }
     }
 
     /// <summary>

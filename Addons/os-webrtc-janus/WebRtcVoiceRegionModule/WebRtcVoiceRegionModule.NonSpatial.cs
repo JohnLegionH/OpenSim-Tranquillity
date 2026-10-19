@@ -74,8 +74,9 @@ public partial class WebRtcVoiceRegionModule
     private NonSpatialVoiceSessionEngine m_nonSpatial;
 
     // [WebRtcVoice] MaxNonSpatialSessions / MaxSessionsPerAgent: how many non-spatial sessions this process
-    // holds, and how many live ones one agent may have started. A value below 1 is not a usable
-    // ceiling, so it reads as the default.
+    // holds, and how many live ones one agent may have started. ConferenceRequestBurst /
+    // ConferenceRequestRefillSeconds: the per-agent token bucket on "start conference" and "invite".
+    // A value below 1 (above 0 for the refill) is not usable, so it reads as the default.
     public static NonSpatialLimits ReadNonSpatialLimits(IConfig pConfig)
         => new NonSpatialLimits
         {
@@ -83,7 +84,17 @@ public partial class WebRtcVoiceRegionModule
                                                       NonSpatialLimits.DefaultMaxNonSpatialSessions),
             MaxSessionsPerAgent = PositiveOrDefault(pConfig.GetInt("MaxSessionsPerAgent", NonSpatialLimits.DefaultMaxSessionsPerAgent),
                                                     NonSpatialLimits.DefaultMaxSessionsPerAgent),
+            ConferenceRequestBurst = PositiveOrDefault(pConfig.GetInt("ConferenceRequestBurst", NonSpatialLimits.DefaultConferenceRequestBurst),
+                                                       NonSpatialLimits.DefaultConferenceRequestBurst),
+            ConferenceRequestRefillSeconds = ReadPositiveDouble(pConfig, "ConferenceRequestRefillSeconds",
+                                                                NonSpatialLimits.DefaultConferenceRequestRefillSeconds),
         };
+
+    private static double ReadPositiveDouble(IConfig pConfig, string key, double fallback)
+    {
+        double value = pConfig.GetDouble(key, fallback);
+        return value > 0 && !double.IsNaN(value) && !double.IsInfinity(value) ? value : fallback;
+    }
 
     private static int PositiveOrDefault(int value, int fallback) => value >= 1 ? value : fallback;
 

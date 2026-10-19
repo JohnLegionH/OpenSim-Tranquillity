@@ -66,6 +66,9 @@ namespace osWebRtcVoice.NonSpatial
 
         /// <summary>A start or invite would add more new people than the conference has room for.</summary>
         public const string TooManyInvitees = "too-many-invitees";
+
+        /// <summary>The agent has made too many conference requests too quickly.</summary>
+        public const string RateLimited = "rate-limited";
     }
 
     public sealed class NonSpatialVoiceSessionEngine
@@ -84,6 +87,7 @@ namespace osWebRtcVoice.NonSpatial
         private readonly TimeSpan _idleTtl;
         private readonly NonSpatialLimits _limits;
         private readonly RefusalLogGate _refusalGate = new RefusalLogGate();
+        private readonly ConferenceRequestLimiter _requestLimiter;
 
         // Held across the check-then-create of every start, so the session caps and the ad-hoc
         // (creator, temp id) lookup are decided and applied as one step.
@@ -113,9 +117,24 @@ namespace osWebRtcVoice.NonSpatial
             _inviteTtl = inviteTtl ?? DefaultInviteTtl;
             _idleTtl = idleTtl ?? DefaultIdleTtl;
             _limits = limits ?? NonSpatialLimits.Default;
+            _requestLimiter = new ConferenceRequestLimiter(_limits.ConferenceRequestBurst, _limits.ConferenceRequestRefillSeconds);
         }
 
         public NonSpatialLimits Limits => _limits;
+        public ConferenceRequestLimiter RequestLimiter => _requestLimiter;
+
+        /// <summary>
+        /// Count one "start conference" or "invite" against <paramref name="agent"/>'s bucket. The two
+        /// share it, so alternating between them gains nothing. False when the bucket is empty.
+        /// </summary>
+        public bool TryTakeConferenceRequest(UUID agent)
+        {
+            if (_requestLimiter.TryTake(agent, _clock()))
+                return true;
+            NoteRefusal(agent, SessionOutcome.RateLimited,
+                        $"burst={_limits.ConferenceRequestBurst} refill-seconds={_limits.ConferenceRequestRefillSeconds}");
+            return false;
+        }
 
         public INonSpatialSessionStore Store => _store;
         public TimeSpan InviteTtl => _inviteTtl;
@@ -361,7 +380,9 @@ namespace osWebRtcVoice.NonSpatial
         /// </summary>
         public void PruneTransientState()
         {
-            _refusalGate.Prune(_clock(), TransientStateMaxAge);
+            DateTime now = _clock();
+            _refusalGate.Prune(now, TransientStateMaxAge);
+            _requestLimiter.Prune(now, TransientStateMaxAge);
         }
 
         /// <summary>How long an agent can go unseen before its bookkeeping is dropped.</summary>

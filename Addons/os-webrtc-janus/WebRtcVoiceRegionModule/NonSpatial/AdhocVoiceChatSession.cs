@@ -109,6 +109,18 @@ namespace osWebRtcVoice.NonSpatial
             if (!reqmap.TryGetUUID("session-id", out UUID tempSessionId) || tempSessionId == UUID.Zero)
                 return false;
 
+            // Every start counts against the agent's request bucket, a retry included. Checked before the
+            // list is read, so a refused request costs the sim almost nothing.
+            if (!engine.TryTakeConferenceRequest(agentID))
+            {
+                outcome = new ChatSessionOutcome
+                {
+                    Status = HttpStatusCode.Forbidden,
+                    Instrument = Line(agentID, tempSessionId, "adhoc-refused-" + SessionOutcome.RateLimited, null),
+                };
+                return true;
+            }
+
             List<UUID> invitees = ParseInvitees(reqmap);
 
             SessionOutcome start = engine.StartAdhoc(agentID, tempSessionId, originRegion, invitees);
@@ -194,6 +206,16 @@ namespace osWebRtcVoice.NonSpatial
             newlyInvited = new List<UUID>();
             if (!Ours(reqmap, engine, enabled, MethodInvite, out UUID sessionId, out NonSpatialVoiceSession session))
                 return false;
+
+            if (!engine.TryTakeConferenceRequest(agentID))
+            {
+                outcome = new ChatSessionOutcome
+                {
+                    Status = HttpStatusCode.Forbidden,
+                    Instrument = Line(agentID, sessionId, "adhoc-refused-" + SessionOutcome.RateLimited, null),
+                };
+                return true;
+            }
 
             List<UUID> asked = ParseInvitees(reqmap);
             SessionOutcome fits = engine.CheckInviteCount(sessionId, agentID, asked);
