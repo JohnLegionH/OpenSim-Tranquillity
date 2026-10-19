@@ -29,12 +29,15 @@ namespace osWebRtcVoice.NonSpatial
         private readonly Dictionary<NonSpatialSessionType, INonSpatialAdmission> _admission = new Dictionary<NonSpatialSessionType, INonSpatialAdmission>();
         private readonly RefusalLogGate _unavailableGate = new RefusalLogGate();
         private readonly Func<DateTime> _clock;
+        private readonly DepartOutbox _outbox;
 
         /// <summary>Raised at most once a minute when the service did not answer. Carries the operation name.</summary>
         public event Action<string> Unavailable;
 
-        public GridNonSpatialSessions(IVoiceSessionService service, IEnumerable<INonSpatialAdmission> admissions, Func<DateTime> clock = null)
+        public GridNonSpatialSessions(IVoiceSessionService service, IEnumerable<INonSpatialAdmission> admissions, Func<DateTime> clock = null,
+                                      DepartOutbox outbox = null)
         {
+            _outbox = outbox;
             _service = service ?? throw new ArgumentNullException(nameof(service));
             _clock = clock ?? (() => DateTime.UtcNow);
             if (admissions != null)
@@ -62,7 +65,7 @@ namespace osWebRtcVoice.NonSpatial
             List<UUID> invitees = type == NonSpatialSessionType.P2P ? new List<UUID> { otherOrOwner } : new List<UUID>();
             AdmissionVerdict v = Admission(type).CanStart(creator, type == NonSpatialSessionType.Group ? otherOrOwner : UUID.Zero, invitees);
             if (!v.Admitted) return SessionOutcome.Fail(v.Decision);
-            return Outcome(_service.Start((int)type, creator, otherOrOwner, tempSessionId, originRegion, requestedCap), "start");
+            return SeatTaken(Outcome(_service.Start((int)type, creator, otherOrOwner, tempSessionId, originRegion, requestedCap), "start"), creator);
         }
 
         public SessionOutcome StartAdhoc(UUID creator, UUID tempSessionId, UUID originRegion,
@@ -70,7 +73,7 @@ namespace osWebRtcVoice.NonSpatial
         {
             AdmissionVerdict v = Admission(NonSpatialSessionType.Adhoc).CanStart(creator, UUID.Zero, invitees ?? new List<UUID>());
             if (!v.Admitted) return SessionOutcome.Fail(v.Decision);
-            return Outcome(_service.StartAdhoc(creator, tempSessionId, originRegion, invitees ?? new List<UUID>(), requestedCap), "startadhoc");
+            return SeatTaken(Outcome(_service.StartAdhoc(creator, tempSessionId, originRegion, invitees ?? new List<UUID>(), requestedCap), "startadhoc"), creator);
         }
 
         public SessionOutcome CheckInviteCount(UUID sessionId, UUID inviter, IReadOnlyCollection<UUID> asked)
@@ -95,29 +98,45 @@ namespace osWebRtcVoice.NonSpatial
             NonSpatialVoiceSession snapshot = SessionWire.FromData(found.Session);
             AdmissionVerdict v = Admission(snapshot.Type).CanJoin(snapshot, agent);
             if (!v.Admitted) return SessionOutcome.Fail(v.Decision, snapshot);
-            return Outcome(_service.Accept(sessionId, agent, originRegion, viewerSession), "accept");
+            return SeatTaken(Outcome(_service.Accept(sessionId, agent, originRegion, viewerSession), "accept"), agent);
         }
 
         public SessionOutcome MarkPresent(UUID sessionId, UUID agent, UUID originRegion, string viewerSession = null)
-            => Outcome(_service.MarkPresent(sessionId, agent, originRegion, viewerSession), "markpresent");
+            => SeatTaken(Outcome(_service.MarkPresent(sessionId, agent, originRegion, viewerSession), "markpresent"), agent);
 
         public SessionOutcome Decline(UUID sessionId, UUID agent)
             => Outcome(_service.Decline(sessionId, agent), "decline");
 
+        // A departure the service did not receive is kept in the outbox, when the region has one, and sent when the
+        // service answers again. The caller is told the service was unavailable all the same.
         public SessionOutcome Depart(UUID sessionId, UUID agent, DepartureReason reason)
-            => Outcome(_service.Depart(sessionId, agent, (int)reason), "depart");
+        {
+            SessionReply r = Reached(_service.Depart(sessionId, agent, (int)reason), "depart");
+            if (r == null) _outbox?.EnqueueDepart(sessionId, agent, (int)reason);
+            return SessionWire.ToOutcome(r);
+        }
 
         public SessionOutcome LeaveChat(UUID sessionId, UUID agent)
-            => Outcome(_service.LeaveChat(sessionId, agent), "leavechat");
+        {
+            SessionReply r = Reached(_service.LeaveChat(sessionId, agent), "leavechat");
+            if (r == null) _outbox?.EnqueueLeaveChat(sessionId, agent);
+            return SessionWire.ToOutcome(r);
+        }
 
         public IReadOnlyList<NonSpatialVoiceSession> DepartByViewerSession(UUID agent, string viewerSession, DepartureReason reason)
         {
             if (string.IsNullOrEmpty(viewerSession)) return new List<NonSpatialVoiceSession>();
-            return SessionWire.ToSessions(Reached(_service.DepartByViewerSession(agent, viewerSession, (int)reason), "departbyviewer"));
+            SessionReply r = Reached(_service.DepartByViewerSession(agent, viewerSession, (int)reason), "departbyviewer");
+            if (r == null) _outbox?.EnqueueDepartByViewerSession(agent, viewerSession, (int)reason);
+            return SessionWire.ToSessions(r);
         }
 
         public IReadOnlyList<NonSpatialVoiceSession> DepartAll(UUID agent, DepartureReason reason)
-            => SessionWire.ToSessions(Reached(_service.DepartAll(agent, (int)reason), "departall"));
+        {
+            SessionReply r = Reached(_service.DepartAll(agent, (int)reason), "departall");
+            if (r == null) _outbox?.EnqueueDepartAll(agent, (int)reason);
+            return SessionWire.ToSessions(r);
+        }
 
         /// <summary>
         /// There is nothing to adopt from a ring: every region sees the one record in the service. A ring for a
@@ -182,6 +201,14 @@ namespace osWebRtcVoice.NonSpatial
             => _admission.TryGetValue(type, out INonSpatialAdmission a)
                 ? a
                 : throw new InvalidOperationException("no admission policy registered for " + type);
+
+        // The agent holds a seat again, so a departure queued for it earlier is out of date (see DepartOutbox.Supersede).
+        private SessionOutcome SeatTaken(SessionOutcome outcome, UUID agent)
+        {
+            if (_outbox != null && outcome.Ok && outcome.Session != null)
+                _outbox.Supersede(agent, outcome.Session.SessionId);
+            return outcome;
+        }
 
         private SessionOutcome Outcome(SessionReply reply, string operation)
             => SessionWire.ToOutcome(Reached(reply, operation));

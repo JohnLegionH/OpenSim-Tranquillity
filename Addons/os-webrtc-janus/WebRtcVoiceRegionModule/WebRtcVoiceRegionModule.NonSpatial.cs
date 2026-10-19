@@ -75,9 +75,13 @@ public partial class WebRtcVoiceRegionModule
     private INonSpatialSessions m_nonSpatial;
 
     // Set only when [WebRtcVoice] SessionStoreMode is grid: the region's client for the grid session service,
-    // and the timer that keeps this region's seats alive there.
+    // the timer that keeps this region's seats alive there, and the queue that holds departures it could not
+    // deliver. The outbox is worked every few seconds; the service itself is behind a circuit breaker.
     private GridNonSpatialSessions m_gridSessions;
     private GridSeatRenewer m_gridRenewer;
+    private DepartOutbox m_gridOutbox;
+    private static readonly TimeSpan GridOutboxInterval = TimeSpan.FromSeconds(5);
+    private long m_gridOutboxLostLoggedAt;
 
     // [WebRtcVoice] CarrierSecret signs and verifies the two cross-process carriers (the ring and the
     // conference text line). Unset, or shorter than CarrierAuth.MinSecretLength, it is off: no carrier is
@@ -543,8 +547,31 @@ public partial class WebRtcVoiceRegionModule
         if (authProblem is not null)
             m_log.LogError("{LogHeader} grid session store: {Problem}; the service will refuse these calls", logHeader, authProblem);
 
-        VoiceSessionServicesConnector service = new(config, "WebRtcVoice", store.ServerUri, store.TimeoutMs);
-        GridNonSpatialSessions grid = new(service, admissions);
+        VoiceSessionServicesConnector connector = new(config, "WebRtcVoice", store.ServerUri, store.TimeoutMs);
+        SessionCircuitBreaker breaker = new(store.BreakerFailures, TimeSpan.FromSeconds(store.BreakerWindowSeconds),
+                                            TimeSpan.FromSeconds(store.BreakerOpenSeconds));
+        breaker.Changed += state =>
+        {
+            if (state == BreakerState.Open)
+                m_log.LogWarning("{LogHeader} grid session store at {Uri} did not answer {Failures} calls in {Window} s; "
+                    + "calls are refused for {Open} s without waiting for it", logHeader, store.ServerUri,
+                    store.BreakerFailures, store.BreakerWindowSeconds, store.BreakerOpenSeconds);
+            else if (state == BreakerState.Closed)
+                m_log.LogInformation("{LogHeader} grid session store at {Uri} is answering again", logHeader, store.ServerUri);
+        };
+        GuardedVoiceSessionService service = new(connector, breaker);
+        DepartOutbox outbox = new(service, store.OutboxMax, TimeSpan.FromSeconds(store.OutboxSeconds));
+        outbox.Lost += why =>
+        {
+            // At most one line a minute; the seat lease returns the seat in any case.
+            long now = Environment.TickCount64;
+            long last = Interlocked.Read(ref m_gridOutboxLostLoggedAt);
+            if (now - last >= 60000 && Interlocked.CompareExchange(ref m_gridOutboxLostLoggedAt, now, last) == last)
+                m_log.LogWarning("{LogHeader} grid session store: gave up a queued departure ({Why}); the seat lease will return the seat",
+                    logHeader, why);
+        };
+        m_gridOutbox = outbox;
+        GridNonSpatialSessions grid = new(service, admissions, outbox: outbox);
         grid.Unavailable += operation =>
             m_log.LogWarning("{LogHeader} grid session store did not answer {Operation} at {Uri}; new calls are refused until it does",
                 logHeader, operation, store.ServerUri);
@@ -554,7 +581,9 @@ public partial class WebRtcVoiceRegionModule
             (message, e) => m_log.LogWarning(e, "{LogHeader} {Message}", logHeader, message),
             TimeSpan.FromSeconds(store.RenewSeconds));
         m_log.LogInformation("{LogHeader} non-spatial sessions are kept by the grid session store at {Uri} "
-            + "(timeout {Timeout} ms, seats renewed every {Renew} s)", logHeader, store.ServerUri, store.TimeoutMs, store.RenewSeconds);
+            + "(timeout {Timeout} ms, seats renewed every {Renew} s, up to {Queue} departures queued for {Age} s, "
+            + "refusing calls for {Open} s after {Failures} failures in {Window} s)", logHeader, store.ServerUri, store.TimeoutMs,
+            store.RenewSeconds, store.OutboxMax, store.OutboxSeconds, store.BreakerOpenSeconds, store.BreakerFailures, store.BreakerWindowSeconds);
     }
 
     // The agents with a root presence in a scene this module serves; the grid store keeps their seats.
@@ -590,6 +619,7 @@ public partial class WebRtcVoiceRegionModule
     {
         m_nonSpatialMaintenance?.Stop();
         m_gridRenewer?.Stop();
+        m_gridOutbox?.Stop();
     }
 
     // Tracks the scenes this shared module serves, for callee resolution on THIS instance (the group
@@ -601,6 +631,7 @@ public partial class WebRtcVoiceRegionModule
                 m_scenes.Add(scene);
         m_nonSpatialMaintenance?.Start();
         m_gridRenewer?.Start();
+        m_gridOutbox?.Start(GridOutboxInterval);
         ReleaseSeatsOfStartedRegion(scene);
     }
 
