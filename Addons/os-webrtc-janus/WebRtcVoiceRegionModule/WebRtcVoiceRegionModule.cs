@@ -294,7 +294,8 @@ public partial class WebRtcVoiceRegionModule : ISharedRegionModule
                 // A CHILD agent (the viewer's neighbour-region provision) is positioned outside this
                 // region, so position finds no parcel. It keeps the pre-slice-1 path: a client id selects the
                 // parcel and every check runs against it; no id (the stock viewer, estate channel) means no
-                // parcel checks and the service's -999 estate room. ProvisionParcelResolver decides.
+                // parcel checks and the service's -999 estate room. ProvisionParcelResolver decides; a hinted
+                // parcel that is not near the child's known position is dropped below.
                 int? clientParcelId = map.TryGetInt("parcel_local_id", out int c) ? c : null;
                 ParcelResolveInput resolveInput = new ParcelResolveInput(clientParcelId, sp.IsChildAgent);
 
@@ -303,17 +304,30 @@ public partial class WebRtcVoiceRegionModule : ISharedRegionModule
                     parcel = scene.LandChannel.GetLandObject(sp.AbsolutePosition.X, sp.AbsolutePosition.Y);
                 ParcelResolution res = ProvisionParcelResolver.Resolve(resolveInput, parcel?.LandData?.LocalID);
                 if (res.Source == ParcelSource.ClientHint)
+                {
+                    // The id comes from the viewer, and this region only knows the child agent's position
+                    // coarsely (the root region sends it after about 10 m of movement, at most every 2 s).
+                    // Accept the named parcel only if it lies within that slack of the child's position;
+                    // otherwise treat the request as sent without an id (estate room). Never a refusal.
                     parcel = scene.LandChannel.GetLandObject(res.LocalId.Value);
+                    LandData hinted = parcel?.LandData;
+                    if (hinted is null || !ChildParcelProximity.IsNear(sp.AbsolutePosition, hinted.AABBMin, hinted.AABBMax))
+                    {
+                        res = ProvisionParcelResolver.RejectHint(res);
+                        parcel = null;
+                        map.Remove("parcel_local_id"); // the service must not room by the dropped id
+                    }
+                }
 
                 LandData land = parcel?.LandData;
                 bool estateChan = land != null && (land.Flags & (uint)ParcelFlags.UseEstateVoiceChan) != 0;
 
                 // Every path logs this line, including the refusals below and the child/no-hint estate path,
                 // so no provision outcome is silent, the NotFound arm included.
-                m_log.LogDebug("{LogHeader} [PARCEL RESOLVE] agent={AgentId} region={RegionName} child={Child} source={Source} client={ClientId} server={ServerLocalId} parcel={ParcelId} estate_chan={EstateChan} mismatch={Mismatch}",
+                m_log.LogDebug("{LogHeader} [PARCEL RESOLVE] agent={AgentId} region={RegionName} child={Child} source={Source} client={ClientId} server={ServerLocalId} parcel={ParcelId} estate_chan={EstateChan} mismatch={Mismatch} hint_rejected={HintRejected}",
                     logHeader, agentID, scene.Name, sp.IsChildAgent, res.Source, clientParcelId?.ToString() ?? "-",
                     res.ServerLocalId?.ToString() ?? "-", land?.LocalID.ToString() ?? "-",
-                    land == null ? "-" : estateChan.ToString(), res.ClientMismatch);
+                    land == null ? "-" : estateChan.ToString(), res.ClientMismatch, res.HintRejected);
 
                 // ParcelSource.None: child agent, no client id -- no parcel checks, parcel_local_id stays
                 // absent, the service defaults to the estate room. The normal neighbour-region path.
