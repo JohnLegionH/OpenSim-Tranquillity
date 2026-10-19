@@ -83,6 +83,10 @@ public partial class WebRtcVoiceRegionModule
     private GridNonSpatialSessions m_gridSessions;
     private GridSeatRenewer m_gridRenewer;
     private DepartOutbox m_gridOutbox;
+    private SessionCircuitBreaker m_gridBreaker;
+    private string m_gridServerUri = string.Empty;
+    private int m_gridProbe;   // 0 still checking, 1 the service answered, 2 it did not
+    private static bool s_sessionsCommandRegistered;
     private static readonly TimeSpan GridOutboxInterval = TimeSpan.FromSeconds(5);
     private long m_gridOutboxLostLoggedAt;
 
@@ -525,6 +529,7 @@ public partial class WebRtcVoiceRegionModule
         SessionStoreSettings store = SessionStoreSettings.Read(m_Config);
         if (store.Problem is not null)
             m_log.LogError("{LogHeader} [WebRtcVoice] {Problem}; non-spatial sessions stay in this process", logHeader, store.Problem);
+        RegisterSessionsCommand();
         if (store.Grid)
         {
             InitialiseGridSessions(config, store, admissions);
@@ -589,6 +594,8 @@ public partial class WebRtcVoiceRegionModule
             m_log.LogWarning("{LogHeader} grid session store did not answer {Operation} at {Uri}; new calls are refused until it does",
                 logHeader, operation, store.ServerUri);
         m_gridSessions = grid;
+        m_gridBreaker = breaker;
+        m_gridServerUri = store.ServerUri;
         m_nonSpatial = grid;
         m_gridRenewer = new GridSeatRenewer(grid, PresentAgents,
             (message, e) => m_log.LogWarning(e, "{LogHeader} {Message}", logHeader, message),
@@ -597,6 +604,58 @@ public partial class WebRtcVoiceRegionModule
             + "(timeout {Timeout} ms, seats renewed every {Renew} s, up to {Queue} departures queued for {Age} s, "
             + "refusing calls for {Open} s after {Failures} failures in {Window} s)", logHeader, store.ServerUri, store.TimeoutMs,
             store.RenewSeconds, store.OutboxMax, store.OutboxSeconds, store.BreakerOpenSeconds, store.BreakerFailures, store.BreakerWindowSeconds);
+
+        // Ask the service once whether it is there, so an address with no service behind it (the wrong URI, a Robust
+        // without the service, a wrong password) is reported when the region starts, not by the first refused call.
+        // Asked in the background, straight to the connector, so it neither holds up start-up nor counts against the breaker.
+        Task.Run(() =>
+        {
+            bool answered = connector.Get(UUID.Zero) is not null;
+            Interlocked.Exchange(ref m_gridProbe, answered ? 1 : 2);
+            if (answered)
+                m_log.LogInformation("{LogHeader} grid session store at {Uri} answered the start-up check", logHeader, store.ServerUri);
+            else
+                m_log.LogError("{LogHeader} grid session store at {Uri} did not answer the start-up check: check SessionStoreServerURI, "
+                    + "that the Robust that serves it has the voice session service enabled, and the service credentials. "
+                    + "New calls are refused until it answers", logHeader, store.ServerUri);
+        });
+    }
+
+    // "show voice sessions": where this region keeps its call sessions, and whether the service is answering.
+    private void RegisterSessionsCommand()
+    {
+        lock (typeof(WebRtcVoiceRegionModule))
+        {
+            if (s_sessionsCommandRegistered || MainConsole.Instance is null)
+                return;   // unit tests / embedded hosts have no console
+            s_sessionsCommandRegistered = true;
+        }
+        MainConsole.Instance.Commands.AddCommand("Voice", false, "show voice sessions",
+            "show voice sessions",
+            "Show where this region keeps its call sessions and, when it is a grid service, whether it is answering",
+            (module, args) =>
+            {
+                foreach (string line in BuildSessionStoreReport().Format())
+                    MainConsole.Instance.Output(line);
+            });
+    }
+
+    private SessionStoreReport BuildSessionStoreReport()
+    {
+        bool grid = m_gridSessions is not null;
+        int probe = Volatile.Read(ref m_gridProbe);
+        return new SessionStoreReport
+        {
+            Grid = grid,
+            ServerUri = grid ? m_gridServerUri : string.Empty,
+            ProbeAnswered = probe == 0 ? null : probe == 1,
+            Breaker = m_gridBreaker?.State ?? BreakerState.Closed,
+            LocalSessions = grid ? 0 : m_nonSpatialStore.All().Count,
+            HeldSeats = m_gridSessions?.HeldSeats().Count ?? 0,
+            QueuedDeparts = m_gridOutbox?.Count ?? 0,
+            DroppedDeparts = m_gridOutbox?.Dropped ?? 0,
+            CarriersSigned = m_carrierAuth.Enabled,
+        };
     }
 
     // The agents with a root presence in a scene this module serves; the grid store keeps their seats.

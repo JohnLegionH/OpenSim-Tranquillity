@@ -44,6 +44,9 @@ namespace osWebRtcVoice.Tests
             public string BaseUri { get; }
             public int Requests;
 
+            /// <summary>While this is unset a request is read but not answered, as a service that has hung does not answer.</summary>
+            public readonly System.Threading.ManualResetEventSlim Answering = new System.Threading.ManualResetEventSlim(true);
+
             public TestServer(VoiceSessionPostHandler handler)
             {
                 _handler = handler;
@@ -73,6 +76,7 @@ namespace osWebRtcVoice.Tests
                             ctx.Request.InputStream.CopyTo(ms);
                             body = ms.ToArray();
                         }
+                        Answering.Wait();
                         TestOSHttpRequest request = new TestOSHttpRequest { Headers = new NameValueCollection(ctx.Request.Headers) };
                         TestOSHttpResponse response = new TestOSHttpResponse();
                         byte[] reply = _handler.Handle(ctx.Request.Url.AbsolutePath, new MemoryStream(body), request, response);
@@ -87,6 +91,7 @@ namespace osWebRtcVoice.Tests
 
             public void Dispose()
             {
+                Answering.Set();
                 _listener.Close();
                 try { _loop.Wait(2000); } catch { }
             }
@@ -331,6 +336,78 @@ namespace osWebRtcVoice.Tests
             Assert.That(refused.Decision, Is.EqualTo(SessionOutcome.StoreUnavailable));
             Assert.That(region.Get(GroupId), Is.Null);
             Assert.That(service.SessionCount, Is.EqualTo(0), "no session anywhere");
+        }
+
+        [Test]
+        public void AServiceThatDoesNotAnswerInTime_IsRefusedCleanly_AndTheClientDoesNotWaitForever()
+        {
+            VoiceSessionService service = VoiceSessionServiceTests.NewService();
+            using TestServer server = new TestServer(NewHandler(service));
+            server.Answering.Reset();
+            VoiceSessionServicesConnector client = new VoiceSessionServicesConnector(Config(), "WebRtcVoice", server.BaseUri, 1000);
+            GridNonSpatialSessions region = VoiceSessionServiceTests.NewRegion(client);
+
+            System.Diagnostics.Stopwatch waited = System.Diagnostics.Stopwatch.StartNew();
+            SessionOutcome refused = region.Start(NonSpatialSessionType.Group, Alice, GroupId, GroupId, RegionA);
+            waited.Stop();
+
+            Assert.That(refused.Ok, Is.False);
+            Assert.That(refused.Decision, Is.EqualTo(SessionOutcome.StoreUnavailable));
+            Assert.That(waited.Elapsed, Is.LessThan(TimeSpan.FromSeconds(8)), "it gave up at its own timeout, not the server's");
+            Assert.That(service.SessionCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void ACallToAServiceThatHasHung_Answers503()
+        {
+            VoiceSessionService service = VoiceSessionServiceTests.NewService();
+            using TestServer server = new TestServer(NewHandler(service));
+            VoiceSessionServicesConnector client = new VoiceSessionServicesConnector(Config(), "WebRtcVoice", server.BaseUri, 1000);
+            GridNonSpatialSessions region = VoiceSessionServiceTests.NewRegion(client);
+            A2ACalls calls = new A2ACalls(() => region);
+            Assert.That(calls.Record(Alice, Bob, RegionA, out _), Is.Not.Null);
+            server.Answering.Reset();
+
+            ChatSessionOutcome o = ChatSessionRequestLogic.Decide(new OpenMetaverse.StructuredData.OSDMap
+            {
+                ["method"] = OpenMetaverse.StructuredData.OSD.FromString("call"),
+                ["session-id"] = OpenMetaverse.StructuredData.OSD.FromUUID(A2ACalls.ComputeSessionId(Alice, Bob)),
+            }, Alice, calls);
+
+            Assert.That(o.Status, Is.EqualTo(HttpStatusCode.ServiceUnavailable), "a timeout is not the store saying the call is gone");
+        }
+
+        [Test]
+        public void AServiceWithNoSuchSession_AnswersTheStartUpCheck()
+        {
+            VoiceSessionService service = VoiceSessionServiceTests.NewService();
+            using TestServer server = new TestServer(NewHandler(service));
+            VoiceSessionServicesConnector client = new VoiceSessionServicesConnector(Config(), "WebRtcVoice", server.BaseUri, 1000);
+
+            SessionReply reply = client.Get(UUID.Zero);
+
+            Assert.That(reply, Is.Not.Null, "an answer, even a refusal, means the service is there");
+            Assert.That(reply.Ok, Is.False);
+        }
+
+        [Test]
+        public void NothingAtTheAddress_DoesNotAnswerTheStartUpCheck()
+        {
+            VoiceSessionService service = VoiceSessionServiceTests.NewService();
+            TestServer first = new TestServer(NewHandler(service));
+            string uri = first.BaseUri;
+            first.Dispose();
+
+            Assert.That(new VoiceSessionServicesConnector(Config(), "WebRtcVoice", uri, 1000).Get(UUID.Zero), Is.Null);
+        }
+
+        [Test]
+        public void AWrongPassword_DoesNotAnswerTheStartUpCheck()
+        {
+            VoiceSessionService service = VoiceSessionServiceTests.NewService();
+            using TestServer server = new TestServer(NewHandler(service));
+
+            Assert.That(NewClient(server, Config(password: "not-the-service-password-not-the-service")).Get(UUID.Zero), Is.Null);
         }
     }
 }
