@@ -641,10 +641,21 @@ namespace osWebRtcVoice.NonSpatial
         /// a misconfiguration that would silently put the two halves of a call in different mixer
         /// rooms. Better to refuse loudly here than to be inaudible in production.
         ///
+        /// A ring that carries no room key is refused: the key is what ties the ring to this grid's
+        /// derivation, so it cannot be optional.
+        ///
         /// Born with RingSent LATCHED and the invited set pre-seeded, which is what makes send-once
         /// hold across instances: this instance must never re-ring a call it did not
         /// start. It carries NO seats -- the ringing instance owns those, and this instance's seat
         /// count is its own slice only (the stated per-instance cap limitation).
+        ///
+        /// A session this instance ALREADY holds is never overwritten, and a ring never latches RingSent
+        /// on it or replaces its credential. The only thing a ring may still add to an existing session is
+        /// for a session that was itself adopted from an earlier ring: the ringing target is marked as
+        /// already rung and, for an ad-hoc conference, given an Invited record if it has none. That is
+        /// needed because the second invitee of one conference on this instance arrives as a second ring,
+        /// and an ad-hoc conference admits the accept on the member record alone. A session started on
+        /// this instance, or a ring whose type differs from the session's, gets nothing added.
         /// </summary>
         public SessionOutcome AdoptRemoteRing(UUID groupId, string carriedRoomKey, string token, int cap,
                                               UUID creator, IEnumerable<UUID> alreadyRung,
@@ -653,7 +664,9 @@ namespace osWebRtcVoice.NonSpatial
             if (groupId == UUID.Zero)
                 return SessionOutcome.Fail(SessionOutcome.NoSuchSession);
             string local = NonSpatialRoomKey.Derive(_gridId, type, groupId);
-            if (!string.IsNullOrEmpty(carriedRoomKey) && !string.Equals(local, carriedRoomKey, StringComparison.Ordinal))
+            if (string.IsNullOrEmpty(carriedRoomKey))
+                return SessionOutcome.Fail("refused-room-key-missing");
+            if (!string.Equals(local, carriedRoomKey, StringComparison.Ordinal))
                 return SessionOutcome.Fail("refused-room-key-mismatch");
 
             DateTime now = _clock();
@@ -666,26 +679,29 @@ namespace osWebRtcVoice.NonSpatial
                                                                           local, owner, creator, effective, now);
                 made.Token = token;                 // the ring carries the credential the viewer will echo
                 made.RingSent = true;               // never re-ring a call this instance did not start
+                made.AdoptedFromRing = true;
                 if (alreadyRung != null)
                     foreach (UUID a2 in alreadyRung) made.MarkInvited(a2);
                 SeedAdoptedMembership(made, type, alreadyRung, now);
                 return made;
             }, out bool created);
 
+            string decision = "ring-adopted";
             if (!created)
             {
-                _store.Mutate<object>(groupId, sess =>
+                decision = _store.Mutate(groupId, sess =>
                 {
-                    sess.LastSeenUtc = now;
-                    if (string.IsNullOrEmpty(sess.Token) && !string.IsNullOrEmpty(token)) sess.Token = token;
-                    sess.RingSent = true;
+                    if (sess.Type != type) return "refused-session-type-mismatch";
+                    if (!sess.AdoptedFromRing) return "ring-session-held";   // started here: a ring adds nothing
                     if (alreadyRung != null)
                         foreach (UUID a2 in alreadyRung) sess.MarkInvited(a2);
                     SeedAdoptedMembership(sess, type, alreadyRung, now);
-                    return null;
-                });
+                    return "ring-adopt-idempotent";
+                }, "refused-no-such-session");
+                if (decision.StartsWith("refused-", StringComparison.Ordinal))
+                    return SessionOutcome.Fail(decision);
             }
-            return new SessionOutcome(true, created ? "ring-adopted" : "ring-adopt-idempotent", s, created);
+            return new SessionOutcome(true, decision, s, created);
         }
 
         /// <summary>

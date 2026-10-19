@@ -188,6 +188,12 @@ namespace osWebRtcVoice.NonSpatial
         /// <summary>True once the 0 -> 1 transition has fired its fan-out for this cycle.</summary>
         public bool RingSent { get; internal set; }
 
+        /// <summary>
+        /// True for a session this instance created from an incoming ring rather than from a local start.
+        /// A later ring may add invitations to such a session; it adds nothing to one started here.
+        /// </summary>
+        public bool AdoptedFromRing { get; internal set; }
+
         public bool WasInvited(UUID agent) => _invited.Contains(agent);
 
         internal void MarkInvited(UUID agent) => _invited.Add(agent);

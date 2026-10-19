@@ -102,6 +102,11 @@ public partial class WebRtcVoiceRegionModule
     {
         if (session is null || !m_groupVoice.IsUsable || body is null)
             return;
+        if (!m_carrierAuth.Enabled)
+        {
+            LogCarrierOff(session.Owner);
+            return;
+        }
 
         List<Scene> scenes;
         lock (m_scenes)
@@ -181,7 +186,7 @@ public partial class WebRtcVoiceRegionModule
             try
             {
                 GridInstantMessage im = GroupVoiceRingTransport.Build(target, initiator, initiatorName,
-                                                                      session.Owner, originRegion, body);
+                                                                      session.Owner, originRegion, body, m_carrierAuth);
                 transfer.SendInstantMessage(im, _ => { });
                 m_log.LogDebug("{LogHeader} {Line}", logHeader,
                     GroupVoiceRingTransport.Line(target, session.Owner, GroupVoiceRingTransport.DecisionSent));
@@ -205,44 +210,31 @@ public partial class WebRtcVoiceRegionModule
     {
         if (m_nonSpatial is null || (!m_groupVoice.IsUsable && !m_adhocVoiceEnabled))
             return;
-        if (!GroupVoiceRingTransport.TryParse(msg, out UUID target, out UUID groupID, out OSDMap body))
+        RingIntake ring = CarrierIntake.AcceptRing(msg, m_carrierAuth, m_nonSpatial, m_groupVoice.IsUsable,
+                                                   m_groupVoice.Cap, m_adhocVoiceEnabled);
+        if (!ring.Claimed)
             return;   // not ours: every other subscriber still sees it untouched
-
-        OSDMap voice = body.TryGetOSDMap("voice", out OSDMap v) ? v : null;
-        string roomKey = voice is not null && voice.TryGetString("channel_uri", out string ru) ? ru : null;
-        string token = voice is not null && voice.TryGetString("channel_credentials", out string tk) ? tk : null;
-        body.TryGetUUID("from_id", out UUID caller);
-
-        // Group and conference rings share the carrier, and invitation_type is what tells them
-        // apart -- it is already in the body the viewer will receive, so nothing new goes on the wire.
-        // Reading it from the BODY rather than adding a transport field also means the discriminator
-        // and the thing the viewer acts on can never disagree.
-        bool isConference = voice is not null
-                            && voice.TryGetValue("invitation_type", out OSD invType)
-                            && invType.AsInteger() == AdhocVoiceInvite.InvitationTypeConference;
-        NonSpatialSessionType ringType = isConference ? NonSpatialSessionType.Adhoc : NonSpatialSessionType.Group;
-
-        if (isConference ? !m_adhocVoiceEnabled : !m_groupVoice.IsUsable)
-            return;   // that half is switched off on this instance
-
-        SessionOutcome adopted = m_nonSpatial.AdoptRemoteRing(groupID, roomKey, token,
-                                                              isConference ? NonSpatialCaps.DefaultConferenceCap
-                                                                           : m_groupVoice.Cap,
-                                                              caller, new[] { target }, ringType);
-        if (!adopted.Ok)
+        if (ring.Reason is not null)
         {
-            m_log.LogWarning("{LogHeader} {Line}", logHeader,
-                GroupVoiceRingTransport.Line(target, groupID, adopted.Decision,
-                    "carried room key does not match this instance's derivation - check GatekeeperURI on both"));
+            LogCarrierRefusal(CarrierAuth.KindRing, ring.Reason, ring.RefusalCount);
+            return;
+        }
+        if (!ring.Ok)
+        {
+            if (ring.Decision != CarrierIntake.DecisionFeatureOff)   // that half is switched off on this instance
+                m_log.LogWarning("{LogHeader} {Line}", logHeader,
+                    GroupVoiceRingTransport.Line(ring.Target, ring.GroupId, ring.Decision,
+                        "carried room key is missing or does not match this instance's derivation - check GatekeeperURI on both"));
             return;
         }
 
         List<Scene> scenes;
         lock (m_scenes)
             scenes = new List<Scene>(m_scenes);
-        string decision = A2AInviteDelivery.Deliver(scenes, target, body, null, out string region);
+        string decision = A2AInviteDelivery.Deliver(scenes, ring.Target, ring.Body, null, out string region);
         m_log.LogDebug("{LogHeader} {Line}", logHeader,
-            GroupVoiceRingTransport.Line(target, groupID, decision, "region=\"" + region + "\" adopted=" + adopted.Decision));
+            GroupVoiceRingTransport.Line(ring.Target, ring.GroupId, decision,
+                "region=\"" + region + "\" adopted=" + ring.Decision));
     }
 
     /// <summary>

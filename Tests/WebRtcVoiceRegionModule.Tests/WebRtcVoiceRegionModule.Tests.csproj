@@ -63,6 +63,7 @@
     <Compile Include="AdhocConferenceTextTests.cs" />
     <Compile Include="AdhocChatLifecycleTests.cs" />
     <Compile Include="GroupChatSessionGuardTests.cs" />
+    <Compile Include="CarrierAuthTests.cs" />
   </ItemGroup>
 
   <ItemGroup>

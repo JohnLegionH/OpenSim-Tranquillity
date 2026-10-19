@@ -73,6 +73,49 @@ public partial class WebRtcVoiceRegionModule
 
     private NonSpatialVoiceSessionEngine m_nonSpatial;
 
+    // [WebRtcVoice] CarrierSecret signs and verifies the two cross-process carriers (the ring and the
+    // conference text line). Unset, or shorter than CarrierAuth.MinSecretLength, it is off: no carrier is
+    // sent and every incoming one is refused. A grid that runs its regions in more than one process sets
+    // the same value on every region server.
+    private CarrierAuth m_carrierAuth = CarrierAuth.Off();
+
+    // Reads [WebRtcVoice] CarrierSecret and says once, at startup, whether cross-process carriers are on.
+    // The secret itself is never logged.
+    private void InitialiseCarrierAuth()
+    {
+        string secret = m_Config.GetString("CarrierSecret", string.Empty);
+        string problem = CarrierAuth.CheckSecret(secret);
+        if (problem is null)
+        {
+            m_carrierAuth = new CarrierAuth(secret);
+            m_log.LogInformation("{LogHeader} cross-process voice carriers on: group and conference rings and "
+                + "conference text are signed with [WebRtcVoice] CarrierSecret", logHeader);
+            return;
+        }
+        m_carrierAuth = CarrierAuth.Off();
+        if (problem == "too-short")
+            m_log.LogError("{LogHeader} [WebRtcVoice] CarrierSecret is shorter than {Min} characters and is refused; "
+                + "cross-process voice carriers are off", logHeader, CarrierAuth.MinSecretLength);
+        else
+            m_log.LogInformation("{LogHeader} cross-process voice carriers are off: [WebRtcVoice] CarrierSecret is not set. "
+                + "None is sent and every incoming one is refused. A grid that runs regions in more than one process "
+                + "sets the same CarrierSecret (at least {Min} characters) on every region server for group and "
+                + "conference calls to ring across them", logHeader, CarrierAuth.MinSecretLength);
+    }
+
+    private void LogCarrierOff(UUID session)
+        => m_log.LogDebug("{LogHeader} carrier not sent: session={Session} decision={Decision}", logHeader, session,
+                          CarrierIntake.DecisionCarrierOff);
+
+    // A refused carrier is logged by reason and running count only, never by contents, and not on every
+    // refusal: the first of each reason and then every hundredth, so a flood cannot flood the log.
+    private void LogCarrierRefusal(string kind, string reason, long count)
+    {
+        if (CarrierAuth.ShouldLog(count))
+            m_log.LogWarning("{LogHeader} carrier refused: kind={Kind} reason={Reason} count={Count}",
+                logHeader, kind, reason, count);
+    }
+
     // [WebRtcVoice] MaxNonSpatialSessions / MaxSessionsPerAgent: how many non-spatial sessions this process
     // holds, and how many live ones one agent may have started. ConferenceRequestBurst /
     // ConferenceRequestRefillSeconds: the per-agent token bucket on "start conference" and "invite".
@@ -411,6 +454,7 @@ public partial class WebRtcVoiceRegionModule
     private void InitialiseNonSpatial(IConfigSource config)
     {
         m_a2aVoiceEnabled = ReadA2AVoiceEnabled(m_Config);
+        InitialiseCarrierAuth();
 
         // Group voice, opt-in. The membership and power lookups are bound per-request
         // to the scene's IGroupsModule (grid state via the groups service, so the same answer

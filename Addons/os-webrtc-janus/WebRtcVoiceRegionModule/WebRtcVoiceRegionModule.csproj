@@ -49,6 +49,8 @@
     <Compile Include="NonSpatial/GroupVoiceChatSession.cs" />
     <Compile Include="NonSpatial/NonSpatialProvisionAdmission.cs" />
     <Compile Include="NonSpatial/GroupVoiceInvite.cs" />
+    <Compile Include="NonSpatial/CarrierAuth.cs" />
+    <Compile Include="NonSpatial/CarrierIntake.cs" />
     <Compile Include="NonSpatial/GroupVoiceRingTransport.cs" />
     <Compile Include="NonSpatial/AdhocVoiceChatSession.cs" />
     <Compile Include="NonSpatial/AdhocVoiceInvite.cs" />

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Contributors, http://opensimulator.org/
+ * Copyright (c) 2026 Legion Builds
  * See CONTRIBUTORS.TXT for a full list of copyright holders.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -24,7 +24,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-// Adapted 2026 by Legion Builds
 
 using System.Collections.Generic;
 using System.Net;
@@ -227,6 +226,11 @@ public partial class WebRtcVoiceRegionModule
     {
         if (candidates is null || candidates.Count == 0)
             return;
+        if (!m_carrierAuth.Enabled)
+        {
+            LogCarrierOff(plan.Session.SessionId);
+            return;
+        }
 
         IMessageTransferModule transfer = null;
         foreach (Scene sc in scenes)
@@ -260,7 +264,8 @@ public partial class WebRtcVoiceRegionModule
             {
                 transfer.SendInstantMessage(
                     AdhocTextTransport.Build(target, plan.Sender, fromName, plan.Session.SessionId,
-                                             originRegion, plan.Message), _ => { });
+                                             originRegion, plan.Message, null, plan.Session.RoomKey, m_carrierAuth),
+                    _ => { });
                 m_log.LogDebug("{LogHeader} {Line}", logHeader,
                     AdhocTextTransport.Line(target, plan.Session.SessionId, AdhocTextTransport.DecisionSent));
             }
@@ -277,40 +282,38 @@ public partial class WebRtcVoiceRegionModule
     ///
     /// THE MEMBERSHIP RE-CHECK IS NOT REDUNDANT. The sending instance already decided the sender is
     /// a member, but this instance holds its own adopted copy of the voice session, and a carrier is a
-    /// grid IM anyone could in principle synthesise. Re-checking here means a forged carrier cannot
-    /// inject text into a conference on this host.
+    /// grid IM anyone could synthesise. The carrier's MAC is verified first (CarrierIntake), and the
+    /// re-check here means even a validly signed line cannot reach a conference its sender is not in.
     /// </summary>
     private void OnIncomingConferenceText(GridInstantMessage msg)
     {
         if (m_nonSpatial is null || !m_adhocVoiceEnabled)
             return;
-        if (!AdhocTextTransport.TryParse(msg, out UUID target, out UUID sessionId, out string message,
-                                         out string fromName, out _))
+        TextIntake text = CarrierIntake.AcceptText(msg, m_carrierAuth, m_nonSpatial);
+        if (!text.Claimed)
             return;   // not ours -- a ring lands here and falls straight through
-
-        UUID sender = new UUID(msg.fromAgentID);
-        NonSpatialVoiceSession session = m_nonSpatial.Store.Get(sessionId);
-        if (session is null || session.Type != NonSpatialSessionType.Adhoc)
+        if (text.Reason is not null)
         {
-            m_log.LogDebug("{LogHeader} {Line}", logHeader,
-                AdhocTextTransport.Line(target, sessionId, SessionOutcome.NoSuchSession));
+            LogCarrierRefusal(CarrierAuth.KindText, text.Reason, text.RefusalCount);
             return;
         }
-        NonSpatialMember from = session.Find(sender);
-        NonSpatialMember to = session.Find(target);
-        if (from is null || !from.HoldsSeat || to is null || !to.HoldsSeat)
+        if (!text.Ok)
         {
-            m_log.LogWarning("{LogHeader} {Line}", logHeader,
-                AdhocTextTransport.Line(target, sessionId, AdhocTextSession.DecisionNotMember,
-                    "from=" + sender));
+            if (text.Decision == SessionOutcome.NoSuchSession)
+                m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                    AdhocTextTransport.Line(text.Target, text.SessionId, text.Decision));
+            else
+                m_log.LogWarning("{LogHeader} {Line}", logHeader,
+                    AdhocTextTransport.Line(text.Target, text.SessionId, text.Decision,
+                        text.Decision == AdhocTextSession.DecisionNotMember ? "from=" + text.Sender : null));
             return;
         }
 
         List<Scene> scenes;
         lock (m_scenes)
             scenes = new List<Scene>(m_scenes);
-        DeliverConferenceTextLocally(scenes, target, sender, fromName, sessionId,
-                                     new UUID(msg.RegionID), message);
+        DeliverConferenceTextLocally(scenes, text.Target, text.Sender, text.FromName, text.SessionId,
+                                     text.OriginRegion, text.Message);
     }
 
     /// <summary>
@@ -409,6 +412,11 @@ public partial class WebRtcVoiceRegionModule
     {
         if (candidates is null || candidates.Count == 0 || body is null)
             return;
+        if (!m_carrierAuth.Enabled)
+        {
+            LogCarrierOff(session.SessionId);
+            return;
+        }
 
         IMessageTransferModule transfer = null;
         Scene originScene = null;
@@ -450,7 +458,7 @@ public partial class WebRtcVoiceRegionModule
             try
             {
                 GridInstantMessage im = GroupVoiceRingTransport.Build(target, initiator, initiatorName,
-                                                                      session.SessionId, originRegion, body);
+                                                                      session.SessionId, originRegion, body, m_carrierAuth);
                 transfer.SendInstantMessage(im, _ => { });
                 m_log.LogDebug("{LogHeader} {Line}", logHeader,
                     GroupVoiceRingTransport.Line(target, session.SessionId, GroupVoiceRingTransport.DecisionSent));
