@@ -101,7 +101,6 @@ namespace osWebRtcVoice
         private int _unplaced;                          // agents left out of the last pass, for the reader
         private long _heartbeatInFlight;                 // the heartbeat's OWN single-flight, 0 or 1
         private long _lastHeartbeatMs;
-        private bool _heartbeatSent;
         private bool _loggedHeartbeatStart;
 
         // Heartbeat log volume. At one send per region per second the per-tick DEBUG line was
@@ -381,11 +380,10 @@ namespace osWebRtcVoice
                 // later. MEASURED live over 21 minutes before this change: 0.88 heartbeats/s against an intended
                 // 1.0, worst gap 1987 ms - almost exactly two periods, i.e. one skipped beat, not starvation.
                 // Single-flight still stands: it stops two sends OVERLAPPING, which is a different question from
-                // how often to send. _lastHeartbeatMs / _heartbeatSent are kept for diagnostics only.
+                // how often to send. _lastHeartbeatMs is kept for diagnostics only.
                 if (Interlocked.CompareExchange(ref _heartbeatInFlight, 1L, 0L) != 0L)
                     return Task.CompletedTask;
                 _lastHeartbeatMs = _nowMs();
-                _heartbeatSent = true;
             }
             OSDMap body = _authority.BuildHeartbeat(_feed.Current.Population, _resolveRoom, stopping);
             return SendHeartbeatAsync(heartbeatSink, body, stopping);
