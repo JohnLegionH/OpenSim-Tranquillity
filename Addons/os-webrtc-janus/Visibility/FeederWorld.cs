@@ -87,9 +87,9 @@ namespace osWebRtcVoice
             => IsVoiceModerated != null && IsVoiceModerated(avatar);
     }
 
-    /// Estate-level facts. TaxFree overrides the parcel voice-ENABLE flag only (semantics doc
-    /// 2.2); Decision 2(b) does not use TaxFree to exempt bans (that fix lives in the ban
-    /// delegate above).
+    /// Estate-level facts. TaxFree (the inverse of the estate's allow-access-override flag) exempts
+    /// neither the parcel voice-ENABLE flag nor parcel bans (the ban delegate above reads the ban list
+    /// directly).
     public readonly struct EstateView
     {
         public readonly bool AllowVoice;        // EstateSettings.AllowVoice (master switch)

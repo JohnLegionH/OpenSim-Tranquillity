@@ -98,15 +98,18 @@ namespace osWebRtcVoice
         /// <param name="sendOne">Per-message transport, injectable for tests (the house pattern -
         /// cf. VisibilityBatchSender's nowMs). Null in production, where it posts through this
         /// sink's own JanusAdminClient.</param>
+        /// <param name="caCertificateFile">Private CA certificate file trusted for an https admin URL, or null
+        /// (see JanusTls).</param>
         public JanusPeerCtlBatchSink(string adminUri, string adminToken, TimeSpan timeout,
                                      UUID regionId, string regionName,
                                      int roomSendConcurrency = DefaultRoomSendConcurrency,
-                                     Func<OSDMap, Task<(AdminSendResult Result, string Body)>> sendOne = null)
+                                     Func<OSDMap, Task<(AdminSendResult Result, string Body)>> sendOne = null,
+                                     string caCertificateFile = null)
         {
             _region = regionName;
             if (sendOne == null)
             {
-                _admin = new JanusAdminClient(adminUri, adminToken, timeout);
+                _admin = new JanusAdminClient(adminUri, adminToken, timeout, JanusTls.CreateHandler(caCertificateFile));
                 _sendOne = req => _admin.SendPluginMessageWithReplyAsync(SlvoicePlugin, req);
             }
             else

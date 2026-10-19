@@ -76,17 +76,24 @@ The region server reads every `.ini` file in that folder at startup; the folder 
 |---|---|---|---|
 | `Enabled` | `[WebRtcVoice]` | `false` | `true` |
 | `JanusGatewayURI` | `[JanusWebRtcVoice]` | placeholder | the gateway's voice URI, for example `http://janus.example.org:14223/voice` |
-| `APIToken` | `[JanusWebRtcVoice]` | placeholder | the gateway's API secret |
+| `APIToken` | `[JanusWebRtcVoice]` | placeholder | the gateway's API secret: a random value of at least 32 characters (a shorter one logs a warning at startup) |
 | `JanusGatewayAdminURI` | `[JanusWebRtcVoice]` | placeholder | the gateway's admin URI |
-| `AdminAPIToken` | `[JanusWebRtcVoice]` | placeholder | the gateway's admin secret |
+| `AdminAPIToken` | `[JanusWebRtcVoice]` | placeholder | the gateway's admin secret: a random value of at least 32 characters (a shorter one logs a warning at startup) |
 
 **Keys with defaults.** The shipped file lists them commented out with their defaults:
 
 | Key | Section | Default | Notes |
 |---|---|---|---|
 | `PluginName` | `[JanusWebRtcVoice]` | `janus.plugin.audiobridge` | `janus.plugin.slvoice` selects a spatial mixer that implements that plugin. |
+| `RemoveEmptyRooms`, `EmptyRoomGraceSeconds` | `[JanusWebRtcVoice]` | `true`, `60` | Remove a room this service created once it has stood empty for the grace period. The stock AudioBridge never removes an emptied room. Rooms the service did not create are never removed, and the slvoice mixer removes its own. |
 | `StunServers` | `[WebRtcVoice]` | empty | Comma-separated STUN URIs advertised to viewers as the `stun-servers` simulator feature. Stock viewers need a valid entry. |
-| `VisibilityFeederEnabled`, `VisibilityEmitEnabled` | `[WebRtcVoice]` | `false` | Send per-listener visibility to a mixer that understands it. Need `JanusGatewayAdminURI` and `AdminAPIToken`. |
+| `VisibilityFeederEnabled`, `VisibilityEmitEnabled` | `[WebRtcVoice]` | `false` | Send per-listener visibility to a mixer that understands it. Need `JanusGatewayAdminURI` and `AdminAPIToken`. They, `VisibilityArmingEnabled`, `JoinCapabilityEnabled` and `ConnectorsEnabled` need the slvoice mixer: with the stock plugin each one that is on logs a warning at start and stays off. `VoiceModerationEnabled` works on both: on the stock plugin a mute is the AudioBridge's own mute of the participant. |
+
+**A mixer on another host needs TLS or a private network.** The API and admin secrets are sent with every
+request, so over plain `http://` they cross the network in clear. Use `https://` URLs for `JanusGatewayURI` and
+`JanusGatewayAdminURI`; the certificate is validated and there is no setting that turns that off. If it comes from
+a private CA, set `JanusGatewayCACertificateFile` to that CA's certificate file. Details: `Docs/voice/configuration.md`,
+"Securing the connection to the mixer".
 
 ### Upgrading
 

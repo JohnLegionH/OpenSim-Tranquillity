@@ -92,7 +92,7 @@ public class JanusPlugin : IDisposable
                 var handleResp = new AttachPluginResp(resp);
                 PluginId = handleResp.pluginId;
                 PluginUri = _JanusSession.SessionUri + "/" + PluginId;
-                m_log.LogDebug("{0} Activate. Plugin attached. ID={1}, URL={2}", LogHeader, PluginId, PluginUri);
+                m_log.LogDebug("{0} Activate. Plugin attached. ID={1}, URL={2}", LogHeader, PluginId, JanusSession.RedactUriForLog(PluginUri));
                 _JanusSession.PluginId = PluginId;
                 _JanusSession.OnEvent += Handle_Event;
                 _JanusSession.OnMessage += Handle_Message;
@@ -135,6 +135,12 @@ public class JanusPlugin : IDisposable
                 // Cleared ONLY after Janus confirms success: on a failed detach PluginId is
                 // left intact so IsConnected stays true and the caller can retry.
                 PluginId = null;
+            }
+            else if (resp is not null && new ErrorResp(resp).errorCode == WebRtcJanusService.JANUS_NO_SUCH_SESSION_ERROR_CODE)
+            {
+                // The Janus session is gone (the mixer restarted), so the handle went with it and there is
+                // nothing left to detach: expected while tidying up a viewer session, not an error.
+                m_log.LogDebug("{0} Detach: the Janus session no longer exists", LogHeader);
             }
             else
             {

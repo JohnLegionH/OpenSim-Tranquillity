@@ -285,13 +285,11 @@ namespace osWebRtcVoice.Tests
         }
 
         // ======================================================================================
-        // Voice-ENABLE override under TaxFree (deliberate, retained - VisibilityRules.cs:46):
-        // TaxFree overrides the parcel voice-ENABLE flag, so a parcel with AllowVoiceChat OFF is
-        // still audible. This is NOT the §E ban void and must not be "fixed" by generalising the
-        // ban test above. The contrast build pins the override as the differentiator: with the SAME
-        // voice-off parcel, TaxFree keeps the source audible, and dropping TaxFree excludes it.
+        // Voice-ENABLE under TaxFree: a parcel with voice turned off gets no voice whether or not the
+        // estate is TaxFree. TaxFree only means the sim skips parcel access checks; it is not a way
+        // to switch a parcel's voice back on.
         [Test]
-        public void VoiceEnableOverrideUnderTaxFree_VoiceOffParcelStillAudible()
+        public void VoiceOffParcelUnderTaxFree_IsNotAudible()
         {
             var w = new FakeWorld();
             w.AddZone(1, Parcel(Id(101), allowVoice: false));   // parcel voice-chat OFF
@@ -301,12 +299,12 @@ namespace osWebRtcVoice.Tests
 
             w.EstateVal = new EstateView(allowVoice: true, taxFree: true, isBanned: _ => false);
             VisibilityMatrix taxFree = VisibilityMatrix.Build(w);
-            Assert.That(taxFree.IsExcluded(a, b), Is.False, "TaxFree overrides the parcel voice-off flag: source still audible");
-            Assert.That(taxFree.IsExcluded(b, a), Is.False, "symmetric");
+            Assert.That(taxFree.IsExcluded(a, b), Is.True, "TaxFree does not override the parcel voice-off flag");
+            Assert.That(taxFree.IsExcluded(b, a), Is.True, "symmetric");
 
             w.EstateVal = new EstateView(allowVoice: true, taxFree: false, isBanned: _ => false);
             VisibilityMatrix noTaxFree = VisibilityMatrix.Build(w);
-            Assert.That(noTaxFree.IsExcluded(a, b), Is.True, "without TaxFree the voice-off parcel excludes the source - the override is the differentiator");
+            Assert.That(noTaxFree.IsExcluded(a, b), Is.True, "and the same without TaxFree");
         }
 
         // ======================================================================================

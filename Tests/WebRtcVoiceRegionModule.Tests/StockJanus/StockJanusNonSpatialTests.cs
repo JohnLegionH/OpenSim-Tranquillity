@@ -1,0 +1,336 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+/*
+ * Opt-in integration tests (see StockJanusRegionTests.cs): avatar-to-avatar, group and ad-hoc conference voice,
+ * each with its switch on, then every switch off, then a gateway restart in the middle of a session.
+ */
+
+using System;
+using System.Collections.Generic;
+using System.Net;
+using System.Threading.Tasks;
+using OpenMetaverse;
+using OpenMetaverse.StructuredData;
+using osWebRtcVoice.NonSpatial;
+using osWebRtcVoice.Tests.StockJanus;
+
+namespace osWebRtcVoice.Tests
+{
+    // The assembly-wide 10 s backstop is too short for a session with a real gateway and a real peer.
+#pragma warning disable CS0618
+    [TestFixture, NUnit.Framework.Timeout(240000)]
+#pragma warning restore CS0618
+    public class StockJanusNonSpatialTests
+    {
+        private static readonly UUID Alice = new UUID("a11ce000-0000-4000-8000-000000000001");
+        private static readonly UUID Bob = new UUID("b0b00000-0000-4000-8000-000000000002");
+        private static readonly UUID Group = new UUID("9a0a0000-0000-4000-8000-0000000000aa");
+        private static readonly TimeSpan Settle = TimeSpan.FromSeconds(10);
+
+        private readonly RawJanus _janus = new();
+
+        [OneTimeSetUp]
+        public void RequireGateway() => StockJanusEnvironment.IgnoreUnlessConfigured();
+
+        private static (string Channel, string Token) CredentialsOf(CapAnswer a)
+        {
+            var creds = (OSDMap)a.Body["voice_credentials"];
+            return (creds["channel_uri"].AsString(), creds["channel_credentials"].AsString());
+        }
+
+        private static OSDMap ChatBody(string method, UUID sessionId, OSD @params = null)
+        {
+            var m = new OSDMap
+            {
+                ["method"] = OSD.FromString(method),
+                ["session-id"] = OSD.FromUUID(sessionId),
+                ["alt_params"] = new OSDMap { ["preferred_voice_server_type"] = OSD.FromString("webrtc") },
+            };
+            if (@params is not null) m["params"] = @params;
+            return m;
+        }
+
+        // ---- avatar-to-avatar -------------------------------------------------------------------
+
+        [Test]
+        public async Task A2A_CallRoomCreateJoinLeave()
+        {
+            using var region = StockRegion.Create((voice, _) => voice.Set("A2AVoiceEnabled", "true"));
+            region.AddAvatar(Alice, StockRegion.InEstateChannelParcel);
+            region.AddAvatar(Bob, StockRegion.InEstateChannelParcel);
+            UUID session = A2ASessionRegistry.ComputeSessionId(Alice, Bob);
+
+            CapAnswer start = await region.ChatSessionAsync(Alice, ChatBody("start p2p voice", session, OSD.FromUUID(Bob)));
+            Assert.That(start.Status, Is.EqualTo((int)HttpStatusCode.OK), "start p2p voice");
+            CapAnswer call = await region.ChatSessionAsync(Alice, ChatBody("call", session));
+            Assert.That(call.Status, Is.EqualTo((int)HttpStatusCode.OK), "caller's call: " + call.Body);
+            Assert.That(region.Queue.Sent.Exists(s => s.To == Bob), Is.True, "the callee was sent an invitation");
+            CapAnswer bobCall = await region.ChatSessionAsync(Bob, ChatBody("call", session));
+            Assert.That(bobCall.Status, Is.EqualTo((int)HttpStatusCode.OK), "callee's call: " + bobCall.Body);
+
+            (string channel, string aliceToken) = CredentialsOf(call);
+            (_, string bobToken) = CredentialsOf(bobCall);
+            using Joined a = await region.JoinAsync(Alice, o => StockRegion.MultiagentBody(o, channel, aliceToken));
+            Assert.That(a.Answer.Provisioned, Is.True, "caller joined: " + a.Answer.Body);
+            using Joined b = await region.JoinAsync(Bob, o => StockRegion.MultiagentBody(o, channel, bobToken));
+            Assert.That(b.Answer.Provisioned, Is.True, "callee joined: " + b.Answer.Body);
+
+            Assert.That(b.Answer.Room, Is.EqualTo(a.Answer.Room), "both parties are in one room");
+            Assert.That(await _janus.WaitForParticipantsAsync(a.Answer.Room, 2, Settle), Is.True);
+            await region.LogoutAsync(a);
+            Assert.That(await _janus.WaitForParticipantsAsync(a.Answer.Room, 1, Settle), Is.True, "caller left");
+            await region.LogoutAsync(b);
+            Assert.That(await _janus.WaitForParticipantsAsync(a.Answer.Room, 0, Settle), Is.True, "callee left");
+        }
+
+        [Test]
+        public async Task A2A_AStrangerWithTheRightChannelIsRefused_AndNoRoomIsCreated()
+        {
+            using var region = StockRegion.Create((voice, _) => voice.Set("A2AVoiceEnabled", "true"));
+            region.AddAvatar(Alice, StockRegion.InEstateChannelParcel);
+            region.AddAvatar(Bob, StockRegion.InEstateChannelParcel);
+            UUID mallory = UUID.Random();
+            region.AddAvatar(mallory, StockRegion.InEstateChannelParcel);
+            UUID session = A2ASessionRegistry.ComputeSessionId(Alice, Bob);
+            await region.ChatSessionAsync(Alice, ChatBody("start p2p voice", session, OSD.FromUUID(Bob)));
+            CapAnswer call = await region.ChatSessionAsync(Alice, ChatBody("call", session));
+            (string channel, string token) = CredentialsOf(call);
+            List<int> before = await _janus.RoomsAsync();
+
+            using var peer = await AiortcPeer.StartAsync();
+            CapAnswer refused = await region.ProvisionAsync(mallory, StockRegion.MultiagentBody(peer.Offer, channel, token));
+
+            Assert.That(refused.Status, Is.EqualTo((int)HttpStatusCode.Forbidden));
+            Assert.That(await _janus.RoomsAsync(), Is.EquivalentTo(before), "the refusal never reached the gateway");
+        }
+
+        [Test]
+        public async Task A2A_Audio_BothPartiesHearEachOther()
+        {
+            StockJanusEnvironment.IgnoreUnlessPeerAvailable();
+            using var region = StockRegion.Create((voice, _) => voice.Set("A2AVoiceEnabled", "true"));
+            region.AddAvatar(Alice, StockRegion.InEstateChannelParcel);
+            region.AddAvatar(Bob, StockRegion.InEstateChannelParcel);
+            UUID session = A2ASessionRegistry.ComputeSessionId(Alice, Bob);
+            await region.ChatSessionAsync(Alice, ChatBody("start p2p voice", session, OSD.FromUUID(Bob)));
+            CapAnswer call = await region.ChatSessionAsync(Alice, ChatBody("call", session));
+            CapAnswer bobCall = await region.ChatSessionAsync(Bob, ChatBody("call", session));
+            (string channel, string aliceToken) = CredentialsOf(call);
+            (_, string bobToken) = CredentialsOf(bobCall);
+
+            using Joined a = await region.JoinAsync(Alice, o => StockRegion.MultiagentBody(o, channel, aliceToken), 440);
+            using Joined b = await region.JoinAsync(Bob, o => StockRegion.MultiagentBody(o, channel, bobToken), 880);
+            await Task.Delay(1500);
+            List<Measurement> ma = await a.Peer.MeasureWindowsAsync(6, 0.5, 440, 880);
+            List<Measurement> mb = await b.Peer.MeasureWindowsAsync(6, 0.5, 440, 880);
+            TestContext.Out.WriteLine("A2A caller heard: " + Measurement.Describe(ma, 440, 880));
+            TestContext.Out.WriteLine("A2A callee heard: " + Measurement.Describe(mb, 440, 880));
+
+            Assert.That(Measurement.MedianShare(ma, 880), Is.GreaterThan(0.8), "the caller hears the callee");
+            Assert.That(Measurement.MedianShare(mb, 440), Is.GreaterThan(0.8), "the callee hears the caller");
+            await region.LogoutAsync(a);
+            await region.LogoutAsync(b);
+        }
+
+        // ---- group ------------------------------------------------------------------------------
+
+        private static (GroupVoicePolicy, NonSpatialVoiceSessionEngine) GroupFixture(StockRegion region)
+        {
+            // Membership answers come from the test, as in the module's own group tests: a scene has no groups service here.
+            var policy = new GroupVoicePolicy
+            {
+                Enabled = true,
+                RequireVoicePower = true,
+                Cap = NonSpatialCaps.DefaultConferenceCap,
+                IsMember = (a, g) => g == Group && (a == Alice || a == Bob),
+                Powers = (a, g) => g == Group ? GroupVoicePolicy.PowerJoinSession | GroupVoicePolicy.PowerVoice : 0UL,
+            };
+            var engine = new NonSpatialVoiceSessionEngine(
+                new InMemoryNonSpatialSessionStore(),
+                new INonSpatialAdmission[] { new P2PAdmission(), new AdhocAdmission(), policy.ToAdmissionOrNull() },
+                "example-grid");
+            region.SetPrivate(region.Region, "m_groupVoice", policy);
+            region.SetPrivate(region.Region, "m_nonSpatial", engine);
+            return (policy, engine);
+        }
+
+        [Test]
+        public async Task Group_CallRoomCreateJoinLeave()
+        {
+            using var region = StockRegion.Create((voice, _) => voice.Set("GroupVoiceEnabled", "true"));
+            region.AddAvatar(Alice, StockRegion.InEstateChannelParcel);
+            region.AddAvatar(Bob, StockRegion.InEstateChannelParcel);
+            (GroupVoicePolicy policy, NonSpatialVoiceSessionEngine engine) = GroupFixture(region);
+            UUID regionId = region.Scene.RegionInfo.RegionID;
+
+            CapAnswer aliceCall = Credentials(Alice, policy, engine, regionId);
+            CapAnswer bobCall = Credentials(Bob, policy, engine, regionId);
+            (string channel, string aliceToken) = CredentialsOf(aliceCall);
+            (_, string bobToken) = CredentialsOf(bobCall);
+
+            using Joined a = await region.JoinAsync(Alice, o => StockRegion.MultiagentBody(o, channel, aliceToken));
+            using Joined b = await region.JoinAsync(Bob, o => StockRegion.MultiagentBody(o, channel, bobToken));
+            Assert.That(a.Answer.Provisioned, Is.True, "first member joined: " + a.Answer.Body);
+            Assert.That(b.Answer.Provisioned, Is.True, "second member joined: " + b.Answer.Body);
+            Assert.That(b.Answer.Room, Is.EqualTo(a.Answer.Room), "one group room");
+            Assert.That(await _janus.WaitForParticipantsAsync(a.Answer.Room, 2, Settle), Is.True);
+            Assert.That(engine.Store.Get(Group).SeatsHeld, Is.EqualTo(2), "the engine holds both seats");
+
+            await region.LogoutAsync(a);
+            await region.LogoutAsync(b);
+            Assert.That(await _janus.WaitForParticipantsAsync(a.Answer.Room, 0, Settle), Is.True);
+            Assert.That(engine.Store.Get(Group).SeatsHeld, Is.EqualTo(0), "the seats are released");
+
+            static CapAnswer Credentials(UUID agent, GroupVoicePolicy p, NonSpatialVoiceSessionEngine e, UUID r)
+            {
+                var call = new OSDMap { ["method"] = OSD.FromString("call"), ["session-id"] = OSD.FromUUID(Group) };
+                Assert.That(GroupVoiceChatSession.TryHandleCall(call, agent, p, e, r, out ChatSessionOutcome o), Is.True);
+                return new CapAnswer { Status = (int)o.Status, Body = o.Body };
+            }
+        }
+
+        // ---- ad-hoc conference ------------------------------------------------------------------
+
+        [Test]
+        public async Task Adhoc_ConferenceRoomCreateJoinLeave()
+        {
+            using var region = StockRegion.Create((voice, _) => voice.Set("AdhocVoiceEnabled", "true"));
+            region.AddAvatar(Alice, StockRegion.InEstateChannelParcel);
+            region.AddAvatar(Bob, StockRegion.InEstateChannelParcel);
+            var engine = region.GetPrivate<NonSpatialVoiceSessionEngine>(region.Region, "m_nonSpatial");
+            UUID regionId = region.Scene.RegionInfo.RegionID;
+
+            var start = new OSDMap
+            {
+                ["method"] = OSD.FromString("start conference"),
+                ["session-id"] = OSD.FromUUID(UUID.Random()),
+                ["params"] = new OSDArray { OSD.FromUUID(Bob) },
+                ["alt_params"] = new OSDMap { ["voice_server_type"] = OSD.FromString("webrtc") },
+            };
+            Assert.That(AdhocVoiceChatSession.TryHandleStartConference(start, Alice, engine, regionId, true, out ChatSessionOutcome started), Is.True);
+            UUID conference = started.Reply.SessionId;
+
+            var callBody = new OSDMap { ["method"] = OSD.FromString("call"), ["session-id"] = OSD.FromUUID(conference) };
+            Assert.That(AdhocVoiceChatSession.TryHandleCall(callBody, Alice, engine, regionId, true, out ChatSessionOutcome aliceCall), Is.True);
+            Assert.That(AdhocVoiceChatSession.TryHandleCall(callBody, Bob, engine, regionId, true, out ChatSessionOutcome bobCall), Is.True);
+            (string channel, string aliceToken) = CredentialsOf(new CapAnswer { Body = aliceCall.Body });
+            (_, string bobToken) = CredentialsOf(new CapAnswer { Body = bobCall.Body });
+
+            using Joined a = await region.JoinAsync(Alice, o => StockRegion.MultiagentBody(o, channel, aliceToken));
+            using Joined b = await region.JoinAsync(Bob, o => StockRegion.MultiagentBody(o, channel, bobToken));
+            Assert.That(a.Answer.Provisioned, Is.True, "conference creator joined: " + a.Answer.Body);
+            Assert.That(b.Answer.Provisioned, Is.True, "invitee joined: " + b.Answer.Body);
+            Assert.That(b.Answer.Room, Is.EqualTo(a.Answer.Room), "one conference room");
+            Assert.That(await _janus.WaitForParticipantsAsync(a.Answer.Room, 2, Settle), Is.True);
+
+            await region.LogoutAsync(a);
+            await region.LogoutAsync(b);
+            Assert.That(await _janus.WaitForParticipantsAsync(a.Answer.Room, 0, Settle), Is.True);
+        }
+
+        // ---- every switch off ------------------------------------------------------------------
+
+        [Test]
+        public async Task EverySwitchOff_NonSpatialRequestsAreAnsweredAsBeforeTheFeatures()
+        {
+            using var region = StockRegion.Create();   // no switch set: the shipped defaults
+            region.AddAvatar(Alice, StockRegion.InEstateChannelParcel);
+            region.AddAvatar(Bob, StockRegion.InEstateChannelParcel);
+            List<int> before = await _janus.RoomsAsync();
+            UUID session = A2ASessionRegistry.ComputeSessionId(Alice, Bob);
+
+            Assert.That((await region.ChatSessionAsync(Alice, ChatBody("call", session))).Status,
+                Is.EqualTo((int)HttpStatusCode.BadRequest), "call: unhandled method");
+            Assert.That((await region.ChatSessionAsync(Alice, ChatBody("start conference", UUID.Random()))).Status,
+                Is.EqualTo((int)HttpStatusCode.OK), "start conference: acknowledged, nothing started");
+            Assert.That((await region.ChatSessionAsync(Alice, ChatBody("decline invitation", session))).Status,
+                Is.EqualTo((int)HttpStatusCode.OK), "decline invitation");
+            Assert.That(region.Queue.StartReplies, Is.Empty, "no session reply was sent to a viewer");
+
+            // No chat session was started, so nothing reached the gateway so far.
+            Assert.That(await _janus.RoomsAsync(), Is.EquivalentTo(before), "no room was created on the gateway");
+
+            // A multiagent provision is served as upstream/develop serves it (see EverySwitchOff_TheAnswersAreTheShippedDefaults).
+            using Joined multiagent = await region.JoinAsync(Alice, o => StockRegion.MultiagentBody(o, session.ToString(), "credentials"), waitConnected: false);
+            Assert.That(multiagent.Answer.Status, Is.EqualTo((int)HttpStatusCode.OK));
+            Assert.That(multiagent.Answer.Provisioned, Is.True, "served, as develop serves it: " + multiagent.Answer.Body);
+            await region.LogoutAsync(multiagent);
+
+            // A spatial provision is unaffected by the switches being off.
+            using Joined spatial = await region.JoinAsync(Alice, o => StockRegion.LocalBody(o), waitConnected: false);
+            Assert.That(spatial.Answer.Provisioned, Is.True, "spatial voice works with every optional switch off: " + spatial.Answer.Body);
+            await region.LogoutAsync(spatial);
+        }
+
+        [Test]
+        public async Task EverySwitchOff_TheAnswersAreTheShippedDefaults()
+        {
+            using var region = StockRegion.Create();
+            region.AddAvatar(Alice, StockRegion.InEstateChannelParcel);
+
+            List<ProbeRow> rows = await DefaultsProbe.RunAsync(region, Alice, _janus);
+
+            foreach (ProbeRow row in rows) TestContext.Out.WriteLine(row);
+            ProbeRow Row(string name) => rows.Find(r => r.Name == name);
+            // With no avatar-to-avatar, group or conference feature on, these answer as upstream/develop does (with its
+            // two start-up fixes): a multiagent provision is served, a provision with no channel_type gets an empty 200.
+            foreach (string served in new[] { "provision multiagent, unknown session", "provision multiagent, group-style channel" })
+            {
+                Assert.That(Row(served).Status, Is.EqualTo((int)HttpStatusCode.OK), served);
+                Assert.That(Row(served).Provisioned, Is.True, served + ": joined a room");
+            }
+            Assert.That(Row("provision with no channel_type").Status, Is.EqualTo((int)HttpStatusCode.OK));
+            Assert.That(Row("provision with no channel_type").Provisioned, Is.False);
+            Assert.That(Row("provision with no channel_type").NewRooms, Is.EqualTo(0), "empty answer, no room");
+            // develop throws on a channel_type it does not know; the lane refuses it.
+            Assert.That(Row("provision channel_type=group").Status, Is.EqualTo((int)HttpStatusCode.Forbidden));
+            Assert.That(Row("provision channel_type=group").NewRooms, Is.EqualTo(0), "no room");
+            Assert.That(Row("logout, unknown viewer session").Response, Is.EqualTo("closed"));
+            Assert.That(Row("chat session: call").Status, Is.EqualTo((int)HttpStatusCode.BadRequest));
+            Assert.That(Row("chat session: start conference").Status, Is.EqualTo((int)HttpStatusCode.OK));
+            Assert.That(Row("chat session: decline invitation").Status, Is.EqualTo((int)HttpStatusCode.OK));
+            Assert.That(Row("chat session: fetch history").Status, Is.EqualTo((int)HttpStatusCode.OK));
+            Assert.That(Row("chat session: unknown method").Status, Is.EqualTo((int)HttpStatusCode.BadRequest));
+        }
+
+        // ---- recovery --------------------------------------------------------------------------
+
+        [Test]
+        public async Task GatewayRestartMidSession_TheServiceHealsAndNewProvisionsWork()
+        {
+            StockJanusEnvironment.IgnoreUnlessRestartable();
+            using var region = StockRegion.Create();
+            region.AddAvatar(Alice, StockRegion.InEstateChannelParcel);
+            region.AddAvatar(Bob, StockRegion.InEstateChannelParcel);
+            using Joined a = await region.JoinAsync(Alice, o => StockRegion.LocalBody(o));
+            Assert.That(a.Answer.Provisioned, Is.True);
+            var service = region.GetPrivate<IWebRtcVoiceService>(region.Service, "m_spatialVoiceService") as WebRtcJanusService;
+            Assert.That(service, Is.Not.Null);
+            Assert.That((await service.ServiceListRoomsAsync())?.isSuccess, Is.True, "the service session works before the restart");
+            string sessionBefore = service.ServiceSessionId;
+
+            await DockerControl.RestartGatewayAsync(_janus);
+
+            AudioBridgeResp rooms = await service.ServiceListRoomsAsync();
+            Assert.That(rooms?.isSuccess, Is.True, "the service session reconnects by itself after a gateway restart");
+            Assert.That(service.ServiceSessionId, Is.Not.EqualTo(sessionBefore), "on a new Janus session");
+
+            // The restart dropped Alice's media and her Janus session; the region is told by her viewer, which re-provisions.
+            CapAnswer closed = await region.LogoutAsync(a);
+            Assert.That(closed.Status, Is.EqualTo((int)HttpStatusCode.OK), "logout of the dead session does not fail the request");
+            using Joined again = await region.JoinAsync(Alice, o => StockRegion.LocalBody(o));
+            Assert.That(again.Answer.Provisioned, Is.True, "a fresh provision after the restart: " + again.Answer.Body);
+            using Joined bob = await region.JoinAsync(Bob, o => StockRegion.LocalBody(o));
+            Assert.That(bob.Answer.Provisioned, Is.True, "a second agent after the restart: " + bob.Answer.Body);
+            Assert.That(bob.Answer.Room, Is.EqualTo(again.Answer.Room));
+            Assert.That(await _janus.WaitForParticipantsAsync(again.Answer.Room, 2, Settle), Is.True);
+            await region.LogoutAsync(again);
+            await region.LogoutAsync(bob);
+        }
+    }
+}

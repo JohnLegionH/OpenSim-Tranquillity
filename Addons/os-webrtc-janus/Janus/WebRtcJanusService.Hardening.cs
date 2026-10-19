@@ -48,8 +48,41 @@ public partial class WebRtcJanusService
     // inlined, so no runtime assembly/ALC crossing) instead of duplicating the 495 literal.
     public const int JANUS_ROOM_FULL_ERROR_CODE = 495;
 
+    /// <summary>Janus core's "No such session" (`janus: error`, code 458): the session id is gone, as it is for every
+    /// session after the mixer restarts.</summary>
+    public const int JANUS_NO_SUCH_SESSION_ERROR_CODE = 458;
+
     /// <summary>: the mixer's "No such room" on a join (`Request error 485: No such room (n)`).</summary>
     public const int JANUS_NO_SUCH_ROOM_ERROR_CODE = 485;
+
+    /// <summary>The shortest secret accepted for the join capability key, and the length below which the Janus API
+    /// and admin secrets draw a warning. Matches the connector capability secret's minimum.</summary>
+    public const int MinSecretLength = 32;
+
+    // A Janus secret shorter than MinSecretLength is easy to guess. The API and admin secrets already exist, so a
+    // short one warns and the service starts as before. The warning names the key only: neither the value nor its
+    // length goes into the log. An empty value is handled by the missing-fields check, not here.
+    private void WarnOnShortJanusSecrets()
+    {
+        if (!string.IsNullOrEmpty(_JanusAPIToken) && _JanusAPIToken.Length < MinSecretLength)
+            _log.LogWarning($"{LogHeader} [JanusWebRtcVoice] APIToken is shorter than {MinSecretLength} characters; use a longer random secret");
+        if (!string.IsNullOrEmpty(_JanusAdminToken) && _JanusAdminToken.Length < MinSecretLength)
+            _log.LogWarning($"{LogHeader} [JanusWebRtcVoice] AdminAPIToken is shorter than {MinSecretLength} characters; use a longer random secret");
+    }
+
+    // [JanusWebRtcVoice] JanusGatewayCACertificateFile — a private CA certificate the sim trusts, in addition to the
+    // system's roots, for https gateway and admin URLs. Empty by default; see JanusTls.
+    private string _JanusCaCertificateFile = string.Empty;
+
+    private void ReadTlsConfig(IConfig janusConfig)
+    {
+        _JanusCaCertificateFile = janusConfig.GetString(JanusTls.CaCertificateFileKey, string.Empty);
+    }
+
+    // The handler every Janus session's HttpClient uses: the test factory when there is one, otherwise the
+    // validating handler for http and https URLs alike.
+    private HttpMessageHandler CreateHttpHandler()
+        => _httpHandlerFactory?.Invoke() ?? JanusTls.CreateHandler(_JanusCaCertificateFile);
 
     // [JanusWebRtcVoice] RequestTimeoutMs — how long an ack'd Janus request waits for its event.
     private int _JanusRequestTimeoutMs = JanusSession.DefaultRequestTimeoutMs;

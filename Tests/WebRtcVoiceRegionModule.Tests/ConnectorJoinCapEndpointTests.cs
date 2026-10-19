@@ -178,6 +178,7 @@ namespace osWebRtcVoice.Tests
             // The module's own Initialise: it logs the load warnings.
             var module = new VoiceConnectorModule();
             cfg.AddConfig("WebRtcVoice").Set("ConnectorsEnabled", "true");
+            cfg.AddConfig("JanusWebRtcVoice").Set("PluginName", "janus.plugin.slvoice");   // connectors need the slvoice mixer
             module.Initialise(cfg);
             lock (m_capture.Lines)
                 Assert.That(m_capture.Lines.Any(l => l.StartsWith("Warning:") && l.Contains("CapabilitySecret is shorter than 32")),

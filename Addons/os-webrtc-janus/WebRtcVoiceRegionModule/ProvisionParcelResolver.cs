@@ -17,7 +17,9 @@
  * A CHILD agent (the viewer's neighbour-region provision) has a position that is not inside this
  * region, so position derivation finds no parcel. A child uses the client's id: if
  * sent, it selects the parcel and every check runs against it; no id (the stock viewer sends none)
- * means no parcel checks and the service's estate room (-999).
+ * means no parcel checks and the service's estate room (-999). The caller then checks the named parcel
+ * against the child's known position (ChildParcelProximity); a parcel that is not near it, or that does
+ * not exist, is dropped with RejectHint and the child gets the estate room. Voice is never refused for that.
  *
  * Pure and Scene-free so the decision unit-tests without a Scene.
  */
@@ -40,7 +42,9 @@ namespace osWebRtcVoice
     /// <param name="LocalId">The parcel to check and room against; null for <see cref="ParcelSource.None"/>,
     /// or for a root agent whose position resolved to no parcel (a refusal).</param>
     /// <param name="ServerLocalId">The position-derived parcel (root only; null otherwise).</param>
-    public readonly record struct ParcelResolution(ParcelSource Source, int? LocalId, int? ServerLocalId, bool ClientMismatch, bool ClientAbsent);
+    /// <param name="HintRejected">True when a child agent's parcel_local_id was dropped because the parcel is not
+    /// near the child's known position (see <see cref="ProvisionParcelResolver.RejectHint"/>).</param>
+    public readonly record struct ParcelResolution(ParcelSource Source, int? LocalId, int? ServerLocalId, bool ClientMismatch, bool ClientAbsent, bool HintRejected = false);
 
     public static class ProvisionParcelResolver
     {
@@ -67,6 +71,13 @@ namespace osWebRtcVoice
                 ClientMismatch: client is not null && serverLocalId is not null && client != serverLocalId,
                 ClientAbsent: client is null);
         }
+
+        /// <summary>A child agent's hinted parcel failed the proximity check: treat the request as if it had sent no
+        /// id, so it gets the estate room. Any other resolution is returned unchanged.</summary>
+        public static ParcelResolution RejectHint(ParcelResolution resolution)
+            => resolution.Source != ParcelSource.ClientHint
+                ? resolution
+                : new ParcelResolution(ParcelSource.None, LocalId: null, ServerLocalId: null, ClientMismatch: false, ClientAbsent: false, HintRejected: true);
 
         /// <summary>Root-agent form: the server-derived parcel is always known.</summary>
         public static ParcelResolution Resolve(int? clientLocalId, int serverLocalId)

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Contributors, http://opensimulator.org/
+ * Copyright (c) 2026 Legion Builds
  * See CONTRIBUTORS.TXT for a full list of copyright holders.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -24,7 +24,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-// Adapted 2026 by Legion Builds
 
 using System.Reflection;
 
@@ -68,6 +67,13 @@ public partial class WebRtcJanusService
         if (_JoinCapabilityEnabled && string.IsNullOrEmpty(_JoinCapabilitySecret))
         {
             _log.LogError($"{LogHeader} [WebRtcVoice] JoinCapabilityEnabled is true but [JanusWebRtcVoice] JoinCapabilitySecret is empty: no capability can be minted, so joins carry none");
+            _JoinCapabilityEnabled = false;
+        }
+        else if (_JoinCapabilityEnabled && _JoinCapabilitySecret.Length < MinSecretLength)
+        {
+            // Join capabilities are an HMAC over a known structure: anyone who sees one can test candidate keys
+            // offline, so a short key must not be used. Named by key only; the value and its length are not logged.
+            _log.LogError($"{LogHeader} [JanusWebRtcVoice] JoinCapabilitySecret is shorter than {MinSecretLength} characters: refusing to mint capabilities with it, so joins carry none");
             _JoinCapabilityEnabled = false;
         }
         else if (_JoinCapabilityEnabled)

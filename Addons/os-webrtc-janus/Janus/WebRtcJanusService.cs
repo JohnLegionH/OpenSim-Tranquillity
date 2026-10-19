@@ -85,9 +85,13 @@ public partial class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                 _JanusAPIToken = janusConfig.GetString("APIToken", string.Empty);
                 _JanusAdminURI = janusConfig.GetString("JanusGatewayAdminURI", string.Empty);
                 _JanusAdminToken = janusConfig.GetString("AdminAPIToken", string.Empty);
+                WarnOnShortJanusSecrets();
+                ReadTlsConfig(janusConfig);
                 ReadPluginNameConfig(janusConfig);
+                MixerOnlySwitches.DisableOnStockPlugin(_Config, _log);
                 ReadGridIdConfig();
                 ReadArmingConfig(webRtcVoiceConfig, janusConfig);
+                ReadRoomReaperConfig(janusConfig);
                 // Debugging options
                 _MessageDetails = janusConfig.GetBoolean("MessageDetails", false);
                 ReadRequestTimeoutConfig(janusConfig);
@@ -108,6 +112,7 @@ public partial class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                         return;
                     }
                     RegisterConsoleCommands();
+                    StartRoomReaper();
                     _log.LogInformation($"{LogHeader} Enabled");
                 }
             }
@@ -138,7 +143,7 @@ public partial class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
     private async Task<bool> ConnectToSessionAndAudioBridge(JanusViewerSession pViewerSession)
     {
         JanusSession janusSession = new JanusSession(_JanusServerURI, _JanusAPIToken, _JanusAdminURI, _JanusAdminToken, _MessageDetails,
-            _httpHandlerFactory?.Invoke());
+            CreateHttpHandler());
         janusSession.JanusRequestTimeout = TimeSpan.FromMilliseconds(_JanusRequestTimeoutMs);
         if (await janusSession.CreateSession().ConfigureAwait(false))
         {
@@ -150,6 +155,8 @@ public partial class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                 // What JanusRoom.JoinRoom mints with. Both stay at their defaults with the knob off.
                 JoinCapabilityEnabled = _JoinCapabilityEnabled,
                 JoinCapabilitySecret = _JoinCapabilitySecret,
+                // Rooms this bridge creates are watched by the empty-room reaper (null when it is off).
+                RoomCreated = _roomReaper is null ? null : _roomReaper.NoteCreated,
             };
 
             if (await audioBridge.Activate(_Config).ConfigureAwait(false))
@@ -298,6 +305,7 @@ public partial class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                     else {
                         viewerSession.Offer = jsepSdp;
                         viewerSession.OfferOrig = jsepSdp;
+                        viewerSession.Spatial = isSpatial;
                         viewerSession.AgentId = pUserID;
                         // ONE join. SelectRoom above has just had the mixer create (or confirm) the room, so
                         // this JSEP join never meets a room the sim merely believed in. It is never re-sent on this handle:

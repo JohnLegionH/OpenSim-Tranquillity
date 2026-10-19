@@ -68,6 +68,7 @@ public partial class JanusAudioBridge
             {
                 case "created":
                     ret = new JanusRoom(this, pRoomId);
+                    RoomCreated?.Invoke(pRoomId);
                     break;
                 case "event":
                     if (abResp.AudioBridgeErrorCode == 486)

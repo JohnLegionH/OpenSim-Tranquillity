@@ -223,6 +223,8 @@ public partial class WebRtcVoiceRegionModule
         if (A2AProvisionAdmission.RecordsListenerRoom(admission.Kind))
         {
             RecordListenerRoom(resp, agentID, scene);
+            if (resp.ContainsKey("viewer_session"))
+                ApplyStockMuteOnJoin(agentID, scene);
         }
         else if (A2AProvisionAdmission.RecordsA2ASession(admission) && resp.TryGetString("viewer_session", out string provVs) && !string.IsNullOrEmpty(provVs))
         {
@@ -309,7 +311,15 @@ public partial class WebRtcVoiceRegionModule
         // ("nsv1:group:<uuid>"), which can never be an A2A channel because that lookup is
         // UUID.TryParse. Anything else -- every body that exists today -- goes to the untouched
         // A2AProvisionAdmission.Decide below with the same arguments it has always had.
-        if (NonSpatialProvisionAdmission.IsGroupProvision(map))
+        if (!NonSpatialVoiceFeatureOn() && A2AProvisionAdmission.IsPassthroughBody(map))
+        {
+            // No avatar-to-avatar, group or conference feature is on, so nothing here issues a channel and there is
+            // no registry to check one against. A "multiagent" body, or one with no channel_type, goes to the voice
+            // service unexamined, as it did before those features existed; the service answers it (a room for a
+            // multiagent body, nothing for a body with no channel_type).
+            admission = A2AProvisionAdmission.Passthrough(map);
+        }
+        else if (NonSpatialProvisionAdmission.IsGroupProvision(map))
         {
             if (!TryAdmitGroupProvision(map, agentID, scene, response, out admission))
                 return false;
@@ -342,9 +352,12 @@ public partial class WebRtcVoiceRegionModule
     // (sp == null || sp.IsChildAgent). A child agent's request is refused before any registry state.
     // Only applies when a non-spatial feature is enabled: otherwise the request is answered as it
     // always was.
+    // True when any of avatar-to-avatar calls, group voice or conferences is switched on.
+    private bool NonSpatialVoiceFeatureOn() => m_a2aVoiceEnabled || m_groupVoice.IsUsable || m_adhocVoiceEnabled;
+
     private bool RefuseChildChatSession(ScenePresence sp, UUID agentID, Scene scene, IOSHttpResponse response)
     {
-        if (sp.IsChildAgent && (m_a2aVoiceEnabled || m_groupVoice.IsUsable || m_adhocVoiceEnabled))
+        if (sp.IsChildAgent && NonSpatialVoiceFeatureOn())
         {
             m_log.LogWarning($"{logHeader} ChatSessionRequest: refusing child agent {agentID} in region \"{scene.RegionInfo.RegionName}\" (chat session requests come from the agent's root region)");
             response.StatusCode = (int)HttpStatusCode.Forbidden;

@@ -51,6 +51,12 @@ namespace osWebRtcVoice
         /// is the kind of small lie that costs an hour during a live incident.
         /// </summary>
         Adhoc = 5,
+        /// <summary>
+        /// A "multiagent" body, or one with no channel_type, while no non-spatial voice feature is on. Nothing in
+        /// this module issues a channel then, so it is handed to the voice service unexamined, as it was before the
+        /// features existed. It records nothing and has no session.
+        /// </summary>
+        Passthrough = 6,
     }
 
     public sealed class ProvisionAdmission
@@ -75,6 +81,7 @@ namespace osWebRtcVoice
         public const string DecisionLocal = "local-admitted";
         public const string DecisionMultiagent = "multiagent-admitted";
         public const string DecisionLogout = "logout";
+        public const string DecisionPassthrough = "passthrough-no-feature";
         public const string DecisionNoSession = "refused-no-session";
         public const string DecisionNotParty = "refused-not-party";
         public const string DecisionBadToken = "refused-bad-token";
@@ -99,6 +106,28 @@ namespace osWebRtcVoice
         /// </summary>
         public static bool RecordsA2ASession(ProvisionAdmission admission)
             => admission is not null && admission.Kind == ProvisionKind.Multiagent && admission.Session is not null;
+
+        /// <summary>
+        /// True for a body that is not a logout and whose channel_type is "multiagent" or absent: the two requests that
+        /// reach the voice service unexamined while no non-spatial voice feature is on.
+        /// </summary>
+        public static bool IsPassthroughBody(OSDMap map)
+        {
+            if (map == null || IsLogout(map))
+                return false;
+            if (!map.TryGetString("channel_type", out string ct))
+                return true;
+            return ct == ChannelTypeMultiagent;
+        }
+
+        public static ProvisionAdmission Passthrough(OSDMap map)
+            => new ProvisionAdmission
+            {
+                Kind = ProvisionKind.Passthrough,
+                Decision = DecisionPassthrough,
+                ChannelType = map != null && map.TryGetString("channel_type", out string ct) ? ct : string.Empty,
+                Channel = map != null && map.TryGetString("channel", out string ch) && !string.IsNullOrEmpty(ch) ? ch : "-",
+            };
 
         public static ProvisionAdmission Decide(OSDMap map, UUID agentID, A2ASessionRegistry registry)
         {

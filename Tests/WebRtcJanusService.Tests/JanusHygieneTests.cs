@@ -107,9 +107,13 @@ namespace osWebRtcVoice.Tests
                     string req = (msg["body"] as OSDMap)?["request"].AsString();
                     if (ModelRooms && (req == "create" || req == "join"))
                         return ModelRoomRequest(req, msg, sid, segs.Length > 2 ? segs[2] : null, txn);
+                    if (ModelRoomLifecycle && (req == "list" || req == "destroy"))
+                        return ModelRoomLifecycleRequest(req, msg, txn);
                     if (req == "list")
                         return Json(HttpStatusCode.OK, "{\"janus\":\"success\",\"transaction\":\"" + txn +
                             "\",\"plugindata\":{\"plugin\":\"janus.plugin.slvoice\",\"data\":{\"audiobridge\":\"success\",\"list\":[]}}}");
+                    if (req == "leave" && ModelRoomLifecycle)
+                        Participants.AddOrUpdate((msg["body"] as OSDMap)["room"].AsInteger(), 0, (_, n) => Math.Max(0, n - 1));
                     if (req == "leave" && sid is not null)
                         QueueGet(sid, HttpStatusCode.OK, "{\"janus\":\"event\",\"transaction\":\"" + txn +
                             "\",\"plugindata\":{\"plugin\":\"janus.plugin.slvoice\",\"data\":" + LeaveReplyData + "}}");
@@ -117,6 +121,36 @@ namespace osWebRtcVoice.Tests
                 default:   // destroy, detach, keepalive
                     return Json(HttpStatusCode.OK, "{\"janus\":\"success\",\"transaction\":\"" + txn + "\"}");
             }
+        }
+
+        // ---- An opt-in model of the stock plugin's room lifecycle (needs ModelRooms for create and join) ----
+        // On, "list" answers every room with its participant count, "leave" lowers the count, and "destroy" removes
+        // a room (error 485 for one that is not there). Nothing removes an emptied room by itself, as on the stock plugin.
+        public bool ModelRoomLifecycle;
+        public readonly ConcurrentDictionary<int, int> Participants = new();
+        public readonly ConcurrentQueue<int> Destroyed = new();
+
+        private HttpResponseMessage ModelRoomLifecycleRequest(string req, OSDMap msg, string txn)
+        {
+            const string Plugin = "\"plugindata\":{\"plugin\":\"janus.plugin.audiobridge\",\"data\":";
+            if (req == "list")
+            {
+                var items = new List<string>();
+                foreach (int room in Rooms.Keys)
+                    items.Add("{\"room\":" + room + ",\"description\":\"r\",\"num_participants\":" + Participants.GetValueOrDefault(room) + "}");
+                return Json(HttpStatusCode.OK, "{\"janus\":\"success\",\"transaction\":\"" + txn + "\"," + Plugin +
+                    "{\"audiobridge\":\"success\",\"list\":[" + string.Join(",", items) + "]}}}");
+            }
+            int target = ((OSDMap)msg["body"])["room"].AsInteger();
+            if (Rooms.TryRemove(target, out _))
+            {
+                Participants.TryRemove(target, out _);
+                Destroyed.Enqueue(target);
+                return Json(HttpStatusCode.OK, "{\"janus\":\"success\",\"transaction\":\"" + txn + "\"," + Plugin +
+                    "{\"audiobridge\":\"destroyed\",\"room\":" + target + "}}}");
+            }
+            return Json(HttpStatusCode.OK, "{\"janus\":\"success\",\"transaction\":\"" + txn + "\"," + Plugin +
+                "{\"audiobridge\":\"event\",\"error_code\":485,\"error\":\"No such room (" + target + ")\"}}}");
         }
 
         private HttpResponseMessage ModelRoomRequest(string req, OSDMap msg, string sid, string handle, string txn)
@@ -145,6 +179,8 @@ namespace osWebRtcVoice.Tests
                     return Json(HttpStatusCode.OK, "{\"janus\":\"error\",\"transaction\":\"" + txn +
                         "\",\"error\":{\"code\":490,\"reason\":\"Error setting ICE locally\"}}");
             }
+            if (Rooms.ContainsKey(room))
+                Participants.AddOrUpdate(room, 1, (_, n) => n + 1);
             string ev = Rooms.ContainsKey(room)
                 ? "{\"janus\":\"event\",\"transaction\":\"" + txn + "\"," + Plugin +
                   "{\"audiobridge\":\"joined\",\"room\":" + room + ",\"id\":" + Interlocked.Increment(ref _nextId) +

@@ -84,6 +84,8 @@ public partial class WebRtcVoiceRegionModule : ISharedRegionModule
                 _MessageDetails = m_Config.GetBoolean("MessageDetails", false);
                 InitialiseRefusalCache();
                 InitialiseStunServers();
+                MixerOnlySwitches.DisableOnStockPlugin(config, m_log);
+                m_stockPlugin = MixerOnlySwitches.IsStockPlugin(MixerOnlySwitches.PluginNameOf(config));
                 InitialiseVisibility(config);
                 InitialiseNonSpatial(config);
                 InitialiseModeration();
@@ -295,7 +297,8 @@ public partial class WebRtcVoiceRegionModule : ISharedRegionModule
                 // A CHILD agent (the viewer's neighbour-region provision) is positioned outside this
                 // region, so position finds no parcel. It keeps the pre-slice-1 path: a client id selects the
                 // parcel and every check runs against it; no id (the stock viewer, estate channel) means no
-                // parcel checks and the service's -999 estate room. ProvisionParcelResolver decides.
+                // parcel checks and the service's -999 estate room. ProvisionParcelResolver decides; a hinted
+                // parcel that is not near the child's known position is dropped below.
                 int? clientParcelId = map.TryGetInt("parcel_local_id", out int c) ? c : null;
                 ParcelResolveInput resolveInput = new ParcelResolveInput(clientParcelId, sp.IsChildAgent);
 
@@ -304,17 +307,30 @@ public partial class WebRtcVoiceRegionModule : ISharedRegionModule
                     parcel = scene.LandChannel.GetLandObject(sp.AbsolutePosition.X, sp.AbsolutePosition.Y);
                 ParcelResolution res = ProvisionParcelResolver.Resolve(resolveInput, parcel?.LandData?.LocalID);
                 if (res.Source == ParcelSource.ClientHint)
+                {
+                    // The id comes from the viewer, and this region only knows the child agent's position
+                    // coarsely (the root region sends it after about 10 m of movement, at most every 2 s).
+                    // Accept the named parcel only if it lies within that slack of the child's position;
+                    // otherwise treat the request as sent without an id (estate room). Never a refusal.
                     parcel = scene.LandChannel.GetLandObject(res.LocalId.Value);
+                    LandData hinted = parcel?.LandData;
+                    if (hinted is null || !ChildParcelProximity.IsNear(sp.AbsolutePosition, hinted.AABBMin, hinted.AABBMax))
+                    {
+                        res = ProvisionParcelResolver.RejectHint(res);
+                        parcel = null;
+                        map.Remove("parcel_local_id"); // the service must not room by the dropped id
+                    }
+                }
 
                 LandData land = parcel?.LandData;
                 bool estateChan = land != null && (land.Flags & (uint)ParcelFlags.UseEstateVoiceChan) != 0;
 
                 // Every path logs this line, including the refusals below and the child/no-hint estate path,
                 // so no provision outcome is silent, the NotFound arm included.
-                m_log.LogDebug("{LogHeader} [PARCEL RESOLVE] agent={AgentId} region={RegionName} child={Child} source={Source} client={ClientId} server={ServerLocalId} parcel={ParcelId} estate_chan={EstateChan} mismatch={Mismatch}",
+                m_log.LogDebug("{LogHeader} [PARCEL RESOLVE] agent={AgentId} region={RegionName} child={Child} source={Source} client={ClientId} server={ServerLocalId} parcel={ParcelId} estate_chan={EstateChan} mismatch={Mismatch} hint_rejected={HintRejected}",
                     logHeader, agentID, scene.Name, sp.IsChildAgent, res.Source, clientParcelId?.ToString() ?? "-",
                     res.ServerLocalId?.ToString() ?? "-", land?.LocalID.ToString() ?? "-",
-                    land == null ? "-" : estateChan.ToString(), res.ClientMismatch);
+                    land == null ? "-" : estateChan.ToString(), res.ClientMismatch, res.HintRejected);
 
                 // ParcelSource.None: child agent, no client id -- no parcel checks, parcel_local_id stays
                 // absent, the service defaults to the estate room. The normal neighbour-region path.
@@ -334,9 +350,27 @@ public partial class WebRtcVoiceRegionModule : ISharedRegionModule
                         m_log.LogWarning("{LogHeader}[ProvisionVoice]: parcel_local_id {ClientId} from agent {AgentId} does not match the avatar's parcel {ServerLocalId} in \"{RegionName}\" — using the server parcel",
                             logHeader, clientParcelId, agentID, res.ServerLocalId, scene.Name);
 
-                    if (!scene.RegionInfo.EstateSettings.TaxFree && (land.Flags & (uint)ParcelFlags.AllowVoiceChat) == 0)
+                    // Voice off on the parcel and bans are enforced whether or not the estate is TaxFree: the
+                    // sim's own ban and restrict answers are false under TaxFree, so the ban list is also read
+                    // directly (ProvisionParcelAccess). Done before any parcel_local_id rewrite below.
+                    EstateSettings estateSettings = scene.RegionInfo.EstateSettings;
+                    ProvisionAccess access = ProvisionParcelAccess.Check(
+                        land,
+                        parcel.IsRestrictedFromLand(agentID) || parcel.IsBannedFromLand(agentID),
+                        a => scene.Permissions.IsAdministrator(a),
+                        a => estateSettings.IsEstateManagerOrOwner(a),
+                        agentID,
+                        Util.UnixTimeSinceEpoch());
+                    if (access == ProvisionAccess.VoiceOff)
                     {
                         m_log.LogDebug($"{logHeader}[ProvisionVoice]:parcel voice not allowed");
+                        response.RawBuffer = llsdUndefAnswerBytes;
+                        response.StatusCode = (int)HttpStatusCode.Forbidden;
+                        return;
+                    }
+                    if (access == ProvisionAccess.Barred)
+                    {
+                        m_log.LogDebug($"{logHeader}[ProvisionVoice]:agent not allowed on parcel");
                         response.RawBuffer = llsdUndefAnswerBytes;
                         response.StatusCode = (int)HttpStatusCode.Forbidden;
                         return;
@@ -354,20 +388,6 @@ public partial class WebRtcVoiceRegionModule : ISharedRegionModule
                     }
                     // else ParcelSource.ClientHint: the client's parcel_local_id is forwarded unchanged (pre-slice-1).
 
-                    // This
-                    // check used to be chained as the "else" of the UseEstateVoiceChan branch
-                    // above, so setting the estate-channel flag skipped ban/restrict enforcement
-                    // entirely. Room selection (which Janus room to route to) and access control
-                    // (may this agent have voice here at all) are independent decisions, so the
-                    // check now runs on both the estate-channel and per-parcel paths.
-                    if(parcel.IsRestrictedFromLand(agentID) || parcel.IsBannedFromLand(agentID))
-                    {
-                        // check Z distance?
-                        m_log.LogDebug($"{logHeader}[ProvisionVoice]:agent not allowed on parcel");
-                        response.RawBuffer = llsdUndefAnswerBytes;
-                        response.StatusCode = (int)HttpStatusCode.Forbidden;
-                        return;
-                    }
                 }
             }
         }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Contributors, http://opensimulator.org/
+ * Copyright (c) 2026 Legion Builds
  * See CONTRIBUTORS.TXT for a full list of copyright holders.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -24,7 +24,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-// Adapted 2026 by Legion Builds
 
 using System.Collections.Generic;
 using System.Net;
@@ -92,6 +91,9 @@ public partial class WebRtcVoiceRegionModule
 
     private string m_JanusAdminToken = string.Empty;
 
+    // [JanusWebRtcVoice] JanusGatewayCACertificateFile: private CA trusted for an https admin URL. Empty = system roots only.
+    private string m_JanusCaCertificateFile = string.Empty;
+
     private int m_AdminTimeoutMs = 5000;
 
     private int m_VisibilityRoomSendConcurrency = JanusPeerCtlBatchSink.DefaultRoomSendConcurrency;
@@ -127,7 +129,7 @@ public partial class WebRtcVoiceRegionModule
         // resolver in the service constructor immediately below this call.
         return new JanusPeerCtlBatchSink(m_JanusAdminUri, m_JanusAdminToken,
             TimeSpan.FromMilliseconds(m_AdminTimeoutMs), scene.RegionInfo.RegionID, scene.RegionInfo.RegionName,
-            m_VisibilityRoomSendConcurrency);
+            m_VisibilityRoomSendConcurrency, sendOne: null, caCertificateFile: m_JanusCaCertificateFile);
     }
 
     // Start the per-listener visibility feeder for this region (opt-in).
@@ -219,6 +221,7 @@ public partial class WebRtcVoiceRegionModule
             m_JanusAdminUri = janusCfg.GetString("JanusGatewayAdminURI", string.Empty);
             m_JanusAdminToken = janusCfg.GetString("AdminAPIToken", string.Empty);
             m_AdminTimeoutMs = janusCfg.GetInt("AdminTimeoutMs", 5000);
+            m_JanusCaCertificateFile = janusCfg.GetString(JanusTls.CaCertificateFileKey, string.Empty);
         }
 
         // Console surfaces. The moderation commands are registered only with moderation enabled, and the

@@ -121,11 +121,25 @@ public class JanusMessage
     {
         return m_message.ToString();
     }
-    /// <summary>How a request is serialized for a LOG line, as opposed to for the wire. The default is
-    /// ToJson; PluginMsgReq overrides it so a join capability is never printed at any level.</summary>
+    /// <summary>Top-level request fields that authenticate the sender and so must never reach a log.</summary>
+    private static readonly string[] LogRedactedFields = { "apisecret", "admin_secret" };
+
+    /// <summary>How a request is serialized for a LOG line, as opposed to for the wire. It is the wire
+    /// form with the API secret and the admin secret replaced; PluginMsgReq also hides a join capability.
+    /// Every other field (the transaction and session ids included) is left as it is: those are not
+    /// secrets and are what an operator correlates on.</summary>
     public virtual string ToJsonForLog()
     {
-        return ToJson();
+        ToJson();   // a subclass may assemble m_message here (PluginMsgReq adds its body)
+        OSDMap copy = new OSDMap();
+        foreach (KeyValuePair<string, OSD> field in m_message)
+            copy[field.Key] = field.Value;
+        foreach (string secret in LogRedactedFields)
+        {
+            if (copy.TryGetValue(secret, out OSD value) && !string.IsNullOrEmpty(value.AsString()))
+                copy[secret] = "<redacted " + secret + ">";
+        }
+        return copy.ToString();
     }
     public override string ToString()
     {
@@ -427,13 +441,12 @@ public class PluginMsgReq : JanusMessageReq
         return base.ToJson();
     }
 
-    /// <summary>The same body with the join capability replaced, for the [JanusWebRtcVoice]
-    /// MessageDetails debug line — the one place a request body is logged. It replaces the exact minted string, so
-    /// no part of a capability can survive into a log, and leaves every other field (the session id included)
-    /// as it is: those are not secrets and are what an operator correlates on.</summary>
+    /// <summary>The log form of the base request (secrets hidden) with the join capability replaced as well, for
+    /// the [JanusWebRtcVoice] MessageDetails debug line — the one place a request body is logged. It replaces the
+    /// exact minted string, so no part of a capability can survive into a log.</summary>
     public override string ToJsonForLog()
     {
-        string json = ToJson();
+        string json = base.ToJsonForLog();
         if (!m_body.ContainsKey("join_cap"))
             return json;
         string capability = m_body["join_cap"].AsString();
@@ -482,6 +495,13 @@ public class PluginMsgResp : JanusMessageResp
         return m_data.ContainsKey(pKey) ? (int)OSDToLong(m_data[pKey]) : 0;
     }
     // Get a string value for a key in the response data or empty string if not there
+    // Get a 64-bit value for a key in the response data or zero if not there
+    public long PluginRespDataLong(string pKey)
+    {
+        if (m_data is null)
+            return 0;
+        return m_data.ContainsKey(pKey) ? OSDToLong(m_data[pKey]) : 0;
+    }
     public string PluginRespDataString(string pKey)
     {
         if (m_data is null)
@@ -555,11 +575,15 @@ public class AudioBridgeCreateRoomReq : PluginMsgReq
 // ==============================================================
 public class AudioBridgeDestroyRoomReq : PluginMsgReq
 {
-    public AudioBridgeDestroyRoomReq(int pRoomId) : base(new OSDMap() {
+    public AudioBridgeDestroyRoomReq(int pRoomId) : this(pRoomId, true)
+    {
+    }
+    /// <param name="pPermanent">Also remove the room from the plugin's config file. False for a room made at run time.</param>
+    public AudioBridgeDestroyRoomReq(int pRoomId, bool pPermanent) : base(new OSDMap() {
                                             { "request", "destroy" },
                                             { "room", pRoomId },
-                                            { "permanent", true }
-                                        })  
+                                            { "permanent", pPermanent }
+                                        })
     {
     }
 }
@@ -591,7 +615,8 @@ public class AudioBridgeJoinRoomResp : AudioBridgeResp
     public AudioBridgeJoinRoomResp(JanusMessageResp pResp) : base(pResp)
     {
     }
-    public int ParticipantId { get { return PluginRespDataInt("id"); } }
+    // Janus assigns a participant a random 64-bit id, so this must not be narrowed to an int.
+    public long ParticipantId { get { return PluginRespDataLong("id"); } }
 }
 // ==============================================================
 public class AudioBridgeConfigRoomReq : PluginMsgReq
@@ -613,7 +638,7 @@ public class AudioBridgeConfigRoomResp : AudioBridgeResp
 // ==============================================================
 public class AudioBridgeLeaveRoomReq : PluginMsgReq
 {
-    public AudioBridgeLeaveRoomReq(int pRoomId, int pAttendeeId) : base(new OSDMap() {
+    public AudioBridgeLeaveRoomReq(int pRoomId, long pAttendeeId) : base(new OSDMap() {
                                             { "request", "leave" },
                                             { "room", pRoomId },
                                             { "id", pAttendeeId }
