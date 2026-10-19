@@ -9,7 +9,7 @@
  * Rooms the service created are removed once they have stood empty for the grace period, on the stock
  * AudioBridge plugin, which never removes an emptied room itself.
  *
- * R1-R6 are the sweep rules, run against a clock the test controls. C1-C5 are the settings. S1-S5 run the real
+ * The R tests are the sweep rules, run against a clock the test controls. The C tests are the settings. The S tests run the real
  * service against the fake gateway with its room lifecycle model switched on: a room made by a viewer's join is
  * removed after the last leave; a room the service did not create, an occupied room, and a plugin that removes
  * empty rooms itself are left alone.

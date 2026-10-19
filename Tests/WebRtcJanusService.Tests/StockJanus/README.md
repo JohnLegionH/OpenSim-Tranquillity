@@ -10,7 +10,7 @@ code (`StockJanusSupport.cs`) and the peer script (`aiortc_peer.py`).
 ## What you need
 
 - A Janus gateway you can discard, with the plugin you want to test (the default is the stock
-  `janus.plugin.audiobridge`). Do not point the tests at a gateway that serves a live grid: they
+  `janus.plugin.audiobridge`). Do not point the tests at a gateway that serves real users: they
   create rooms, and one test restarts the gateway's container.
 - Python with the `aiortc` package, for the tests that use a peer.
 - Docker, for the restart test.
