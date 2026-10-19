@@ -105,6 +105,8 @@ namespace OpenSim.Region.ScriptEngine.Shared.Tests
             m_scene = new SceneHelpers().SetupScene();
 
             BaseHttpServer server = new BaseHttpServer(port);
+            // BaseHttpServer listens on all interfaces unless told otherwise; this test only connects from the same machine.
+            server.ListenIPAddress = IPAddress.Loopback;
             MainServer.Instance.AddHttpServer(server);
 
             server.Start();
