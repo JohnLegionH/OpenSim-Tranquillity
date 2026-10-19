@@ -5,7 +5,7 @@
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 # Builds the Jolt test projects and runs their suites on Linux x64 in Release. It runs only when a change touches
-# the Jolt module, its tests, its native or this file. Each project's test output is also checked with
+# the Jolt module, its tests, its native, the physics contract (SharedBase) it implements, the mesher it calls, or this file. Each project's test output is also checked with
 # assert-joltc-native.ps1: recorded natives under runtimes/<rid>/native/ and no other joltc.
 name: Jolt CI
 
@@ -16,6 +16,8 @@ on:
       - 'Source/OpenSim.Region.PhysicsModules.Jolt.Backend/**'
       - 'Source/OpenSim.Region.PhysicsModules.Jolt.Vehicles/**'
       - 'Source/OpenSim.Region.PhysicsModules.Jolt.Diagnostics/**'
+      - 'Source/OpenSim.Region.PhysicsModules.SharedBase/**'
+      - 'Source/OpenSim.Region.PhysicsModules.Meshing/**'
       - 'Tests/OpenSim.Region.PhysicsModules.Jolt*/**'
       - 'Tests/JoltTestShared/**'
       - 'Tests/JoltPhysicsHarness/**'
@@ -31,6 +33,8 @@ on:
       - 'Source/OpenSim.Region.PhysicsModules.Jolt.Backend/**'
       - 'Source/OpenSim.Region.PhysicsModules.Jolt.Vehicles/**'
       - 'Source/OpenSim.Region.PhysicsModules.Jolt.Diagnostics/**'
+      - 'Source/OpenSim.Region.PhysicsModules.SharedBase/**'
+      - 'Source/OpenSim.Region.PhysicsModules.Meshing/**'
       - 'Tests/OpenSim.Region.PhysicsModules.Jolt*/**'
       - 'Tests/JoltTestShared/**'
       - 'Tests/JoltPhysicsHarness/**'
