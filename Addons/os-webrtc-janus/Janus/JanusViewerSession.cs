@@ -57,12 +57,15 @@ public class JanusViewerSession : IVoiceViewerSession
     public OMV.UUID ClientSessionId { get; set; }
 
     // Janus keeps track of the user by this ID
-    public int ParticipantId { get; set; }
+    public long ParticipantId { get; set; }
 
     // Connections to the Janus server
     public JanusSession Session { get; set; }
     public JanusAudioBridge AudioBridge { get; set; }
     public JanusRoom Room { get; set; }
+
+    // True when the room this session joined is a spatial ("local") room, as opposed to a call or conference room.
+    public bool Spatial { get; set; }
 
     // Serializes Shutdown against concurrent invocation (the hangup path and, if wired,
     // presence removal), so the teardown steps below cannot double-invoke

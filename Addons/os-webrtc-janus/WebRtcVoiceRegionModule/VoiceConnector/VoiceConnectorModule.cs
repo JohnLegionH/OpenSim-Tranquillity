@@ -94,6 +94,9 @@ public class VoiceConnectorModule : INonSharedRegionModule
         if (moduleConfig is null)
             return;   // no voice config at all -> stay inert (no registry registered)
 
+        // Connectors need the slvoice mixer: on the stock plugin the switch is reported and switched off here.
+        MixerOnlySwitches.DisableOnStockPlugin(pConfig, m_log);
+
         // [WebRtcVoice] ConnectorsEnabled: NPC voice connectors (recorder and injector records). Off by default;
         // with it off the module reads no [VoiceConnector.*] record and registers nothing.
         m_connectorsEnabled = moduleConfig.GetBoolean("ConnectorsEnabled", false);

@@ -84,6 +84,8 @@ public partial class WebRtcVoiceRegionModule : ISharedRegionModule
                 _MessageDetails = m_Config.GetBoolean("MessageDetails", false);
                 InitialiseRefusalCache();
                 InitialiseStunServers();
+                MixerOnlySwitches.DisableOnStockPlugin(config, m_log);
+                m_stockPlugin = MixerOnlySwitches.IsStockPlugin(MixerOnlySwitches.PluginNameOf(config));
                 InitialiseVisibility(config);
                 InitialiseNonSpatial(config);
                 InitialiseModeration();

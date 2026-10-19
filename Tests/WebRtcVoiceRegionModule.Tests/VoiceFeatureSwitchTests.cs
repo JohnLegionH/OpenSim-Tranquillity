@@ -208,6 +208,7 @@ namespace osWebRtcVoice.Tests
             voice.Set("Enabled", "true");
             if (connectorsEnabled)
                 voice.Set("ConnectorsEnabled", "true");
+            cfg.AddConfig("JanusWebRtcVoice").Set("PluginName", "janus.plugin.slvoice");   // connectors need the slvoice mixer
             IConfig rec = cfg.AddConfig("VoiceConnector.Recorder");
             rec.Set("Enabled", "true");
             rec.Set("NpcFirstName", "Recorder");

@@ -66,6 +66,8 @@
     <Compile Include="AdhocChatLifecycleTests.cs" />
     <Compile Include="GroupChatSessionGuardTests.cs" />
     <Compile Include="CarrierAuthTests.cs" />
+    <Compile Include="StockModerationTests.cs" />
+    <Compile Include="StockPluginSwitchTests.cs" />
     <!-- Opt-in integration tests against a real Janus gateway (skipped unless WEBRTC_JANUS_TEST_URL is set). -->
     <Compile Include="StockJanus\StockRegion.cs" />
     <Compile Include="StockJanus\DefaultsProbe.cs" />

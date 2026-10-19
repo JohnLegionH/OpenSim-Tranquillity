@@ -88,6 +88,7 @@ public partial class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                 WarnOnShortJanusSecrets();
                 ReadTlsConfig(janusConfig);
                 ReadPluginNameConfig(janusConfig);
+                MixerOnlySwitches.DisableOnStockPlugin(_Config, _log);
                 ReadGridIdConfig();
                 ReadArmingConfig(webRtcVoiceConfig, janusConfig);
                 ReadRoomReaperConfig(janusConfig);
@@ -304,6 +305,7 @@ public partial class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                     else {
                         viewerSession.Offer = jsepSdp;
                         viewerSession.OfferOrig = jsepSdp;
+                        viewerSession.Spatial = isSpatial;
                         viewerSession.AgentId = pUserID;
                         // ONE join. SelectRoom above has just had the mixer create (or confirm) the room, so
                         // this JSEP join never meets a room the sim merely believed in. It is never re-sent on this handle:

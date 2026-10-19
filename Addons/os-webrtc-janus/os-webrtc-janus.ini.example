@@ -17,7 +17,9 @@
     ; ---------------------------------------------------------------------------------------------
     ; Optional features. Every key below is commented out and shows its default. All of them are off
     ; unless noted. Features marked "slvoice mixer" need a Janus plugin that implements the
-    ; janus.plugin.slvoice protocol (see PluginName below); the stock AudioBridge ignores them.
+    ; janus.plugin.slvoice protocol (see PluginName below). The stock AudioBridge cannot do them: with the
+    ; stock plugin each such switch that is on logs a warning at start naming the switch and the plugin, and
+    ; stays off.
     ; ---------------------------------------------------------------------------------------------
 
     ; Comma-separated STUN server URIs advertised to viewers as the SimulatorFeatures "stun-servers"
@@ -85,7 +87,10 @@
     ;JoinCapabilityEnabled = false
 
     ; Parcel voice moderation (the SpatialVoiceModerationRequest capability and the voice moderation
-    ; console commands). Default: false. Needs the slvoice mixer and VisibilityFeederEnabled.
+    ; console commands). Default: false. With the slvoice mixer it needs VisibilityFeederEnabled. With the stock
+    ; AudioBridge a mute is the plugin's own mute of that participant in its room (a mute-all is remembered per
+    ; parcel and also applies to whoever joins afterwards), and a request the plugin cannot carry out is
+    ; answered 501 rather than 200.
     ;VoiceModerationEnabled = false
 
     ; NPC voice connectors (recorder and injector NPCs, configured by [VoiceConnector.<name>] records

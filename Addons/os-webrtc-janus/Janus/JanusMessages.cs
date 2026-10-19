@@ -495,6 +495,13 @@ public class PluginMsgResp : JanusMessageResp
         return m_data.ContainsKey(pKey) ? (int)OSDToLong(m_data[pKey]) : 0;
     }
     // Get a string value for a key in the response data or empty string if not there
+    // Get a 64-bit value for a key in the response data or zero if not there
+    public long PluginRespDataLong(string pKey)
+    {
+        if (m_data is null)
+            return 0;
+        return m_data.ContainsKey(pKey) ? OSDToLong(m_data[pKey]) : 0;
+    }
     public string PluginRespDataString(string pKey)
     {
         if (m_data is null)
@@ -608,7 +615,8 @@ public class AudioBridgeJoinRoomResp : AudioBridgeResp
     public AudioBridgeJoinRoomResp(JanusMessageResp pResp) : base(pResp)
     {
     }
-    public int ParticipantId { get { return PluginRespDataInt("id"); } }
+    // Janus assigns a participant a random 64-bit id, so this must not be narrowed to an int.
+    public long ParticipantId { get { return PluginRespDataLong("id"); } }
 }
 // ==============================================================
 public class AudioBridgeConfigRoomReq : PluginMsgReq
@@ -630,7 +638,7 @@ public class AudioBridgeConfigRoomResp : AudioBridgeResp
 // ==============================================================
 public class AudioBridgeLeaveRoomReq : PluginMsgReq
 {
-    public AudioBridgeLeaveRoomReq(int pRoomId, int pAttendeeId) : base(new OSDMap() {
+    public AudioBridgeLeaveRoomReq(int pRoomId, long pAttendeeId) : base(new OSDMap() {
                                             { "request", "leave" },
                                             { "room", pRoomId },
                                             { "id", pAttendeeId }

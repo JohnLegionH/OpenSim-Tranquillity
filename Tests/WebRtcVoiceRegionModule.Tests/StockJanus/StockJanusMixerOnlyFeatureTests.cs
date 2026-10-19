@@ -103,7 +103,7 @@ namespace osWebRtcVoice.Tests
         }
 
         [Test]
-        public async Task EverySlvoiceSwitchOn_VoiceStillWorksOnTheStockPlugin_AndArmingReportsTheMismatch()
+        public async Task EverySlvoiceSwitchOn_VoiceStillWorksOnTheStockPlugin_AndEachSwitchReportsItCannotWork()
         {
             StockJanusEnvironment.IgnoreUnlessPeerAvailable();
             var problems = new ProblemCollector();
@@ -132,10 +132,13 @@ namespace osWebRtcVoice.Tests
                     TestContext.Out.WriteLine($"  x{g.Count()} {g.Key}");
 
                 Assert.That(Measurement.MedianShare(heard, 880), Is.GreaterThan(0.8), "audio is unaffected by the switches");
-                // The visibility sender notices that the plugin rejects its batches and says so once. Nothing is said about
-                // the join capability or moderation, which have no request the plugin could reject.
-                Assert.That(lines.Any(l => l.Contains("rejected as ProtocolError")), Is.True,
-                    "the sender reports that the plugin rejects its requests");
+                // Each switch the stock plugin cannot honour says so at start, naming the switch and the plugin, and stays off
+                // (so the sender never meets a plugin that rejects its batches).
+                foreach (string name in new[] { "JoinCapabilityEnabled", "VisibilityFeederEnabled", "VisibilityEmitEnabled", "VisibilityArmingEnabled" })
+                    Assert.That(lines.Any(l => l.StartsWith("Warning") && l.Contains(name) && l.Contains("janus.plugin.audiobridge")), Is.True,
+                        $"a warning names {name} and the plugin");
+                Assert.That(lines.Any(l => l.Contains("rejected as ProtocolError")), Is.False,
+                    "no visibility batch is sent, so none is rejected");
                 await region.LogoutAsync(a);
                 await region.LogoutAsync(b);
             }
@@ -148,32 +151,67 @@ namespace osWebRtcVoice.Tests
         // ---- what the stock plugin silently ignores --------------------------------------------
 
         [Test]
-        public async Task ModerationMute_OnTheStockPlugin_IsAcceptedButMutesNobody()
+        public async Task ModerationMute_OnTheStockPlugin_UsesTheAudioBridgesOwnMute()
         {
             StockJanusEnvironment.IgnoreUnlessPeerAvailable();
-            using var region = StockRegion.Create((voice, janus) =>
-            {
-                voice.Set("VisibilityFeederEnabled", "true");
-                voice.Set("VisibilityEmitEnabled", "true");
-                voice.Set("VoiceModerationEnabled", "true");
-            });
+            StockJanusEnvironment.IgnoreUnlessAudioBridge();
+            using var region = StockRegion.Create((voice, janus) => voice.Set("VoiceModerationEnabled", "true"));
             region.AddAvatar(Alice, StockRegion.InEstateChannelParcel);   // Alice owns the parcel
             region.AddAvatar(Bob, StockRegion.InEstateChannelParcel);
             using Joined a = await region.JoinAsync(Alice, o => StockRegion.LocalBody(o), 440);
             using Joined b = await region.JoinAsync(Bob, o => StockRegion.LocalBody(o), 880);
+            Assert.That(await _janus.WaitForParticipantsAsync(a.Answer.Room, 2, Settle), Is.True);
+            await Task.Delay(1500);   // let the first frames flow
+            List<Measurement> before = await a.Peer.MeasureWindowsAsync(4, 0.5, 440, 880);
+            Assert.That(Measurement.MedianShare(before, 880), Is.GreaterThan(0.8), "precondition: Alice hears Bob");
 
             CapAnswer muted = await region.ModerateAsync(Alice, new OpenMetaverse.StructuredData.OSDMap
             {
                 ["operand"] = OpenMetaverse.StructuredData.OSD.FromString("mute"),
                 ["agent_id"] = OpenMetaverse.StructuredData.OSD.FromUUID(Bob),
             });
-            await Task.Delay(3000);   // feeder ticks
+            await Task.Delay(1000);
             List<Measurement> heard = await a.Peer.MeasureWindowsAsync(4, 0.5, 440, 880);
             TestContext.Out.WriteLine($"moderation answered HTTP {muted.Status}; Alice then heard: " + Measurement.Describe(heard, 440, 880));
 
-            Assert.That(muted.Status, Is.EqualTo(200), "the region accepts the moderator's mute");
-            Assert.That(Measurement.MedianShare(heard, 880), Is.GreaterThan(0.8),
-                "and on the stock plugin the muted avatar is still heard: nothing carries the mute to the mixer");
+            Assert.That(muted.Status, Is.EqualTo(200));
+            Assert.That(Measurement.MedianRms(heard), Is.LessThan(0.005), "the muted avatar's tone is no longer heard");
+
+            CapAnswer unmuted = await region.ModerateAsync(Alice, new OpenMetaverse.StructuredData.OSDMap
+            {
+                ["operand"] = OpenMetaverse.StructuredData.OSD.FromString("unmute"),
+                ["agent_id"] = OpenMetaverse.StructuredData.OSD.FromUUID(Bob),
+            });
+            await Task.Delay(1000);
+            List<Measurement> after = await a.Peer.MeasureWindowsAsync(4, 0.5, 440, 880);
+            Assert.That(unmuted.Status, Is.EqualTo(200));
+            Assert.That(Measurement.MedianShare(after, 880), Is.GreaterThan(0.8), "and after the unmute Bob is heard again");
+            await region.LogoutAsync(a);
+            await region.LogoutAsync(b);
+        }
+
+        [Test]
+        public async Task ModerationMuteAll_OnTheStockPlugin_AlsoMutesSomeoneWhoJoinsAfterwards()
+        {
+            StockJanusEnvironment.IgnoreUnlessPeerAvailable();
+            StockJanusEnvironment.IgnoreUnlessAudioBridge();
+            using var region = StockRegion.Create((voice, janus) => voice.Set("VoiceModerationEnabled", "true"));
+            region.AddAvatar(Alice, StockRegion.InEstateChannelParcel);
+            region.AddAvatar(Bob, StockRegion.InEstateChannelParcel);
+            using Joined a = await region.JoinAsync(Alice, o => StockRegion.LocalBody(o), 440);
+
+            CapAnswer muted = await region.ModerateAsync(Alice, new OpenMetaverse.StructuredData.OSDMap
+            {
+                ["operand"] = OpenMetaverse.StructuredData.OSD.FromString("mute_all"),
+            });
+            Assert.That(muted.Status, Is.EqualTo(200));
+            using Joined b = await region.JoinAsync(Bob, o => StockRegion.LocalBody(o), 880);
+            Assert.That(await _janus.WaitForParticipantsAsync(a.Answer.Room, 2, Settle), Is.True);
+            await Task.Delay(1500);
+            List<Measurement> heard = await a.Peer.MeasureWindowsAsync(4, 0.5, 440, 880);
+            TestContext.Out.WriteLine("Alice heard: " + Measurement.Describe(heard, 440, 880));
+
+            Assert.That(Measurement.MedianRms(heard), Is.LessThan(0.005), "Bob joined after mute_all and is not heard");
             await region.LogoutAsync(a);
             await region.LogoutAsync(b);
         }
@@ -185,9 +223,11 @@ namespace osWebRtcVoice.Tests
             using var region = StockRegion.Create(MixerOnlySwitchesOn);
             region.AddAvatar(Alice, StockRegion.InEstateChannelParcel);
             using Joined a = await region.JoinAsync(Alice, o => StockRegion.LocalBody(o));
-            Assert.That(a.Answer.Provisioned, Is.True, "a join that carries the capability is accepted: " + a.Answer.Body);
+            Assert.That(a.Answer.Provisioned, Is.True, "the join is accepted: " + a.Answer.Body);
 
-            // Anything holding the gateway's API secret can join the same room with no capability at all.
+            // The stock plugin has nothing that checks a capability, so the switch is reported and stays off (the
+            // unit tests show no capability is minted). Anything holding the gateway's API secret can join the same
+            // room with none; the secret is the only protection the stock gateway has.
             using var stranger = await AiortcPeer.StartAsync();
             string answer = await _janus.JoinDirectAsync(a.Answer.Room, "stranger", stranger.Offer);
 

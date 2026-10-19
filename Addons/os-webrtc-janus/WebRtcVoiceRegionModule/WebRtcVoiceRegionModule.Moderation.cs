@@ -141,6 +141,13 @@ public partial class WebRtcVoiceRegionModule
             return;
         }
 
+        // On the stock plugin there is no visibility matrix; the plugin's own participant mute does it.
+        if (m_stockPlugin)
+        {
+            ApplyStockSpatialMute(operand, targetAgent, land, agentID, scene, response);
+            return;
+        }
+
         // (5) The store lives on the per-region visibility service. The matrix is the single
         // enforcement point, so if the feeder is disabled there is no way to enforce a mute —
         // refuse loudly rather than silently accept an unenforceable one.

@@ -217,6 +217,8 @@ public partial class WebRtcVoiceRegionModule
         if (A2AProvisionAdmission.RecordsListenerRoom(admission.Kind))
         {
             RecordListenerRoom(resp, agentID, scene);
+            if (resp.ContainsKey("viewer_session"))
+                ApplyStockMuteOnJoin(agentID, scene);
         }
         else if (A2AProvisionAdmission.RecordsA2ASession(admission) && resp.TryGetString("viewer_session", out string provVs) && !string.IsNullOrEmpty(provVs))
         {
