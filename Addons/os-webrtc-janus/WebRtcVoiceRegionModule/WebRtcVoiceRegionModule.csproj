@@ -54,6 +54,7 @@
     <Compile Include="NonSpatial/AdhocTextTransport.cs" />
     <Compile Include="NonSpatial/AdhocTextSession.cs" />
     <Compile Include="NonSpatial/AdhocConferenceRoster.cs" />
+    <Compile Include="NonSpatial/CallMuteColumns.cs" />
     <Compile Include="NonSpatial/AdhocChatMembership.cs" />
     <Compile Include="VoiceConnector/ConnectorIdentity.cs" />
     <Compile Include="VoiceConnector/VoiceConnectorRecord.cs" />

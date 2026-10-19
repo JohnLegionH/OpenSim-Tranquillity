@@ -80,6 +80,7 @@
     <Compile Include="VoiceSessionServiceTests.cs" />
     <Compile Include="VoiceSessionWireTests.cs" />
     <Compile Include="CallModerationStateTests.cs" />
+    <Compile Include="CallMuteEnforcementTests.cs" />
     <Compile Include="GridStoreResilienceTests.cs" />
     <Compile Include="StockModerationTests.cs" />
     <Compile Include="ProvisionPassthroughTests.cs" />

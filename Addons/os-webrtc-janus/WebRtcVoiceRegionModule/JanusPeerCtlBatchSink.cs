@@ -333,6 +333,24 @@ namespace osWebRtcVoice
             return worst;
         }
 
+        /// <summary>
+        /// Send one batch to ONE named room, as it is: no partitioning by where the sim thinks each agent is, nothing
+        /// sent to the estate room, and no arming fields. For rooms the visibility feed does not own (a group call's or
+        /// a conference's), which are not in the room table and have no declared authority; the mixer applies a mute
+        /// batch to such a room all the same. The mixer's inner reply is returned so the caller can tell a mute that was
+        /// applied from one the mixer does not understand.
+        /// </summary>
+        public async Task<(PeerCtlSendResult Result, SlvoiceReply Reply)> SendToRoomAsync(int roomNumber, VisOp op,
+            IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> excl,
+            IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> mute)
+        {
+            OSDMap request = PeerCtlBatchSerializer.BuildRequest(op, excl ?? EmptyChannel, mute);
+            request["room"] = new OSDInteger(roomNumber);
+            (PeerCtlSendResult result, SlvoiceReply reply) = await SendAndReadAsync(request).ConfigureAwait(false);
+            RecordStats(new[] { reply });
+            return (result, reply);
+        }
+
         // Stamp the room's epoch and next generation, and on add/remove the base generation the
         // sim believes the mixer holds for each named listener. Keys are appended after "room", so a knob-off request,
         // which never reaches here, keeps its exact key order.
