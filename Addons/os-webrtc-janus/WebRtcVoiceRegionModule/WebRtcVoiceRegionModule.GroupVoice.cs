@@ -429,6 +429,8 @@ public partial class WebRtcVoiceRegionModule
             SessionOutcome pres = m_nonSpatial.MarkPresent(gsess.SessionId, agentID, scene.RegionInfo.RegionID, groupVs);
             bool conf = gsess.Type == NonSpatialSessionType.Adhoc;
             string detail = $"room={admission.Channel} seats={m_nonSpatial.Get(gsess.SessionId)?.SeatsHeld}/{gsess.Cap}";
+            if (pres.Ok)
+                SyncCallVoiceOnJoin(agentID, gsess);
             m_log.LogDebug("{LogHeader} {Line}", logHeader,
                 conf ? AdhocVoiceChatSession.Line(agentID, gsess.SessionId, "adhoc-present-" + pres.Decision, detail)
                      : GroupVoiceChatSession.Line(agentID, gsess.Owner, "group-present-" + pres.Decision, detail));
@@ -477,6 +479,8 @@ public partial class WebRtcVoiceRegionModule
         {
             m_log.LogDebug("{LogHeader} {Line}", logHeader, groupOutcome.Instrument);
             ApplyChatSessionOutcome(groupOutcome, response);
+            if (groupOutcome.Status == HttpStatusCode.OK)
+                SendGroupJoinModeration(agentID, GroupSessionIdOf(reqmap));
             if (groupOutcome.StartedRinging)
                 RingGroupMembers(m_nonSpatial.Get(GroupSessionIdOf(reqmap)), agentID, sp.Name, GroupNameOf(GroupSessionIdOf(reqmap)));
             return true;
@@ -491,6 +495,8 @@ public partial class WebRtcVoiceRegionModule
         {
             m_log.LogDebug("{LogHeader} {Line}", logHeader, acceptOutcome.Instrument);
             ApplyChatSessionOutcome(acceptOutcome, response);
+            if (acceptOutcome.Status == HttpStatusCode.OK)
+                SendGroupJoinModeration(agentID, GroupSessionIdOf(reqmap));
             if (acceptOutcome.StartedRinging)
                 RingGroupMembers(m_nonSpatial.Get(GroupSessionIdOf(reqmap)), agentID, sp.Name, GroupNameOf(GroupSessionIdOf(reqmap)));
             return true;

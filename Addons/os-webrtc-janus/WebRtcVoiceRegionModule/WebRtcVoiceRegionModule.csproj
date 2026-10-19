@@ -19,6 +19,7 @@
     <Compile Include="WebRtcVoiceRegionModule.NonSpatial.cs" />
     <Compile Include="WebRtcVoiceRegionModule.GroupVoice.cs" />
     <Compile Include="WebRtcVoiceRegionModule.AdhocVoice.cs" />
+    <Compile Include="WebRtcVoiceRegionModule.CallModeration.cs" />
     <Compile Include="LandBan.cs" />
     <Compile Include="ProvisionParcelResolver.cs" />
     <Compile Include="ChildParcelProximity.cs" />
@@ -54,7 +55,9 @@
     <Compile Include="NonSpatial/AdhocTextTransport.cs" />
     <Compile Include="NonSpatial/AdhocTextSession.cs" />
     <Compile Include="NonSpatial/AdhocConferenceRoster.cs" />
+    <Compile Include="NonSpatial/CallModerationHandler.cs" />
     <Compile Include="NonSpatial/CallMuteColumns.cs" />
+    <Compile Include="NonSpatial/CallModerationDelivery.cs" />
     <Compile Include="NonSpatial/AdhocChatMembership.cs" />
     <Compile Include="VoiceConnector/ConnectorIdentity.cs" />
     <Compile Include="VoiceConnector/VoiceConnectorRecord.cs" />
