@@ -56,7 +56,13 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
     private static string LogHeader = "[WEBRTC VOICE SERVICE MODULE]";
 
     private static bool m_Enabled = false;
-    private static bool m_allowNpcVoice = false;   // [WebRtcVoice] AllowNpcVoice, default deny
+    // [WebRtcVoice] AllowNpcVoice. The default is false because the stock server gives an NPC no way to reach
+    // voice provisioning: the provision handler is a per-agent capability, capabilities are created only for
+    // real client circuits (Scene.NewUserConnection calls ICapabilitiesModule.CreateCaps), and NPCModule adds its
+    // avatar with Scene.AddNewAgent without creating any. False therefore keeps the stock behaviour (an NPC gets
+    // no voice); true is an explicit opt-in, and a registered voice connector identity is admitted either way.
+    public const bool DefaultAllowNpcVoice = false;
+    private static bool m_allowNpcVoice = DefaultAllowNpcVoice;
     // Replays a failed provision's answer to the viewer's immediate retries (RefusalCacheSeconds).
     private ProvisionRefusalCache m_refusalCache = new ProvisionRefusalCache(TimeSpan.FromSeconds(ProvisionRefusalCache.DefaultSeconds));
     private IConfigSource m_Config;
@@ -83,7 +89,7 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
             // NPC voice is refused by default -- an NPC presence provisions voice only as a
             // registered connector identity or when the operator opts the whole surface open.
             // Enforced in the provision path.
-            m_allowNpcVoice = moduleConfig.GetBoolean("AllowNpcVoice", false);
+            m_allowNpcVoice = ReadAllowNpcVoice(moduleConfig);
             // [WebRtcVoice] RefusalCacheSeconds (default 5; 0 disables) - how long a failed provision's
             // answer is replayed to the viewer's immediate retries without creating a voice session or calling Janus.
             int refusalSeconds = moduleConfig.GetInt("RefusalCacheSeconds", ProvisionRefusalCache.DefaultSeconds);
@@ -438,6 +444,12 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
             return false;                                      // zero UUID
         viewerSessionId = vs;
         return true;
+    }
+
+    // [WebRtcVoice] AllowNpcVoice from a config section; a missing key reads as DefaultAllowNpcVoice.
+    public static bool ReadAllowNpcVoice(IConfig pConfig)
+    {
+        return pConfig.GetBoolean("AllowNpcVoice", DefaultAllowNpcVoice);
     }
 
     // The AllowNpcVoice decision, pure and side-effect-free so it is unit-testable without a Scene (NpcProvisionGuardTests — the

@@ -17,6 +17,7 @@
  * IVoiceConnectorRegistry per scene; a null registry contributes isConnectorIdentity=false,
  * identical to an empty one — covered by the false cases below.
  */
+using Nini.Config;
 using NUnit.Framework;
 using osWebRtcVoice;
 
@@ -44,6 +45,22 @@ namespace osWebRtcVoice.Tests
         {
             Assert.That(WebRtcVoiceServiceModule.IsNpcProvisionRefused(
                 pIsNpcPresence: true, pAllowNpcVoice: false, pIsConnectorIdentity: true), Is.False);
+        }
+
+        // The stock server creates no capabilities for an NPC (Scene.AddNewAgent, no CreateCaps), so an NPC cannot
+        // provision voice there. The default of false keeps that; only an explicit AllowNpcVoice = true opens it.
+        [Test]
+        public void AllowNpcVoice_DefaultsToFalse_WhenTheKeyIsMissing()
+        {
+            Assert.That(WebRtcVoiceServiceModule.DefaultAllowNpcVoice, Is.False);
+            IConfig empty = new IniConfigSource().AddConfig("WebRtcVoice");
+            Assert.That(WebRtcVoiceServiceModule.ReadAllowNpcVoice(empty), Is.False);
+            Assert.That(WebRtcVoiceServiceModule.IsNpcProvisionRefused(
+                pIsNpcPresence: true, pAllowNpcVoice: WebRtcVoiceServiceModule.ReadAllowNpcVoice(empty),
+                pIsConnectorIdentity: false), Is.True);
+
+            empty.Set("AllowNpcVoice", "true");
+            Assert.That(WebRtcVoiceServiceModule.ReadAllowNpcVoice(empty), Is.True);
         }
 
         [Test]

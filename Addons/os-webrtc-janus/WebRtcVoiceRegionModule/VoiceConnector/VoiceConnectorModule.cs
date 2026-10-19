@@ -101,6 +101,7 @@ public class VoiceConnectorModule : INonSharedRegionModule
             return;
 
         m_npcNameToken = moduleConfig.GetString("NpcNameToken", DefaultNpcNameToken);
+        // Same key and default as the service module (WebRtcVoiceServiceModule.DefaultAllowNpcVoice).
         m_allowNpcVoice = moduleConfig.GetBoolean("AllowNpcVoice", false);
         m_voiceRangeMetres = moduleConfig.GetFloat("VoiceRangeMetres", DefaultVoiceRangeMetres);
         // The same grid identity the multiagent room numbers use (JanusAudioBridge.ReadGridId).
