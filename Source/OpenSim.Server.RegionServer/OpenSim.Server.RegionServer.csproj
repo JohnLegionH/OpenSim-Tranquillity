@@ -82,7 +82,28 @@
          no manual DLL copying, no compile/runtime identity splits. -->
     <ProjectReference Include="../../Source/Phlox.ScriptEngine/Phlox.ScriptEngine.csproj" />
     <ProjectReference Include="../../Addons/os-webrtc-janus/WebRtcVoiceRegionModule/WebRtcVoiceRegionModule.csproj" />
+    <!-- WebRtcVoiceServiceModule implements IWebRtcVoiceService (defined in WebRtcVoice), but nothing
+         referenced it, so the region publish did not include it. Copying a publish over an older install
+         then paired the new interface with the old implementer: a type-load failure, with voice dead
+         rather than degraded. It is a discovered region module, so the reference only affects packaging.
+         AssertVoiceInterfaceAssembliesPublished below keeps it that way. -->
+    <ProjectReference Include="../../Addons/os-webrtc-janus/WebRtcVoiceServiceModule/WebRtcVoiceServiceModule.csproj" />
   </ItemGroup>
+
+  <!-- Every assembly whose IL names IWebRtcVoiceService must reach the publish together: the
+       interface and its implementers are one shippable set. VoiceInterfaceAssemblyListTests checks
+       this list against a scan of the source, so a new implementer cannot be added without landing here too. -->
+  <ItemGroup>
+    <VoiceInterfaceAssembly Include="WebRtcVoice" />
+    <VoiceInterfaceAssembly Include="WebRtcJanusService" />
+    <VoiceInterfaceAssembly Include="WebRtcVoiceRegionModule" />
+    <VoiceInterfaceAssembly Include="WebRtcVoiceServiceModule" />
+  </ItemGroup>
+
+  <Target Name="AssertVoiceInterfaceAssembliesPublished" AfterTargets="Publish">
+    <Error Condition="!Exists('$(PublishDir)%(VoiceInterfaceAssembly.Identity).dll')"
+           Text="%(VoiceInterfaceAssembly.Identity).dll names IWebRtcVoiceService but is not in the publish at $(PublishDir). Ship the interface and every implementer together, or a copied publish loads a new interface against an old implementer (type-load failure, voice dead)." />
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="SkiaSharp" Version="4.153.1" />
