@@ -35,6 +35,7 @@
     <Compile Include="RingVerificationTests.cs" />
     <Compile Include="SessionStoreReportTests.cs" />
     <Compile Include="CarrierKeyTests.cs" />
+    <Compile Include="CarrierStartupLineTests.cs" />
     <Compile Include="RegionStartSeatReleaseTests.cs" />
     <Compile Include="P2PCallRulesTests.cs" />
     <Compile Include="SeatRenewalTests.cs" />
