@@ -254,6 +254,34 @@ namespace osWebRtcVoice.Tests
             Assert.That(r.Scene.RequestModuleInterface<IGroupChatGate>(), Is.Null);
         }
 
+        // ---- grid mode: a member seated through another region server --------------------------------------------
+
+        [Test]
+        public void InGridMode_AMuteOfAMemberSeatedThroughAnotherRegionServer_NamesThatAgentAndNoOtherAgent()
+        {
+            using Region r = Region.Create(Moderation);
+            VoiceSessionService service = VoiceSessionServiceTests.NewService();
+            GridNonSpatialSessions here = VoiceSessionServiceTests.NewRegion(service);
+            GridNonSpatialSessions there = VoiceSessionServiceTests.NewRegion(service);
+            typeof(WebRtcVoiceRegionModule).GetField("m_nonSpatial", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(r.Module, here);
+            UUID home = r.Scene.RegionInfo.RegionID, elsewhere = UUID.Random();
+            here.Start(NonSpatialSessionType.Group, Officer, GroupId, GroupId, home);
+            here.MarkPresent(GroupId, Officer, home, "vs-officer");
+            foreach (UUID far in new[] { Member, Other })
+            {
+                there.Accept(GroupId, far, elsewhere, "vs-" + far.ToString()[..4]);
+                there.MarkPresent(GroupId, far, elsewhere, "vs-" + far.ToString()[..4]);
+            }
+
+            int status = r.Post(Officer, MuteUpdate(Member, "voice", true));
+
+            Assert.That(status, Is.EqualTo((int)HttpStatusCode.OK));
+            Assert.That(r.Voice.Mutes.Where(m => m.Muted).Select(m => m.Agent), Is.EqualTo(new[] { Member }),
+                        "the mute names the agent id the other server set, and no one else");
+            Assert.That(there.Get(GroupId).IsVoiceMuted(Member), Is.True, "and the other region server sees the record");
+            Assert.That(there.Get(GroupId).IsVoiceMuted(Other), Is.False);
+        }
+
         // ---- the roster -----------------------------------------------------------------------------------
 
         [Test]
