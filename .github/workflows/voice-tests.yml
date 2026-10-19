@@ -72,6 +72,33 @@ jobs:
         with:
           global-json-file: global.json
 
+      # Three of these projects (Visibility, WebRtcVoiceRegionModule and its tests) list their sources by hand
+      # (EnableDefaultItems=false), so a .cs file added without a Compile Include is silently left out of the
+      # build and, for a test file, of the run. This step compares the .cs files on disk under every voice project
+      # with the project's evaluated Compile items.
+      - name: Check that every voice source file is compiled
+        run: |
+          status=0
+          while IFS= read -r project; do
+            dir=$(dirname "$project")
+            compiled=$(dotnet msbuild "$project" -getItem:Compile -nologo \
+              | grep -o '"FullPath": *"[^"]*"' \
+              | sed -e 's/^"FullPath": *"//' -e 's/"$//' -e 's#\\\\#/#g' \
+              | grep -F "/$dir/" | sed "s#.*/$dir/##" | LC_ALL=C sort -u)
+            on_disk=$(find "$dir" -name '*.cs' -not -path '*/bin/*' -not -path '*/obj/*' \
+              | sed "s#^$dir/##" | LC_ALL=C sort -u)
+            missing=$(comm -13 <(printf '%s\n' "$compiled") <(printf '%s\n' "$on_disk"))
+            if [ -n "$missing" ]; then
+              echo "::error::$project does not compile these files:"
+              printf '%s\n' "$missing"
+              status=1
+            else
+              echo "$project: all $(printf '%s\n' "$on_disk" | wc -l) source files are compiled"
+            fi
+          done < <(find Addons/os-webrtc-janus Tests/WebRtcJanusService.Tests Tests/WebRtcVoiceRegionModule.Tests \
+            -name '*.csproj' -not -path '*/bin/*' -not -path '*/obj/*' | LC_ALL=C sort)
+          exit $status
+
       - name: Build the voice test projects
         run: |
           for project in $VOICE_TEST_PROJECTS; do
