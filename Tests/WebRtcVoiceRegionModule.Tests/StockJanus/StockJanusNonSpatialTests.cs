@@ -236,7 +236,7 @@ namespace osWebRtcVoice.Tests
         // ---- every switch off ------------------------------------------------------------------
 
         [Test]
-        public async Task EverySwitchOff_NonSpatialRequestsAreAnsweredAsBeforeTheFeatures_AndNeverReachTheGateway()
+        public async Task EverySwitchOff_NonSpatialRequestsAreAnsweredAsBeforeTheFeatures()
         {
             using var region = StockRegion.Create();   // no switch set: the shipped defaults
             region.AddAvatar(Alice, StockRegion.InEstateChannelParcel);
@@ -252,13 +252,14 @@ namespace osWebRtcVoice.Tests
                 Is.EqualTo((int)HttpStatusCode.OK), "decline invitation");
             Assert.That(region.Queue.StartReplies, Is.Empty, "no session reply was sent to a viewer");
 
-            using var peer = await AiortcPeer.StartAsync();
-            foreach (string channel in new[] { session.ToString(), "nsv1:group:" + Group, "nsv1:adhoc:" + UUID.Random() })
-            {
-                CapAnswer refused = await region.ProvisionAsync(Alice, StockRegion.MultiagentBody(peer.Offer, channel, "credentials"));
-                Assert.That(refused.Status, Is.EqualTo((int)HttpStatusCode.Forbidden), "multiagent provision for " + channel);
-            }
+            // No chat session was started, so nothing reached the gateway so far.
             Assert.That(await _janus.RoomsAsync(), Is.EquivalentTo(before), "no room was created on the gateway");
+
+            // A multiagent provision is served as upstream/develop serves it (see EverySwitchOff_TheAnswersAreTheShippedDefaults).
+            using Joined multiagent = await region.JoinAsync(Alice, o => StockRegion.MultiagentBody(o, session.ToString(), "credentials"), waitConnected: false);
+            Assert.That(multiagent.Answer.Status, Is.EqualTo((int)HttpStatusCode.OK));
+            Assert.That(multiagent.Answer.Provisioned, Is.True, "served, as develop serves it: " + multiagent.Answer.Body);
+            await region.LogoutAsync(multiagent);
 
             // A spatial provision is unaffected by the switches being off.
             using Joined spatial = await region.JoinAsync(Alice, o => StockRegion.LocalBody(o), waitConnected: false);
@@ -276,12 +277,19 @@ namespace osWebRtcVoice.Tests
 
             foreach (ProbeRow row in rows) TestContext.Out.WriteLine(row);
             ProbeRow Row(string name) => rows.Find(r => r.Name == name);
-            foreach (string refused in new[] { "provision multiagent, unknown session", "provision multiagent, group-style channel",
-                                               "provision with no channel_type", "provision channel_type=group" })
+            // With no avatar-to-avatar, group or conference feature on, these answer as upstream/develop does (with its
+            // two start-up fixes): a multiagent provision is served, a provision with no channel_type gets an empty 200.
+            foreach (string served in new[] { "provision multiagent, unknown session", "provision multiagent, group-style channel" })
             {
-                Assert.That(Row(refused).Status, Is.EqualTo((int)HttpStatusCode.Forbidden), refused);
-                Assert.That(Row(refused).NewRooms, Is.EqualTo(0), refused + ": no room");
+                Assert.That(Row(served).Status, Is.EqualTo((int)HttpStatusCode.OK), served);
+                Assert.That(Row(served).Provisioned, Is.True, served + ": joined a room");
             }
+            Assert.That(Row("provision with no channel_type").Status, Is.EqualTo((int)HttpStatusCode.OK));
+            Assert.That(Row("provision with no channel_type").Provisioned, Is.False);
+            Assert.That(Row("provision with no channel_type").NewRooms, Is.EqualTo(0), "empty answer, no room");
+            // develop throws on a channel_type it does not know; the lane refuses it.
+            Assert.That(Row("provision channel_type=group").Status, Is.EqualTo((int)HttpStatusCode.Forbidden));
+            Assert.That(Row("provision channel_type=group").NewRooms, Is.EqualTo(0), "no room");
             Assert.That(Row("logout, unknown viewer session").Response, Is.EqualTo("closed"));
             Assert.That(Row("chat session: call").Status, Is.EqualTo((int)HttpStatusCode.BadRequest));
             Assert.That(Row("chat session: start conference").Status, Is.EqualTo((int)HttpStatusCode.OK));
