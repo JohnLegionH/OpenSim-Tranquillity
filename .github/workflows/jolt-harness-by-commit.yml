@@ -4,15 +4,15 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-# Diagnostic: builds the Jolt harness at each listed commit on Ubuntu x64 and runs that commit's own list of
+# Diagnostic: builds the Jolt harness at each listed commit on Windows x64 and runs that commit's own list of
 # harness runs, so the commit where a Linux row moved can be read off the uploaded summaries. Runs only on a push to
 # its own branch. Records nothing and checks nothing against a baseline.
-name: Jolt harness by commit
+name: Jolt harness by commit on Windows
 
 on:
   push:
     branches:
-      - diag/ci-3-a
+      - diag/ci-3-b
 
 permissions:
   contents: read
@@ -24,192 +24,68 @@ env:
 jobs:
   harness:
     name: Harness at ${{ matrix.short }}
-    runs-on: ubuntu-22.04
+    runs-on: windows-2022
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
         include:
-          - sha: b180a4d90e7e59a985f3a29aa6df9351c705a708
-            short: b180a4d90e
-          - sha: 38f35dcd1e0e647a08174545e3545dc35b375f0b
-            short: 38f35dcd1e
-          - sha: 939ea5709ca0ccd6664c4b138942a4cce9c85edd
-            short: 939ea5709c
-          - sha: 5dd8e90eb1ade3126cc054e39de504c6cce487d6
-            short: 5dd8e90eb1
-          - sha: a47842a1861b6d3800798dd81f966238a00e201b
-            short: a47842a186
-          - sha: 8a69d5fb3d3650ef26bdac6aa6ba0a70bc1582db
-            short: 8a69d5fb3d
-          - sha: c3429e59116e5f1c3394fdf510e4bb85eca810b4
-            short: c3429e5911
-          - sha: f62c5165475598b1268d4c4430e8d47303f8fd16
-            short: f62c516547
-          - sha: b6d1bc1d346609409ffde3a13791418db2128f11
-            short: b6d1bc1d34
-          - sha: 7d93668b33bb29c67dc326aa7213071ad00ab190
-            short: 7d93668b33
-          - sha: 3a5f39b8814af960c0fc81036cb323948686de97
-            short: 3a5f39b881
-          - sha: cf057630445627a1ded501a89e061c783e522042
-            short: cf05763044
-          - sha: af53fcc5434480834b1298465126f91ca0485266
-            short: af53fcc543
-          - sha: 2357e87047e4140b4feb159a4367a8bb38e68f1d
-            short: 2357e87047
-          - sha: cda806f2687ed7c55970ed923639176957b1af83
-            short: cda806f268
-          - sha: 1954f2220bbe87b39ae66a6ebb8d45b74b24bbf3
-            short: 1954f2220b
-          - sha: 20cd2a2d8a3fc2bd3c3061d2891bafa753d3a40f
-            short: 20cd2a2d8a
-          - sha: c31a55c229e2a5e546be4c8120f5265cdb56609b
-            short: c31a55c229
-          - sha: 8b80e287078991451bf740cb9259cea3f62c0dff
-            short: 8b80e28707
-          - sha: 7d76b7f0fc55b32feec4366ed385d6f133b0f80f
-            short: 7d76b7f0fc
-          - sha: d41c8b054382547b43fca09d2a4dd3dd66475248
-            short: d41c8b0543
-          - sha: 22bbab7681b7b10391f8e67fb9e29756f65444e9
-            short: 22bbab7681
-          - sha: 0ccd33c7f207682f87084e92a76c6c1c630e8b82
-            short: 0ccd33c7f2
-          - sha: bd88dd90411e3f10504ae0dd868a4428edb2f088
-            short: bd88dd9041
-          - sha: 560fcda6dbcef0d3e2dc76466911f06908f9b08d
-            short: 560fcda6db
-          - sha: e87260236a9580e94b6038e01e39fd4c37b2e80d
-            short: e87260236a
-          - sha: 325d60224a0027efd067a25c75a99405fcc55099
-            short: 325d60224a
-          - sha: 30a5ae1a47ea05eb886ef0fb512ad44c5dbcdd00
-            short: 30a5ae1a47
-          - sha: bf5f58654406371c1e2c85bea47818d355e74e33
-            short: bf5f586544
-          - sha: 7ac0e9a41e20f0d14ecaab78eeda68041d53dbe6
-            short: 7ac0e9a41e
-          - sha: 13c54049ecd34c6faa281ea089f0ae7b1e6d765b
-            short: 13c54049ec
-          - sha: b58fb1474bf16268795bee9b2ee9f76b23121432
-            short: b58fb1474b
-          - sha: 4ff2ec2d39c40f2c76d6643e32ce8b39508b9bc9
-            short: 4ff2ec2d39
-          - sha: 843ee8b47af9f6839c6e97d1831b19efa57476dc
-            short: 843ee8b47a
-          - sha: 1f52834d08d48f7409cc9709a03a881fdcda5db4
-            short: 1f52834d08
-          - sha: 1bca75e175e2ed4d2dded8f69a43748b015dff57
-            short: 1bca75e175
-          - sha: 862f1f016528e2e2d07e568722103f6fb6f10e13
-            short: 862f1f0165
-          - sha: 5213c11fe8069ca46d4df79622f2b9d0095c36b5
-            short: 5213c11fe8
-          - sha: 33b38f01c2e6a8ddf9595ade72526ac626aa9cb8
-            short: 33b38f01c2
-          - sha: dd53c782b8df85554f7a928a62aa476b23ce4c93
-            short: dd53c782b8
-          - sha: 03132f67598064a14ccb25b34411a8f13e32c75c
-            short: 03132f6759
-          - sha: 08dabfbdef43d53f5dfe58013cfe0a171db067b4
-            short: 08dabfbdef
-          - sha: b261ce4cf596b3cf698d5005aaf7548cca34ae61
-            short: b261ce4cf5
-          - sha: c2bc756d9886aaf86235970e66412a4182b686d5
-            short: c2bc756d98
-          - sha: 1a381911ba9750a8c4cd69986f5ad00e21f26add
-            short: 1a381911ba
-          - sha: 71d96102a4b3c21bdb0b26a1c4015455ad79557d
-            short: 71d96102a4
-          - sha: 11cd2f97f06a64bcc1fd24fbc7015eda3fd06216
-            short: 11cd2f97f0
-          - sha: 24981574a3af64314275cb471e75ccf0276c4291
-            short: 24981574a3
-          - sha: 0fbd531929823adc9299cc69ffcf1cdc1a542038
-            short: 0fbd531929
-          - sha: 01999ecbec6a576e3325eb52fb96b650fab10e07
-            short: 01999ecbec
-          - sha: bd1aab25ca1d54052e6ca4f3d2c629dd18bf12a6
-            short: bd1aab25ca
-          - sha: 4dca68c67c17fb06e75d0c8d7bdbd5b49f57892c
-            short: 4dca68c67c
-          - sha: 7332f36b4cbb6abbc35766956e5d272c8db0e9d1
-            short: 7332f36b4c
-          - sha: 52bb44a60be8c2f0a8a2b646317fe18cdc6b0ba3
-            short: 52bb44a60b
-          - sha: cf11bdbfe1b360ab798cd8f5d350c32ac4f86e8b
-            short: cf11bdbfe1
-          - sha: ecb700371bb24afbcf713256c3d9fc3825fb5e4f
-            short: ecb700371b
-          - sha: a97a64f2ab0001fccbb65572ef413495f526214a
-            short: a97a64f2ab
-          - sha: 42a4729308a8dc3c68a4cd23fa5d0e68516ecc49
-            short: 42a4729308
-          - sha: 4220a8e4f04fa40c8761cc4e055faa674e170027
-            short: 4220a8e4f0
-          - sha: dda6eebab8a403e425be51e268b1d1abd4b48b0e
-            short: dda6eebab8
-          - sha: 91fbcaa026803c87a98c7e423faee77a8b161ebf
-            short: 91fbcaa026
-          - sha: 931460533da646e408828f15814c15549af6a848
-            short: 931460533d
-          - sha: 61b051a21e1637f5820c65b90c105a94c9bfbc77
-            short: 61b051a21e
-          - sha: 22577e4be90789ae66292829b76e736a99f13a1c
-            short: 22577e4be9
-          - sha: 1974c8709ca506663bb02e4eefc9943e970a882b
-            short: 1974c8709c
-          - sha: ed5fb6828d0fa9ec40db2ad4c33553e1fab4beb9
-            short: ed5fb6828d
-          - sha: 3a97830531d0bc1d5dcd22293dd430bce7f1d872
-            short: 3a97830531
-          - sha: 95c608eaef7d7f34449ce188097075752cb703f2
-            short: 95c608eaef
-          - sha: ae6ec85327aecfc3d1851a4919335edaaea3f714
-            short: ae6ec85327
-          - sha: 91921aebacf28b392e92ac3860a7e96e6a90ab24
-            short: 91921aebac
-          - sha: 46827cd33f05f6ccbc17a4c59e8656a797aefc50
-            short: 46827cd33f
-          - sha: 229182fc00c4ce6337cf8a26f5dd132a9006a055
-            short: 229182fc00
-          - sha: bff4bcfd6a346f97b80018c7753f448d84b8bd15
-            short: bff4bcfd6a
-          - sha: 31093eb6a838b0f523f1d466ad2b1fe69521b81d
-            short: 31093eb6a8
-          - sha: d8edc804842ca609449b4fca7bc8ce4ebcdff91f
-            short: d8edc80484
-          - sha: 5efc0812851530ac5fab92e7efb11699821c4651
-            short: 5efc081285
-          - sha: f39fec8e3eaf7538030bd2e8aba65e5c4a57a7d5
-            short: f39fec8e3e
-          - sha: 6fac3edd8c5495d75416eae5c01c09f5c703b9a2
-            short: 6fac3edd8c
-          - sha: ee26f2ce9f12a0bbc1d7295236f43e2998d94453
-            short: ee26f2ce9f
-          - sha: 758465b2fdea01feebeda28019372071485bf8a9
-            short: 758465b2fd
-          - sha: 9f3490eb49766cf7acfb3ea23f376f98e729d2d2
-            short: 9f3490eb49
-          - sha: 53e5e8883efa95607d8d3fd7cf78fa59ee469b1b
-            short: 53e5e8883e
-          - sha: 5b058e35445e4087a0ba539fb4aa54d6fbdaf494
-            short: 5b058e3544
-          - sha: d9dfd6b1b909503548f924e331f942e23568f737
-            short: d9dfd6b1b9
-          - sha: 9809897d087efdf0e167a236af42c1eea173adc6
-            short: 9809897d08
-          - sha: 2e9130ad11a640030ae7c752bb7253db55353a64
-            short: 2e9130ad11
-          - sha: 2fd34a3d801853f8c07f1861482ac87c30ed61af
-            short: 2fd34a3d80
-          - sha: 83ae311bb0373395cdc139263d9d79a240f0548f
-            short: 83ae311bb0
-          - sha: 3be43755283e6cbb616c14eacffd17f08a51903f
-            short: 3be4375528
-          - sha: d7a9e0cc682aff777f6607f4cc0a239a14e4f7d4
-            short: d7a9e0cc68
+          - sha: "b180a4d90e7e59a985f3a29aa6df9351c705a708"
+            short: "cb180a4d90e"
+          - sha: "8a69d5fb3d3650ef26bdac6aa6ba0a70bc1582db"
+            short: "c8a69d5fb3d"
+          - sha: "c3429e59116e5f1c3394fdf510e4bb85eca810b4"
+            short: "cc3429e5911"
+          - sha: "cf057630445627a1ded501a89e061c783e522042"
+            short: "ccf05763044"
+          - sha: "af53fcc5434480834b1298465126f91ca0485266"
+            short: "caf53fcc543"
+          - sha: "cda806f2687ed7c55970ed923639176957b1af83"
+            short: "ccda806f268"
+          - sha: "1954f2220bbe87b39ae66a6ebb8d45b74b24bbf3"
+            short: "c1954f2220b"
+          - sha: "20cd2a2d8a3fc2bd3c3061d2891bafa753d3a40f"
+            short: "c20cd2a2d8a"
+          - sha: "c31a55c229e2a5e546be4c8120f5265cdb56609b"
+            short: "cc31a55c229"
+          - sha: "d41c8b054382547b43fca09d2a4dd3dd66475248"
+            short: "cd41c8b0543"
+          - sha: "0ccd33c7f207682f87084e92a76c6c1c630e8b82"
+            short: "c0ccd33c7f2"
+          - sha: "560fcda6dbcef0d3e2dc76466911f06908f9b08d"
+            short: "c560fcda6db"
+          - sha: "e87260236a9580e94b6038e01e39fd4c37b2e80d"
+            short: "ce87260236a"
+          - sha: "4ff2ec2d39c40f2c76d6643e32ce8b39508b9bc9"
+            short: "c4ff2ec2d39"
+          - sha: "1bca75e175e2ed4d2dded8f69a43748b015dff57"
+            short: "c1bca75e175"
+          - sha: "5213c11fe8069ca46d4df79622f2b9d0095c36b5"
+            short: "c5213c11fe8"
+          - sha: "03132f67598064a14ccb25b34411a8f13e32c75c"
+            short: "c03132f6759"
+          - sha: "08dabfbdef43d53f5dfe58013cfe0a171db067b4"
+            short: "c08dabfbdef"
+          - sha: "0fbd531929823adc9299cc69ffcf1cdc1a542038"
+            short: "c0fbd531929"
+          - sha: "7332f36b4cbb6abbc35766956e5d272c8db0e9d1"
+            short: "c7332f36b4c"
+          - sha: "52bb44a60be8c2f0a8a2b646317fe18cdc6b0ba3"
+            short: "c52bb44a60b"
+          - sha: "ecb700371bb24afbcf713256c3d9fc3825fb5e4f"
+            short: "cecb700371b"
+          - sha: "4220a8e4f04fa40c8761cc4e055faa674e170027"
+            short: "c4220a8e4f0"
+          - sha: "3a97830531d0bc1d5dcd22293dd430bce7f1d872"
+            short: "c3a97830531"
+          - sha: "46827cd33f05f6ccbc17a4c59e8656a797aefc50"
+            short: "c46827cd33f"
+          - sha: "f39fec8e3eaf7538030bd2e8aba65e5c4a57a7d5"
+            short: "cf39fec8e3e"
+          - sha: "3be43755283e6cbb616c14eacffd17f08a51903f"
+            short: "c3be4375528"
+          - sha: "d7a9e0cc682aff777f6607f4cc0a239a14e4f7d4"
+            short: "cd7a9e0cc68"
     defaults:
       run:
         shell: bash
@@ -250,7 +126,5 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: harness-${{ matrix.short }}
-          path: |
-            ${{ runner.temp }}/harness/*.txt
-            ${{ runner.temp }}/harness/*/summary.csv
+          path: ${{ runner.temp }}/harness
           if-no-files-found: ignore
