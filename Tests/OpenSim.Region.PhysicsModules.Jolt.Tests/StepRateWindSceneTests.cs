@@ -145,7 +145,10 @@ public class StepRateWindSceneTests
         try
         {
             Task step = Task.Run(() => rig.Backend.Step(1f / 64f, Span<BodyState>.Empty, Span<CharacterState>.Empty, Span<ContactReport>.Empty));
+            // the test needs to know whether the step returned within a bound, so it waits on the task here
+#pragma warning disable xUnit1031
             finished = step.Wait(TimeSpan.FromSeconds(10));
+#pragma warning restore xUnit1031
         }
         finally
         {

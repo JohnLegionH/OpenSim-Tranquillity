@@ -11,7 +11,6 @@ using OpenMetaverse;
 using OpenSim.Framework;
 using OpenSim.Region.PhysicsModules.Jolt.Harness;
 using OpenSim.Region.PhysicsModules.Jolt.Vehicles;
-using OpenSim.Region.PhysicsModules.Jolt.Harness;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -261,7 +260,8 @@ public class VehicleStepRateSceneTests
         {
             rig.RunTo(second);
             Vector3 nose = Vector3.UnitX * rig.Car.Orientation;
-            Vector3 v = Vector3.Normalize(rig.Car.Velocity);
+            Vector3 carVelocity = rig.Car.Velocity;
+            Vector3 v = Vector3.Normalize(in carVelocity);
             double angle = Math.Acos(Math.Clamp(Vector3.Dot(nose, v), -1f, 1f)) / Deg;
             Check("deflection angle (degrees)", rate, n, rig.Time, angle, 40 * Math.Exp(-rig.Time / 2), 40);
         }

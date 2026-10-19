@@ -374,8 +374,11 @@ internal static class HalcyonAsWritten
             float diff = hoverHeight - groundHeight;
             if (Math.Sign(vel) != Math.Sign(diff))
             {
+                // Halcyon's branch is kept as written, although damping is 1 here and the second arm never runs
+#pragma warning disable CS0162
                 if (damping > 0.75f) dv += -vel;
                 else dv += -vel * timeStep;
+#pragma warning restore CS0162
             }
             dv += diff * (1.0f / hoverTau) * timeStep;
             dv += DoHoverDamping(vel, damping, timeStep);

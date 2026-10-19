@@ -129,7 +129,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal volatile bool AngularApproaching = true;
 
         // Halcyon's second-order coefficients for the current step length, kept so the powers are worked out once.
-        private float _coefKappa, _coefC, _coefH, _alpha, _beta;
         private float _rotKappa, _rotC, _rotH, _rotAlpha, _rotBeta;
 
         internal BasicForcesStepProvider(JoltScene module, JoltPrim prim, IPhysicsBackend backend)

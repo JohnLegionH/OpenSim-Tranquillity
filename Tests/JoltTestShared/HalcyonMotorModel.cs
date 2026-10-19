@@ -97,8 +97,8 @@ internal sealed class HalcyonMotorModel
     public float AngularDeflectionEfficiency = 0f;
     public float Buoyancy;
     public float HoverTimescale = 1000f;
-    public bool HoverFlag;
-    public bool LimitMotorUp, LimitMotorDown, TorqueWorldZ;
+    public bool HoverFlag = false;
+    public bool LimitMotorUp, LimitMotorDown = false, TorqueWorldZ = false;
     public VehicleType Type = VehicleType.Car;
 
     // The vehicle's dynamics (VehicleDynamicsState).
