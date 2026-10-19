@@ -69,9 +69,12 @@ namespace osWebRtcVoice.NonSpatial
 
         /// <summary>The agent has made too many conference requests too quickly.</summary>
         public const string RateLimited = "rate-limited";
+
+        /// <summary>The grid session service did not answer, so nothing was started, joined or changed.</summary>
+        public const string StoreUnavailable = "refused-store-unavailable";
     }
 
-    public sealed class NonSpatialVoiceSessionEngine
+    public sealed class NonSpatialVoiceSessionEngine : INonSpatialSessions
     {
         /// <summary>An unanswered invitation's lifetime. Matches the live A2A invite TTL for consistency.</summary>
         public static readonly TimeSpan DefaultInviteTtl = TimeSpan.FromMinutes(2);
@@ -144,6 +147,10 @@ namespace osWebRtcVoice.NonSpatial
         public Func<UUID, bool> IsAgentPresent { get; set; }
 
         public INonSpatialSessionStore Store => _store;
+
+        public NonSpatialVoiceSession Get(UUID sessionId) => _store.Get(sessionId);
+
+        public NonSpatialVoiceSession GetByRoomKey(string roomKey) => _store.GetByRoomKey(roomKey);
         public TimeSpan InviteTtl => _inviteTtl;
         public TimeSpan IdleTtl => _idleTtl;
 

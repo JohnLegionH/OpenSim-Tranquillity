@@ -64,6 +64,8 @@
     <Compile Include="AdhocChatLifecycleTests.cs" />
     <Compile Include="GroupChatSessionGuardTests.cs" />
     <Compile Include="CarrierAuthTests.cs" />
+    <Compile Include="VoiceSessionServiceTests.cs" />
+    <Compile Include="VoiceSessionWireTests.cs" />
   </ItemGroup>
 
   <ItemGroup>

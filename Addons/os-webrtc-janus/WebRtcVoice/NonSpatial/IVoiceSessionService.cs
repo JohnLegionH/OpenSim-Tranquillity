@@ -1,0 +1,48 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+/*
+ * The grid-wide call session service: the non-spatial session engine's own operations (start, invite,
+ * accept, depart and the rest) run in one place, so the seat cap, the ring-once latch and the start
+ * races are decided once for the whole grid. Every operation is atomic inside the service and
+ * answers with a SessionReply (the outcome and a copy of the session it touched).
+ *
+ * Two implementations: VoiceSessionService (the engine, in the process that hosts it) and
+ * VoiceSessionServicesConnector (a region's HTTP client for it).
+ */
+using System.Collections.Generic;
+using OpenMetaverse;
+
+namespace osWebRtcVoice.NonSpatial
+{
+    public interface IVoiceSessionService
+    {
+        SessionReply Start(int type, UUID creator, UUID otherOrOwner, UUID tempSessionId, UUID originRegion, int requestedCap);
+        SessionReply StartAdhoc(UUID creator, UUID tempSessionId, UUID originRegion, IReadOnlyList<UUID> invitees, int requestedCap);
+        SessionReply CheckInviteCount(UUID sessionId, UUID inviter, IReadOnlyList<UUID> asked);
+        SessionReply Invite(UUID sessionId, UUID inviter, UUID invitee);
+        SessionReply Accept(UUID sessionId, UUID agent, UUID originRegion, string viewerSession);
+        SessionReply MarkPresent(UUID sessionId, UUID agent, UUID originRegion, string viewerSession);
+        SessionReply Decline(UUID sessionId, UUID agent);
+        SessionReply Depart(UUID sessionId, UUID agent, int reason);
+        SessionReply LeaveChat(UUID sessionId, UUID agent);
+        SessionReply DepartByViewerSession(UUID agent, string viewerSession, int reason);
+        SessionReply DepartAll(UUID agent, int reason);
+
+        /// <summary>Release every seat that names this region as where it was taken. Count = seats released.</summary>
+        SessionReply DepartRegion(UUID region);
+
+        /// <summary>The region still has these agents; their seats' leases restart. Count = agents recorded.</summary>
+        SessionReply RenewSeats(IReadOnlyList<UUID> agents);
+
+        SessionReply MarkInvited(UUID sessionId, IReadOnlyList<UUID> agents);
+        SessionReply IssueToken(UUID sessionId, UUID agent);
+        SessionReply TakeConferenceRequest(UUID agent);
+        SessionReply Get(UUID sessionId);
+        SessionReply GetByRoomKey(string roomKey);
+    }
+}
