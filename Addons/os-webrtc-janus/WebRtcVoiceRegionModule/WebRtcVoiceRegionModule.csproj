@@ -45,10 +45,14 @@
     <Compile Include="NonSpatial/INonSpatialAdmission.cs" />
     <Compile Include="NonSpatial/INonSpatialSessionStore.cs" />
     <Compile Include="NonSpatial/NonSpatialVoiceSessionEngine.cs" />
+    <Compile Include="NonSpatial/NonSpatialMaintenance.cs" />
+    <Compile Include="NonSpatial/NonSpatialLimits.cs" />
     <Compile Include="NonSpatial/GroupVoicePolicy.cs" />
     <Compile Include="NonSpatial/GroupVoiceChatSession.cs" />
     <Compile Include="NonSpatial/NonSpatialProvisionAdmission.cs" />
     <Compile Include="NonSpatial/GroupVoiceInvite.cs" />
+    <Compile Include="NonSpatial/CarrierAuth.cs" />
+    <Compile Include="NonSpatial/CarrierIntake.cs" />
     <Compile Include="NonSpatial/GroupVoiceRingTransport.cs" />
     <Compile Include="NonSpatial/AdhocVoiceChatSession.cs" />
     <Compile Include="NonSpatial/AdhocVoiceInvite.cs" />

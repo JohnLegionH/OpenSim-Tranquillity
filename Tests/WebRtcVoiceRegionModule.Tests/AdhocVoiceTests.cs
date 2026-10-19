@@ -203,8 +203,10 @@ namespace osWebRtcVoice.Tests
         public void TheSeatBeyondTheCapIsRefusedWith409NotAQuietFailure()
         {
             NonSpatialVoiceSessionEngine e = Engine();
-            SessionOutcome start = e.StartAdhoc(Alice, UUID.Random(), RegionA, new List<UUID> { Bob, Carol }, requestedCap: 2);
+            // The cap of 2 counts Alice, so a start can ring one person; Carol is invited afterwards, while the room still has a seat.
+            SessionOutcome start = e.StartAdhoc(Alice, UUID.Random(), RegionA, new List<UUID> { Bob }, requestedCap: 2);
             UUID sid = start.Session.SessionId;
+            Assert.That(e.Invite(sid, Alice, Carol).Ok, Is.True);
             AdhocVoiceChatSession.TryHandleAcceptInvitation(Method("accept invitation", sid), Bob, e, RegionA, true, out _);
 
             AdhocVoiceChatSession.TryHandleAcceptInvitation(Method("accept invitation", sid), Carol, e, RegionA, true,

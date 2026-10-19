@@ -45,7 +45,8 @@ namespace osWebRtcVoice.Tests
                                                                Func<UUID, UUID, bool> hasPower = null,
                                                                INonSpatialSessionStore store = null,
                                                                TimeSpan? inviteTtl = null,
-                                                               TimeSpan? idleTtl = null)
+                                                               TimeSpan? idleTtl = null,
+                                                               NonSpatialLimits limits = null)
         {
             clock ??= new FakeClock();
             return new NonSpatialVoiceSessionEngine(
@@ -56,7 +57,7 @@ namespace osWebRtcVoice.Tests
                     new AdhocAdmission(),
                     new GroupAdmission(isMember ?? ((a, g) => true), hasPower ?? ((a, g) => true)),
                 },
-                "example-grid", clock.Get, inviteTtl, idleTtl);
+                "example-grid", clock.Get, inviteTtl, idleTtl, limits);
         }
 
         // ---- item 2: the two ids -------------------------------------------------------------

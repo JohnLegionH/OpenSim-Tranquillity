@@ -74,6 +74,7 @@ namespace osWebRtcVoice.NonSpatial
         public const string KeyMessage = "message";
         public const string KeyFromName = "from_name";
         public const string KeySessionName = "session_name";
+        public const string KeyRoomKey = "room_key";
 
         /// <summary>
         /// Build the carrier for one remote recipient. The session id rides in imSessionID and the
@@ -82,14 +83,18 @@ namespace osWebRtcVoice.NonSpatial
         /// rather than forwarding a half-formed one.
         /// </summary>
         public static GridInstantMessage Build(UUID target, UUID fromAgent, string fromName, UUID sessionId,
-                                               UUID originRegion, string message, string sessionName = null)
+                                               UUID originRegion, string message, string sessionName = null,
+                                               string roomKey = null, CarrierAuth auth = null)
         {
             OSDMap payload = new OSDMap
             {
                 [KeyMessage] = OSD.FromString(message ?? string.Empty),
                 [KeyFromName] = OSD.FromString(fromName ?? string.Empty),
                 [KeySessionName] = OSD.FromString(sessionName ?? string.Empty),
+                [KeyRoomKey] = OSD.FromString(roomKey ?? string.Empty),
             };
+            if (auth is { Enabled: true })
+                payload[CarrierAuth.AuthKey] = auth.Seal(Fields(target, sessionId, fromAgent, roomKey, message));
             byte[] bucket = Encoding.UTF8.GetBytes(BucketMagic + OSDParser.SerializeJsonString(payload));
             return new GridInstantMessage
             {
@@ -117,7 +122,16 @@ namespace osWebRtcVoice.NonSpatial
         /// </summary>
         public static bool TryParse(GridInstantMessage msg, out UUID target, out UUID sessionId,
                                     out string message, out string fromName, out string sessionName)
+            => TryParse(msg, out target, out sessionId, out message, out fromName, out sessionName,
+                        out _, out _);
+
+        /// <summary>As above, and also returns the room key the sender signed and the carrier's auth block.</summary>
+        public static bool TryParse(GridInstantMessage msg, out UUID target, out UUID sessionId,
+                                    out string message, out string fromName, out string sessionName,
+                                    out string roomKey, out OSDMap auth)
         {
+            roomKey = null;
+            auth = null;
             target = UUID.Zero;
             sessionId = UUID.Zero;
             message = null;
@@ -142,6 +156,8 @@ namespace osWebRtcVoice.NonSpatial
                 message = map.TryGetString(KeyMessage, out string m) ? m : string.Empty;
                 fromName = map.TryGetString(KeyFromName, out string f) ? f : string.Empty;
                 sessionName = map.TryGetString(KeySessionName, out string s) ? s : string.Empty;
+                roomKey = map.TryGetString(KeyRoomKey, out string rk) ? rk : string.Empty;
+                auth = map.TryGetOSDMap(CarrierAuth.AuthKey, out OSDMap carried) ? carried : null;
             }
             catch { return false; }
 
@@ -149,6 +165,19 @@ namespace osWebRtcVoice.NonSpatial
             sessionId = new UUID(msg.imSessionID);
             return true;
         }
+
+        /// <summary>The fields a conference text line's MAC covers. The sender fills the caller slot.</summary>
+        public static CarrierFields Fields(UUID target, UUID sessionId, UUID sender, string roomKey, string message)
+            => new CarrierFields
+            {
+                Kind = CarrierAuth.KindText,
+                Target = target,
+                SessionId = sessionId,
+                SessionType = NonSpatialSessionType.Adhoc.ToString(),
+                RoomKey = roomKey,
+                Caller = sender,
+                Text = message,
+            };
 
         public static string Line(UUID target, UUID session, string decision, string detail = null)
             => $"{InstrumentTag} target={target} session={session} decision={decision}"

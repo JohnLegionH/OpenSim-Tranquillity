@@ -57,6 +57,18 @@ namespace osWebRtcVoice.NonSpatial
         public const string NoSuchSession = "refused-no-session";
         public const string Capacity = "refused-capacity";
         public const string AlreadyDeparted = "refused-departed";
+
+        /// <summary>The process already holds the most sessions it is configured to.</summary>
+        public const string GlobalSessionCap = "session-cap-global";
+
+        /// <summary>The agent already has the most live sessions it may have started.</summary>
+        public const string AgentSessionCap = "session-cap-agent";
+
+        /// <summary>A start or invite would add more new people than the conference has room for.</summary>
+        public const string TooManyInvitees = "too-many-invitees";
+
+        /// <summary>The agent has made too many conference requests too quickly.</summary>
+        public const string RateLimited = "rate-limited";
     }
 
     public sealed class NonSpatialVoiceSessionEngine
@@ -73,13 +85,27 @@ namespace osWebRtcVoice.NonSpatial
         private readonly Func<DateTime> _clock;
         private readonly TimeSpan _inviteTtl;
         private readonly TimeSpan _idleTtl;
+        private readonly NonSpatialLimits _limits;
+        private readonly RefusalLogGate _refusalGate = new RefusalLogGate();
+        private readonly ConferenceRequestLimiter _requestLimiter;
+
+        // Held across the check-then-create of every start, so the session caps and the ad-hoc
+        // (creator, temp id) lookup are decided and applied as one step.
+        private readonly object _startGate = new object();
+
+        /// <summary>
+        /// Raised when a limit refuses a request, at most once per agent per minute so a loop of refused
+        /// requests cannot flood the log. Carries counts and the decision only, never lists of ids.
+        /// </summary>
+        public event Action<UUID, string, string> LimitRefused;
 
         public NonSpatialVoiceSessionEngine(INonSpatialSessionStore store,
                                             IEnumerable<INonSpatialAdmission> admissions,
                                             string gridId,
                                             Func<DateTime> clock = null,
                                             TimeSpan? inviteTtl = null,
-                                            TimeSpan? idleTtl = null)
+                                            TimeSpan? idleTtl = null,
+                                            NonSpatialLimits limits = null)
         {
             _store = store ?? throw new ArgumentNullException(nameof(store));
             _admission = new Dictionary<NonSpatialSessionType, INonSpatialAdmission>();
@@ -90,7 +116,32 @@ namespace osWebRtcVoice.NonSpatial
             _clock = clock ?? (() => DateTime.UtcNow);
             _inviteTtl = inviteTtl ?? DefaultInviteTtl;
             _idleTtl = idleTtl ?? DefaultIdleTtl;
+            _limits = limits ?? NonSpatialLimits.Default;
+            _requestLimiter = new ConferenceRequestLimiter(_limits.ConferenceRequestBurst, _limits.ConferenceRequestRefillSeconds);
         }
+
+        public NonSpatialLimits Limits => _limits;
+        public ConferenceRequestLimiter RequestLimiter => _requestLimiter;
+
+        /// <summary>
+        /// Count one "start conference" or "invite" against <paramref name="agent"/>'s bucket. The two
+        /// share it, so alternating between them gains nothing. False when the bucket is empty.
+        /// </summary>
+        public bool TryTakeConferenceRequest(UUID agent)
+        {
+            if (_requestLimiter.TryTake(agent, _clock()))
+                return true;
+            NoteRefusal(agent, SessionOutcome.RateLimited,
+                        $"burst={_limits.ConferenceRequestBurst} refill-seconds={_limits.ConferenceRequestRefillSeconds}");
+            return false;
+        }
+
+        /// <summary>
+        /// Whether an agent is still present on this instance. A session whose idle time is up is kept while
+        /// any member holding a seat is present, because someone in the call is activity however quiet the
+        /// session has been. Unset, no agent counts as present and idle expiry works on the clock alone.
+        /// </summary>
+        public Func<UUID, bool> IsAgentPresent { get; set; }
 
         public INonSpatialSessionStore Store => _store;
         public TimeSpan InviteTtl => _inviteTtl;
@@ -161,14 +212,76 @@ namespace osWebRtcVoice.NonSpatial
             AdmissionVerdict v = Admission(NonSpatialSessionType.Adhoc).CanStart(creator, UUID.Zero, invitees ?? new List<UUID>());
             if (!v.Admitted) return SessionOutcome.Fail(v.Decision);
 
-            NonSpatialVoiceSession prior = FindAdhocByTemp(creator, tempSessionId);
-            if (prior != null)
+            // The conference cap counts the person who starts the call, who takes the first seat, so the
+            // people who can be rung are the cap minus one. An invitation reserves nothing, so a list that
+            // fits can still be more than will accept; this bound only stops one request ringing the whole
+            // grid. A list over it is refused whole, never cut to its first entries.
+            List<UUID> distinct = DistinctInvitees(invitees, creator);
+            int room = Math.Max(NonSpatialCaps.Effective(NonSpatialSessionType.Adhoc, requestedCap) - 1, 0);
+            if (distinct.Count > room)
             {
-                Touch(prior.SessionId);
-                return new SessionOutcome(true, "start-idempotent", prior, created: false);
+                NoteRefusal(creator, SessionOutcome.TooManyInvitees,
+                            $"asked={invitees?.Count ?? 0} new={distinct.Count} room={room}");
+                return SessionOutcome.Fail(SessionOutcome.TooManyInvitees);
             }
-            return StartWithId(NonSpatialSessionType.Adhoc, UUID.Random(), tempSessionId, creator, UUID.Zero,
-                               originRegion, requestedCap, invitees);
+
+            // Find-then-create as one step. A viewer retries a start with the same temp id, and two
+            // retries that both looked before either created would each open a conference.
+            lock (_startGate)
+            {
+                NonSpatialVoiceSession prior = FindAdhocByTemp(creator, tempSessionId);
+                if (prior != null)
+                {
+                    Touch(prior.SessionId);
+                    return new SessionOutcome(true, "start-idempotent", prior, created: false);
+                }
+                return StartWithId(NonSpatialSessionType.Adhoc, UUID.Random(), tempSessionId, creator, UUID.Zero,
+                                   originRegion, requestedCap, distinct);
+            }
+        }
+
+        /// <summary>
+        /// The invitees once each, in first-seen order, without the nil id and without <paramref name="except"/>
+        /// (the person asking). A set, not a scan of the list, so a long list costs linear time.
+        /// </summary>
+        public static List<UUID> DistinctInvitees(IEnumerable<UUID> asked, UUID except)
+        {
+            List<UUID> distinct = new List<UUID>();
+            if (asked == null) return distinct;
+            HashSet<UUID> seen = new HashSet<UUID>();
+            foreach (UUID a in asked)
+                if (a != UUID.Zero && a != except && seen.Add(a))
+                    distinct.Add(a);
+            return distinct;
+        }
+
+        /// <summary>
+        /// Decide whether an "invite" naming <paramref name="asked"/> fits the conference. The new
+        /// people in the request (not seated, and not already holding an invitation) may not outnumber the
+        /// seats still free, and a request over that is refused whole. Nothing is invited by this call.
+        /// </summary>
+        public SessionOutcome CheckInviteCount(UUID sessionId, UUID inviter, IReadOnlyCollection<UUID> asked)
+        {
+            List<UUID> distinct = DistinctInvitees(asked, inviter);
+            return _store.Mutate(sessionId, sess =>
+            {
+                int fresh = 0;
+                foreach (UUID a in distinct)
+                {
+                    NonSpatialMember m = sess.Find(a);
+                    if (m == null || (!m.HoldsSeat && m.State != MemberState.Invited))
+                        fresh++;
+                }
+                int room = sess.Cap - sess.SeatsHeld;
+                if (fresh > room)
+                {
+                    NoteRefusal(inviter, SessionOutcome.TooManyInvitees,
+                                $"asked={asked?.Count ?? 0} new={fresh} room={Math.Max(room, 0)}");
+                    // A room with no seat left is the capacity refusal an invite into it has always had.
+                    return SessionOutcome.Fail(room <= 0 ? SessionOutcome.Capacity : SessionOutcome.TooManyInvitees, sess);
+                }
+                return new SessionOutcome(true, "invitees-fit", sess);
+            }, SessionOutcome.Fail(SessionOutcome.NoSuchSession));
         }
 
         private SessionOutcome StartWithId(NonSpatialSessionType type, UUID sessionId, UUID tempSessionId,
@@ -179,20 +292,32 @@ namespace osWebRtcVoice.NonSpatial
             int cap = NonSpatialCaps.Effective(type, requestedCap);
             string roomKey = NonSpatialRoomKey.Derive(_gridId, type, sessionId);
 
-            NonSpatialVoiceSession s = _store.StartOrGet(sessionId, () =>
+            NonSpatialVoiceSession s;
+            bool created;
+            lock (_startGate)
             {
-                NonSpatialVoiceSession made = new NonSpatialVoiceSession(type, sessionId, tempSessionId, roomKey,
-                                                                         owner, creator, cap, now);
-                // the creator takes its seat at start; it is the one party that never needs inviting.
-                // Taking the first seat also JOINS THE CONVERSATION. The two axes are
-                // separate from here on -- a later voice hang-up clears the seat and leaves this.
-                made.Upsert(creator, MemberState.Accepted, originRegion, now).InChat = true;
-                if (invitees != null)
-                    foreach (UUID a in invitees)
-                        if (a != UUID.Zero && a != creator)
-                            made.Upsert(a, MemberState.Invited, UUID.Zero, now);
-                return made;
-            }, out bool created);
+                // A start that finds its session already there creates nothing, so only a genuinely
+                // new session is counted against the caps.
+                if (_store.Get(sessionId) == null)
+                {
+                    SessionOutcome refused = CheckSessionCaps(creator);
+                    if (!refused.Ok) return refused;
+                }
+                s = _store.StartOrGet(sessionId, () =>
+                {
+                    NonSpatialVoiceSession made = new NonSpatialVoiceSession(type, sessionId, tempSessionId, roomKey,
+                                                                             owner, creator, cap, now);
+                    // the creator takes its seat at start; it is the one party that never needs inviting.
+                    // Taking the first seat also JOINS THE CONVERSATION. The two axes are
+                    // separate from here on -- a later voice hang-up clears the seat and leaves this.
+                    made.Upsert(creator, MemberState.Accepted, originRegion, now).InChat = true;
+                    if (invitees != null)
+                        foreach (UUID a in invitees)
+                            if (a != UUID.Zero && a != creator)
+                                made.Upsert(a, MemberState.Invited, UUID.Zero, now);
+                    return made;
+                }, out created);
+            }
 
             if (!created)
             {
@@ -228,6 +353,52 @@ namespace osWebRtcVoice.NonSpatial
             bool ring = ClaimRing(sessionId);
             return new SessionOutcome(true, created ? "started" : "start-idempotent", s, created, ring);
         }
+
+        /// <summary>
+        /// Refuse a new session when the process already holds the most it is configured to, or when
+        /// the creator already has the most live sessions it may have started. Called with the start
+        /// gate held, so two simultaneous starts cannot both slip under a cap.
+        /// </summary>
+        private SessionOutcome CheckSessionCaps(UUID creator)
+        {
+            IReadOnlyList<NonSpatialVoiceSession> all = _store.All();
+            if (all.Count >= _limits.MaxNonSpatialSessions)
+            {
+                NoteRefusal(creator, SessionOutcome.GlobalSessionCap, $"sessions={all.Count} limit={_limits.MaxNonSpatialSessions}");
+                return SessionOutcome.Fail(SessionOutcome.GlobalSessionCap);
+            }
+            int started = 0;
+            foreach (NonSpatialVoiceSession existing in all)
+                if (existing.Creator == creator && !_store.Mutate(existing.SessionId, sess => sess.IsDead, true))
+                    started++;
+            if (started >= _limits.MaxSessionsPerAgent)
+            {
+                NoteRefusal(creator, SessionOutcome.AgentSessionCap, $"started={started} limit={_limits.MaxSessionsPerAgent}");
+                return SessionOutcome.Fail(SessionOutcome.AgentSessionCap);
+            }
+            return new SessionOutcome(true, "caps-ok", null);
+        }
+
+        /// <summary>Report a limit refusal, once per agent per minute. The detail carries counts only.</summary>
+        private void NoteRefusal(UUID agent, string decision, string detail)
+        {
+            if (_refusalGate.ShouldLog(agent, _clock()))
+                LimitRefused?.Invoke(agent, decision, detail);
+        }
+
+        /// <summary>
+        /// Drop per-agent bookkeeping nobody has touched for a while. Called from the maintenance pass so
+        /// the tables stay as small as the set of agents active recently.
+        /// </summary>
+        public void PruneTransientState()
+        {
+            DateTime now = _clock();
+            _refusalGate.Prune(now, TransientStateMaxAge);
+            _requestLimiter.Prune(now, TransientStateMaxAge);
+        }
+
+        /// <summary>How long an agent can go unseen before its bookkeeping is dropped.</summary>
+        public static readonly TimeSpan TransientStateMaxAge = TimeSpan.FromMinutes(10);
 
         // ---- invite / accept / decline ---------------------------------------------------------
 
@@ -477,10 +648,21 @@ namespace osWebRtcVoice.NonSpatial
         /// a misconfiguration that would silently put the two halves of a call in different mixer
         /// rooms. Better to refuse loudly here than to be inaudible in production.
         ///
+        /// A ring that carries no room key is refused: the key is what ties the ring to this grid's
+        /// derivation, so it cannot be optional.
+        ///
         /// Born with RingSent LATCHED and the invited set pre-seeded, which is what makes send-once
         /// hold across instances: this instance must never re-ring a call it did not
         /// start. It carries NO seats -- the ringing instance owns those, and this instance's seat
         /// count is its own slice only (the stated per-instance cap limitation).
+        ///
+        /// A session this instance ALREADY holds is never overwritten, and a ring never latches RingSent
+        /// on it or replaces its credential. The only thing a ring may still add to an existing session is
+        /// for a session that was itself adopted from an earlier ring: the ringing target is marked as
+        /// already rung and, for an ad-hoc conference, given an Invited record if it has none. That is
+        /// needed because the second invitee of one conference on this instance arrives as a second ring,
+        /// and an ad-hoc conference admits the accept on the member record alone. A session started on
+        /// this instance, or a ring whose type differs from the session's, gets nothing added.
         /// </summary>
         public SessionOutcome AdoptRemoteRing(UUID groupId, string carriedRoomKey, string token, int cap,
                                               UUID creator, IEnumerable<UUID> alreadyRung,
@@ -489,7 +671,9 @@ namespace osWebRtcVoice.NonSpatial
             if (groupId == UUID.Zero)
                 return SessionOutcome.Fail(SessionOutcome.NoSuchSession);
             string local = NonSpatialRoomKey.Derive(_gridId, type, groupId);
-            if (!string.IsNullOrEmpty(carriedRoomKey) && !string.Equals(local, carriedRoomKey, StringComparison.Ordinal))
+            if (string.IsNullOrEmpty(carriedRoomKey))
+                return SessionOutcome.Fail("refused-room-key-missing");
+            if (!string.Equals(local, carriedRoomKey, StringComparison.Ordinal))
                 return SessionOutcome.Fail("refused-room-key-mismatch");
 
             DateTime now = _clock();
@@ -502,26 +686,29 @@ namespace osWebRtcVoice.NonSpatial
                                                                           local, owner, creator, effective, now);
                 made.Token = token;                 // the ring carries the credential the viewer will echo
                 made.RingSent = true;               // never re-ring a call this instance did not start
+                made.AdoptedFromRing = true;
                 if (alreadyRung != null)
                     foreach (UUID a2 in alreadyRung) made.MarkInvited(a2);
                 SeedAdoptedMembership(made, type, alreadyRung, now);
                 return made;
             }, out bool created);
 
+            string decision = "ring-adopted";
             if (!created)
             {
-                _store.Mutate<object>(groupId, sess =>
+                decision = _store.Mutate(groupId, sess =>
                 {
-                    sess.LastSeenUtc = now;
-                    if (string.IsNullOrEmpty(sess.Token) && !string.IsNullOrEmpty(token)) sess.Token = token;
-                    sess.RingSent = true;
+                    if (sess.Type != type) return "refused-session-type-mismatch";
+                    if (!sess.AdoptedFromRing) return "ring-session-held";   // started here: a ring adds nothing
                     if (alreadyRung != null)
                         foreach (UUID a2 in alreadyRung) sess.MarkInvited(a2);
                     SeedAdoptedMembership(sess, type, alreadyRung, now);
-                    return null;
-                });
+                    return "ring-adopt-idempotent";
+                }, "refused-no-such-session");
+                if (decision.StartsWith("refused-", StringComparison.Ordinal))
+                    return SessionOutcome.Fail(decision);
             }
-            return new SessionOutcome(true, created ? "ring-adopted" : "ring-adopt-idempotent", s, created);
+            return new SessionOutcome(true, decision, s, created);
         }
 
         /// <summary>
@@ -599,23 +786,75 @@ namespace osWebRtcVoice.NonSpatial
         /// a viewer that is simply gone leaves an invitation that ages out and a voice session that dies.
         /// Returns the ids removed.
         /// </summary>
-        public IReadOnlyList<UUID> Sweep()
+        public IReadOnlyList<UUID> Sweep() => SweepWithSummary().Removed;
+
+        /// <summary>What one sweep did: the sessions removed, the invitations that lapsed and the seats released.</summary>
+        public readonly struct SweepSummary
+        {
+            public IReadOnlyList<UUID> Removed { get; }
+            public int InvitationsExpired { get; }
+            public int SeatsReleased { get; }
+
+            public SweepSummary(IReadOnlyList<UUID> removed, int invitationsExpired, int seatsReleased)
+            {
+                Removed = removed;
+                InvitationsExpired = invitationsExpired;
+                SeatsReleased = seatsReleased;
+            }
+        }
+
+        /// <summary>
+        /// <see cref="Sweep"/> with the counts the maintenance pass logs. A session removed for being
+        /// idle first has every member departed with the Expired reason, the same transition a normal
+        /// departure makes, so a caller still holding the session never sees a seat in a room that
+        /// no longer exists.
+        /// </summary>
+        public SweepSummary SweepWithSummary()
         {
             DateTime now = _clock();
             List<UUID> removed = new List<UUID>();
+            int invitationsExpired = 0;
+            int seatsReleased = 0;
             foreach (NonSpatialVoiceSession s in _store.All())
             {
-                _store.Mutate<object>(s.SessionId, sess =>
+                // A session is idle only when nobody who holds a seat in it is still here. A present seat
+                // holder is activity, so a long quiet call is not ended under the people in it.
+                if (now - s.LastSeenUtc >= _idleTtl && SeatHolderIsPresent(s.SessionId))
+                    Touch(s.SessionId);
+
+                int[] counts = _store.Mutate(s.SessionId, sess =>
                 {
+                    int lapsed = 0;
                     foreach (NonSpatialMember m in sess.Members)
                         if (m.State == MemberState.Invited && now - m.InvitedUtc >= _inviteTtl)
                         {
                             m.State = MemberState.Departed;
                             m.Departure = DepartureReason.Expired;
                             m.LastSeenUtc = now;
+                            lapsed++;
                         }
-                    return null;
-                });
+                    int released = 0;
+                    if (now - sess.LastSeenUtc >= _idleTtl)
+                    {
+                        foreach (NonSpatialMember m in sess.Members)
+                        {
+                            if (m.HoldsSeat) released++;
+                            if (m.State != MemberState.Departed && m.State != MemberState.Declined)
+                            {
+                                m.State = MemberState.Departed;
+                                m.Departure = DepartureReason.Expired;
+                            }
+                            m.InChat = false;
+                            m.ViewerSession = null;
+                            m.LastSeenUtc = now;
+                        }
+                        sess.EndRingCycle();
+                    }
+                    return new[] { lapsed, released };
+                }, null);
+                if (counts == null) continue;
+                invitationsExpired += counts[0];
+                seatsReleased += counts[1];
                 NonSpatialVoiceSession after = _store.Get(s.SessionId);
                 if (after == null) continue;
                 if (after.IsDead || now - after.LastSeenUtc >= _idleTtl)
@@ -623,10 +862,35 @@ namespace osWebRtcVoice.NonSpatial
                     if (_store.Remove(after.SessionId)) removed.Add(after.SessionId);
                 }
             }
-            return removed;
+            return new SweepSummary(removed, invitationsExpired, seatsReleased);
         }
 
         // ---- helpers -------------------------------------------------------------------------
+
+        /// <summary>
+        /// True when a member holding a seat in the session is present on this instance. The lookup runs
+        /// outside the store's lock. A lookup that fails counts as present: ending a call with someone in it
+        /// is worse than keeping a dead one until the next pass.
+        /// </summary>
+        private bool SeatHolderIsPresent(UUID sessionId)
+        {
+            Func<UUID, bool> present = IsAgentPresent;
+            if (present == null) return false;
+            List<UUID> seated = _store.Mutate(sessionId, sess =>
+            {
+                List<UUID> ids = new List<UUID>();
+                foreach (NonSpatialMember m in sess.Members)
+                    if (m.HoldsSeat) ids.Add(m.AgentId);
+                return ids;
+            }, null);
+            if (seated == null) return false;
+            foreach (UUID agent in seated)
+            {
+                try { if (present(agent)) return true; }
+                catch { return true; }
+            }
+            return false;
+        }
 
         /// <summary>
         /// Record that these agents have been rung for the current ring cycle, so a later joiner's

@@ -67,9 +67,17 @@ namespace osWebRtcVoice.NonSpatial
         /// drift between the two paths.
         /// </summary>
         public static GridInstantMessage Build(UUID target, UUID fromAgent, string fromName, UUID groupID,
-                                               UUID originRegion, OSDMap invitationBody)
+                                               UUID originRegion, OSDMap invitationBody, CarrierAuth auth = null)
         {
             if (invitationBody is null) throw new ArgumentNullException(nameof(invitationBody));
+            if (auth is { Enabled: true })
+            {
+                // Sign a copy: the same body is built for every target, and each carrier needs its own nonce.
+                OSDMap signed = new OSDMap();
+                foreach (System.Collections.Generic.KeyValuePair<string, OSD> kv in invitationBody) signed[kv.Key] = kv.Value;
+                signed[CarrierAuth.AuthKey] = auth.Seal(Fields(target, groupID, invitationBody));
+                invitationBody = signed;
+            }
             byte[] payload = Encoding.UTF8.GetBytes(BucketMagic + OSDParser.SerializeJsonString(invitationBody));
             return new GridInstantMessage
             {
@@ -96,7 +104,16 @@ namespace osWebRtcVoice.NonSpatial
         /// sees the message exactly as before.
         /// </summary>
         public static bool TryParse(GridInstantMessage msg, out UUID target, out UUID groupID, out OSDMap body)
+            => TryParse(msg, out target, out groupID, out body, out _);
+
+        /// <summary>
+        /// As above, and also returns the carrier's auth block. The auth block is taken OUT of the body, so
+        /// the body that goes on to the viewer is exactly what a local ring would have delivered.
+        /// </summary>
+        public static bool TryParse(GridInstantMessage msg, out UUID target, out UUID groupID, out OSDMap body,
+                                    out OSDMap auth)
         {
+            auth = null;
             target = UUID.Zero;
             groupID = UUID.Zero;
             body = null;
@@ -119,9 +136,48 @@ namespace osWebRtcVoice.NonSpatial
             }
             catch { return false; }
 
+            if (body.TryGetOSDMap(CarrierAuth.AuthKey, out OSDMap carried))
+                auth = carried;
+            body.Remove(CarrierAuth.AuthKey);
+
             target = new UUID(msg.toAgentID);
             groupID = new UUID(msg.imSessionID);
             return true;
+        }
+
+        /// <summary>
+        /// What a ring is about, read from the invitation body the viewer will receive: the session type
+        /// (invitation_type tells a conference from a group), the room key, the credential and the caller.
+        /// The sender signs these and the receiver verifies and adopts the same values, so the two sides
+        /// cannot disagree about what was signed.
+        /// </summary>
+        public static void ReadBody(OSDMap body, out NonSpatialSessionType type, out string roomKey,
+                                    out string credential, out UUID caller)
+        {
+            OSDMap voice = body.TryGetOSDMap("voice", out OSDMap v) ? v : null;
+            roomKey = voice is not null && voice.TryGetString("channel_uri", out string ru) ? ru : null;
+            credential = voice is not null && voice.TryGetString("channel_credentials", out string tk) ? tk : null;
+            body.TryGetUUID("from_id", out caller);
+            bool isConference = voice is not null
+                                && voice.TryGetValue("invitation_type", out OSD invType)
+                                && invType.AsInteger() == AdhocVoiceInvite.InvitationTypeConference;
+            type = isConference ? NonSpatialSessionType.Adhoc : NonSpatialSessionType.Group;
+        }
+
+        /// <summary>The fields a ring's MAC covers.</summary>
+        public static CarrierFields Fields(UUID target, UUID sessionId, OSDMap body)
+        {
+            ReadBody(body, out NonSpatialSessionType type, out string roomKey, out string credential, out UUID caller);
+            return new CarrierFields
+            {
+                Kind = CarrierAuth.KindRing,
+                Target = target,
+                SessionId = sessionId,
+                SessionType = type.ToString(),
+                RoomKey = roomKey,
+                Caller = caller,
+                Credential = credential,
+            };
         }
 
         public static string Line(UUID target, UUID group, string decision, string detail = null)
