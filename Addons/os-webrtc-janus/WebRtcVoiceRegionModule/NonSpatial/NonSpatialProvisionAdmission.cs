@@ -102,7 +102,9 @@ namespace osWebRtcVoice.NonSpatial
             if (engine == null)
                 return Refuse(DecisionNoSession, 403);
 
-            NonSpatialVoiceSession s = engine.GetByRoomKey(channel, agentID);
+            NonSpatialVoiceSession s = engine.GetByRoomKey(channel, agentID, out bool unavailable);
+            if (s == null && unavailable)
+                return Refuse("group-refused-" + SessionOutcome.StoreUnavailable, NonSpatialCaps.StoreUnavailableHttpStatus);
 
             // Dispatch on the OWN type of the voice session rather than assuming group. The room key tag
             // and the stored type must agree -- they are both derived from the same Start -- so this
@@ -139,7 +141,7 @@ namespace osWebRtcVoice.NonSpatial
             if (!seat.Ok)
                 return seat.Decision == SessionOutcome.Capacity
                     ? Refuse(DecisionCapacity, NonSpatialCaps.CapacityHttpStatus, s)
-                    : Refuse(seat.Decision == SessionOutcome.Removed ? DecisionRemoved : "group-refused-" + seat.Decision, 403, s);
+                    : Refuse(seat.Decision == SessionOutcome.Removed ? DecisionRemoved : "group-refused-" + seat.Decision, NonSpatialCaps.RefusalStatus(seat.Decision), s);
 
             return new NonSpatialProvisionResult { Session = s, Admitted = true, Decision = DecisionAdmitted, Status = 200 };
         }
@@ -181,7 +183,7 @@ namespace osWebRtcVoice.NonSpatial
             if (!seat.Ok)
                 return seat.Decision == SessionOutcome.Capacity
                     ? Refuse(DecisionAdhocCapacity, NonSpatialCaps.CapacityHttpStatus, s)
-                    : Refuse(seat.Decision == SessionOutcome.Removed ? DecisionAdhocRemoved : "adhoc-refused-" + seat.Decision, 403, s);
+                    : Refuse(seat.Decision == SessionOutcome.Removed ? DecisionAdhocRemoved : "adhoc-refused-" + seat.Decision, NonSpatialCaps.RefusalStatus(seat.Decision), s);
 
             return new NonSpatialProvisionResult { Session = s, Admitted = true, Decision = DecisionAdhocAdmitted, Status = 200 };
         }
