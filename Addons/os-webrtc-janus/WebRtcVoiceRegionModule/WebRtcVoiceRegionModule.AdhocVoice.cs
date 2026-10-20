@@ -379,8 +379,9 @@ public partial class WebRtcVoiceRegionModule
 
         OSDMap body = AdhocVoiceInvite.BuildBody(session, token, initiator, initiatorName);
 
-        // (a) anyone with a presence in THIS process, exactly as a group ring reaches them
-        HashSet<UUID> presentHere = new HashSet<UUID>(GroupVoiceInvite.PresentAgents(scenes));
+        // (a) anyone with a ROOT presence in THIS process, exactly as a group ring reaches them. An invitee
+        // who is only a child presence here is rung through the carrier like one on another process.
+        HashSet<UUID> presentHere = new HashSet<UUID>(GroupVoiceInvite.RootAgents(scenes));
         List<UUID> local = new List<UUID>();
         List<UUID> remote = new List<UUID>();
         foreach (UUID t in targets)
