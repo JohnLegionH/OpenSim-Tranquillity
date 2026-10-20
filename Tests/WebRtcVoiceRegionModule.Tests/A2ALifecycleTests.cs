@@ -105,7 +105,7 @@ namespace osWebRtcVoice.Tests
             m["logout"] = OSD.FromBoolean(false);
             ProvisionAdmission a = A2AProvisionAdmission.Decide(m, Alice, new A2ARegistry());
             Assert.That(a.Kind, Is.EqualTo(ProvisionKind.Refused));
-            Assert.That(a.Decision, Is.EqualTo(A2AProvisionAdmission.DecisionO29));
+            Assert.That(a.Decision, Is.EqualTo(A2AProvisionAdmission.DecisionOtherChannelType));
         }
 
         [Test]
@@ -121,14 +121,14 @@ namespace osWebRtcVoice.Tests
         [TestCase("")]
         [TestCase("group")]
         [TestCase("MULTIAGENT")]
-        public void OtherChannelTypes_StayRefusedByO29(string channelType)
+        public void OtherChannelTypes_AreRefused(string channelType)
         {
             var m = new OSDMap { ["voice_server_type"] = OSD.FromString("webrtc") };
             if (channelType != null) m["channel_type"] = OSD.FromString(channelType);
             ProvisionAdmission a = A2AProvisionAdmission.Decide(m, Alice, new A2ARegistry());
             Assert.That(a.Kind, Is.EqualTo(ProvisionKind.Refused));
             Assert.That(a.Admitted, Is.False);
-            Assert.That(a.Decision, Is.EqualTo(A2AProvisionAdmission.DecisionO29));
+            Assert.That(a.Decision, Is.EqualTo(A2AProvisionAdmission.DecisionOtherChannelType));
         }
 
         [Test]

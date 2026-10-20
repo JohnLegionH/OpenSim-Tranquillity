@@ -9,7 +9,7 @@
  * The join popup. Send-once at the engine seam, the fan-out target list, the invitation
  * body, and the "accept invitation" handler that makes the popup more than decorative.
  *
- * Viewer facts (verified against /d/phoenix-firestorm 895f65ab43):
+ * Viewer facts (verified against the Firestorm viewer source, revision 895f65ab43):
  *   llimview.cpp:5196        the voice branch fires on a ChatterBoxInvitation body with a `voice` key
  *   llimview.cpp:5204        invitation_type == P2P_CHAT_SESSION picks IM_SESSION_P2P_INVITE
  *   llimview.cpp:119-125     GROUP_CHAT_SESSION = 0, CONFERENCE_SESSION = 1, P2P_CHAT_SESSION = 2
@@ -68,7 +68,7 @@ namespace osWebRtcVoice.Tests
         private static OSDMap Call(UUID group) => new OSDMap { ["method"] = OSD.FromString("call"), ["session-id"] = OSD.FromUUID(group) };
         private static OSDMap Accept(UUID group) => new OSDMap { ["method"] = OSD.FromString("accept invitation"), ["session-id"] = OSD.FromUUID(group) };
 
-        // ---- item 4: send-once -------------------------------------------------------------------
+        // ---- send-once -------------------------------------------------------------------
 
         [Test]
         public void TheFirstSeatStartsTheRing_AndNoLaterSeatDoes()
@@ -142,7 +142,7 @@ namespace osWebRtcVoice.Tests
             Assert.That(back.StartedRinging, Is.False, "rejoining a live call must not ring everyone again");
         }
 
-        // ---- item 3: the target list -------------------------------------------------------------
+        // ---- the target list -------------------------------------------------------------
 
         [Test]
         public void TargetsAreMembersWithBothPowers_ExcludingTheInitiator()
@@ -201,7 +201,7 @@ namespace osWebRtcVoice.Tests
             Assert.That(GroupVoiceInvite.Targets(null, e.Store.Get(grp), Alice, p), Is.Empty);
         }
 
-        // ---- item 2: the invitation body ---------------------------------------------------------
+        // ---- the invitation body ---------------------------------------------------------
 
         [Test]
         public void TheBodyCarriesTheGroupIdAndTheVoiceKey()
@@ -250,7 +250,7 @@ namespace osWebRtcVoice.Tests
                 () => GroupVoiceInvite.BuildBody(adhoc.Session, "tok", Alice, "Test User", "G"));
         }
 
-        // ---- item 1: accept invitation ------------------------------------------------------------
+        // ---- accept invitation ------------------------------------------------------------
 
         [Test]
         public void AcceptInvitationAdmitsTheMemberAndTakesItsSeat()

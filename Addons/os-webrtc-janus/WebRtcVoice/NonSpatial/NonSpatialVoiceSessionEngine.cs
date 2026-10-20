@@ -12,7 +12,7 @@
  * lifecycle it has always had, which differs from a conference or a group in a few places; those
  * rules are gathered under "person-to-person calls" below.
  *
- * IDEMPOTENCY (item 6) is not sprinkled through the methods -- it falls out of two rules:
+ * IDEMPOTENCY is not sprinkled through the methods -- it falls out of two rules:
  *   - identity is DERIVED, never generated, everywhere it can be (DeriveSessionId), so the same
  *     request always addresses the same session. ADHOC is the one exception and it is handled by
  *     keying the creation on the viewer's temp id (see StartAdhoc);
@@ -487,7 +487,7 @@ namespace osWebRtcVoice.NonSpatial
         /// <summary>
         /// Take a seat. This is the cap's decision point and it is made INSIDE the store mutation,
         /// so N simultaneous accepts at the boundary produce exactly Cap seats and the rest a
-        /// capacity refusal -- never Cap+1 (item 6).
+        /// capacity refusal -- never Cap+1.
         /// </summary>
         public SessionOutcome Accept(UUID sessionId, UUID agent, UUID originRegion, string viewerSession = null)
         {
@@ -733,7 +733,7 @@ namespace osWebRtcVoice.NonSpatial
         /// Born with RingSent LATCHED and the invited set pre-seeded, which is what makes send-once
         /// hold across instances: this instance must never re-ring a call it did not
         /// start. It carries NO seats -- the ringing instance owns those, and this instance's seat
-        /// count is its own slice only (the stated per-instance cap limitation).
+        /// count is local to this instance only (the stated per-instance cap limitation).
         ///
         /// A session this instance ALREADY holds is never overwritten, and a ring never latches RingSent
         /// on it or replaces its credential. The only thing a ring may still add to an existing session is

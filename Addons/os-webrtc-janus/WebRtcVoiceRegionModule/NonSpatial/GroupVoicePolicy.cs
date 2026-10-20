@@ -12,7 +12,7 @@
  * speak, and the viewer already models that with two separate constants:
  *     GP_SESSION_JOIN  = 0x1 << 16   "can join session"   roles_constants.h:144
  *     GP_SESSION_VOICE = 0x1 << 27   "can hear/talk"      roles_constants.h:145
- * The slice specified GP_SESSION_JOIN. I require BOTH, and say so rather than doing it quietly:
+ * The design called for GP_SESSION_JOIN alone. This requires BOTH, and say so rather than doing it quietly:
  * requiring only JOIN would admit a member whose role has been explicitly denied voice, which is a
  * permission the grid owner has already expressed. Both live in `DefaultEveryonePowers`
  * (GroupsService.cs:44-52, `JoinChat | AllowVoiceChat`), so no ordinary group is affected; only a
@@ -37,8 +37,8 @@ namespace osWebRtcVoice.NonSpatial
 {
     /// <summary>
     /// Everything the group arm needs, injected. Null or <see cref="Enabled"/> false means the arm is
-    /// inert and every caller falls through to the untouched A2A path -- which is how item 6's
-    /// "default reproduces current behaviour" is satisfied.
+    /// inert and every caller falls through to the untouched A2A path -- which is how the
+    /// "default reproduces current behaviour" rule is satisfied.
     /// </summary>
     public sealed class GroupVoicePolicy
     {

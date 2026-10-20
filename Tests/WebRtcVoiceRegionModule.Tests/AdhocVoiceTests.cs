@@ -9,17 +9,17 @@
  * VOICE on an ad-hoc conference -- the "call" and "accept invitation" arms, the room, the cap,
  * the provision, and the teardown.
  *
- * WHAT THIS SLICE IS ACTUALLY ABOUT, because the arms look like copies of the group ones and are not:
+ * WHAT THIS TEST CLASS IS ACTUALLY ABOUT, because the arms look like copies of the group ones and are not:
  *
  *   1. AN AD-HOC "call" NEVER CREATES A voice session. A group "call" does, because for a group the voice session
  *      id IS the group id and the first caller is simply the first. A conference id is server-minted
  *      and means nothing until "start conference" produced it, so a "call" for a conference this
- *      store does not hold must fall through and 404 on the A2A arm -- the pre-slice behaviour for an
+ *      store does not hold must fall through and 404 on the A2A arm -- the previous behaviour for an
  *      unknown session, which the viewer already survives.
  *   2. THE PROVISION WAS ALREADY REACHING THE GROUP ARM AND BEING REFUSED. NonSpatialRoomKey.IsRoomKey
  *      matches "nsv1:adhoc:" as readily as "nsv1:group:", so a conference provision arrived at
  *      NonSpatialProvisionAdmission.Decide and was turned away with group-refused-no-session because
- *      Decide insisted on a Group session. That is the bug this slice closes, and it is asserted
+ *      Decide insisted on a Group session. That is the bug this feature closes, and it is asserted
  *      below rather than described.
  *   3. THE SEAT HAS TO BE TAGGED WITH THE VIEWER SESSION or the logout teardown cannot find it. 
  *      found this the hard way for groups: a hang-up held its seat for eight hours. The teardown
@@ -406,7 +406,7 @@ namespace osWebRtcVoice.Tests
         [Test]
         public void ThreeWayConference_StartRingCallAcceptProvisionHangUp()
         {
-            // The whole slice in one pass, in the order a viewer actually produces it.
+            // The whole flow in one pass, in the order a viewer actually produces it.
             NonSpatialVoiceSessionEngine e = Engine();
 
             // Alice starts a conference with Bob and Carol; the re-key reply carries both ids.

@@ -500,7 +500,7 @@ public partial class WebRtcVoiceRegionModule
         // is enabled and the voice session-id names a group this agent belongs to. TryHandleCall returns
         // false having done nothing for everything else, so the A2A path below is reached with
         // exactly the arguments and the state it would have had. A group "call" from a NON-member
-        // falls through on purpose: it reaches the A2A arm and 404s there, which is the pre-slice
+        // falls through on purpose: it reaches the A2A arm and 404s there, which is the previous
         // answer for an unknown session and the one the viewer already survives.
         if (GroupVoiceChatSession.TryHandleCall(reqmap, agentID, m_groupVoice, m_nonSpatial,
                                                 scene.RegionInfo.RegionID, out ChatSessionOutcome groupOutcome))

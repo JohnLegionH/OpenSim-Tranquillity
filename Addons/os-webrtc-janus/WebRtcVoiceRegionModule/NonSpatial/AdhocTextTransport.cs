@@ -106,7 +106,7 @@ namespace osWebRtcVoice.NonSpatial
                 fromGroup = false,
                 imSessionID = sessionId.Guid,
                 message = message ?? string.Empty,
-                // Item 5: a conference line is worthless stored and replayed hours later, and
+                // A conference line is worthless stored and replayed hours later, and
                 // both offline allowlists reject SessionSend anyway. Zero here says so at the source.
                 offline = 0,
                 RegionID = originRegion.Guid,

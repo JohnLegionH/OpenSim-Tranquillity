@@ -392,7 +392,7 @@ namespace osWebRtcVoice.Tests
         }
 
         // ======================================================================================
-        // Hardening (item 2): a derivation exception on a tick is reported and swallowed - the
+        // Hardening: a derivation exception on a tick is reported and swallowed - the
         // last good matrix is kept and the next tick re-derives (the timer is never killed).
         [Test]
         public void Tick_WhenDerivationThrows_LogsAndKeepsLastMatrix_ThenRecovers()
@@ -423,7 +423,7 @@ namespace osWebRtcVoice.Tests
         }
 
         // ======================================================================================
-        // Debug guard (item 3): the tick thread is captured on first tick and is stable across
+        // Debug guard: the tick thread is captured on first tick and is stable across
         // ticks (single-threaded mutation). The Debug.Assert inside the feeder fires only on a
         // cross-thread mutation; here we assert the observable invariant holds under normal use.
         [Test]

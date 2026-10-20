@@ -296,7 +296,7 @@ public partial class WebRtcVoiceRegionModule : ISharedRegionModule
                 // The client id is now a hint: logged on mismatch, never refused (a viewer mid-crossing can
                 // be stale).
                 // A CHILD agent (the viewer's neighbour-region provision) is positioned outside this
-                // region, so position finds no parcel. It keeps the pre-slice-1 path: a client id selects the
+                // region, so position finds no parcel. It keeps the unchanged path: a client id selects the
                 // parcel and every check runs against it; no id (the stock viewer, estate channel) means no
                 // parcel checks and the service's -999 estate room. ProvisionParcelResolver decides; a hinted
                 // parcel that is not near the child's known position is dropped below.
@@ -387,7 +387,7 @@ public partial class WebRtcVoiceRegionModule : ISharedRegionModule
                         // the same number, so no live room renumbers.
                         map["parcel_local_id"] = OSD.FromInteger(land.LocalID);
                     }
-                    // else ParcelSource.ClientHint: the client's parcel_local_id is forwarded unchanged (pre-slice-1).
+                    // else ParcelSource.ClientHint: the client's parcel_local_id is forwarded unchanged (unchanged).
 
                 }
             }
