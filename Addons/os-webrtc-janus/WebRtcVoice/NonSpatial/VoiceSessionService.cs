@@ -154,6 +154,7 @@ namespace osWebRtcVoice.NonSpatial
 
         public SessionReply VerifyRing(UUID sessionId, UUID target, UUID claimedCaller, int type)
             => type == (int)NonSpatialSessionType.Group || type == (int)NonSpatialSessionType.Adhoc
+               || type == (int)NonSpatialSessionType.P2P
                 ? Reply(_engine.VerifyRing(sessionId, target, claimedCaller, (NonSpatialSessionType)type), target)
                 : SessionReply.Fail("refused-bad-request");
 

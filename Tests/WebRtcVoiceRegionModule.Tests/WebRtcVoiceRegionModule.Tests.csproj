@@ -19,6 +19,7 @@
   <ItemGroup>
     <Compile Include="AssemblyInfo.cs" />
     <Compile Include="LandBanTests.cs" />
+    <Compile Include="NonSpatialSessionConcurrencyTests.cs" />
     <Compile Include="FeederWorldFromSceneTests.cs" />
     <Compile Include="VoiceMembershipIndexTests.cs" />
     <Compile Include="VoiceSessionCloseCaptureTests.cs" />
@@ -84,6 +85,7 @@
     <Compile Include="GridStoreProcessTests.cs" />
     <Compile Include="CrossProcessHarness.cs" />
     <Compile Include="A2ARingRootOnlyTests.cs" />
+    <Compile Include="A2ACrossProcessTests.cs" />
     <Compile Include="GroupRingRootOnlyTests.cs" />
     <Compile Include="AdhocRingRootOnlyTests.cs" />
     <Compile Include="AdhocTextCrossProcessTests.cs" />

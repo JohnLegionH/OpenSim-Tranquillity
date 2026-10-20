@@ -739,6 +739,10 @@ namespace osWebRtcVoice.NonSpatial
             int effective = NonSpatialCaps.Effective(type, cap);
             // Owner is the group for a group session; an ad-hoc conference has no owning object.
             UUID owner = type == NonSpatialSessionType.Group ? groupId : UUID.Zero;
+            // A call between two people that has ended is not found again: the ring begins a new one.
+            if (type == NonSpatialSessionType.P2P
+                && _store.Mutate(groupId, sess => LapseIfExpired(sess, now), false))
+                _store.Remove(groupId);
             NonSpatialVoiceSession s = _store.StartOrGet(groupId, () =>
             {
                 NonSpatialVoiceSession made = new NonSpatialVoiceSession(type, groupId, groupId,
@@ -748,6 +752,8 @@ namespace osWebRtcVoice.NonSpatial
                 made.AdoptedFromRing = true;
                 if (alreadyRung != null)
                     foreach (UUID a2 in alreadyRung) made.MarkInvited(a2);
+                if (type == NonSpatialSessionType.P2P)
+                    SeedAdoptedCall(made, creator, alreadyRung, now);
                 SeedAdoptedMembership(made, type, alreadyRung, now);
                 return made;
             }, out bool created);
@@ -758,6 +764,16 @@ namespace osWebRtcVoice.NonSpatial
                 decision = _store.Mutate(groupId, sess =>
                 {
                     if (sess.Type != type) return "refused-session-type-mismatch";
+                    if (type == NonSpatialSessionType.P2P)
+                    {
+                        // The ring of a call this instance already holds. A call started here (two people calling each
+                        // other at the same moment) is not replaced, an answered call is under way, and a call whose
+                        // credential differs is a different one: replacing that credential would turn away a viewer
+                        // that already holds it.
+                        if (sess.CalleeAnswered) return "refused-already-active";
+                        if (!sess.AdoptedFromRing || !string.Equals(sess.Token, token, StringComparison.Ordinal))
+                            return "refused-call-in-progress";
+                    }
                     if (!sess.AdoptedFromRing) return "ring-session-held";   // started here: a ring adds nothing
                     if (alreadyRung != null)
                         foreach (UUID a2 in alreadyRung) sess.MarkInvited(a2);
@@ -768,6 +784,19 @@ namespace osWebRtcVoice.NonSpatial
                     return SessionOutcome.Fail(decision);
             }
             return new SessionOutcome(true, decision, s, created);
+        }
+
+        /// <summary>
+        /// A call between two people adopted from a ring is recorded as the ringing instance holds it: the caller
+        /// seated (not yet joined here) and the callee invited.
+        /// </summary>
+        private static void SeedAdoptedCall(NonSpatialVoiceSession sess, UUID caller, IEnumerable<UUID> rung, DateTime now)
+        {
+            sess.Upsert(caller, MemberState.Accepted, UUID.Zero, now).InChat = true;
+            if (rung == null) return;
+            foreach (UUID a in rung)
+                if (a != UUID.Zero && a != caller && sess.Find(a) == null)
+                    sess.Upsert(a, MemberState.Invited, UUID.Zero, now);
         }
 
         /// <summary>
@@ -823,16 +852,19 @@ namespace osWebRtcVoice.NonSpatial
 
         /// <summary>
         /// Whether a ring received for <paramref name="target"/> is genuine, judged from this engine's own record and
-        /// nothing the ring carried. Group and conference rings only. Nothing is created or changed except that a
+        /// nothing the ring carried. Group, conference and avatar-to-avatar rings. Nothing is created or changed except that a
         /// genuine ring is used up, so a replay of it is refused.
         /// </summary>
         public SessionOutcome VerifyRing(UUID sessionId, UUID target, UUID claimedCaller, NonSpatialSessionType type)
         {
-            if (type != NonSpatialSessionType.Group && type != NonSpatialSessionType.Adhoc)
+            if (type != NonSpatialSessionType.Group && type != NonSpatialSessionType.Adhoc && type != NonSpatialSessionType.P2P)
                 return SessionOutcome.Fail("refused-session-type-mismatch");
+            DateTime now = _clock();
             return _store.Mutate(sessionId, sess =>
             {
-                if (sess.IsDead) return SessionOutcome.Fail(SessionOutcome.NoSuchSession);
+                if (LapseIfExpired(sess, now) || sess.IsDead) return SessionOutcome.Fail(SessionOutcome.NoSuchSession);
+                if (type == NonSpatialSessionType.P2P && sess.Type == NonSpatialSessionType.P2P)
+                    return VerifyCallRing(sess, target, claimedCaller);
                 if (sess.Type != type) return SessionOutcome.Fail("refused-session-type-mismatch");
                 if (!sess.RingSent) return SessionOutcome.Fail("refused-ring-not-sent");
                 NonSpatialMember caller = sess.Find(claimedCaller);
@@ -841,6 +873,23 @@ namespace osWebRtcVoice.NonSpatial
                 if (!sess.TakeRing(target)) return SessionOutcome.Fail("refused-ring-used");
                 return new SessionOutcome(true, "ring-verified", sess);
             }, SessionOutcome.Fail(SessionOutcome.NoSuchSession));
+        }
+
+        /// <summary>
+        /// Whether a ring for a call between two people is genuine, judged from the record alone: the call is live,
+        /// the claimed caller is the one who started it and holds its seat, and the target is the callee, who has not
+        /// answered. The ring is used up, so a replay is refused.
+        /// </summary>
+        private static SessionOutcome VerifyCallRing(NonSpatialVoiceSession sess, UUID target, UUID claimedCaller)
+        {
+            if (sess.Creator != claimedCaller) return SessionOutcome.Fail("refused-caller-not-seated");
+            NonSpatialMember caller = sess.Find(claimedCaller);
+            if (caller == null || !caller.HoldsSeat) return SessionOutcome.Fail("refused-caller-not-seated");
+            NonSpatialMember callee = sess.Callee;
+            if (callee == null || callee.AgentId != target) return SessionOutcome.Fail("refused-target-not-invited");
+            if (sess.CalleeAnswered) return SessionOutcome.Fail("refused-already-active");
+            if (!sess.TakeCallRing(target)) return SessionOutcome.Fail("refused-ring-used");
+            return new SessionOutcome(true, "ring-verified", sess);
         }
 
         public string IssueToken(UUID sessionId, UUID agent, out bool unavailable)

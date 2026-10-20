@@ -79,6 +79,9 @@ namespace osWebRtcVoice
         /// <summary>The value the viewer sends as <c>channel</c> on a multiagent provision: the session id as a string.</summary>
         public string ChannelUri => SessionId.ToString();
 
+        /// <summary>The mixer room key the call is derived to; a carrier names it so the receiver can check it derives the same.</summary>
+        public string RoomKey { get; }
+
         public bool IsProvisioned(UUID agent) => agent == Caller ? CallerProvisioned : agent == Callee && CalleeProvisioned;
 
         public bool IsParty(UUID agent) => agent == Caller || agent == Callee;
@@ -94,6 +97,7 @@ namespace osWebRtcVoice
             CreatedUtc = s.CreatedUtc;
             LastSeenUtc = s.LastSeenUtc;
             Token = s.Token;
+            RoomKey = s.RoomKey;
             State = s.CalleeAnswered ? A2ASessionState.Active : A2ASessionState.Invited;
             NonSpatialMember caller = s.Find(s.Creator);
             CallerProvisioned = NonSpatialVoiceSession.IsJoined(caller);
@@ -240,6 +244,72 @@ namespace osWebRtcVoice
             A2ASession s = TryGet(sessionId, UUID.Zero);
             if (sessions != null && s != null && s.Callee != UUID.Zero)
                 sessions.MarkInvited(sessionId, new[] { s.Callee });
+        }
+
+        // ---- calls placed or answered in another region-server process ------------------------------
+
+        /// <summary>
+        /// Stands in for the viewer session of a party who joined in another process: this process never sees that
+        /// party's viewer session, only that the party is present.
+        /// </summary>
+        public const string RemoteViewerSession = "remote";
+
+        /// <summary>
+        /// A call placed in another region-server process arrived by its signed ring (the in-process store has no
+        /// shared record). Records it here as the sender's process holds it: the caller seated, the callee invited
+        /// and already rung, and the credential the one the caller's process minted. Null with
+        /// <paramref name="refusal"/> when this process already holds the call and the ring must not replace it:
+        /// one it started itself (two people calling each other at the same moment), an answered one, or one under
+        /// a different credential.
+        /// </summary>
+        public A2ASession AdoptRemote(UUID caller, UUID callee, string roomKey, string token, out string refusal)
+        {
+            refusal = null;
+            INonSpatialSessions sessions = _sessions();
+            if (sessions == null) { refusal = "no-store"; return null; }
+            if (string.IsNullOrEmpty(token)) { refusal = "no-token"; return null; }
+            SessionOutcome o = sessions.AdoptRemoteRing(ComputeSessionId(caller, callee), roomKey, token,
+                                                        NonSpatialCaps.P2PCap, caller, new[] { callee }, NonSpatialSessionType.P2P);
+            if (!o.Ok)
+            {
+                refusal = o.Decision switch
+                {
+                    "refused-already-active" => "already-active",
+                    "refused-call-in-progress" => "call-in-progress",
+                    _ => o.Decision,
+                };
+                return null;
+            }
+            return Live(o.Session);
+        }
+
+        /// <summary>The far party joined in its own process and said so: it counts as present here. Null when this process holds no such call.</summary>
+        public A2ASession MarkRemoteJoined(UUID sessionId, UUID joined, UUID originRegion)
+        {
+            INonSpatialSessions sessions = _sessions();
+            A2ASession s = TryGet(sessionId, joined);
+            if (sessions == null || s == null || !s.IsParty(joined))
+                return null;
+            SessionOutcome o = sessions.Accept(sessionId, joined, originRegion, RemoteViewerSession);
+            return o.Ok ? Live(o.Session) : null;
+        }
+
+        /// <summary>
+        /// The far party left. The call ends here when no one is joined in it any longer. Null when this process
+        /// holds no such call; <paramref name="ended"/> says whether it is over.
+        /// </summary>
+        public A2ASession MarkRemoteGone(UUID sessionId, UUID departed, out bool ended)
+        {
+            ended = false;
+            INonSpatialSessions sessions = _sessions();
+            A2ASession s = TryGet(sessionId, departed);
+            if (sessions == null || s == null || !s.IsParty(departed))
+                return null;
+            SessionOutcome o = sessions.Depart(sessionId, departed, DepartureReason.PresenceLost);
+            if (!o.Ok)
+                return null;
+            ended = o.Session == null || o.Session.IsDead;
+            return s;
         }
 
         // ---- lookup -------------------------------------------------------------------------

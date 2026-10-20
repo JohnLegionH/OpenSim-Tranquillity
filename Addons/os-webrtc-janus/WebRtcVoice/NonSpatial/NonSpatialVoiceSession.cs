@@ -28,6 +28,7 @@
  */
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using OpenMetaverse;
 
 namespace osWebRtcVoice.NonSpatial
@@ -180,6 +181,12 @@ namespace osWebRtcVoice.NonSpatial
         /// </summary>
         internal string CarrierKey { get; set; }
 
+        // The store's lock covers every change, but callers also read a session they got from Store.Get
+        // without holding it (a log line's seat count, a ring walking the members). This lock makes
+        // those reads see the table either before or after a change. It is only ever taken inside the
+        // store's lock or alone, never the other way round.
+        private readonly object _sync = new object();
+
         private readonly Dictionary<UUID, NonSpatialMember> _members = new Dictionary<UUID, NonSpatialMember>();
 
         /// <summary>
@@ -199,7 +206,7 @@ namespace osWebRtcVoice.NonSpatial
         /// </summary>
         public bool AdoptedFromRing { get; internal set; }
 
-        public bool WasInvited(UUID agent) => _invited.Contains(agent);
+        public bool WasInvited(UUID agent) { lock (_sync) return _invited.Contains(agent); }
 
         /// <summary>
         /// Who has already used the ring they were marked invited for (see the engine's VerifyRing). A ring is
@@ -209,12 +216,20 @@ namespace osWebRtcVoice.NonSpatial
 
         internal void MarkInvited(UUID agent)
         {
-            if (_invited.Add(agent))
-                _ringsUsed.Remove(agent);
+            lock (_sync)
+                if (_invited.Add(agent) && Type != NonSpatialSessionType.P2P)
+                    _ringsUsed.Remove(agent);
         }
 
+        /// <summary>
+        /// True the first time it is asked for the callee of a call between two people, false after that. A call is
+        /// rung once, so unlike a group ring this does not wait for the callee to be marked invited and is not
+        /// given back when they are.
+        /// </summary>
+        internal bool TakeCallRing(UUID agent) { lock (_sync) return _ringsUsed.Add(agent); }
+
         /// <summary>True the first time it is asked for an invited agent, false after that.</summary>
-        internal bool TakeRing(UUID agent) => _invited.Contains(agent) && _ringsUsed.Add(agent);
+        internal bool TakeRing(UUID agent) { lock (_sync) return _invited.Contains(agent) && _ringsUsed.Add(agent); }
 
         /// <summary>
         /// Forget that ONE agent was rung, without ending the cycle for everyone else.
@@ -225,15 +240,21 @@ namespace osWebRtcVoice.NonSpatial
         /// </summary>
         internal void ClearInvited(UUID agent)
         {
-            _invited.Remove(agent);
-            _ringsUsed.Remove(agent);
+            lock (_sync)
+            {
+                _invited.Remove(agent);
+                _ringsUsed.Remove(agent);
+            }
         }
 
         /// <summary>The room emptied: forget the ring so a later start rings the group again.</summary>
         internal void EndRingCycle()
         {
-            _invited.Clear();
-            _ringsUsed.Clear();
+            lock (_sync)
+            {
+                _invited.Clear();
+                _ringsUsed.Clear();
+            }
             RingSent = false;
         }
 
@@ -251,9 +272,10 @@ namespace osWebRtcVoice.NonSpatial
             LastSeenUtc = nowUtc;
         }
 
-        public NonSpatialMember Find(UUID agent) => _members.TryGetValue(agent, out NonSpatialMember m) ? m : null;
+        public NonSpatialMember Find(UUID agent) { lock (_sync) return _members.TryGetValue(agent, out NonSpatialMember m) ? m : null; }
 
-        public IReadOnlyCollection<NonSpatialMember> Members => _members.Values;
+        /// <summary>The members at the moment of the call. A copy, so the caller can walk it while others join.</summary>
+        public IReadOnlyCollection<NonSpatialMember> Members { get { lock (_sync) return _members.Values.ToArray(); } }
 
         /// <summary>Seats taken. Invited, Declined and Departed do not count.</summary>
         public int SeatsHeld
@@ -261,8 +283,9 @@ namespace osWebRtcVoice.NonSpatial
             get
             {
                 int n = 0;
-                foreach (NonSpatialMember m in _members.Values)
-                    if (m.HoldsSeat) n++;
+                lock (_sync)
+                    foreach (NonSpatialMember m in _members.Values)
+                        if (m.HoldsSeat) n++;
                 return n;
             }
         }
@@ -285,8 +308,9 @@ namespace osWebRtcVoice.NonSpatial
         {
             get
             {
-                foreach (NonSpatialMember m in _members.Values)
-                    if (m.State == MemberState.Invited || m.HoldsSeat || (m.InChat && Type != NonSpatialSessionType.P2P)) return false;
+                lock (_sync)
+                    foreach (NonSpatialMember m in _members.Values)
+                        if (m.State == MemberState.Invited || m.HoldsSeat || (m.InChat && Type != NonSpatialSessionType.P2P)) return false;
                 return true;
             }
         }
@@ -300,8 +324,9 @@ namespace osWebRtcVoice.NonSpatial
             get
             {
                 if (Type != NonSpatialSessionType.P2P) return null;
-                foreach (NonSpatialMember m in _members.Values)
-                    if (m.AgentId != Creator) return m;
+                lock (_sync)
+                    foreach (NonSpatialMember m in _members.Values)
+                        if (m.AgentId != Creator) return m;
                 return null;
             }
         }
@@ -333,25 +358,29 @@ namespace osWebRtcVoice.NonSpatial
         public List<UUID> ChatMembers()
         {
             List<UUID> all = new List<UUID>();
-            foreach (NonSpatialMember m in _members.Values)
-                if (m.InChat) all.Add(m.AgentId);
+            lock (_sync)
+                foreach (NonSpatialMember m in _members.Values)
+                    if (m.InChat) all.Add(m.AgentId);
             return all;
         }
 
         internal NonSpatialMember Upsert(UUID agent, MemberState state, UUID originRegion, DateTime nowUtc)
         {
-            if (_members.TryGetValue(agent, out NonSpatialMember m))
+            lock (_sync)
             {
-                m.State = state;
-                m.OriginRegion = originRegion;
-                m.LastSeenUtc = nowUtc;
-                if (state != MemberState.Departed && state != MemberState.Declined)
-                    m.Departure = DepartureReason.None;
+                if (_members.TryGetValue(agent, out NonSpatialMember m))
+                {
+                    m.State = state;
+                    m.OriginRegion = originRegion;
+                    m.LastSeenUtc = nowUtc;
+                    if (state != MemberState.Departed && state != MemberState.Declined)
+                        m.Departure = DepartureReason.None;
+                    return m;
+                }
+                m = new NonSpatialMember(agent, state, originRegion, nowUtc);
+                _members[agent] = m;
                 return m;
             }
-            m = new NonSpatialMember(agent, state, originRegion, nowUtc);
-            _members[agent] = m;
-            return m;
         }
     }
 }

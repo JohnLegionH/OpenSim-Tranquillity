@@ -118,9 +118,12 @@ The behaviour documented here has only been exercised against a spatial mixer im
 - **Avatar-to-avatar** (`A2AVoiceEnabled`): the viewer's `start p2p voice` records an invitation
   (session id is the viewer's XOR of the two agent ids); the caller's `call` returns credentials and,
   once, delivers an invitation to the callee; each party provisions with the channel and credentials
-  to enter a two-seat room. Invitations expire if unanswered and are held in memory on one region
-  server instance; a callee on another instance is refused. Media is always relayed through the
-  mixer, never directly between viewers.
+  to enter a two-seat room. Invitations expire if unanswered and are held in memory on each region
+  server instance. A callee whose viewer is in a region hosted by another instance is rung through a
+  signed grid instant message (`CarrierSecret`): that instance records the call with the same credentials
+  and delivers the invitation, so the callee's accept is admitted there. The callee joining, declining or
+  hanging up reaches the caller's instance the same way. Without a secret the callee is not rung. Media is
+  always relayed through the mixer, never directly between viewers.
 - **Group voice** (`GroupVoiceEnabled`): requires the Groups module. Joining needs the group
   membership power, and speaking needs the voice power unless `GroupVoiceRequireVoicePower = false`.
   Seats are capped by `GroupVoiceCap` (default 50, never above the mixer's room limit of 110). A
