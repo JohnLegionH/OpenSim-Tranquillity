@@ -98,7 +98,7 @@ namespace osWebRtcVoice.Tests
         }
 
         [Test]
-        public void EnforceIsAccepted_AndRecordedAsTheConfiguredMode()
+        public void EnforceIsAccepted_AndIsTheModeTheFeedRunsIn()
         {
             IConfig cfg = Section();
             cfg.Set("PositionFeedEnabled", "true");
@@ -108,8 +108,8 @@ namespace osWebRtcVoice.Tests
             PositionSettings s = WebRtcVoiceRegionModule.ReadPositionSettings(cfg, warnings.Add);
 
             Assert.That(s.Mode, Is.EqualTo(PositionFeedMode.Enforce));
-            Assert.That(warnings, Is.Empty, "enforce is a valid word, the module says separately that it is not active yet");
-            Assert.That(PositionFeedModes.Active(s.Mode), Is.EqualTo(PositionFeedMode.Observe));
+            Assert.That(warnings, Is.Empty, "enforce is a valid word");
+            Assert.That(PositionFeedModes.Active(s.Mode), Is.EqualTo(PositionFeedMode.Enforce));
         }
 
         [Test]

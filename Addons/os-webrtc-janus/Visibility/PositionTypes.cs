@@ -22,8 +22,9 @@ using OpenMetaverse.StructuredData;
 
 namespace osWebRtcVoice
 {
-    /// How the mixer is asked to treat the positions. Only Observe is active today: the mixer counts what
-    /// it would have changed and changes nothing.
+    /// How the mixer is asked to treat the positions. Observe: the mixer counts what it would have changed and
+    /// changes nothing. Enforce: the mixer replaces a viewer's claimed position that is farther from the sim's
+    /// than the tolerance allows; it does so only if its own operator also allows it (JS_POS_MODE=enforce).
     public enum PositionFeedMode
     {
         Observe = 0,
@@ -45,9 +46,9 @@ namespace osWebRtcVoice
             return PositionFeedMode.Observe;
         }
 
-        /// The mode the feed actually runs in. Enforce is accepted by the configuration but nothing acts on
-        /// it yet, so it runs as Observe.
-        public static PositionFeedMode Active(PositionFeedMode configured) => PositionFeedMode.Observe;
+        /// The mode the feed asks the mixer for: the configured one. The mixer decides whether to act on an
+        /// Enforce request, and a later request that says Observe takes it back.
+        public static PositionFeedMode Active(PositionFeedMode configured) => configured;
 
         /// The word sent to the mixer.
         public static string WireName(PositionFeedMode mode)

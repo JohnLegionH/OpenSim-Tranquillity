@@ -125,10 +125,18 @@ namespace osWebRtcVoice.Tests
         }
 
         [Test]
-        public async Task EnforceModeIsAcceptedButSentAsObserve()
+        public async Task EnforceModeIsSentToTheMixerAsEnforce()
         {
             var sink = new FakeSink { MixerVisProtocol = 3 };
             await Pump(new FakeWorld(), sink, PositionFeedMode.Enforce).TickAsync();
+            Assert.That(sink.Sent.Single()["mode"].AsString(), Is.EqualTo("enforce"));
+        }
+
+        [Test]
+        public async Task ObserveModeIsStillSentAsObserve()
+        {
+            var sink = new FakeSink { MixerVisProtocol = 3 };
+            await Pump(new FakeWorld(), sink, PositionFeedMode.Observe).TickAsync();
             Assert.That(sink.Sent.Single()["mode"].AsString(), Is.EqualTo("observe"));
         }
 

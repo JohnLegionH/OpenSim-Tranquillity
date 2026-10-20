@@ -253,8 +253,9 @@ public partial class WebRtcVoiceRegionModule
 
         m_log.LogInformation($"{logHeader}[Positions]: position feed enabled, mode {m_PositionSettings.Mode.ToString().ToLowerInvariant()}");
         if (m_PositionSettings.Mode == PositionFeedMode.Enforce)
-            m_log.LogInformation($"{logHeader}[Positions]: PositionFeedMode enforce is accepted but not active yet; " +
-                "positions are sent in observe mode");
+            m_log.LogInformation($"{logHeader}[Positions]: PositionFeedMode enforce: each position request asks the mixer to replace " +
+                "a viewer's claimed position that is farther from the sim's than the tolerance allows; the mixer does so only if its " +
+                "operator has also set JS_POS_MODE=enforce, otherwise it keeps counting");
         if (!m_Config.GetBoolean("JoinCapabilityEnabled", false))
             m_log.LogWarning($"{logHeader}[Positions]: JoinCapabilityEnabled is false, so a viewer can join the mixer as another agent; " +
                 "positions are matched to the agent id a viewer joins as, so the comparison is only as strong as that binding");

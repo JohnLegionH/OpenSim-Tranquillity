@@ -90,7 +90,9 @@
     ; plugin it logs a warning at start and stays off.
     ;PositionFeedEnabled = false
     ; observe or enforce. Default: observe (the mixer counts what it would change and changes nothing).
-    ; enforce is accepted but not active yet; positions are sent in observe mode.
+    ; enforce asks the mixer to replace a viewer's claimed position that is farther from the sim's than the
+    ; tolerance allows. The mixer does so only if its operator has also set JS_POS_MODE=enforce; otherwise it
+    ; keeps counting. Setting this back to observe stops the correction with the next request.
     ;PositionFeedMode = observe
 
     ; The sim issues each joining avatar a signed join capability. Default: false. Needs the slvoice mixer

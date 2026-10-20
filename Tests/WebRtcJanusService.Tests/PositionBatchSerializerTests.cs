@@ -89,10 +89,12 @@ namespace osWebRtcVoice.Tests
         }
 
         [Test]
-        public void EnforceMode_IsSentAsObserveWhileNothingActsOnIt()
+        public void ConfiguredMode_IsTheModeSentToTheMixer()
         {
-            Assert.That(PositionFeedModes.Active(PositionFeedMode.Enforce), Is.EqualTo(PositionFeedMode.Observe));
-            Assert.That(PositionFeedModes.WireName(PositionFeedModes.Active(PositionFeedMode.Enforce)), Is.EqualTo("observe"));
+            Assert.That(PositionFeedModes.Active(PositionFeedMode.Enforce), Is.EqualTo(PositionFeedMode.Enforce));
+            Assert.That(PositionFeedModes.WireName(PositionFeedModes.Active(PositionFeedMode.Enforce)), Is.EqualTo("enforce"));
+            Assert.That(PositionFeedModes.Active(PositionFeedMode.Observe), Is.EqualTo(PositionFeedMode.Observe));
+            Assert.That(PositionFeedModes.WireName(PositionFeedModes.Active(PositionFeedMode.Observe)), Is.EqualTo("observe"));
         }
 
         [TestCase(null, PositionFeedMode.Observe, true)]
