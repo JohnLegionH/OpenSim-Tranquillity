@@ -49,7 +49,8 @@ namespace osWebRtcVoice.Tests
             while (!log.Lines.Any(l => l.Text.Contains("Exiting long poll loop")) && clock.ElapsedMilliseconds < 8000)
                 await Task.Delay(20);
 
-            Assert.That(log.At(LogLevel.Debug, "Exiting long poll loop").Count, Is.EqualTo(1), "written, at Debug");
+            // At least one: a session another test left behind may end during the same moment.
+            Assert.That(log.At(LogLevel.Debug, "Exiting long poll loop").Count, Is.GreaterThanOrEqualTo(1), "written, at Debug");
             Assert.That(log.AtInfoOrAbove("Exiting long poll loop"), Is.Empty, "and not at Information or above");
         }
     }

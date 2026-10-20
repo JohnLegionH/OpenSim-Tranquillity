@@ -9,6 +9,7 @@
  * What a removed member's viewer, retrying its provision, writes to the log: one line for the first refusal, nothing for
  * the retries, one line with the count when the removal is lifted. Counted with a test appender.
  */
+using System.Linq;
 using System.Net;
 using Microsoft.Extensions.Logging;
 using NUnit.Framework;
@@ -29,7 +30,8 @@ namespace osWebRtcVoice.Tests
         [TearDown]
         public void TearDown() => _log.Dispose();
 
-        private System.Collections.Generic.List<LogCapture.Line> RefusalLines() => _log.AtInfoOrAbove("provision from");
+        private System.Collections.Generic.List<LogCapture.Line> RefusalLines()
+            => _log.AtInfoOrAbove("provision from").Where(l => l.Text.Contains(Member.ToString())).ToList();
 
         [Test]
         public void AViewerThatKeepsRetryingAfterARemoval_WritesOneLine_NotOnePerWindow()
