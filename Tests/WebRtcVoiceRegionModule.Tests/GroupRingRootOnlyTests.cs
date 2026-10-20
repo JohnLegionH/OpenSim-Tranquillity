@@ -137,6 +137,21 @@ namespace osWebRtcVoice.Tests
         }
 
         [Test]
+        public void RootAgents_ListsRootPresencesOnly()
+        {
+            Process p = new Process();
+            UUID root = UUID.Random();
+            UUID child = UUID.Random();
+            p.AddRoot(root);
+            p.AddChild(child);
+
+            List<UUID> roots = osWebRtcVoice.NonSpatial.GroupVoiceInvite.RootAgents(new[] { p.Scene });
+
+            Assert.That(roots, Does.Contain(root));
+            Assert.That(roots, Does.Not.Contain(child));
+        }
+
+        [Test]
         public void MemberWithARootPresenceHere_IsRungLocally_AndNothingIsCarried()
         {
             var (mod, p, session) = Calling(x => x.AddRoot(Bob));

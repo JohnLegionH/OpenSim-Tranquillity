@@ -13,7 +13,6 @@
  * which may be another process that has never heard of the call. So a child presence is not a place
  * to ring. These tests cover the delivery function every ring goes through.
  */
-using System.Collections.Generic;
 using NUnit.Framework;
 using OpenMetaverse;
 using OpenMetaverse.StructuredData;
@@ -82,21 +81,6 @@ namespace osWebRtcVoice.Tests
 
             Assert.That(decision, Is.EqualTo(A2AInviteDelivery.DecisionNoPresence));
             Assert.That(p.Queue.Enqueued, Is.Empty);
-        }
-
-        [Test]
-        public void RootAgents_ListsRootPresencesOnly()
-        {
-            Process p = new Process();
-            UUID root = UUID.Random();
-            UUID child = UUID.Random();
-            p.AddRoot(root);
-            p.AddChild(child);
-
-            List<UUID> roots = osWebRtcVoice.NonSpatial.GroupVoiceInvite.RootAgents(new[] { p.Scene });
-
-            Assert.That(roots, Does.Contain(root));
-            Assert.That(roots, Does.Not.Contain(child));
         }
     }
 }
