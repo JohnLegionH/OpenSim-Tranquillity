@@ -1,0 +1,183 @@
+# WebRTC voice: deployment
+
+How to lay out regions, the Janus gateway and the Robust call session service, and which settings matter for each
+layout. Settings are described in [configuration.md](configuration.md); what the features do is in
+[README.md](README.md).
+
+## Region layouts
+
+### Several regions in one region server process
+
+One voice module serves every region in the process, and it keeps one record of each call for all of them. Avatar-to-avatar
+calls, group calls and conferences work between avatars on any of those regions with no extra setting. Leave
+`CarrierSecret` unset and `SessionStoreMode` at `local`.
+
+Regions in the same process need no entry in `ControlPlaneTrustedHosts` for each other (see
+`Docs/security/Hardening.md`).
+
+### One region per process (the usual layout)
+
+Each process is a separate voice module with its own records. With the defaults (`SessionStoreMode = local`):
+
+- An avatar-to-avatar call rings the other person only if their region is served by the caller's process. With one
+  region per process that means the same region.
+- A group call or conference rings members on other processes only when `CarrierSecret` is set to the same value on
+  every region server.
+- The seat limit of a group call or conference counts per process: a limit of 50 can be reached once in each process.
+- A mute-all, a mute or a removal made on one process is a record of that process only.
+
+Choose one of:
+
+1. **`SessionStoreMode = grid`** with the call session service on Robust (below). All processes share one record of every
+   call: one seat count, one ring, moderation seen everywhere, and seats given back when a region restarts. No
+   `CarrierSecret` is needed. Recommended for a grid with more than one process that offers group calls or
+   conferences.
+2. **`CarrierSecret`** on every region server, with `SessionStoreMode = local`. Group and conference rings, and
+   conference text lines, are sent between processes as signed grid instant messages. Nothing runs on Robust.
+
+Neither changes avatar-to-avatar calls: they ring only inside one process.
+
+If your regions are neighbours on different hosts, each region server needs the other hosts' addresses in
+`[Network] ControlPlaneTrustedHosts`, as for any region server (see `Docs/security/Hardening.md`). The voice addon does
+not read that list, and the signed ring and text messages between processes are not covered by it: they are ordinary
+instant messages (dialog 17), not one of the privileged dialogs that list guards.
+
+### The Janus gateway on another host
+
+The region server reaches the gateway over HTTP(S) at `JanusGatewayURI` and `JanusGatewayAdminURI`. Every request
+carries the API or admin secret, so use `https://` (see [security.md](security.md)) or a network you control. The
+gateway must also be reachable by viewers for media (next section). In this layout the settings that matter are the
+four `[JanusWebRtcVoice]` values, `JanusGatewayCACertificateFile` for a private CA, `PluginName`, and the timeouts
+`RequestTimeoutMs` and `AdminTimeoutMs` if the link is slow.
+
+## Networking
+
+A viewer must reach three things:
+
+1. **The region's UDP circuit**, on the address the region hands out. By default that is the address the region's
+   `ExternalHostName` resolves to; the `[ViewerAddress]` section of `RegionServer.ini` can give different viewer
+   networks different addresses.
+2. **The region's HTTP listener**, which serves the viewer's capabilities, including the voice requests
+   (`ProvisionVoiceAccountRequest`, `VoiceSignalingRequest`, `ChatSessionRequest`), on the same address.
+3. **The gateway's media (RTP) UDP port range.** Audio flows between the viewer and the gateway on these ports. The
+   addon cannot see this path.
+
+Audio needs the gateway to advertise an address the viewer can reach (for a gateway in a container or behind NAT,
+set the gateway's NAT address mapping, `nat_1_1_mapping` in Janus), that range to be published and open in every
+firewall and router between the viewer and the gateway, and a STUN server for viewers outside your network
+(`StunServers`). The addon does not deliver TURN.
+
+**Test from a second machine.** A viewer on the same machine as the region can have working voice when a viewer on
+another machine does not: the gateway's address and ports are reached over the local machine, which skips the router
+and firewall rules and the address mapping that every other viewer depends on. Log in from a machine on another network
+and check voice there before you call it done.
+
+## Calls across region server processes
+
+The two ways to share calls between processes, and what each limit means for users:
+
+| | `local`, no `CarrierSecret` | `local` with `CarrierSecret` | `grid` |
+|---|---|---|---|
+| Avatar-to-avatar call, callee on the caller's process | Rings | Rings | Rings |
+| Avatar-to-avatar call, callee on another process | Not rung | Not rung | Not rung |
+| Group call or conference ring to a member on another process | Not sent; one that arrives is refused | Sent, signed; received if the signature is valid | Sent; the receiving region asks the service whether it is genuine |
+| Conference text to a member on another process | Not delivered | Delivered, signed | Delivered, signed with a key the service gives only to the conference's members |
+| Seat limit of a group call or conference | Per process | Per process | One count for the grid |
+| Mute, mute-all and removal | That process only | That process only | Recorded in the service; a region applies a removal to a member it hosts when its next seat renewal reports it (60 seconds by default) |
+| Seats of a region that stops | Gone with the process | Gone with the process | Given back by the service when the lease runs out (180 seconds), or at once when the region starts again |
+
+Details of `CarrierSecret`:
+
+- At least 32 characters, the same on every region server. A shorter value is refused at start-up with an error and the
+  carriers stay off.
+- Each ring and text line carries a signature over its contents. A message older than 60 seconds (a clock difference of
+  30 seconds is allowed), repeated, unsigned, or signed wrongly is refused. The first refusal of each reason is logged,
+  then every hundredth.
+- A ring that arrives never changes a session the receiving process already holds, and the receiving process does not
+  ring the group again for a call it did not start.
+- Keep the clocks of the region servers in step.
+
+## The Robust call session service
+
+The service is part of `WebRtcVoice.dll`, which the grid server project references. It keeps the records of group calls,
+conferences and avatar-to-avatar calls in the grid server's memory.
+
+**Enable it on Robust** (`GridServer.ini`, or `Robust.ini`). Both the `[ServiceList]` entry and `Enabled = true` are
+needed, and it refuses to load without HTTP basic authentication and a password of at least 32 characters:
+
+```ini
+[ServiceList]
+    VoiceSessionConnector = "${Const|PrivatePort}/WebRtcVoice.dll:VoiceSessionServerConnector"
+
+[WebRtcVoiceSessionService]
+    Enabled = true
+    AuthType = "BasicHttpAuthentication"
+    HttpAuthUsername = "voice-sessions"
+    HttpAuthPassword = "<a password of at least 32 characters, kept out of version control>"
+```
+
+**Point every region server at it**, with the same user and password, in the region server's voice settings:
+
+```ini
+[WebRtcVoice]
+    SessionStoreMode = grid
+    SessionStoreServerURI = http://robust.example.org:8003
+    AuthType = "BasicHttpAuthentication"
+    HttpAuthUsername = "voice-sessions"
+    HttpAuthPassword = "<the same password>"
+```
+
+Use the private port in `SessionStoreServerURI`. The service is authenticated by the basic-authentication user and password
+only. Set `SessionStoreMode` the same way on every region server: a call started on a server that keeps its own record
+is not seen by the others.
+
+**Authentication.** The service accepts nothing without the credentials. The region server's own call to it uses the
+section it is given (`[WebRtcVoice]`), falling back to `[Network]`; the service on Robust uses `[WebRtcVoiceSessionService]`,
+falling back to `[Network]`. Basic authentication sends the password with every request, so keep the link on the private port and on a network only your
+servers can reach.
+
+**What a Robust restart does.** The records live in memory, so a restart empties them. People already talking keep their
+audio, because audio does not pass through Robust or the region server. A call that has to be looked up again finds no
+session: a viewer that provisions into a group call or conference after the restart is refused with HTTP 403 (the decision
+is `group-refused-no-session` or `adhoc-refused-no-session`), and a moderation request is answered 404. Calling the group
+again starts a new call.
+
+**When the service cannot be reached.** The region refuses new calls and never falls back to keeping its own record. For
+avatar-to-avatar calls the answer to "start p2p voice" and to "call" is **HTTP 503**, which the viewer can try again. A
+group call or conference that cannot reach the service is refused with 403 (the decision word contains
+`refused-store-unavailable`), and a moderation request with 503. After 5 calls in 10 seconds with no answer a circuit breaker
+opens and calls are refused at once for 5 seconds without waiting for the timeout (3000 ms); then one call is tried.
+Departures (people leaving a call) are kept, up to 256 for 60 seconds, and sent when the service answers again;
+a seat given up is given back by the lease. The region logs each of these (see [troubleshooting.md](troubleshooting.md)).
+
+**At start-up** the region asks the service once whether it answers and logs the result, so a wrong address, a Robust without
+the service and a wrong password are reported when the region starts. The console command `show voice sessions` shows the
+state at any time.
+
+## Sizing
+
+**Gateway media ports.** The slvoice mixer's documentation gives one UDP port from the gateway's RTP range for every person in
+voice at the same time; use the same figure as your starting point for the stock plugin and check it against your Janus
+configuration. Size the range for the most people you expect in voice at once across all regions that use the gateway, plus
+headroom: 200 ports is about 200 people. When the range is exhausted further joins fail. The range is set on the gateway
+(`rtp_port_range` in Janus's configuration); the firewall, any router forward, and a container's published ports must
+match it.
+
+**Session limits** (defaults; each is a setting):
+
+| Limit | Default | Where | Setting |
+|---|---|---|---|
+| Sessions of all kinds held at once | 5000 | Region server process (`local`) or the service (`grid`) | `MaxNonSpatialSessions` / `MaxSessions` |
+| Live sessions one agent may have started | 20 | same | `MaxSessionsPerAgent` |
+| "Start conference" and "invite" requests one agent can make back to back | 5, refilling one every 10 seconds | same | `ConferenceRequestBurst`, `ConferenceRequestRefillSeconds` |
+| Seats in one group call or conference | 50, at most 110 | Region | `GroupVoiceCap` (group). A conference uses 50 |
+| Seats in an avatar-to-avatar call | 2 | fixed | - |
+| Unanswered invitation | 2 minutes | `local`: fixed. `grid`: `InviteTtlSeconds` (120) | - |
+| Idle call (nobody in it) | 8 hours | `local`: fixed. `grid`: `IdleTtlHours` (8) | - |
+
+A start beyond a limit is refused and logged. A call with a member who is still present is never idle.
+A conference start may name the seat cap minus one invitees, because the starter holds a seat.
+
+**Gateway rooms.** The addon creates one room per estate channel, parcel, call and conference as needed. On the stock
+AudioBridge it removes rooms it created once they have been empty for `EmptyRoomGraceSeconds` (60), so a long-running
+gateway does not accumulate them.

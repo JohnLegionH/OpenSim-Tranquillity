@@ -74,7 +74,9 @@ each class is intentionally unreachable and throws.
   process; the connector reconciles the ids when a reply arrives.
 
 `[ServiceList] VoiceServiceConnector` is not present in the stock Robust example files and must be
-added by hand; see the addon README.
+added by hand; see the addon README. The grid server project references `WebRtcVoice` only, so the
+assemblies that `WebRtcVoiceServerConnector` loads for the Janus service are not part of a grid server
+built from this tree.
 
 ### 2.3 Signalling
 
@@ -111,9 +113,8 @@ from replies.
 
 ## 4. Non-spatial voice
 
-All of these are off unless their switch is set, and the call logic does not depend on the plugin.
-The behaviour documented here has only been exercised against a spatial mixer implementing
-`janus.plugin.slvoice`.
+All of these are off unless their switch is set, and the call logic does not depend on the plugin: it
+works with the stock AudioBridge and with a spatial mixer implementing `janus.plugin.slvoice`.
 
 - **Avatar-to-avatar** (`A2AVoiceEnabled`): the viewer's `start p2p voice` records an invitation
   (session id is the viewer's XOR of the two agent ids); the caller's `call` returns credentials and,
@@ -210,7 +211,10 @@ The visibility feed always addresses `janus.plugin.slvoice`.
   service); the mixer owns room lifetime.
 - The viewer-session registry is per-process memory.
 - Avatar-to-avatar invitations, moderation state and the connector registry are in memory and are
-  lost on restart.
+  lost on restart. Call sessions are in the region server's memory, or with `SessionStoreMode = grid` in the
+  grid server's (see [deployment.md](deployment.md)).
+- An avatar-to-avatar invitation is delivered only to a callee whose region is served by the caller's own
+  region server process.
 - Several message classes are defined but not used: a Janus `hangup` request, an AudioBridge
   `configure` request and its response.
 - Mixer-side behaviour (spatial rendering, per-connection diagnostics, an echo test, camera-position

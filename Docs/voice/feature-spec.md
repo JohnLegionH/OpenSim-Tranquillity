@@ -25,18 +25,22 @@ is set.
 
 | Feature | Switch (all default `false`) | Needs |
 |---|---|---|
-| Avatar-to-avatar calls | `A2AVoiceEnabled` | spatial mixer |
-| Group voice | `GroupVoiceEnabled` | Groups module, spatial mixer |
-| Conference voice and text | `AdhocVoiceEnabled` | Groups module for text, spatial mixer |
+| Avatar-to-avatar calls | `A2AVoiceEnabled` | - |
+| Group voice | `GroupVoiceEnabled` | Groups module |
+| Conference voice and text | `AdhocVoiceEnabled` | Groups module for text |
+| Calls between region server processes | `SessionStoreMode = grid`, or `CarrierSecret` | the call session service on Robust, or the same secret on every region server |
+| Group and conference call moderation | `CallModerationEnabled` | `GroupVoiceEnabled` or `AdhocVoiceEnabled` |
 | Visibility feed (compute) | `VisibilityFeederEnabled` | spatial mixer, admin endpoint |
 | Visibility feed (send) | `VisibilityEmitEnabled` | feeder on |
 | Authority arming | `VisibilityArmingEnabled` | feeder and emit on |
 | Join capability | `JoinCapabilityEnabled` | spatial mixer, `JoinCapabilitySecret` |
-| Voice moderation | `VoiceModerationEnabled` | feeder on |
+| Voice moderation | `VoiceModerationEnabled` | stock plugin: nothing more; spatial mixer: feeder on |
+| Position feed | `PositionFeedEnabled` | spatial mixer at `vis_protocol` 3, feeder and emit on |
 | Voice connectors | `ConnectorsEnabled` | spatial mixer, NPC module |
 
-The call logic for the non-spatial features does not depend on the plugin, but it has only been
-exercised against a spatial mixer.
+The call logic for the non-spatial features does not depend on the plugin: avatar-to-avatar calls, group
+calls and conferences work with the stock AudioBridge and with a spatial mixer. With the stock AudioBridge, a
+switch that needs the spatial mixer is switched off at start with a warning. See [README.md](README.md).
 
 ## 2. Goals and non-goals
 
