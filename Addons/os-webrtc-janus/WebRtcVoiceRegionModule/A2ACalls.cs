@@ -193,12 +193,25 @@ namespace osWebRtcVoice
         /// Returns null when the call is unknown or over or the agent is not a party.
         /// </summary>
         public A2ASession MarkProvisioned(UUID sessionId, UUID agent, UUID originRegion, string viewerSession)
+            => MarkProvisioned(sessionId, agent, originRegion, viewerSession, out _);
+
+        /// <summary>
+        /// As above. <paramref name="becameActive"/> is true for the one join that seated the callee, which is the
+        /// join that moved the call from Invited to Active. The store decides it inside its own mutation (the engine's
+        /// first-seating outcome, also carried back by the grid session service), so joins that arrive together,
+        /// from one process or several, cannot each claim the change as they could by reading the call before and
+        /// after their own join.
+        /// </summary>
+        public A2ASession MarkProvisioned(UUID sessionId, UUID agent, UUID originRegion, string viewerSession, out bool becameActive)
         {
+            becameActive = false;
             INonSpatialSessions sessions = _sessions();
             if (sessions == null)
                 return null;
             SessionOutcome o = sessions.Accept(sessionId, agent, originRegion, viewerSession);
-            return o.Ok ? Live(o.Session) : null;
+            A2ASession s = o.Ok ? Live(o.Session) : null;
+            becameActive = s != null && o.Decision == SessionOutcome.Accepted && agent == s.Callee;
+            return s;
         }
 
         /// <summary>

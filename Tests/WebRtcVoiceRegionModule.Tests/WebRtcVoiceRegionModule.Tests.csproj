@@ -32,6 +32,7 @@
     <Compile Include="A2ACharacterisationTests.cs" />
     <Compile Include="A2ARegistry.cs" />
     <Compile Include="A2AGridCallTests.cs" />
+    <Compile Include="A2AActivationRaceTests.cs" />
     <Compile Include="A2AStoreUnavailableTests.cs" />
     <Compile Include="RingVerificationTests.cs" />
     <Compile Include="SessionStoreReportTests.cs" />
