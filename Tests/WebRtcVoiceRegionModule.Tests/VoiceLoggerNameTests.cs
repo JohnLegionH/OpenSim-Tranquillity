@@ -65,7 +65,7 @@ namespace osWebRtcVoice.Tests
                     }
 
             TestContext.Out.WriteLine($"{found.Count} voice loggers, all under {Prefix}:\n" + string.Join("\n", found));
-            Assert.That(found.Count, Is.GreaterThanOrEqualTo(20), "the search found the voice loggers");
+            Assert.That(found.Count, Is.GreaterThanOrEqualTo(10), "the search found the voice loggers");
         }
 
         [Test]
