@@ -27,15 +27,14 @@ namespace osWebRtcVoice.Tests
     {
         public const string Prefix = "osWebRtcVoice";
 
-        // One type from each voice assembly: the Janus service, the shared voice library, the region module, the service
-        // module and the visibility library.
+        // One type from each voice assembly: the Janus service, the shared voice library, the region module and the
+        // service module.
         private static readonly Assembly[] VoiceAssemblies =
         {
             typeof(JanusSession).Assembly,
             typeof(VoiceViewerSession).Assembly,
             typeof(WebRtcVoiceRegionModule).Assembly,
             typeof(WebRtcVoiceServiceModule).Assembly,
-            typeof(DeltaComputer).Assembly,
         };
 
         private static IEnumerable<Type> Types(Assembly assembly)
