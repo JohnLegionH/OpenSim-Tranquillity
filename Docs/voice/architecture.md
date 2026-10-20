@@ -119,8 +119,14 @@ works with the stock AudioBridge and with a spatial mixer implementing `janus.pl
 - **Avatar-to-avatar** (`A2AVoiceEnabled`): the viewer's `start p2p voice` records an invitation
   (session id is the viewer's XOR of the two agent ids); the caller's `call` returns credentials and,
   once, delivers an invitation to the callee; each party provisions with the channel and credentials
-  to enter a two-seat room. Invitations expire if unanswered and are held in memory on one region
-  server instance; a callee on another instance is refused. Media is always relayed through the
+  to enter a two-seat room. Invitations expire if unanswered and are held in memory on each region
+  server instance. A callee whose viewer is in a region hosted by another instance is rung through a
+  grid instant message. Under `SessionStoreMode = local` it is signed with `CarrierSecret`: that instance
+  records the call with the same credentials and delivers the invitation, so the callee's accept is admitted
+  there, and without a secret the callee is not rung. Under `grid` the receiving instance asks the session
+  service whether the call exists and the target is its callee, and uses the service's credentials; nothing is
+  signed or adopted. The callee joining, declining or hanging up reaches the caller's instance the same way,
+  and under `grid` is acted on only when the service says it is true. Media is always relayed through the
   mixer, never directly between viewers.
 - **Group voice** (`GroupVoiceEnabled`): requires the Groups module. Joining needs the group
   membership power, and speaking needs the voice power unless `GroupVoiceRequireVoicePower = false`.
@@ -213,8 +219,9 @@ The visibility feed always addresses `janus.plugin.slvoice`.
 - Avatar-to-avatar invitations, moderation state and the connector registry are in memory and are
   lost on restart. Call sessions are in the region server's memory, or with `SessionStoreMode = grid` in the
   grid server's (see [deployment.md](deployment.md)).
-- An avatar-to-avatar invitation is delivered only to a callee whose region is served by the caller's own
-  region server process.
+- An avatar-to-avatar invitation is delivered directly only to a callee whose root presence is in the caller's own
+  region server process. A callee who is root in another process is rung through a carrier message (signed with
+  `CarrierSecret` under `SessionStoreMode = local`, checked against the session service under `grid`).
 - Several message classes are defined but not used: a Janus `hangup` request, an AudioBridge
   `configure` request and its response.
 - Mixer-side behaviour (spatial rendering, per-connection diagnostics, an echo test, camera-position

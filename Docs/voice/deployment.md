@@ -19,10 +19,11 @@ Regions in the same process need no entry in `ControlPlaneTrustedHosts` for each
 
 Each process is a separate voice module with its own records. With the defaults (`SessionStoreMode = local`):
 
-- An avatar-to-avatar call rings the other person only if their region is served by the caller's process. With one
-  region per process that means the same region.
-- A group call or conference rings members on other processes only when `CarrierSecret` is set to the same value on
-  every region server.
+- A group call, a conference or an avatar-to-avatar call rings people on other processes only when `CarrierSecret`
+  is set to the same value on every region server.
+- Two people who call each other at the same instant from two processes both ring out, and an avatar-to-avatar call
+  whose two people leave in different processes can wait for the idle sweep (8 hours) in the process of the one who
+  left first.
 - The seat limit of a group call or conference counts per process: a limit of 50 can be reached once in each process.
 - A mute-all, a mute or a removal made on one process is a record of that process only.
 
@@ -30,12 +31,11 @@ Choose one of:
 
 1. **`SessionStoreMode = grid`** with the call session service on Robust (below). All processes share one record of every
    call: one seat count, one ring, moderation seen everywhere, and seats given back when a region restarts. No
-   `CarrierSecret` is needed. Recommended for a grid with more than one process that offers group calls or
-   conferences.
-2. **`CarrierSecret`** on every region server, with `SessionStoreMode = local`. Group and conference rings, and
-   conference text lines, are sent between processes as signed grid instant messages. Nothing runs on Robust.
-
-Neither changes avatar-to-avatar calls: they ring only inside one process.
+   `CarrierSecret` is needed, and neither avatar-to-avatar limit above applies. Recommended for a grid with more
+   than one process that offers calls, group calls or conferences.
+2. **`CarrierSecret`** on every region server, with `SessionStoreMode = local`. Group, conference and
+   avatar-to-avatar rings, the answers of an avatar-to-avatar call, and conference text lines, are sent between
+   processes as signed grid instant messages. Nothing runs on Robust.
 
 If your regions are neighbours on different hosts, each region server needs the other hosts' addresses in
 `[Network] ControlPlaneTrustedHosts`, as for any region server (see `Docs/security/Hardening.md`). The voice addon does
@@ -79,7 +79,9 @@ The two ways to share calls between processes, and what each limit means for use
 | | `local`, no `CarrierSecret` | `local` with `CarrierSecret` | `grid` |
 |---|---|---|---|
 | Avatar-to-avatar call, callee on the caller's process | Rings | Rings | Rings |
-| Avatar-to-avatar call, callee on another process | Not rung | Not rung | Not rung |
+| Avatar-to-avatar call, callee on another process | Not rung | Rung, signed; the callee's join, decline and hang-up are carried back | Rung; the receiving region asks the service whether the call is genuine, and whether each answer is true |
+| Two people calling each other at the same instant, from two processes | Not rung | Both ring out | One call; both can join |
+| An avatar-to-avatar call whose two people leave in different processes | Not tracked across processes | A record can wait for the idle sweep (8 hours) in the process of the one who left first | Ended at once |
 | Group call or conference ring to a member on another process | Not sent; one that arrives is refused | Sent, signed; received if the signature is valid | Sent; the receiving region asks the service whether it is genuine |
 | Conference text to a member on another process | Not delivered | Delivered, signed | Delivered, signed with a key the service gives only to the conference's members |
 | Seat limit of a group call or conference | Per process | Per process | One count for the grid |

@@ -6,8 +6,8 @@
  */
 
 /*
- * Authentication for the two cross-process voice carriers (the ring, LGVRING1, and the conference
- * text line, LGVTEXT1).
+ * Authentication for the cross-process voice carriers: the group and conference ring (LGVRING1), the
+ * conference text line (LGVTEXT1) and the avatar-to-avatar carriers (LGVA2A1).
  *
  * Both travel as grid instant messages. The grid IM endpoint sits on the region's public HTTP port and
  * does not authenticate its callers, so on its own a carrier proves nothing about who sent it. Each
@@ -75,6 +75,12 @@ namespace osWebRtcVoice.NonSpatial
         public const string KindRing = "ring";
         public const string KindText = "text";
 
+        /// <summary>
+        /// The kinds of the avatar-to-avatar carriers: a ring, the callee's join, a leave and a decline. Each
+        /// is its own kind, so the MAC of one can never be replayed as another.
+        /// </summary>
+        public const string KindA2APrefix = "a2a-";
+
         public const string NoSecret = "no-secret";
         public const string MissingMac = "missing-mac";
         public const string MalformedMac = "malformed-mac";
@@ -118,28 +124,28 @@ namespace osWebRtcVoice.NonSpatial
         /// The start-up line about <c>[WebRtcVoice] CarrierSecret</c>. <paramref name="problem"/> is the result of
         /// <see cref="CheckSecret"/>; <paramref name="gridStore"/> is true when SessionStoreMode is grid. With the
         /// grid session service the receiving region asks the service whether a ring is genuine and the service keeps
-        /// each conference's text key, so rings and conference text cross processes without a CarrierSecret. With the
+        /// each conference's text key, so rings, avatar-to-avatar calls and conference text cross processes without a CarrierSecret. With the
         /// in-process store a carrier needs the secret. The secret itself is never part of the line.
         /// </summary>
         public static (bool IsError, string Text) StartupLine(string problem, bool gridStore)
         {
             if (problem == null)
-                return (false, "cross-process voice carriers on: group and conference rings and "
-                    + "conference text are signed with [WebRtcVoice] CarrierSecret");
+                return (false, "cross-process voice carriers on: group and conference rings, "
+                    + "conference text and avatar-to-avatar calls are signed with [WebRtcVoice] CarrierSecret");
             if (gridStore)
                 return problem == "too-short"
                     ? (true, "[WebRtcVoice] CarrierSecret is shorter than " + MinSecretLength + " characters and is refused; "
                         + "it is not needed with SessionStoreMode grid")
                     : (false, "cross-process voice carriers: [WebRtcVoice] CarrierSecret is not set and is not needed "
-                        + "with SessionStoreMode grid. Rings and conference text cross processes, and the grid session "
-                        + "service verifies them");
+                        + "with SessionStoreMode grid. Rings, avatar-to-avatar calls and conference text cross processes, "
+                        + "and the grid session service verifies them");
             return problem == "too-short"
                 ? (true, "[WebRtcVoice] CarrierSecret is shorter than " + MinSecretLength + " characters and is refused; "
                     + "cross-process voice carriers are off")
                 : (false, "cross-process voice carriers are off: [WebRtcVoice] CarrierSecret is not set. "
                     + "None is sent and every incoming one is refused. A grid that runs regions in more than one process "
-                    + "sets the same CarrierSecret (at least " + MinSecretLength + " characters) on every region server for group and "
-                    + "conference calls to ring across them");
+                    + "sets the same CarrierSecret (at least " + MinSecretLength + " characters) on every region server for group, "
+                    + "conference and avatar-to-avatar calls to ring across them");
         }
 
         /// <summary>

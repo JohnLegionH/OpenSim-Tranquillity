@@ -109,7 +109,9 @@ others cannot (see [deployment.md](deployment.md)).
 the gateway reachable.
 
 **The Call button does nothing.** `A2AVoiceEnabled` is off, or the other person is on a region served by another region server
-process (see [deployment.md](deployment.md)).
+process and neither `CarrierSecret` (the same on every region server) nor `SessionStoreMode = grid` is set (see
+[deployment.md](deployment.md)). The carrier steps are logged at Debug as `[A2A XHOST]`; a refused one is logged at
+Warning with the reason.
 
 **A group or conference call does not ring a member on another process.** In `local` mode set the same `CarrierSecret` on
 every region server, or use `SessionStoreMode = grid`. Look for `carrier refused` lines on the receiving region and

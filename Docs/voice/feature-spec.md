@@ -111,8 +111,10 @@ a proximity notice from a voiced connector. The addon creates rooms with `record
 
 Two-party calls in a non-spatial room. An invitation is recorded when the caller opens a voice session
 with another avatar, the caller's call request returns credentials and delivers one invitation to the
-callee, and both parties then provision with those credentials. The callee must be on the same region
-server instance. Unanswered invitations expire.
+callee, and both parties then provision with those credentials. A callee on another region server
+process is rung through a grid instant message: signed with `CarrierSecret` under `SessionStoreMode = local`,
+checked against the session service under `grid`. The callee's join, decline and hang-up are carried back the
+same way. Unanswered invitations expire.
 
 ### 4.3 Group voice and conferences (Implemented, off by default)
 

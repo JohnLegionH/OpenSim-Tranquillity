@@ -64,7 +64,8 @@ public partial class WebRtcVoiceRegionModule
     // process, or in the grid session service when SessionStoreMode is grid. Shared by every scene this module
     // serves; thread-safe because ChatSessionRequest arrives on cap HTTP threads. The store is read through
     // m_nonSpatial on every use, so these follow whichever store was set up. The invitation itself is delivered
-    // only to a callee on this instance.
+    // only to a callee on this instance; a callee who is root in another process is rung through the carrier
+    // (WebRtcVoiceRegionModule.A2ACarrier.cs).
     private A2ACalls m_a2aCalls;
     private A2ACalls A2A => m_a2aCalls ??= new A2ACalls(() => m_nonSpatial);
 
@@ -165,7 +166,7 @@ public partial class WebRtcVoiceRegionModule
     private bool m_a2aVoiceEnabled = DefaultA2AVoiceEnabled;
 
     // Scenes this shared module serves, for callee resolution on THIS instance (the group
-    // module's m_sceneList / GetActiveClient pattern).
+    // module's m_sceneList / GetActiveClient pattern). A callee in another process is reached by the carrier.
     private readonly List<Scene> m_scenes = new();
 
     /// <summary>
@@ -200,6 +201,8 @@ public partial class WebRtcVoiceRegionModule
         // the call ends only when the other party is gone too (both-logout semantics), and a
         // later admitted provision seats the party again, so this is reversible.
         scene.EventManager.OnClientClosed += (clientID, s) => OnVoiceClientClosed(scene, clientID, s);
+        // Steps of a call placed in or answered in another region-server process.
+        scene.EventManager.OnIncomingInstantMessage += OnIncomingA2ACarrier;
     }
 
     // A client closed: drop its avatar-to-avatar records, then release its group and conference seats.
@@ -220,14 +223,10 @@ public partial class WebRtcVoiceRegionModule
         {
             m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} session-id={SessionId} region={RegionName} decision=removed-client-closed",
                 logHeader, clientID, gone.SessionId, s?.Name ?? scene.Name);
-            // Tell the remaining party the departed one LEFT (if reachable here).
-            List<Scene> scenesSnap;
-            lock (m_scenes)
-                scenesSnap = new List<Scene>(m_scenes);
-            string line = A2AAgentListDelivery.SendLeave(scenesSnap, gone, clientID, null);
-            if (line != null)
-                m_log.LogDebug("{LogHeader} {Line}", logHeader, line);
+            // Tell the remaining party the departed one LEFT, here or in the process where it is root.
+            SendA2ALeave(gone, clientID, closedIn);
         }
+        SendA2ALeaveAcrossProcesses(left, clientID, closedIn);
         ReleaseSeatsOnClientClosed(scene, clientID, s, left);
     }
 
@@ -261,14 +260,9 @@ public partial class WebRtcVoiceRegionModule
             // llimview.cpp:4366-4382). Not re-sent on a reconnect re-provision of an already-
             // Active record. This is the participant/moderation surface only; the caller's
             // connected state comes from mixer presence.
+            // The caller may be root in another process; its update then travels as a signed join.
             if (!wasActive && s != null && s.State == A2ASessionState.Active)
-            {
-                List<Scene> scenes;
-                lock (m_scenes)
-                    scenes = new List<Scene>(m_scenes);
-                foreach (string line in A2AAgentListDelivery.SendActivePair(scenes, s, null))
-                    m_log.LogDebug("{LogHeader} {Line}", logHeader, line);
-            }
+                SendA2AActivePair(s, scene);
         }
         else if ((admission.Kind == ProvisionKind.Group || admission.Kind == ProvisionKind.Adhoc)
                  && resp.TryGetString("viewer_session", out string groupVs) && !string.IsNullOrEmpty(groupVs))
@@ -288,13 +282,9 @@ public partial class WebRtcVoiceRegionModule
             {
                 m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} session-id={SessionId} viewer_session={ViewerSession} decision=removed-both-logout",
                     logHeader, agentID, gone.SessionId, a2aVs);
-                List<Scene> scenes;
-                lock (m_scenes)
-                    scenes = new List<Scene>(m_scenes);
-                string line = A2AAgentListDelivery.SendLeave(scenes, gone, agentID, null);
-                if (line != null)
-                    m_log.LogDebug("{LogHeader} {Line}", logHeader, line);
+                SendA2ALeave(gone, agentID, scene);
             }
+            SendA2ALeaveAcrossProcesses(left, agentID, scene);
 
             ReleaseGroupSeatsOnLogout(agentID, a2aVs, left);
         }
@@ -435,7 +425,8 @@ public partial class WebRtcVoiceRegionModule
 
         // "call" produced an invitation for the other party. Deliver it as a generic
         // ChatterBoxInvitation event (BuildEvent + Enqueue) to the callee on THIS instance; an
-        // unreachable callee (offline / another region server) gets nothing and the caller rings out.
+        // unreachable callee (offline, or in another region server with no carrier secret set) gets nothing and the
+        // caller rings out. A callee whose root presence is in another process is rung through the signed carrier.
         // Never affects this request's outcome: the caller's credentials are returned regardless.
         if (outcome.Invite is not null)
         {
@@ -443,6 +434,7 @@ public partial class WebRtcVoiceRegionModule
             lock (m_scenes)
                 scenes = new List<Scene>(m_scenes);
             string decision = A2AInviteDelivery.Deliver(scenes, outcome.Invite.Callee, outcome.Invite.Body, null, out string calleeRegion);
+            decision = RingA2ACalleeAcrossProcesses(outcome.Invite, sp.Name, scene, decision);
             m_log.LogDebug("{LogHeader} {Line}", logHeader,
                 A2AInviteDelivery.Line(outcome.Invite.Callee, outcome.Invite.Caller, outcome.Invite.SessionId, calleeRegion, decision));
             // One ring per Invited record. Marked only on a confirmed enqueue, so a
@@ -450,6 +442,10 @@ public partial class WebRtcVoiceRegionModule
             if (decision == A2AInviteDelivery.DecisionSent)
                 A2A.MarkInviteSent(outcome.Invite.SessionId);
         }
+
+        // The callee turned the call down: the caller's viewer is told, so the call ends on its screen.
+        if (outcome.Declined is not null && outcome.Declined.Callee == agentID)
+            SendA2ADeclined(outcome.Declined, scene);
 
         if (outcome.Reply is not null)
         {

@@ -154,7 +154,12 @@ The shipped `os-webrtc-janus.ini` lists it commented out with a public server as
 `A2AVoiceEnabled`. Handles the viewer's "call" and "start p2p voice" requests: the region records the
 invitation, delivers it to the callee, and provisions a two-party voice session for the pair. A call is private
 to its two avatars: only they, holding the call's token, are admitted to its room. With the switch off the chat
-session handler behaves as it does without the feature, and the Call button does not work.
+session handler behaves as it does without the feature, and the Call button does not work. When the callee is in a
+region hosted by another process, the call rings there through a carrier message. With the default
+`SessionStoreMode = local` it is signed with `CarrierSecret`, set to the same value on every region server (see
+configuration); without it a callee in another process is not rung and the caller's call rings out. With
+`SessionStoreMode = grid` no secret is needed: the receiving region asks the session service whether the call exists
+and whether the join, decline or hang-up it was told about is true, and acts on the service's answer.
 
 The invitation is delivered to a callee whose region is served by the same region server process as the caller. A
 callee on a region of another process is not rung, in either `SessionStoreMode`.
@@ -243,7 +248,10 @@ by commented-out keys.
 - **Call sessions are held in memory.** Call invitations, group and conference seats, and moderation state are not
   stored in a database. With `SessionStoreMode = local` they are lost when the region server process restarts; with
   `grid` they are lost when the grid server restarts. See [deployment.md](deployment.md).
-- **Avatar-to-avatar calls ring only inside one process.** See above.
+- **Avatar-to-avatar calls across processes, with `SessionStoreMode = local`:** two people calling each other at the
+  same instant from two processes both ring out (each process already holds a call of its own for the pair), and a
+  call whose two people leave in different processes can wait for the idle sweep (8 hours) in the process of the one
+  who left first. `SessionStoreMode = grid` has neither: one record serves both processes.
 - **Only the slvoice mixer enforces visibility.** With the stock plugin every listener in a room hears every
   source, whatever the visibility switches say.
 - **The stock plugin has no spatial audio.** It mixes a room flat.
