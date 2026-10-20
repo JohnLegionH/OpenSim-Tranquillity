@@ -140,6 +140,8 @@ public partial class WebRtcVoiceRegionModule : ISharedRegionModule
     {
         StopNonSpatialMaintenance();
         StopAllVisibilityServices();
+        m_refusalLog.Dispose();
+        m_removalLog.Dispose();
     }
 
     // ISharedRegionModule.Name

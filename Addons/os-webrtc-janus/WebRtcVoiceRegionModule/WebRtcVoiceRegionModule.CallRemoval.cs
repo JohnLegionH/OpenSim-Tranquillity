@@ -41,15 +41,17 @@ public partial class WebRtcVoiceRegionModule
     public const string ForceCloseReasonKey = "close_on_no_ability";
 
     // Replays a removal refusal to the viewer's immediate retries, per (member, call).
-    private ProvisionRefusalCache m_removalRefusals = new ProvisionRefusalCache(TimeSpan.FromSeconds(ProvisionRefusalCache.DefaultSeconds));
+    private readonly RefusalEpisodeLog m_removalLog = new RefusalEpisodeLog(m_log, logHeader + " [CALL REMOVAL]");
+    private ProvisionRefusalCache m_removalRefusals => m_removalLog.Cache;
 
     /// <summary>What a removal or a readmission did.</summary>
     public readonly record struct CallRemovalResult(bool Ok, string Decision, bool Changed, int Dropped, string Note);
 
     private void InitialiseCallRemovalCache()
     {
-        m_removalRefusals = new ProvisionRefusalCache(TimeSpan.FromSeconds(
+        m_removalLog.SetWindow(TimeSpan.FromSeconds(
             Math.Max(0, m_Config.GetInt("RefusalCacheSeconds", ProvisionRefusalCache.DefaultSeconds))));
+        m_removalLog.Start();
     }
 
     // The refusal cache is keyed by a UUID; a call's channel string is folded to one.
@@ -157,7 +159,7 @@ public partial class WebRtcVoiceRegionModule
         SessionOutcome recorded = m_nonSpatial.Moderate(sessionId, by, ModerationOp.Remove, target, false);
         if (!recorded.Ok)
             return new CallRemovalResult(false, recorded.Decision, false, 0, null);
-        m_removalRefusals.Clear(target, RemovalCacheKey(before.RoomKey));
+        m_removalLog.Ended(target, RemovalCacheKey(before.RoomKey), "the member was let back in");
         if (recorded.Decision == SessionOutcome.ModerationChanged)
             m_log.LogInformation("{LogHeader} [CALL REMOVAL] session={Session} by={By} target={Target} readmitted", logHeader, before.SessionId, by, target);
         return new CallRemovalResult(true, recorded.Decision, recorded.Decision == SessionOutcome.ModerationChanged, 0, null);
@@ -166,10 +168,9 @@ public partial class WebRtcVoiceRegionModule
     // A provision into a call was refused because the member was removed: the refusal is kept for the viewer's retries.
     private void NoteRemovalRefusal(UUID agentID, string channel, string decision, Scene scene)
     {
-        int suppressed = m_removalRefusals.RecordRefusal(agentID, RemovalCacheKey(channel), decision);
-        if (suppressed > 0)
-            m_log.LogInformation("{LogHeader} [CALL REMOVAL] provision from {Agent} refused again ({Decision}, cached, {Suppressed} retries suppressed)",
-                logHeader, agentID, decision, suppressed);
+        UUID key = RemovalCacheKey(channel);
+        int suppressed = m_removalRefusals.RecordRefusal(agentID, key, decision);
+        m_removalLog.Refused(agentID, key, string.Empty, $" ({decision})", suppressed);
     }
 
     // The service reports that a seat this region holds belongs to a member who was removed from the call elsewhere.
@@ -185,11 +186,14 @@ public partial class WebRtcVoiceRegionModule
 
     // A group member who no longer holds the powers to be in the call (or is no longer in the group) is dropped from it.
     // This is not a removal: it leaves no record, and the member can come back when the powers do.
-    private bool DropIfCallPowerLost(NonSpatialVoiceSession session, UUID agent)
+    // A pass over many members passes one memo's lookups so the groups service is asked once for each member.
+    private bool DropIfCallPowerLost(NonSpatialVoiceSession session, UUID agent, GroupStandingMemo standing = null)
     {
         if (!m_groupVoice.IsUsable || session.Type != NonSpatialSessionType.Group)
             return false;
-        if (m_groupVoice.IsMember(agent, session.Owner) && m_groupVoice.HasRequiredPowers(agent, session.Owner))
+        Func<UUID, UUID, bool> isMember = standing is null ? m_groupVoice.IsMember : standing.IsMember;
+        Func<UUID, UUID, ulong> powers = standing is null ? m_groupVoice.Powers : standing.Powers;
+        if (isMember(agent, session.Owner) && (powers(agent, session.Owner) & m_groupVoice.RequiredMask) == m_groupVoice.RequiredMask)
             return false;
         m_nonSpatial.Depart(session.SessionId, agent, DepartureReason.PowerLost);
         int dropped = DropMemberFromCallMedia(session, agent, ForceCloseReasonKey);

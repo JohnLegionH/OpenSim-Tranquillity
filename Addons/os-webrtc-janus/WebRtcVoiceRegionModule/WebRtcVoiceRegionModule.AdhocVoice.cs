@@ -113,7 +113,7 @@ public partial class WebRtcVoiceRegionModule
             // A non-member's SessionSend for this voice session is refused AND LOGGED. Warning,
             // not debug: a stranger addressing a conference id is worth seeing without turning
             // debug on.
-            m_log.LogWarning("{LogHeader} {Line}", logHeader,
+            WarnRefusal("conference-text-" + decision, sender, () => logHeader + " " +
                 AdhocTextSession.Line(sender, sessionId, decision,
                     "region=\"" + (client?.Scene?.RegionInfo?.RegionName ?? string.Empty) + "\""));
             return;
@@ -272,12 +272,7 @@ public partial class WebRtcVoiceRegionModule
             presence = sc.PresenceService;
             if (presence is not null) break;
         }
-        List<UUID> online = GroupVoiceInvite.OnlineOnly(candidates, agent =>
-        {
-            if (presence is null) return UUID.Zero;
-            OpenSim.Services.Interfaces.PresenceInfo[] found = presence.GetAgents(new[] { agent.ToString() });
-            return found is { Length: > 0 } ? found[0].RegionID : UUID.Zero;
-        });
+        List<UUID> online = OnlineMembers(presence, candidates);
 
         foreach (UUID target in online)
         {
@@ -328,7 +323,7 @@ public partial class WebRtcVoiceRegionModule
                 m_log.LogDebug("{LogHeader} {Line}", logHeader,
                     AdhocTextTransport.Line(text.Target, text.SessionId, text.Decision));
             else
-                m_log.LogWarning("{LogHeader} {Line}", logHeader,
+                WarnRefusal("conference-text-carrier-" + text.Decision, text.Sender, () => logHeader + " " +
                     AdhocTextTransport.Line(text.Target, text.SessionId, text.Decision,
                         text.Decision == AdhocTextSession.DecisionNotMember ? "from=" + text.Sender : null));
             return;
@@ -465,12 +460,7 @@ public partial class WebRtcVoiceRegionModule
             if (presence is not null) break;
         }
         int before = candidates.Count;
-        List<UUID> online = GroupVoiceInvite.OnlineOnly(candidates, agent =>
-        {
-            if (presence is null) return UUID.Zero;          // no presence service: send nothing
-            OpenSim.Services.Interfaces.PresenceInfo[] found = presence.GetAgents(new[] { agent.ToString() });
-            return found is { Length: > 0 } ? found[0].RegionID : UUID.Zero;
-        });
+        List<UUID> online = OnlineMembers(presence, candidates);
         if (online.Count != before)
             m_log.LogDebug("{LogHeader} {Line}", logHeader,
                 AdhocVoiceInvite.Line(UUID.Zero, session.SessionId, GroupVoiceInvite.DecisionOffline,
