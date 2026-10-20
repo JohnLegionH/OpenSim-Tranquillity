@@ -69,6 +69,7 @@
     <Compile Include="CarrierAuthTests.cs" />
     <Compile Include="CrossProcessHarness.cs" />
     <Compile Include="A2ARingRootOnlyTests.cs" />
+    <Compile Include="A2ACrossProcessTests.cs" />
     <Compile Include="GroupRingRootOnlyTests.cs" />
     <Compile Include="AdhocRingRootOnlyTests.cs" />
     <Compile Include="AdhocTextCrossProcessTests.cs" />
