@@ -48,6 +48,7 @@
     <Compile Include="A2AProvisionAdmission.cs" />
     <Compile Include="NonSpatial/NonSpatialMaintenance.cs" />
     <Compile Include="NonSpatial/GroupVoicePolicy.cs" />
+    <Compile Include="NonSpatial/GroupStandingMemo.cs" />
     <Compile Include="NonSpatial/GroupVoiceChatSession.cs" />
     <Compile Include="NonSpatial/NonSpatialProvisionAdmission.cs" />
     <Compile Include="NonSpatial/GroupVoiceInvite.cs" />
