@@ -232,8 +232,7 @@ public partial class WebRtcVoiceRegionModule
             // without error_code) leaves the record as it was. The callee's admitted provision is
             // the accept (Invited -> Active).
             string vs = provVs;
-            bool wasActive = admission.Session.State == A2ASessionState.Active;
-            A2ASession s = m_a2aSessions.MarkProvisioned(admission.Session.SessionId, agentID, vs);
+            A2ASession s = m_a2aSessions.MarkProvisioned(admission.Session.SessionId, agentID, vs, out bool becameActive);
             // The mixer room the service derived (grid id + channel + type) rides on the
             // success map as `room`; surfaced here so an A2A join is auditable end to end.
             m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} session-id={SessionId} viewer_session={ViewerSession} room={Room} state={State} decision=provisioned",
@@ -247,7 +246,7 @@ public partial class WebRtcVoiceRegionModule
             // Active record. This is the participant/moderation surface only; the caller's
             // connected state comes from mixer presence.
             // The caller may be root in another process; its update then travels as a signed join.
-            if (!wasActive && s != null && s.State == A2ASessionState.Active)
+            if (becameActive)
                 SendA2AActivePair(s, scene);
         }
         else if ((admission.Kind == ProvisionKind.Group || admission.Kind == ProvisionKind.Adhoc)
