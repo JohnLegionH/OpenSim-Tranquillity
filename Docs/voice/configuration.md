@@ -3,22 +3,29 @@
 Every key read by the `os-webrtc-janus` addon, with the default the code uses when the key is absent.
 The shipped file is `Addons/os-webrtc-janus/os-webrtc-janus.ini`; copy it into the `config` folder
 (or whatever `[Startup] inidirectory` names) of the region server. For an overview, a minimal set up
-and the feature descriptions, see [README.md](README.md).
+and the feature descriptions, see [README.md](README.md). Deployment choices are in
+[deployment.md](deployment.md).
 
 Conventions used below:
 
 - "Slvoice mixer" means a Janus plugin that implements the `janus.plugin.slvoice` protocol (see the README).
-  The stock `janus.plugin.audiobridge` plugin does not understand the features marked this way.
+  The stock `janus.plugin.audiobridge` plugin does not understand the features marked this way. When the plugin
+  is the stock one, each switch marked "slvoice mixer" that is set to `true` logs a warning at start naming the
+  switch and the plugin, and is treated as `false`.
 - Booleans accept `true` / `false`.
 - Keys that are commented out in the shipped file show their default and behave as if absent.
 - Secrets are never logged. Do not commit real tokens or secrets to a repository.
+- A value outside its usable range is replaced by the default (or the nearest usable value) where the table says
+  so; the code does not stop at start-up for these.
 
 ## Where each section is read
 
 | Section | Read by |
 |---|---|
 | `[WebRtcVoice]` | The region server (all feature switches), and Robust when it hosts the grid voice service (`Enabled`, `MessageDetails`, `SpatialVoiceService`, `NonSpatialVoiceService`, `LocalServiceModule`, `AllowNpcVoice`, `RefusalCacheSeconds`). |
-| `[JanusWebRtcVoice]` | Whichever process talks to Janus: the region server for a region-local Janus, Robust for the grid service. The region server also reads `JanusGatewayAdminURI`, `AdminAPIToken` and `AdminTimeoutMs` from its own copy of this section for visibility emission, even when other voice traffic goes through Robust. |
+| `[JanusWebRtcVoice]` | Whichever process talks to Janus: the region server for a region-local Janus, Robust for the grid service. The region server also reads `PluginName`, `JanusGatewayAdminURI`, `AdminAPIToken`, `AdminTimeoutMs` and `JanusGatewayCACertificateFile` from its own copy of this section, even when other voice traffic goes through Robust. |
+| `[WebRtcVoiceSessionService]` | Robust (the grid server), only when `VoiceSessionConnector` is in its `[ServiceList]`. See [the call session service](#webrtcvoicesessionservice-grid-server). |
+| `[Network]` | `AuthType`, `HttpAuthUsername` and `HttpAuthPassword` for the call session service, on both sides; the voice sections override it. |
 | `[VoiceConnector.<name>]` | The region server, only when `ConnectorsEnabled = true`. |
 
 ## [WebRtcVoice]
@@ -38,7 +45,7 @@ Conventions used below:
 
 | Key | Default | Meaning | Needs |
 |---|---|---|---|
-| `StunServers` | empty | Comma-separated full ICE URIs (scheme included, no quotes), e.g. `stun:stun.l.google.com:19302`. Stock viewers need one to connect from outside the grid's network. Advertised to viewers as the `stun-servers` simulator feature. Empty: the feature is not added by the addon. Whether the addon's value or the core server's own `StunServers` setting wins when both are set has not been verified. | Works with either plugin. |
+| `StunServers` | empty | Comma-separated full ICE URIs (scheme included, no quotes), e.g. `stun:stun.l.google.com:19302`. Stock viewers need one to connect from outside the grid's network. Advertised to viewers as the `stun-servers` simulator feature. Empty: the addon adds nothing. If the core server's own `StunServers` setting (in `[Const]`, `[Startup]`, `[GridInfo]` or `[SimulatorFeatures]`) is also set and holds at least one valid host, the core server's value is the one viewers receive, because it is written after the addon's. | Works with either plugin. |
 | `RefusalCacheSeconds` | `5` | After a voice provision is refused or fails, the same answer is replayed to that viewer's immediate retries for this many seconds without repeating the estate and parcel checks or calling Janus. `0` (or a negative value) turns the cache off. | - |
 | `AllowNpcVoice` | `false` | Allow any NPC presence to obtain voice. When `false`, an NPC is refused unless it is a registered connector identity (see `ConnectorsEnabled`). Real avatars are never affected. | - |
 
@@ -46,12 +53,35 @@ Conventions used below:
 
 | Key | Default | Meaning | Needs |
 |---|---|---|---|
-| `A2AVoiceEnabled` | `false` | Handle the viewer's "call" and "start p2p voice" chat session requests. Off: the chat session handler answers as it does without the feature. | Verified only against the slvoice mixer. |
-| `GroupVoiceEnabled` | `false` | Group voice sessions. Membership and powers are looked up through the region's Groups module. | Groups module. Verified only against the slvoice mixer. |
+| `A2AVoiceEnabled` | `false` | Handle the viewer's "call" and "start p2p voice" chat session requests. Off: the chat session handler answers as it does without the feature. | Works with either plugin. |
+| `GroupVoiceEnabled` | `false` | Group voice sessions. Membership and powers are looked up through the region's Groups module. | Groups module. Works with either plugin. |
 | `GroupVoiceRequireVoicePower` | `true` | Require the group role power `GP_SESSION_VOICE` as well as `GP_SESSION_JOIN`. `false` requires join only. | `GroupVoiceEnabled`. |
-| `GroupVoiceCap` | `50` | Largest number of seats in one group session. Values above 110 are lowered to 110 (the mixer's room limit as mirrored in the code); values below 2 are raised to 2; 0 or negative means 50. | `GroupVoiceEnabled`. |
-| `AdhocVoiceEnabled` | `false` | Ad-hoc voice and conference text ("start conference"). Off: "start conference" gets an empty 200 reply, as without the feature. | Groups module for the conference text session. Verified only against the slvoice mixer. |
-| `CarrierSecret` | unset | Signs the messages that carry group and conference rings, and conference text lines, between region servers running in different processes. Unset: nothing is sent across processes and every such message that arrives is refused (calls between regions of one process are unaffected). A value under 32 characters is refused at startup and leaves them off. A grid that runs regions in more than one process must set the same value on every region server for group and conference calls to ring across them. Messages older than about a minute, repeated, unsigned or wrongly signed are refused. Separate from the join-capability secret. | `GroupVoiceEnabled` or `AdhocVoiceEnabled`. |
+| `GroupVoiceCap` | `50` | Largest number of seats in one group session. Values above 110 are lowered to 110 (the spatial mixer's room limit, kept for both plugins); values below 2 are raised to 2; 0 or negative means 50. | `GroupVoiceEnabled`. |
+| `AdhocVoiceEnabled` | `false` | Ad-hoc voice and conference text ("start conference"). Off: "start conference" gets an empty 200 reply, as without the feature. | Groups module for the conference text session. Works with either plugin. |
+
+### Call sessions across region server processes
+
+A group call, a conference or an avatar-to-avatar call is a session. By default (`SessionStoreMode = local`) each
+region server process keeps its own sessions. See [deployment.md](deployment.md) for what that means and how to
+choose.
+
+| Key | Default | Meaning | Needs |
+|---|---|---|---|
+| `CarrierSecret` | unset | Signs the messages that carry group and conference rings, and conference text lines, between region servers running in different processes. Unset: nothing is sent across processes and every such message that arrives is refused (calls between regions of one process are unaffected). A value under 32 characters is refused at startup and leaves them off. A grid that runs regions in more than one process and keeps `SessionStoreMode = local` must set the same value on every region server for group and conference calls to ring across them. Messages older than 60 seconds (clock difference allowed: 30 seconds), repeated, unsigned or wrongly signed are refused. With `SessionStoreMode = grid` it is not needed; a region that sets it anyway also signs rings and requires the signature on them. Separate from the join-capability secret. | `GroupVoiceEnabled` or `AdhocVoiceEnabled`. |
+| `MaxNonSpatialSessions` | `5000` | Most sessions of all kinds one region server process holds at once. A start beyond it is refused. A value below 1 reads as the default. Used only in `local` mode; in `grid` mode the service's `MaxSessions` applies. | `local` mode. |
+| `MaxSessionsPerAgent` | `20` | Most live sessions one agent may have started. A start beyond it is refused. A value below 1 reads as the default. `local` mode only. | `local` mode. |
+| `ConferenceRequestBurst` | `5` | Requests one agent may make back to back to "start conference" and "invite" (one shared allowance). A value below 1 reads as the default. `local` mode only. | `local` mode. |
+| `ConferenceRequestRefillSeconds` | `10` | After a burst, one more request is allowed every this many seconds. A value of 0 or below reads as the default. `local` mode only. | `local` mode. |
+| `SessionStoreMode` | `local` | `local`: each region server process keeps its own sessions. `grid`: sessions are kept by the call session service on Robust, so every process shares one record of each call. Any other value logs an error and keeps `local`. Set it the same on every region server. | `grid`: the service configured on Robust. |
+| `SessionStoreServerURI` | empty | Required with `grid`: the base address of the Robust server that hosts the service, for example `http://robust.example.org:8003` (the private port). With `grid` and no address, an error is logged and `local` is kept. | `grid`. |
+| `AuthType`, `HttpAuthUsername`, `HttpAuthPassword` | `None`, empty, empty | Required with `grid`: the service accepts only HTTP basic authentication. Set them here (or in `[Network]`; this section wins) to the values of `[WebRtcVoiceSessionService]` on Robust. The password must be at least 32 characters. Without them the region logs an error and its calls are refused. Keep the password out of version control. | `grid`. |
+| `SessionStoreTimeoutMs` | `3000` | Milliseconds to wait for the service before a request is refused. A value under 100 reads as the default. | `grid`. |
+| `SessionSeatRenewSeconds` | `60` | Seconds between a region telling the service which seats it still holds. The service releases a seat that has not been renewed for its `SeatLeaseSeconds` (180), so keep this at a third of that or less. A value under 5 reads as the default. | `grid`. |
+| `SessionStoreOutboxMax` | `256` | Departures (a viewer leaving a call) kept while the service cannot be reached, and sent when it answers again. A value below 1 reads as the default. | `grid`. |
+| `SessionStoreOutboxSeconds` | `60` | Seconds a kept departure is held before it is given up. A given-up seat is returned by the seat lease. A value below 1 reads as the default. | `grid`. |
+| `SessionStoreBreakerFailures` | `5` | Calls with no answer within `SessionStoreBreakerWindowSeconds` that open the circuit breaker. A value below 1 reads as the default. | `grid`. |
+| `SessionStoreBreakerWindowSeconds` | `10` | Window for the failures above. | `grid`. |
+| `SessionStoreBreakerOpenSeconds` | `5` | Seconds the breaker then refuses calls at once, without waiting out the timeout; then one call is tried. | `grid`. |
 
 ### Visibility (who may hear whom)
 
@@ -62,21 +92,26 @@ Conventions used below:
 | `VisibilityTickMs` | `250` | Milliseconds between visibility recomputations. | Feeder. |
 | `VisibilityRoomSendConcurrency` | `4` | Number of rooms addressed concurrently within one batch send. | Emission. |
 | `VisibilityArmingEnabled` | `false` | Create spatial rooms declaring the sim as their visibility authority (with epochs and heartbeats). The mixer withholds audio from a room whose authority goes silent. Takes effect only when the feeder and emission are also on. | Slvoice mixer; feeder; emission. |
-| `PositionFeedEnabled` | `false` | Send the mixer each voice participant's position as the region sees it (`peer_pos`, see the mixer feed protocol, section 6.6), so a viewer's own claim can be compared with it. Nothing is computed or sent while this is off. A mixer that does not advertise `vis_protocol` 3 is sent nothing. On the stock plugin it logs a warning at start and stays off. | Slvoice mixer at `vis_protocol` 3; feeder; emission. |
-| `PositionFeedMode` | `observe` | `observe` or `enforce`. `enforce` is accepted but not active yet; positions are sent in observe mode. | `PositionFeedEnabled`. |
-| `PositionFeedTickMs` | `500` | Milliseconds between position evaluations. | `PositionFeedEnabled`. |
+| `PositionFeedEnabled` | `false` | Send the mixer each voice participant's position as the region sees it (`peer_pos`, see the mixer feed protocol, section 6.6), so a viewer's own claim can be compared with it. Nothing is computed or sent while this is off. A mixer that does not advertise `vis_protocol` 3 is sent nothing. See [positions.md](positions.md). | Slvoice mixer at `vis_protocol` 3; feeder; emission. |
+| `PositionFeedMode` | `observe` | `observe` or `enforce`. `enforce` is accepted but not active yet; positions are sent in observe mode. Any other value logs a warning and uses `observe`. | `PositionFeedEnabled`. |
+| `PositionFeedTickMs` | `500` | Milliseconds between position evaluations. Minimum 100. | `PositionFeedEnabled`. |
 | `PositionFeedKeepAliveMs` | `1000` | A full snapshot of each room is sent at least this often (not less than the tick). | `PositionFeedEnabled`. |
-| `PositionFeedMoveThresholdCm` | `100` | Centimetres a participant must move from the last point sent before it is sent again between snapshots. | `PositionFeedEnabled`. |
-| `PositionFeedMarginCm` | `500` | Centimetres of difference the mixer should accept at the moment of a sample. | `PositionFeedEnabled`. |
-| `PositionFeedSpeedFloorCmS` | `800` | The smallest speed allowance sent, in cm/s, so a standing avatar that starts to run is not flagged. | `PositionFeedEnabled`. |
-| `PositionFeedSpeedMaxCmS` | `10000` | Speed ceiling in cm/s for a physics engine that declares no maximum speed of its own. An engine that does declare one (Bullet) uses that instead. | `PositionFeedEnabled`. |
+| `PositionFeedMoveThresholdCm` | `100` | Centimetres a participant must move from the last point sent before it is sent again between snapshots. Minimum 1. | `PositionFeedEnabled`. |
+| `PositionFeedMarginCm` | `500` | Centimetres of difference between the viewer's claimed position and the region's that the mixer allows at the moment of a sample. Minimum 0. | `PositionFeedEnabled`. |
+| `PositionFeedSpeedFloorCmS` | `800` | The smallest speed allowance sent, in cm/s, so a standing avatar that starts to run is not flagged. Minimum 0. | `PositionFeedEnabled`. |
+| `PositionFeedSpeedMaxCmS` | `10000` | Speed ceiling in cm/s for a physics engine that declares no maximum speed of its own (not below the floor). An engine that does declare one uses that instead. | `PositionFeedEnabled`. |
 
 ### Join capability and moderation
 
 | Key | Default | Meaning | Needs |
 |---|---|---|---|
-| `JoinCapabilityEnabled` | `false` | The region signs a short-lived (60 seconds) join capability for each avatar join and sends it to the mixer. If the secret is empty, an error is logged and the feature stays off. | Slvoice mixer; `[JanusWebRtcVoice]` `JoinCapabilitySecret`, equal to the mixer's secret. |
-| `VoiceModerationEnabled` | `false` | Advertise the `SpatialVoiceModerationRequest` capability to viewers and register the console commands `show voice moderation`, `voice moderation mute`, `voice moderation unmute`. | Slvoice mixer; `VisibilityFeederEnabled` (moderation state is held by the feeder). |
+| `JoinCapabilityEnabled` | `false` | The region signs a short-lived (60 seconds) join capability for each avatar join and sends it to the mixer. If the secret is empty or shorter than 32 characters, an error is logged and the feature stays off. | Slvoice mixer; `[JanusWebRtcVoice]` `JoinCapabilitySecret`, equal to the mixer's secret. |
+| `VoiceModerationEnabled` | `false` | Advertise the `SpatialVoiceModerationRequest` capability to viewers so a parcel's owner, an estate manager or a group moderator can mute avatars on the parcel. With the slvoice mixer the mute is carried by the visibility feeder. With the stock plugin it is the plugin's own mute of that participant. The console commands `show voice moderation`, `voice moderation mute` and `voice moderation unmute` are registered whenever the key is on; they work on the feeder's state, so they find nothing with the stock plugin. See [moderation.md](moderation.md). | Stock plugin: nothing more. Slvoice mixer: `VisibilityFeederEnabled`; without it a request is answered 501 and nothing is recorded. |
+| `CallModerationEnabled` | `false` | Moderation of group calls from the viewer's participant list, and the console commands that moderate group calls and conferences. Off: the viewer's moderation requests are answered as they were without the feature. | `GroupVoiceEnabled` or `AdhocVoiceEnabled`; without one, a warning is logged and it stays off. |
+| `CallModerationRevalidateSeconds` | `60` | Seconds between checks that the moderator flags in a call's participant list, and the powers of group members seated in the call, are still right. `0` = never. A negative value reads as 60. | `CallModerationEnabled`. |
+| `CallRemovalMinutes` | `0` | How long a removal lasts. `0`: until the call ends. Above 0: that many minutes (at most 525600), and the call's record is kept that long. | `CallModerationEnabled`. |
+
+`CallModerationEnabled` is separate from `VoiceModerationEnabled`, which moderates the voice of a parcel.
 
 ### NPC voice connectors
 
@@ -100,21 +135,23 @@ if it cannot connect to Janus at startup.
 | `APIToken` | empty (required) | API secret for the Janus REST API. Must equal the gateway's. Use a random value of at least 32 characters; a shorter one is logged as a warning at startup. | - |
 | `JanusGatewayAdminURI` | empty (required) | URL of the Janus admin API. Also used for visibility emission. | - |
 | `AdminAPIToken` | empty (required) | Admin API secret. Must equal the gateway's. Use a random value of at least 32 characters; a shorter one is logged as a warning at startup. | - |
-| `MessageDetails` | `false` | Write every message sent to and received from Janus to the log. Very verbose. | - |
-| `PluginName` | `janus.plugin.audiobridge` | Janus plugin the region attaches voice handles to. `janus.plugin.slvoice` selects a spatial mixer implementing that protocol. | The named plugin installed in Janus. |
+| `MessageDetails` | `false` | Write every message sent to and received from Janus to the log. Very verbose. The API and admin secrets are hidden in what is logged. | - |
+| `PluginName` | `janus.plugin.audiobridge` | Janus plugin the region attaches voice handles to. `janus.plugin.slvoice` selects a spatial mixer implementing that protocol. Any name other than the stock one is treated as such a mixer. The region server reads this from its own copy of the section even when Janus runs elsewhere, so set it there too. | The named plugin installed in Janus. |
 | `RequestTimeoutMs` | `5000` | Milliseconds an "ack"-answered Janus request waits for its result before failing. Zero or negative falls back to 5000. | - |
 | `AdminTimeoutMs` | `5000` | Milliseconds a Janus admin API request waits for its answer (used by visibility emission). | - |
-| `JanusGatewayCACertificateFile` | empty | Path of a private CA certificate (PEM or DER; a PEM file may hold several) trusted alongside the operating system's roots, for the `https://` gateway and admin URLs. No setting turns validation off. See [Securing the connection to the mixer](#securing-the-connection-to-the-mixer). | A mixer served over https with a certificate from that CA. |
+| `RemoveEmptyRooms` | `true` | Remove a room this service created once nobody has been in it for `EmptyRoomGraceSeconds`. The stock AudioBridge never removes an emptied room. Rooms the service did not create are never removed. Does nothing with the slvoice mixer, which removes empty rooms itself. | Stock plugin. |
+| `EmptyRoomGraceSeconds` | `60` | Seconds a room stands empty before it is removed. A negative value reads as 60. | `RemoveEmptyRooms`. |
+| `JanusGatewayCACertificateFile` | empty | Path of a private CA certificate (PEM or DER; a PEM file may hold several) trusted alongside the operating system's roots, for the `https://` gateway and admin URLs. No setting turns validation off. See [Securing the connection to the mixer](#securing-the-connection-to-the-mixer). | A gateway served over https with a certificate from that CA. |
 | `JoinCapabilitySecret` | empty | Secret used to sign join capabilities, for avatars and for connectors. Never logged. Must match the mixer. At least 32 characters: with `JoinCapabilityEnabled` on, a shorter one is refused at startup and no capability is minted. | Slvoice mixer. |
 
 ### Securing the connection to the mixer
 
-Every request to the mixer carries the API secret or the admin secret. Over plain `http://` those cross the
-network in clear, so anyone on the path can read them and take over the mixer. A mixer on another host therefore
-needs TLS, or a network that only you control (a private LAN or a VPN). A mixer on the same host, reached through
+Every request to the gateway carries the API secret or the admin secret. Over plain `http://` those cross the
+network in clear, so anyone on the path can read them and take over the gateway. A gateway on another host therefore
+needs TLS, or a network that only you control (a private LAN or a VPN). A gateway on the same host, reached through
 the loopback address, needs neither.
 
-To use TLS, serve the mixer's gateway and admin APIs over https (the mixer needs a certificate and its key), then
+To use TLS, serve the gateway's REST and admin APIs over https (the gateway needs a certificate and its key), then
 point the region server, and Robust if it talks to Janus, at the https URLs:
 
 ```ini
@@ -123,11 +160,11 @@ point the region server, and Robust if it talks to Janus, at the https URLs:
     JanusGatewayAdminURI = https://mixer.example.org:8090/admin
 ```
 
-The certificate is checked as before, like any other HTTPS connection: it must chain to a root the operating system trusts and
+The certificate is checked like any other HTTPS connection: it must chain to a root the operating system trusts and
 must name the host in the URL. No setting turns the check off. A certificate that fails it is refused, nothing is
 sent to that server, and the log says why (`[JANUS TLS] the certificate presented by ... was rejected`).
 
-If the mixer's certificate comes from a CA the operating system does not know (your own CA, or a self-signed
+If the gateway's certificate comes from a CA the operating system does not know (your own CA, or a self-signed
 certificate), set `JanusGatewayCACertificateFile` to the file holding that CA's certificate, or the self-signed
 certificate itself:
 
@@ -136,15 +173,38 @@ certificate itself:
     JanusGatewayCACertificateFile = /etc/opensim/mixer-ca.pem
 ```
 
-That certificate is trusted alongside the system roots, only for the connection to the mixer. The host name
+That certificate is trusted alongside the system roots, only for the connection to the gateway. The host name
 must still match, so a CA certificate does not excuse a wrong name. Leave the key unset when the certificate is
 from a public CA. If the file is missing or unreadable, an error naming the key is logged and only the system roots
 are used. Restart the region server after changing it.
 
 Grid identity: room numbers for non-spatial sessions are derived from the grid's gatekeeper address, so two grids
-sharing one mixer do not collide. It is read from `GatekeeperURI` (in `[Hypergrid]`, `[Startup]` or `[Const]`), else
+sharing one gateway do not collide. It is read from `GatekeeperURI` (in `[Hypergrid]`, `[Startup]` or `[Const]`), else
 `[GatekeeperService] ExternalName`, else `[GridService] Gatekeeper`. If none is set, a warning is logged and the
 rooms are derived without a grid identity.
+
+## [WebRtcVoiceSessionService] (grid server)
+
+The shipped example is in `Source/OpenSim.Server.GridServer/AppData/GridServer.ini.example`. Nothing is served
+unless `VoiceSessionConnector = "${Const|PrivatePort}/WebRtcVoice.dll:VoiceSessionServerConnector"` is in
+`[ServiceList]` **and** `Enabled = true` here. Sessions are held in the grid server's memory and are gone when it
+restarts.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `Enabled` | `false` | Nothing is served unless this is `true`. |
+| `AuthType` | `None` | Must be `BasicHttpAuthentication`, here or in `[Network]` (this section wins). With anything else the service does not load: the connector throws an error naming the section and what is wrong. |
+| `HttpAuthUsername` | empty | Required. |
+| `HttpAuthPassword` | empty | Required, at least 32 characters. |
+| `GridId` | read like a region reads it | The grid identity that call room keys are derived from. Left empty it is read from `GatekeeperURI` (`[Const]`, `[Startup]`, `[Hypergrid]`), else `[GatekeeperService] ExternalName`, else `[GridService] Gatekeeper`, normalised the same way as on a region, so the service and every region derive the same room key. |
+| `MaxSessions` | `5000` | Most sessions of all kinds the service holds. A start beyond it is refused. Minimum 1. |
+| `MaxSessionsPerAgent` | `20` | Most live sessions one agent may have started. Minimum 1. |
+| `ConferenceRequestBurst` | `5` | Requests one agent may make back to back to "start conference" and "invite". Minimum 1. |
+| `ConferenceRequestRefillSeconds` | `10` | Seconds for one more request to become available after a burst. |
+| `InviteTtlSeconds` | `120` | How long an unanswered invitation lasts. Minimum 1. |
+| `IdleTtlHours` | `8` | How long a call with nobody in it and nobody renewing it is kept. A call with a member that a region still renews is never idle. Minimum 1. |
+| `SweepSeconds` | `30` | How often the service looks for expired invitations, idle calls and seats whose lease ran out. Minimum 1. |
+| `SeatLeaseSeconds` | `180` | A seat is released when its region has not renewed it for this long. Regions renew every `SessionSeatRenewSeconds`; keep this at three times that or more. Minimum 10. |
 
 ## [VoiceConnector.\<name\>]
 

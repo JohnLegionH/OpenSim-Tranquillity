@@ -26,18 +26,17 @@ Instructions for:
 - [Configure Standalone Region](#Configure_Standalone)
 - [Managing Voice Service](#Managing_Voice) (console commands, etc)
 
-**Note**: as of January 2024, this solution does not provide true spatial
-voice service using Janus. There are people working on additions to Janus
-to provide this but the existing solution provides only non-spatial
-voice services using the `AudioBridge` Janus plugin. Additionally,
-features like muting and individual avatar volume are not yet implemented.
+**Note**: Janus's stock `AudioBridge` plugin, the default, mixes every room flat: there is no
+distance falloff or panning, and the addon's per-listener visibility, join capability and
+connector features need a spatial mixer that implements the `janus.plugin.slvoice` protocol.
+Calls, group voice, conferences and moderation work with either plugin. The table in
+[Docs/voice/README.md](../../Docs/voice/README.md) lists each feature and what it needs.
 
 <a id="Known_Issues"></a>
 ## Known Issues
 
-- No spatial audio
+- With the stock plugin there is no spatial audio
 - One can see your own "white dot" but you don't see other avatar's white dots
-- No muting
 - No individual volume control
 
 And probably more found at [os-webrtc-janus issues](https://github.com/Misterblue/os-webrtc-janus/issues).
@@ -86,7 +85,14 @@ The region server reads every `.ini` file in that folder at startup; the folder 
 |---|---|---|---|
 | `PluginName` | `[JanusWebRtcVoice]` | `janus.plugin.audiobridge` | `janus.plugin.slvoice` selects a spatial mixer that implements that plugin. |
 | `RemoveEmptyRooms`, `EmptyRoomGraceSeconds` | `[JanusWebRtcVoice]` | `true`, `60` | Remove a room this service created once it has stood empty for the grace period. The stock AudioBridge never removes an emptied room. Rooms the service did not create are never removed, and the slvoice mixer removes its own. |
-| `StunServers` | `[WebRtcVoice]` | empty | Comma-separated STUN URIs advertised to viewers as the `stun-servers` simulator feature. Stock viewers need a valid entry. |
+| `StunServers` | `[WebRtcVoice]` | empty | Comma-separated STUN URIs advertised to viewers as the `stun-servers` simulator feature. Stock viewers need a valid entry. If the core server's own `StunServers` setting is also set, the core server's value is the one advertised. |
+| `A2AVoiceEnabled`, `GroupVoiceEnabled`, `AdhocVoiceEnabled` | `[WebRtcVoice]` | `false` | Avatar-to-avatar calls, group voice, and ad-hoc conferences with conference text. Group voice and conference text need the Groups module. They work with either plugin. |
+| `GroupVoiceRequireVoicePower`, `GroupVoiceCap` | `[WebRtcVoice]` | `true`, `50` | Group voice requires the role power to speak as well as to join; the most seats in one group session (never above 110, never below 2). |
+| `MaxNonSpatialSessions`, `MaxSessionsPerAgent`, `ConferenceRequestBurst`, `ConferenceRequestRefillSeconds` | `[WebRtcVoice]` | `5000`, `20`, `5`, `10` | Limits on the call sessions one region server process holds, used when `SessionStoreMode` is `local`. With `grid` the same limits are set in `[WebRtcVoiceSessionService]` on the grid server. |
+| `CarrierSecret` | `[WebRtcVoice]` | unset | At least 32 characters, the same on every region server of a grid that runs regions in more than one process, when `SessionStoreMode` is `local`. See "Sharing call sessions between region servers" below. |
+| `RefusalCacheSeconds` | `[WebRtcVoice]` | `5` | Seconds a refused voice provision is remembered, so a viewer's immediate retries are answered without repeating the checks. `0` turns it off. |
+| `RequestTimeoutMs`, `AdminTimeoutMs` | `[JanusWebRtcVoice]` | `5000`, `5000` | Milliseconds an "ack"-answered Janus request waits for its result, and a Janus admin API request waits for its answer. |
+| `PositionFeedEnabled`, `PositionFeedMode` | `[WebRtcVoice]` | `false`, `observe` | The region reports each participant's position to the mixer. Needs the slvoice mixer. `enforce` is accepted but not active yet. Tuning keys are in the shipped ini file. |
 | `CallModerationEnabled`, `CallModerationRevalidateSeconds`, `CallRemovalMinutes` | `[WebRtcVoice]` | `false`, `60`, `0` | Moderation of a group call from the viewer's participant list: a member holding Moderate Group Chat mutes one member's voice or text, or mutes and unmutes everyone's voice. The power is checked on every request and a moderator is never muted. A voice mute is carried out by the slvoice mixer's mute channel or by the stock AudioBridge's own participant mute; one that cannot be carried out is answered 501 or 503 and is not recorded. Needs `GroupVoiceEnabled` or `AdhocVoiceEnabled`. Separate from `VoiceModerationEnabled`, which moderates a parcel's voice. Conferences, which have no moderator menu in the viewers, are moderated from the region console: `show voice calls`, `show voice call <call-id>`, `voice call mute|unmute <call-id> <agent> voice|text`, `voice call mute-all|unmute-all <call-id>`, `voice call remove <call-id> <agent> [reason]` and `voice call readmit <call-id> <agent>` (the same commands work on a group call). A removal from the console: the member's voice is dropped, their viewer is told to close the call, and a call, an accepted invitation, an invitation or a voice provision is refused until the call ends (or for `CallRemovalMinutes`, when above 0). A group's text is not touched by a removal; a conference member leaves the conference's text. A group member who loses the powers the call needs is let go on the next check, without a removal being recorded. |
 | `VisibilityFeederEnabled`, `VisibilityEmitEnabled` | `[WebRtcVoice]` | `false` | Send per-listener visibility to a mixer that understands it. Need `JanusGatewayAdminURI` and `AdminAPIToken`. They, `VisibilityArmingEnabled`, `JoinCapabilityEnabled`, `ConnectorsEnabled` and `PositionFeedEnabled` need the slvoice mixer: with the stock plugin each one that is on logs a warning at start and stays off. `VoiceModerationEnabled` works on both: on the stock plugin a mute is the AudioBridge's own mute of the participant. |
 
@@ -182,7 +188,12 @@ contains just sample entries.
 ## Configure Robust Server for WebRTC Voice
 
 For the grid services side, `os-webrtc-janus` is configured as an additional service
-in the Robust OpenSimulator server. The additions to `Robust.ini` are:
+in the Robust OpenSimulator server. In this tree the grid server project references only
+`WebRtcVoice.dll` (`Source/OpenSim.Server.GridServer/OpenSim.Server.GridServer.csproj`). The
+connector below loads `WebRtcVoiceServiceModule.dll` and `WebRtcJanusService.dll`, which that project does not
+reference, so a grid server built from this tree does not carry them. The setups the guide in `Docs/voice`
+describes run the Janus service in the region server process; the grid server hosts only the call session
+service (next section). The additions to `Robust.ini` for a grid-hosted Janus service are:
 
 ```
 ...
@@ -215,9 +226,10 @@ and a Robust server with only `VoiceServiceConnector` in its ServiceList is poss
 
 Group, conference and avatar-to-avatar calls are sessions kept by the region server. A grid with
 more than one region server process has one record of each call per process unless the processes
-share a store: each process counts its own seat limit, each rings the group itself, and a call
-between people on different processes depends on `CarrierSecret`. The grid voice session service
-keeps one record of every call instead. It is off by default and nothing changes until both sides
+share a store: each process counts its own seat limit, each rings the group itself, and a group or
+conference call between people on different processes depends on `CarrierSecret`. The grid voice
+session service keeps one record of every call instead. In either mode an avatar-to-avatar call rings
+only a callee whose region is served by the caller's own region server process. It is off by default and nothing changes until both sides
 are configured.
 
 In `Robust.ini` (or `GridServer.ini`), add the connector to `[ServiceList]` and enable the service.

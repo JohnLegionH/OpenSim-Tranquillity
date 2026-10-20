@@ -3,11 +3,11 @@
     ; Module to use for spatial WebRtcVoice
     ; The following is for a Janus service just for spatial voice for this region. Config in [JanusWebRtcVoice]
     SpatialVoiceService = WebRtcJanusService.dll:WebRtcJanusService
-    ; The following is for a grid spatial voice service for this region. Link is WebRtcVoiceServiceURI
+    ; The following is for a grid spatial voice service for this region. Link is WebRtcVoiceServerURI
     ; SpatialVoiceService=WebRtcVoice.dll:WebRtcVoiceServiceConnector
     ; Module to use for non-spatial WebRtcVoice. Local voice service. Config in [JanusWebRtcVoice]
     NonSpatialVoiceService = WebRtcJanusService.dll:WebRtcJanusService
-    ; The following is for a grid non-spatial voice service. For groups and IMs.  Link is WebRtcVoiceServiceURI
+    ; The following is for a grid non-spatial voice service. For groups and IMs.  Link is WebRtcVoiceServerURI
     ; NonSpatialVoiceService=WebRtcVoice.dll:WebRtcVoiceServiceConnector
     ; URL for the grid service that is providing the WebRtcVoiceService. Used by WebRtcVoiceServiceConnector.
     ;WebRtcVoiceServerURI = ${Const|PrivURL}:${Const|PrivatePort}
@@ -30,11 +30,11 @@
     ;StunServers = stun:stun.l.google.com:19302
 
     ; Avatar-to-avatar calls (the "call" and "start p2p voice" chat session requests). Default: false.
-    ; With it off the chat session handler answers as it did before. The call logic is plugin-neutral;
-    ; it has only been exercised against the slvoice mixer.
+    ; With it off the chat session handler answers as it did before. Works with either plugin: the stock
+    ; AudioBridge or the slvoice mixer.
     ;A2AVoiceEnabled = false
 
-    ; Group voice. Default: false. Needs the Groups module. Same plugin note as A2AVoiceEnabled.
+    ; Group voice. Default: false. Needs the Groups module. Works with either plugin.
     ;GroupVoiceEnabled = false
     ; Require the group role power to speak (GP_SESSION_VOICE) as well as to join. Default: true.
     ;GroupVoiceRequireVoicePower = true
@@ -42,7 +42,7 @@
     ;GroupVoiceCap = 50
 
     ; Ad-hoc voice and conference text ("start conference"). Default: false. Needs the Groups module for
-    ; the conference text session. Same plugin note as A2AVoiceEnabled.
+    ; the conference text session. Works with either plugin.
     ;AdhocVoiceEnabled = false
 
     ; Limits on non-spatial sessions (avatar-to-avatar, group and conference calls). Sessions and unanswered
@@ -71,10 +71,11 @@
     ;CarrierSecret =
 
     ; Where group, conference and avatar-to-avatar call sessions are kept. Default: local, each region
-    ; process keeps its own (calls across region processes then depend on CarrierSecret above, the seat
-    ; limit is counted per process and each process rings the group itself). Set grid to keep them in
-    ; the voice session service that Robust hosts, so every process shares one record of each call: one
-    ; seat count, one ring, and seats released when a region restarts. Needs the Robust side configured
+    ; process keeps its own (group and conference rings across region processes then depend on CarrierSecret
+    ; above, the seat limit is counted per process and each process rings the group itself). Set grid to keep
+    ; them in the voice session service that Robust hosts, so every process shares one record of each call: one
+    ; seat count, one ring, and seats released when a region restarts. In either mode an avatar-to-avatar call
+    ; rings only a callee whose region is served by the caller's own region server process. Needs the Robust side configured
     ; ([WebRtcVoiceSessionService] in the grid server settings) and all region processes set the same way.
     ; With grid set, a call that cannot reach the service is refused; it never falls back to a local record.
     ;SessionStoreMode = local
@@ -136,6 +137,23 @@
     ; observe or enforce. Default: observe (the mixer counts what it would change and changes nothing).
     ; enforce is accepted but not active yet; positions are sent in observe mode.
     ;PositionFeedMode = observe
+    ; Tuning, used only when PositionFeedEnabled is true. A value below its minimum is raised to it.
+    ; Milliseconds between position evaluations. Default: 500. Minimum 100.
+    ;PositionFeedTickMs = 500
+    ; A full snapshot of each room is sent at least this often. Default: 1000. Not below PositionFeedTickMs.
+    ;PositionFeedKeepAliveMs = 1000
+    ; Centimetres a participant must move from the last point sent before it is sent again between
+    ; snapshots. Default: 100. Minimum 1.
+    ;PositionFeedMoveThresholdCm = 100
+    ; Centimetres a viewer's claimed position may differ from the region's before the mixer counts it.
+    ; Default: 500. Minimum 0.
+    ;PositionFeedMarginCm = 500
+    ; The smallest speed allowance sent, in cm/s, so a standing avatar that starts to run is not counted.
+    ; Default: 800. Minimum 0.
+    ;PositionFeedSpeedFloorCmS = 800
+    ; Speed ceiling in cm/s for a physics engine that declares no maximum speed of its own. Default: 10000.
+    ; Not below PositionFeedSpeedFloorCmS.
+    ;PositionFeedSpeedMaxCmS = 10000
 
     ; The sim issues each joining avatar a signed join capability. Default: false. Needs the slvoice mixer
     ; and [JanusWebRtcVoice] JoinCapabilitySecret.
