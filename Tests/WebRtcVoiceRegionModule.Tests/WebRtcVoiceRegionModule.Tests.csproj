@@ -19,6 +19,7 @@
   <ItemGroup>
     <Compile Include="AssemblyInfo.cs" />
     <Compile Include="LandBanTests.cs" />
+    <Compile Include="NonSpatialSessionConcurrencyTests.cs" />
     <Compile Include="FeederWorldFromSceneTests.cs" />
     <Compile Include="VoiceMembershipIndexTests.cs" />
     <Compile Include="VoiceSessionCloseCaptureTests.cs" />
