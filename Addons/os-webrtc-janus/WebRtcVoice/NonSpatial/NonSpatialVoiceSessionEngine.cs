@@ -54,6 +54,10 @@ namespace osWebRtcVoice.NonSpatial
 
         public static SessionOutcome Fail(string decision, NonSpatialVoiceSession s = null) => new SessionOutcome(false, decision, s);
 
+        /// <summary>Accept took a seat the agent did not hold. A repeat accept by a seated agent answers <see cref="AcceptRepeated"/>.</summary>
+        public const string Accepted = "accepted";
+        public const string AcceptRepeated = "accept-idempotent";
+
         public const string NoSuchSession = "refused-no-session";
         public const string Capacity = "refused-capacity";
         public const string AlreadyDeparted = "refused-departed";
@@ -520,7 +524,7 @@ namespace osWebRtcVoice.NonSpatial
                     // they could see.
                     m.InChat = true;
                     sess.LastSeenUtc = now;
-                    return new SessionOutcome(true, "accept-idempotent", sess);
+                    return new SessionOutcome(true, SessionOutcome.AcceptRepeated, sess);
                 }
                 if (sess.IsFull)
                     return SessionOutcome.Fail(SessionOutcome.Capacity, sess);
@@ -534,7 +538,7 @@ namespace osWebRtcVoice.NonSpatial
                 // latched by RingSent, so two simultaneous first-joiners cannot both ring the group.
                 bool ring = wasEmpty && sess.SeatsHeld == 1 && !sess.RingSent;
                 if (ring) sess.RingSent = true;
-                return new SessionOutcome(true, "accepted", sess, created: false, startedRinging: ring);
+                return new SessionOutcome(true, SessionOutcome.Accepted, sess, created: false, startedRinging: ring);
 
             }, SessionOutcome.Fail(SessionOutcome.NoSuchSession));
         }
