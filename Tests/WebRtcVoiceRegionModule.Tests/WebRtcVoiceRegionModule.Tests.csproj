@@ -71,6 +71,7 @@
     <Compile Include="A2ARingRootOnlyTests.cs" />
     <Compile Include="GroupRingRootOnlyTests.cs" />
     <Compile Include="AdhocRingRootOnlyTests.cs" />
+    <Compile Include="AdhocTextCrossProcessTests.cs" />
     <Compile Include="StockModerationTests.cs" />
     <Compile Include="ProvisionPassthroughTests.cs" />
     <Compile Include="StockPluginSwitchTests.cs" />
