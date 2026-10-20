@@ -25,6 +25,8 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <PackageReference Include="NUnit3TestAdapter" Version="5.0.0" />
+    <!-- Transitive via OpenMetaverse; pinned to the first release that fixes GHSA-qhrr-8q5h-9q3h. -->
+    <PackageReference Include="MessagePack" Version="3.1.9" />
   </ItemGroup>
 
   <ItemGroup>
