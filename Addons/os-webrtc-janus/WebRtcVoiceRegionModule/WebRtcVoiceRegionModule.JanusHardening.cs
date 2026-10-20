@@ -53,7 +53,8 @@ public partial class WebRtcVoiceRegionModule
 {
     // Replays a provision refusal (403/404/501) to the viewer's immediate retries for RefusalCacheSeconds
     // without re-running the estate/parcel checks. Replaced from config in Initialise.
-    private ProvisionRefusalCache m_refusalCache = new ProvisionRefusalCache(TimeSpan.FromSeconds(ProvisionRefusalCache.DefaultSeconds));
+    private readonly RefusalEpisodeLog m_refusalLog = new RefusalEpisodeLog(m_log, logHeader + "[ProvisionVoice]:");
+    private ProvisionRefusalCache m_refusalCache => m_refusalLog.Cache;
 
     /// <summary>Fail-closed channel-type admission for voice provisioning. Voice
     /// authorization -- parcel/estate ban &amp; restrict -- is only implemented for the "local"
@@ -88,7 +89,8 @@ public partial class WebRtcVoiceRegionModule
     // handler below is unchanged except that, for an admitted "local" provision, a refusal recorded within
     // RefusalCacheSeconds for this (agent, region) is answered again from the cache before the estate/parcel
     // checks run. This wrapper records a fresh 403/404/501 refusal of a "local" provision, and clears the
-    // entry on a successful provision or a logout. At most one INFO line per (agent, region) per window.
+    // entry on a successful provision or a logout. A run of refusals for one (agent, region) is one episode: one INFO
+    // line for the first refusal and one with the count when the episode ends (RefusalEpisodeLog).
     public void ProvisionVoiceAccountRequest(IOSHttpRequest request, IOSHttpResponse response, UUID agentID, Scene scene)
     {
         var ctx = new ProvisionCallContext();
@@ -97,14 +99,12 @@ public partial class WebRtcVoiceRegionModule
         UUID regionId = scene.RegionInfo.RegionID;
         if (ctx.Kind == ProvisionKind.Logout || ctx.Provisioned)
         {
-            m_refusalCache.Clear(agentID, regionId);
+            m_refusalLog.Ended(agentID, regionId, ctx.Kind == ProvisionKind.Logout ? "it logged out" : "it was admitted");
         }
         else if (ctx.Kind == ProvisionKind.Local && !ctx.AnsweredFromCache && IsCacheableRefusalStatus(response.StatusCode))
         {
             int suppressed = m_refusalCache.RecordRefusal(agentID, regionId, new CachedRefusal(response.StatusCode, response.RawBuffer));
-            if (suppressed > 0)
-                m_log.LogInformation("{LogHeader}[ProvisionVoice]: provision from {AgentId} in \"{RegionName}\" refused again (cached, {Suppressed} retries suppressed)",
-                    logHeader, agentID, scene.Name, suppressed);
+            m_refusalLog.Refused(agentID, regionId, $" in \"{scene.Name}\"", string.Empty, suppressed);
         }
     }
 
@@ -129,7 +129,8 @@ public partial class WebRtcVoiceRegionModule
     private void InitialiseRefusalCache()
     {
         // [WebRtcVoice] RefusalCacheSeconds (default 5; 0 disables).
-        m_refusalCache = new ProvisionRefusalCache(TimeSpan.FromSeconds(
+        m_refusalLog.SetWindow(TimeSpan.FromSeconds(
             Math.Max(0, m_Config.GetInt("RefusalCacheSeconds", ProvisionRefusalCache.DefaultSeconds))));
+        m_refusalLog.Start();
     }
 }
