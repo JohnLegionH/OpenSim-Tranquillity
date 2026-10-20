@@ -10,7 +10,7 @@ using System.Threading;
 
 namespace osWebRtcVoice
 {
-    /// <summary>Slice: the one-way gate between "the Watchdog noticed this feeder stalled" and "the
+    /// <summary>The one-way gate between "the Watchdog noticed this feeder stalled" and "the
     /// tick that finally runs rebuilds from the scene".
     ///
     /// It exists as its own type because the two halves run on different threads and neither can be tested through

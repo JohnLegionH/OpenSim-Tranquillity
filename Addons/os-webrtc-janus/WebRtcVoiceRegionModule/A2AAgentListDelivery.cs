@@ -14,7 +14,7 @@
  * can_voice_chat:false for the peer on a P2P channel as a decline and HANGS UP the call
  * (P2PCallDeclined + endCall, llimview.cpp:4366-4382). The group pattern's 1-arg
  * GroupChatListAgentUpdateData ctor defaults canVoice to FALSE (IEventQueue.cs:43-50), so this class
- * never uses it: every update is built by the 5-arg ctor with cv:true, by construction. This slice is
+ * never uses it: every update is built by the 5-arg ctor with cv:true, by construction. This change is
  * (a) ONLY; the caller's connected/End-Call state is (b) -- mixer presence, M-A2A-1.
  *
  * The wire body is built by the existing EventQueueGetHandlers.ChatterBoxSessionAgentListUpdates

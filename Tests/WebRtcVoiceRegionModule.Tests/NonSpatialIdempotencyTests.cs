@@ -8,7 +8,7 @@
 /*
  * Idempotency under retry, reconnect and region-crossing races.
  *
- * One test per race, as the slice requires. The concurrent ones use real threads through a Barrier
+ * One test per race, as the specification requires. The concurrent ones use real threads through a Barrier
  * so they exercise the store's atomicity rather than a comfortable interleaving.
  */
 using System;
