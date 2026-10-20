@@ -6,7 +6,7 @@
  */
 
 /*
- * item 3: room identity is derived independently of session identity, and the collision
+ * Room identity is derived independently of session identity, and the collision
  * argument in NonSpatialRoomKey's header is asserted rather than asserted-about.
  *
  * Layer (1) -- structural, against live A2A rooms -- is the one that matters most, because A2A

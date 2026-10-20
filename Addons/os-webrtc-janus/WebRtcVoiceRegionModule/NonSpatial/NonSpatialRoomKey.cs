@@ -20,7 +20,7 @@
  *     RoomKey = "nsv1:" + tag + ":" + Uuid(SHA256(NS || 0x1F || gridId || 0x1F || tag || 0x1F || sessionId))
  *   where tag is p2p|adhoc|group and NS is the fixed namespace below. First 16 bytes of the digest
  *   become the UUID. Deterministic, so any instance on the grid derives the same key for the same
- *   session without coordination (item 7), and one-way, so the room key leaks no session identity.
+ *   session without coordination, and one-way, so the room key leaks no session identity.
  *
  * COLLISION ARGUMENT, in three layers, because only two of them are structural and the report must
  * not pretend otherwise:
@@ -52,7 +52,7 @@
  *      create (:313) and treats "already exists" as success (:315), so an aliased room is a room
  *      whose description does not match what this voice session expects. ExpectedRoomDescription below
  *      gives the engine the string to compare when P1.x wires room allocation; closing the residual
- *      properly means widening the mixer's room number, which is its own slice and not this one.
+ *      properly means widening the mixer's room number, which is a separate piece of work.
  */
 using System;
 using System.Security.Cryptography;

@@ -24,7 +24,7 @@
  *     -> processSessionInitializedReply re-keys mId2SessionMap, sets mSessionID and updates the
  *        voice channel id (:1705-1737, :1165-1177)
  *     -> and fires the QUEUED CALL if mStartCallOnInitialize (:1731-1734)
- * That last line is why this slice must come before ad-hoc voice: without the re-key the queued call
+ * That last line is why this step must come before ad-hoc voice: without the re-key the queued call
  * never starts.
  *
  * Modelled on GroupsMessagingModule.ChatterBoxSessionStartReplyViaCaps (:686-707), which has been
@@ -265,7 +265,7 @@ namespace osWebRtcVoice.NonSpatial
         /// make someone unreachable for the rest of the call.
         ///
         /// Scoped to AD-HOC sessions only. The viewer sends this same method for a declined GROUP
-        /// invitation (llimview.cpp:3429-3438), and that path is not in this slice; letting it fall
+        /// invitation (llimview.cpp:3429-3438), and that path is not handled here; letting it fall
         /// through keeps today's behaviour for everything that is not a conference.
         /// </summary>
         public static bool TryHandleDeclineInvitation(OSDMap reqmap, UUID agentID, NonSpatialVoiceSessionEngine engine,
@@ -299,7 +299,7 @@ namespace osWebRtcVoice.NonSpatial
         /// simply the first. A conference cannot work that way: its id is server-minted and means
         /// nothing until "start conference" has produced it. So this arm never starts anything -- if
         /// the store has no such conference we are not ours, fall through, and the A2A arm 404s
-        /// exactly as it does for any unknown session, which is the pre-slice behaviour the viewer
+        /// exactly as it does for any unknown session, which is the previous behaviour the viewer
         /// already survives.
         ///
         /// Admission is the engine's: AdhocAdmission.CanJoin admits on a member record, so the

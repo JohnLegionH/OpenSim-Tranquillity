@@ -173,7 +173,7 @@ namespace osWebRtcVoice
             // only m_scene and estate — both stable for the tick — so hoisting them is semantically
             // identical. The old closure allocated both on EVERY call; since the matrix build invokes
             // the ban delegate across all pairs, that made allocation O(N^2) on the TaxFree path (the
-            // scaling assessment's item 3 named the O(N) outer-closure churn and missed this). The
+            // earlier scaling assessment named the O(N) outer-closure churn and missed this). The
             // live-LandData contract is unchanged: the ban-list scan still runs at invocation. A
             // (parcel, avatar) result memo is deliberately NOT taken — it pays only when agents
             // cluster onto few parcels, and it would break the read-live-LandData-per-call contract.

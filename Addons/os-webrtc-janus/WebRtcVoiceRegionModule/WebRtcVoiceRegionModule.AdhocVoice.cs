@@ -78,7 +78,7 @@ public partial class WebRtcVoiceRegionModule
     /// <summary>
     /// A member typed into a conference. The viewer sends ImprovedInstantMessage with
     /// dialog SessionSend and the AUTHORITATIVE session id (the start reply re-keyed it), and before
-    /// this slice nothing claimed it -- InstantMessageModule drops SessionSend in its default arm
+    /// this feature nothing claimed it -- InstantMessageModule drops SessionSend in its default arm
     /// and GroupsMessagingModule only takes a GROUP id.
     ///
     /// GROUP TEXT IS UNTOUCHED: TryPlan returns false for any id the engine does not hold as ADHOC,

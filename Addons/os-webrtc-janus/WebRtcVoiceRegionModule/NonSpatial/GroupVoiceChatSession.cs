@@ -24,7 +24,7 @@
  *     a member of.
  * On a decline the module calls ChatSessionRequestLogic.Decide exactly as before, byte for byte.
  * A non-member's "call" therefore still reaches the A2A arm and still 404s there, which is the
- * pre-slice behaviour for an unknown session and is what the viewer already knows how to survive.
+ * previous behaviour for an unknown session and is what the viewer already knows how to survive.
  *
  * WHAT IT HANDS BACK is the same map the A2A arm builds (ChatSessionRequestLogic.cs:228-235), with
  * one deliberate difference: channel_uri is NonSpatialRoomKey.Derive(grid, Group, groupId), NOT the

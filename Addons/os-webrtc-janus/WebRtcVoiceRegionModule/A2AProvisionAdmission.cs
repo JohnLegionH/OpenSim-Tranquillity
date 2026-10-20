@@ -62,7 +62,7 @@ namespace osWebRtcVoice
     public sealed class ProvisionAdmission
     {
         public ProvisionKind Kind { get; init; }
-        /// <summary>Instrument decision word: local-admitted | multiagent-admitted | refused-no-session | refused-not-party | refused-bad-token | refused-o29 | logout.</summary>
+        /// <summary>Instrument decision word: local-admitted | multiagent-admitted | refused-no-session | refused-not-party | refused-bad-token | refused-channel-type | logout.</summary>
         public string Decision { get; init; }
         /// <summary>The A2A session for an admitted multiagent provision; null otherwise.</summary>
         public A2ASession Session { get; init; }
@@ -85,7 +85,7 @@ namespace osWebRtcVoice
         public const string DecisionNoSession = "refused-no-session";
         public const string DecisionNotParty = "refused-not-party";
         public const string DecisionBadToken = "refused-bad-token";
-        public const string DecisionO29 = "refused-o29";
+        public const string DecisionOtherChannelType = "refused-channel-type";
 
         public static bool IsLogout(OSDMap map)
             => map != null && map.TryGetBool("logout", out bool lg) && lg;
@@ -154,7 +154,7 @@ namespace osWebRtcVoice
                 return new ProvisionAdmission { Kind = ProvisionKind.Multiagent, Decision = DecisionMultiagent, Session = s, ChannelType = channelType, Channel = channel };
             }
 
-            return Refuse(DecisionO29, channelType, channel);
+            return Refuse(DecisionOtherChannelType, channelType, channel);
         }
 
         private static ProvisionAdmission Refuse(string decision, string channelType, string channel)

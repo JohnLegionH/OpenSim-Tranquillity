@@ -69,7 +69,7 @@ namespace osWebRtcVoice.NonSpatial
     }
 
     /// <summary>
-    /// The in-process store for this slice. One lock, held across the whole of each operation, so
+    /// The in-process store. One lock, held across the whole of each operation, so
     /// StartOrGet and Mutate are the atomic units the interface promises.
     /// </summary>
     public sealed class InMemoryNonSpatialSessionStore : INonSpatialSessionStore

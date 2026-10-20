@@ -341,7 +341,7 @@ namespace osWebRtcVoice.Tests
         public void NeitherArmTouchesAGroupSessionOrAnUnknownId()
         {
             // The viewer sends "decline invitation" for group invitations too (llimview.cpp:3429-3438).
-            // Taking those would change behaviour outside this slice.
+            // Taking those would change behaviour outside this feature.
             NonSpatialVoiceSessionEngine e = Engine();
             UUID grp = UUID.Random();
             e.Start(NonSpatialSessionType.Group, Alice, grp, grp, RegionA);
@@ -462,7 +462,7 @@ namespace osWebRtcVoice.Tests
         [Test]
         public void AGroupRingStillAdoptsAsAGroupSession()
         {
-            // The type parameter defaults to Group, so 's behaviour is unchanged by this slice.
+            // The type parameter defaults to Group, so 's behaviour is unchanged by this feature.
             NonSpatialVoiceSessionEngine a = Engine();
             UUID grp = UUID.Random();
             NonSpatialVoiceSession g = a.Start(NonSpatialSessionType.Group, Alice, grp, grp, RegionA).Session;

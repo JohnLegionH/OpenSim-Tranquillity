@@ -11,7 +11,7 @@
  * path still behaves identically, because the group arms only ever take bodies the A2A arms could
  * not have taken.
  *
- * Viewer facts (verified against /d/phoenix-firestorm 895f65ab43):
+ * Viewer facts (verified against the Firestorm viewer source, revision 895f65ab43):
  *   roles_constants.h:144  GP_SESSION_JOIN  = 0x1 << 16   "can join session"
  *   roles_constants.h:145  GP_SESSION_VOICE = 0x1 << 27   "can hear/talk"
  *   llimview.cpp:2535-2538 a group session id IS the group id
@@ -82,7 +82,7 @@ namespace osWebRtcVoice.Tests
                 ["credentials"] = OSD.FromString(credentials ?? string.Empty),
             };
 
-        // ---- item 1: the power constants are the viewer's ---------------------------------------
+        // ---- the power constants are the viewer's ---------------------------------------
 
         [Test]
         public void ThePowerConstants_AreTheViewersLiterals_AndOpenMetaversesEnum()
@@ -107,7 +107,7 @@ namespace osWebRtcVoice.Tests
             Assert.That(joinOnly.RequiredMask, Is.EqualTo(GroupVoicePolicy.PowerJoinSession));
         }
 
-        // ---- item 4: the "call" arm --------------------------------------------------------------
+        // ---- the "call" arm --------------------------------------------------------------
 
         [Test]
         public void Call_WithBothPowers_ReturnsVoiceCredentialsCarryingTheGroupRoomKey()
@@ -239,7 +239,7 @@ namespace osWebRtcVoice.Tests
             }
         }
 
-        // ---- item 5: the cap, load-bearing for the first time -------------------------------------
+        // ---- the cap, load-bearing for the first time -------------------------------------
 
         [Test]
         public void TheFiftyFirstCallerIsRefusedWith409_WhichTheViewerShowsAsChannelFull()

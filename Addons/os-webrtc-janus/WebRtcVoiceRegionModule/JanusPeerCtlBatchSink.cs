@@ -49,7 +49,7 @@ namespace osWebRtcVoice
     public sealed class JanusPeerCtlBatchSink : IPeerCtlBatchSink, IPeerCtlHeartbeatSink, IPeerPosSink, IDisposable
     {
         private static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
-        // Reused empty excl slice for a room that has only mute changes this op.
+        // Reused empty excl collection for a room that has only mute changes this op.
         private static readonly IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> EmptyChannel
             = new Dictionary<UUID, IReadOnlyCollection<UUID>>();
         private const string LogHeader = "[JANUS PEERCTL SINK]";

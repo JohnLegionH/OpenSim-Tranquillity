@@ -19,7 +19,7 @@
  * id as an ADHOC session. A group id is not in that store, so TryPlan returns false and
  * GroupsMessagingModule handles it exactly as it does today, byte for byte.
  *
- * THE MEMBERSHIP RULE (item 4) IS CHAT MEMBERSHIP -- NonSpatialMember.InChat -- not a roster, not
+ * THE MEMBERSHIP RULE IS CHAT MEMBERSHIP -- NonSpatialMember.InChat -- not a roster, not
  * a power, and NOT THE VOICE SEAT. An ad-hoc conference has no roster; "being invited
  * is the whole of the membership" (AdhocVoiceInvite.cs:7-8), and joining is what puts an agent in
  * the conversation.
@@ -35,7 +35,7 @@
  * and the cap still read the SEAT list; text and the roster read the CHAT list. They are allowed
  * to differ, and representing that difference is the point of the separate chat axis.
  *
- * NO ECHO TO THE SENDER (item 4), AND THIS IS A DELIBERATE DIVERGENCE FROM THE GROUP PATTERN.
+ * NO ECHO TO THE SENDER, AND THIS IS A DELIBERATE DIVERGENCE FROM THE GROUP PATTERN.
  * GroupsMessagingModule sends to self first of all (GroupsMessagingModule.cs:330-333) because a
  * the local echo of a group voice session is how the sender's own panel fills. A conference here does not want
  * that: the viewer already renders what it just sent into the ad-hoc session it owns, so echoing
@@ -43,7 +43,7 @@
  * KNOWN DIFFERENCE from the group path rather than an oversight, because the next person to read
  * both will otherwise "fix" it back.
  *
- * OFFLINE MEMBERS GET NOTHING STORED (item 5), and three independent things say so:
+ * OFFLINE MEMBERS GET NOTHING STORED, and three independent things say so:
  *     OfflineMessageModule.cs:228-233        allowlist = MessageFromObject, MessageFromAgent,
  *                                            GroupNotice, GroupInvitation, InventoryOffered,
  *                                            TaskInventoryOffered -> anything else returns early
@@ -147,7 +147,7 @@ namespace osWebRtcVoice.NonSpatial
             NonSpatialMember from = session.Find(sender);
             if (from is null || !from.InChat)
             {
-                // Item 4: a non-member's SessionSend for this voice session is refused and logged. This
+                // A non-member's SessionSend for this voice session is refused and logged. This
                 // covers the stranger, the invitee who never accepted, the decliner and the member
                 // who already left -- none of them is in the conversation.
                 //

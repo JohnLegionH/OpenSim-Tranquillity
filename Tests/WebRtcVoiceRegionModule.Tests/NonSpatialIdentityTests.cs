@@ -6,9 +6,9 @@
  */
 
 /*
- * items 1 and 2: session types, pluggable admission, and the two distinct identities.
+ * Session types, pluggable admission, and the two distinct identities.
  *
- * The viewer facts asserted here were verified in slice P1-VERIFY against /d/phoenix-firestorm at
+ * The viewer facts asserted here were verified against the Firestorm viewer source at revision
  * 895f65ab43:
  *   llimview.cpp:2535-2538  group  -> session id IS the group id ("slam group session_id to the group_id")
  *   llimview.cpp:2542       adhoc  -> session_id.generate(), a random id the server has never seen
@@ -60,7 +60,7 @@ namespace osWebRtcVoice.Tests
                 "example-grid", clock.Get, inviteTtl, idleTtl, limits);
         }
 
-        // ---- item 2: the two ids -------------------------------------------------------------
+        // ---- the two ids -------------------------------------------------------------
 
         [Test]
         public void P2P_SessionId_IsTheViewerXor_AndNeedsNoRekey()
@@ -117,7 +117,7 @@ namespace osWebRtcVoice.Tests
             Assert.Throws<ArgumentException>(() => e.Start(NonSpatialSessionType.Adhoc, Alice, Bob, UUID.Random(), RegionA));
         }
 
-        // ---- item 1: pluggable admission ------------------------------------------------------
+        // ---- pluggable admission ------------------------------------------------------
 
         [Test]
         public void Group_Admission_RefusesANonMember()

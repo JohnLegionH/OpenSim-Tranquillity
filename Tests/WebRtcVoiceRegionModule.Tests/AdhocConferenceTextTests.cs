@@ -88,7 +88,7 @@ namespace osWebRtcVoice.Tests
             public byte[] EndEventToBytes(osUTF8 sb) => throw new NotSupportedException();
         }
 
-        // ---- item 3: ring / text discrimination, BOTH DIRECTIONS -----------------------------------
+        // ---- ring / text discrimination, BOTH DIRECTIONS -----------------------------------
 
         [Test]
         public void BothDirections_TheRingParserRejectsText_AndTheTextParserRejectsARing()
@@ -138,7 +138,7 @@ namespace osWebRtcVoice.Tests
             Assert.That(AdhocTextTransport.BucketMagic, Is.Not.EqualTo(GroupVoiceRingTransport.BucketMagic));
             Assert.That(AdhocTextTransport.BucketMagic.StartsWith(GroupVoiceRingTransport.BucketMagic, StringComparison.Ordinal), Is.False);
             Assert.That(GroupVoiceRingTransport.BucketMagic.StartsWith(AdhocTextTransport.BucketMagic, StringComparison.Ordinal), Is.False);
-            // item 5, stated at the source as well as relied on in the two offline allowlists
+            // Stated at the source as well as relied on in the two offline allowlists
             Assert.That(AdhocTextTransport.Build(Bob, Alice, "Alice", UUID.Random(), Region, "x").offline,
                 Is.EqualTo(0), "a conference line must never be stored and replayed at next login");
         }
@@ -162,7 +162,7 @@ namespace osWebRtcVoice.Tests
                 "fromGroup=true is group chat's combination, never ours");
         }
 
-        // ---- item 2 and 4: fan-out, membership, no echo ---------------------------------------------
+        // ---- fan-out, membership, no echo ---------------------------------------------
 
         [Test]
         public void EveryOtherSeatHolderReceivesTheLine()
@@ -313,7 +313,7 @@ namespace osWebRtcVoice.Tests
             Assert.That(new UUID(rebuilt.imSessionID), Is.EqualTo(new UUID(carried.imSessionID)));
         }
 
-        // ---- item 1: the roster --------------------------------------------------------------------
+        // ---- the roster --------------------------------------------------------------------
 
         [Test]
         public void AJoinerGetsTheWholeRoomAndTheRoomGetsTheJoiner()

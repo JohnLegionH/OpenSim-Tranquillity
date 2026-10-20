@@ -202,7 +202,7 @@ namespace osWebRtcVoice
                 // ARRAY. It says "none", which is the fact, and it is the only shape that says it
                 // without the viewer treating the reply as malformed.
                 //
-                // A non-empty array is what a future history slice would return; nothing else about
+                // A non-empty array is what a future history feature would return; nothing else about
                 // this arm would change.
                 case MethodFetchHistory:
                     return new ChatSessionOutcome

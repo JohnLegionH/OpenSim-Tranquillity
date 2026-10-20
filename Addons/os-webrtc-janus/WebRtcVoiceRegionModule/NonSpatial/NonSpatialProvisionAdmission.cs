@@ -19,16 +19,16 @@
  * THE LIVE A2A PATH IS NOT EDITED. This is a wrapper: it takes the group arm only when group voice
  * is enabled AND the channel is one of our room keys, and otherwise calls
  * A2AProvisionAdmission.Decide with the same arguments it would have received anyway. That function
- * is byte-identical to its pre-slice self, which is how "provably unchanged" is met without an
+ * is byte-identical to its earlier self, which is how "provably unchanged" is met without an
  * argument about reading the code.
  *
- * DEFENCE IN DEPTH (item 3). The provision re-checks membership AND powers, it does not trust the
+ * DEFENCE IN DEPTH. The provision re-checks membership AND powers, it does not trust the
  * token alone. In A2A the token is held by exactly two named parties; in a group it is the same
  * string for everyone who can call, so a leaked token must not be sufficient. Order of refusal is
  * deliberate: no-session, then not-a-member, then no-power, then bad-token, then capacity -- each a
  * different operator problem and each its own greppable word.
  *
- * ROOM ALLOCATION (item 2) needs no code here. The room key IS the `channel`, so the existing
+ * ROOM ALLOCATION needs no code here. The room key IS the `channel`, so the existing
  * multiagent arm of JanusAudioBridge.CalcRoomNumber hashes (gridId, channel, "multiagent")
  * (:275-286) and produces a room number distinct from every parcel room and every A2A room. Nothing
  * in the Janus bridge changes.

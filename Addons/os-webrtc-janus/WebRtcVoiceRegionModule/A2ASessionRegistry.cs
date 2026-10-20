@@ -6,7 +6,7 @@
  */
 
 /*
- * Avatar-to-avatar (P2P) voice invitation registry (slice).
+ * Avatar-to-avatar (P2P) voice invitation registry.
  *
  * In-memory, per region-server instance, thread-safe: sessionID -> { caller, callee, token, state, created }.
  * The session id is the viewer's XOR of the two agent ids (llimview.cpp:2530-2570 in the wire trace); the
@@ -98,7 +98,7 @@ namespace osWebRtcVoice
         public const int TokenBytes = 32;
 
         /// <summary>
-        /// Idle backstop for an Active session (the slice-1 carry-forward): removed when no party has
+        /// Idle backstop for an Active session: removed when no party has
         /// produced any registry activity (provision, logout, call, decline) for this long. A live call makes
         /// NO ChatSessionRequest traffic -- audio flows via the mixer -- so this must comfortably exceed any
         /// plausible call, or a party reconnecting mid-call would be refused-no-session. It is a leak guard
