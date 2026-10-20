@@ -64,7 +64,8 @@ namespace osWebRtcVoice.Tests
             ["jsep"] = new OSDMap { ["type"] = OSD.FromString("offer"), ["sdp"] = OSD.FromString("v=0") },
         };
 
-        private List<LogCapture.Line> RefusalLines() => _log.AtInfoOrAbove("refused");
+        // Only this fixture's viewer: lines from other tests running before or after must not count.
+        private List<LogCapture.Line> RefusalLines() => _log.AtInfoOrAbove("refused").Where(l => l.Text.Contains(Alice.ToString())).ToList();
 
         [Test]
         public void TheFirstRefusalOfAnEpisode_IsLoggedOnce_AndTheRetriesInTheWindowAddNoLine()

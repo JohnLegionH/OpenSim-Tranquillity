@@ -59,8 +59,8 @@ namespace osWebRtcVoice.Tests
             for (int window = 0; window < 12; window++)   // a minute of a viewer retrying at its usual rate
                 Retry(log, Agent, 9, ref _now);
 
-            Assert.That(_log.AtInfoOrAbove().Count, Is.EqualTo(1));
-            Assert.That(_log.AtInfoOrAbove()[0].Text, Does.Contain("refused").And.Contain(Agent.ToString()));
+            Assert.That(_log.AtInfoOrAbove("[TEST]").Count, Is.EqualTo(1));
+            Assert.That(_log.AtInfoOrAbove("[TEST]")[0].Text, Does.Contain("refused").And.Contain(Agent.ToString()));
             Assert.That(log.Open, Is.EqualTo(1));
         }
 
@@ -74,7 +74,7 @@ namespace osWebRtcVoice.Tests
 
             log.Ended(Agent, Region, "it was admitted");
 
-            var lines = _log.AtInfoOrAbove();
+            var lines = _log.AtInfoOrAbove("[TEST]");
             Assert.That(lines.Count, Is.EqualTo(2));
             Assert.That(lines[1].Text, Does.Contain("30 times").And.Contain("it was admitted"));
             Assert.That(log.Open, Is.EqualTo(0));
@@ -89,7 +89,7 @@ namespace osWebRtcVoice.Tests
 
             log.Ended(Agent, Region);
 
-            Assert.That(_log.AtInfoOrAbove().Count, Is.EqualTo(1));
+            Assert.That(_log.AtInfoOrAbove("[TEST]").Count, Is.EqualTo(1));
         }
 
         [Test]
@@ -105,13 +105,13 @@ namespace osWebRtcVoice.Tests
             _now += 2_000;    // 61 s
             Assert.That(log.Sweep(), Is.EqualTo(1));
 
-            var lines = _log.AtInfoOrAbove();
+            var lines = _log.AtInfoOrAbove("[TEST]");
             Assert.That(lines.Count, Is.EqualTo(2));
             Assert.That(lines[1].Text, Does.Contain("30 times").And.Contain("no retry for 60 s"));
             Assert.That(log.Sweep(), Is.EqualTo(0), "closed once");
 
             Retry(log, Agent, 0, ref _now);
-            Assert.That(_log.AtInfoOrAbove().Count, Is.EqualTo(3), "a refusal after the end is a new episode");
+            Assert.That(_log.AtInfoOrAbove("[TEST]").Count, Is.EqualTo(3), "a refusal after the end is a new episode");
         }
 
         [Test]
@@ -123,7 +123,7 @@ namespace osWebRtcVoice.Tests
             Retry(log, Other, 5, ref _now);
             Retry(log, Agent, 5, ref _now);
 
-            Assert.That(_log.AtInfoOrAbove().Count, Is.EqualTo(2), "one first line for each");
+            Assert.That(_log.AtInfoOrAbove("[TEST]").Count, Is.EqualTo(2), "one first line for each");
             Assert.That(log.Open, Is.EqualTo(2));
         }
 
@@ -135,7 +135,7 @@ namespace osWebRtcVoice.Tests
             Retry(log, Agent, 0, ref _now, 0);
             log.Ended(Agent, Region);
 
-            Assert.That(_log.AtInfoOrAbove(), Is.Empty);
+            Assert.That(_log.AtInfoOrAbove("[TEST]"), Is.Empty);
             Assert.That(log.Open, Is.EqualTo(0));
         }
 
@@ -154,7 +154,7 @@ namespace osWebRtcVoice.Tests
             while (log.Open > 0 && clock.ElapsedMilliseconds < 8000)
                 Thread.Sleep(20);
             Assert.That(log.Open, Is.EqualTo(0), "the timer closed the episode");
-            Assert.That(_log.AtInfoOrAbove().Last().Text, Does.Contain("3 times"));
+            Assert.That(_log.AtInfoOrAbove("[TEST]").Last().Text, Does.Contain("3 times"));
         }
     }
 }
