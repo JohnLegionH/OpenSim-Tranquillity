@@ -103,13 +103,43 @@ namespace osWebRtcVoice.Tests
             IConfig cfg = Section();
             cfg.Set("PositionFeedEnabled", "true");
             cfg.Set("PositionFeedMode", "enforce");
+            cfg.Set("JoinCapabilityEnabled", "true");
             var warnings = new List<string>();
 
             PositionSettings s = WebRtcVoiceRegionModule.ReadPositionSettings(cfg, warnings.Add);
 
             Assert.That(s.Mode, Is.EqualTo(PositionFeedMode.Enforce));
-            Assert.That(warnings, Is.Empty, "enforce is a valid word");
+            Assert.That(warnings, Is.Empty, "enforce is a valid word and the join capability is on");
             Assert.That(PositionFeedModes.Active(s.Mode), Is.EqualTo(PositionFeedMode.Enforce));
+        }
+
+        [Test]
+        public void EnforceWithoutTheJoinCapability_WarnsNamingBothSettings_AndObserves()
+        {
+            IConfig cfg = Section();
+            cfg.Set("PositionFeedEnabled", "true");
+            cfg.Set("PositionFeedMode", "enforce");
+            var warnings = new List<string>();
+
+            PositionSettings s = WebRtcVoiceRegionModule.ReadPositionSettings(cfg, warnings.Add);
+
+            Assert.That(s.Mode, Is.EqualTo(PositionFeedMode.Observe));
+            Assert.That(PositionFeedModes.WireName(PositionFeedModes.Active(s.Mode)), Is.EqualTo("observe"));
+            Assert.That(warnings, Has.Count.EqualTo(1));
+            Assert.That(warnings[0], Does.Contain("PositionFeedMode").And.Contain("JoinCapabilityEnabled").And.Contain("observe"));
+        }
+
+        [Test]
+        public void ObserveWithoutTheJoinCapability_IsUnchangedAndSilent()
+        {
+            IConfig cfg = Section();
+            cfg.Set("PositionFeedEnabled", "true");
+            var warnings = new List<string>();
+
+            PositionSettings s = WebRtcVoiceRegionModule.ReadPositionSettings(cfg, warnings.Add);
+
+            Assert.That(s.Mode, Is.EqualTo(PositionFeedMode.Observe));
+            Assert.That(warnings, Is.Empty);
         }
 
         [Test]

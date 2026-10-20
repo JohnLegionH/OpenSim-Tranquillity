@@ -93,6 +93,8 @@
     ; enforce asks the mixer to replace a viewer's claimed position that is farther from the sim's than the
     ; tolerance allows. The mixer does so only if its operator has also set JS_POS_MODE=enforce; otherwise it
     ; keeps counting. Setting this back to observe stops the correction with the next request.
+    ; enforce needs JoinCapabilityEnabled = true (below): without it a viewer can join as another agent, so the
+    ; region logs a warning and stays in observe.
     ;PositionFeedMode = observe
 
     ; The sim issues each joining avatar a signed join capability. Default: false. Needs the slvoice mixer

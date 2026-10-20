@@ -79,8 +79,9 @@ public partial class WebRtcVoiceRegionModule
     public const bool DefaultPositionFeedEnabled = false;
 
     // The feed's settings, or null when the feed is off. PositionFeedMode is "observe" (the default) or
-    // "enforce"; only observe is active, enforce is accepted and runs as observe. pWarn receives a message for a value
-    // that had to be replaced.
+    // "enforce". Enforce also needs JoinCapabilityEnabled: positions are matched to the agent id a viewer joined as, so
+    // without the join capability a viewer can join as another agent and the comparison proves nothing; enforce then
+    // runs as observe. pWarn receives a message for a value that had to be replaced.
     public static PositionSettings ReadPositionSettings(IConfig pConfig, Action<string> pWarn = null)
     {
         if (!pConfig.GetBoolean("PositionFeedEnabled", DefaultPositionFeedEnabled))
@@ -90,6 +91,12 @@ public partial class WebRtcVoiceRegionModule
         PositionFeedMode mode = PositionFeedModes.Parse(modeText, out bool recognised);
         if (!recognised)
             pWarn?.Invoke($"PositionFeedMode \"{modeText}\" is neither observe nor enforce; using observe");
+        if (mode == PositionFeedMode.Enforce && !pConfig.GetBoolean("JoinCapabilityEnabled", false))
+        {
+            pWarn?.Invoke("PositionFeedMode enforce needs JoinCapabilityEnabled = true: positions are matched to the agent id a " +
+                "viewer joined as, and without the join capability a viewer can join as another agent; staying in observe");
+            mode = PositionFeedMode.Observe;
+        }
 
         return new PositionSettings
         {
