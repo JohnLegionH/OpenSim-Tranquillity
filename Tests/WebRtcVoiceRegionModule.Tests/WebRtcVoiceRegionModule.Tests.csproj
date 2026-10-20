@@ -87,6 +87,7 @@
     <Compile Include="GroupRingRootOnlyTests.cs" />
     <Compile Include="AdhocRingRootOnlyTests.cs" />
     <Compile Include="AdhocTextCrossProcessTests.cs" />
+    <Compile Include="AdhocTextGridModeTests.cs" />
     <Compile Include="StockModerationTests.cs" />
     <Compile Include="ProvisionPassthroughTests.cs" />
     <Compile Include="StockPluginSwitchTests.cs" />

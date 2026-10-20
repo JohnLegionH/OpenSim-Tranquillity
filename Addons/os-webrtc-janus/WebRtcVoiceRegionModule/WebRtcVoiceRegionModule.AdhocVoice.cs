@@ -187,10 +187,13 @@ public partial class WebRtcVoiceRegionModule
                                          originRegion, plan.Message);
         }
         // Members this process cannot rule in or out: only ever carried. One who has a root presence here and
-        // is not recorded as in the conversation here is not in it, and gets nothing.
-        foreach (UUID target in plan.Elsewhere)
-            if (!rootHere.Contains(target))
-                remote.Add(target);
+        // is not recorded as in the conversation here is not in it, and gets nothing. A store shared by every
+        // process (the one that keys the conference) records an answer wherever it is given, so there is nobody
+        // to guess about there: an invitee it records as invited has not answered, and is not written to.
+        if (m_nonSpatial is not { StoreIssuesCarrierKeys: true })
+            foreach (UUID target in plan.Elsewhere)
+                if (!rootHere.Contains(target))
+                    remote.Add(target);
 
         SendRemoteConferenceText(plan, fromName, originRegion, scenes, remote);
     }
