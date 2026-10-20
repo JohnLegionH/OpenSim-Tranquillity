@@ -64,7 +64,7 @@ namespace osWebRtcVoice.Tests
         private static OSDMap Call(UUID grp) => new OSDMap { ["method"] = OSD.FromString("call"), ["session-id"] = OSD.FromUUID(grp) };
         private static OSDMap Accept(UUID grp) => new OSDMap { ["method"] = OSD.FromString("accept invitation"), ["session-id"] = OSD.FromUUID(grp) };
 
-        // ---- item 1: the carrier ------------------------------------------------------------------
+        // ---- the carrier ------------------------------------------------------------------
 
         [Test]
         public void TheCarrierRoundTrips()
@@ -118,7 +118,7 @@ namespace osWebRtcVoice.Tests
             Assert.That(GroupVoiceRingTransport.TryParse(new GridInstantMessage { dialog = 1, fromGroup = false }, out _, out _, out _), Is.False);
         }
 
-        // ---- item 3: the remote accept -------------------------------------------------------------
+        // ---- the remote accept -------------------------------------------------------------
 
         [Test]
         public void ARemoteInstanceDerivesTheSameRoomKey()
@@ -187,7 +187,7 @@ namespace osWebRtcVoice.Tests
             Assert.That(r.Decision, Is.EqualTo("refused-room-key-mismatch"));
         }
 
-        // ---- item 2: send-once across instances ------------------------------------------------------
+        // ---- send-once across instances ------------------------------------------------------
 
         [Test]
         public void AnAdoptedSessionNeverRingsAgain()

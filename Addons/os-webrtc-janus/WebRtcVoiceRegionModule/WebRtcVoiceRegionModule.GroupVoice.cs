@@ -142,7 +142,9 @@ public partial class WebRtcVoiceRegionModule
         if (roster is null) return;
 
         HashSet<UUID> local = new HashSet<UUID>(alreadyRungLocally ?? new List<UUID>());
-        HashSet<UUID> presentHere = new HashSet<UUID>(GroupVoiceInvite.PresentAgents(scenes));
+        // Root presences only: a member who is just a child presence here is rung through the carrier,
+        // so the process that holds their root presence records the call before their accept arrives.
+        HashSet<UUID> presentHere = new HashSet<UUID>(GroupVoiceInvite.RootAgents(scenes));
         List<UUID> remote = new List<UUID>();
         foreach (GroupMembersData m in roster)
         {
@@ -269,7 +271,7 @@ public partial class WebRtcVoiceRegionModule
         lock (m_scenes)
             scenes = new List<Scene>(m_scenes);
 
-        List<UUID> targets = GroupVoiceInvite.Targets(GroupVoiceInvite.PresentAgents(scenes), session,
+        List<UUID> targets = GroupVoiceInvite.Targets(GroupVoiceInvite.RootAgents(scenes), session,
                                                       initiator, m_groupVoice);
         bool noLocalTargets = targets.Count == 0;
         if (noLocalTargets)
@@ -498,7 +500,7 @@ public partial class WebRtcVoiceRegionModule
         // is enabled and the voice session-id names a group this agent belongs to. TryHandleCall returns
         // false having done nothing for everything else, so the A2A path below is reached with
         // exactly the arguments and the state it would have had. A group "call" from a NON-member
-        // falls through on purpose: it reaches the A2A arm and 404s there, which is the pre-slice
+        // falls through on purpose: it reaches the A2A arm and 404s there, which is the previous
         // answer for an unknown session and the one the viewer already survives.
         if (GroupVoiceChatSession.TryHandleCall(reqmap, agentID, m_groupVoice, m_nonSpatial,
                                                 scene.RegionInfo.RegionID, out ChatSessionOutcome groupOutcome))

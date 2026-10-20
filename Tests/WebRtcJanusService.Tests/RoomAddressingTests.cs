@@ -8,7 +8,7 @@
 /*
  * 2: an agent is addressed at the room it is IN, and never at a guessed one.
  *
- * THE DEFECT. Until this slice the sim had one rule for an agent with no AgentRoomTable record: address it at the
+ * THE DEFECT. Until this change the sim had one rule for an agent with no AgentRoomTable record: address it at the
  * region's estate-channel room. That number is a real, live room in every region, so the "fallback" was not inert -
  * on a parcel with its own voice channel it wrote that agent's live exclusion and mute state into the WRONG room, and
  * on an empty region it created policy for a room no viewer had provisioned. It also looked healthy: the send
@@ -20,7 +20,7 @@
  *      provisioned into - its parcel's room, which on an estate-channel parcel IS the estate number;
  *   3. else nothing: the agent is OMITTED from every batch, every column and every heartbeat entry, and counted.
  * The estate number is never an address merely because it is the default. Where it is the RESOLVED number - an
- * estate-channel parcel, which is the common case - every byte is exactly what it was before this slice, which is
+ * estate-channel parcel, which is the common case - every byte is exactly what it was before this change, which is
  * why the knob-off goldens are untouched (O2 below proves the knob-ON half the goldens do not cover).
  *
  * The rig composes the resolver exactly as VoiceVisibilityService does (record, else parcel, else null); the sim-side
@@ -81,7 +81,7 @@ namespace osWebRtcVoice.Tests
             public VisibilityBatch Tick() { Current = VisibilityMatrix.Build(_world); return VisibilityBatch.EmptyDelta(-999); }
         }
 
-        /// The sim as this slice leaves it: a record table, a parcel resolution, and the composition of the two.
+        /// The sim as this change leaves it: a record table, a parcel resolution, and the composition of the two.
         private sealed class Rig : IDisposable
         {
             public long Clock = 10_000;

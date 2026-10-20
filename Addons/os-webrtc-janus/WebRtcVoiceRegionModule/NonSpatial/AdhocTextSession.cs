@@ -19,7 +19,7 @@
  * id as an ADHOC session. A group id is not in that store, so TryPlan returns false and
  * GroupsMessagingModule handles it exactly as it does today, byte for byte.
  *
- * THE MEMBERSHIP RULE (item 4) IS CHAT MEMBERSHIP -- NonSpatialMember.InChat -- not a roster, not
+ * THE MEMBERSHIP RULE IS CHAT MEMBERSHIP -- NonSpatialMember.InChat -- not a roster, not
  * a power, and NOT THE VOICE SEAT. An ad-hoc conference has no roster; "being invited
  * is the whole of the membership" (AdhocVoiceInvite.cs:7-8), and joining is what puts an agent in
  * the conversation.
@@ -35,7 +35,7 @@
  * and the cap still read the SEAT list; text and the roster read the CHAT list. They are allowed
  * to differ, and representing that difference is the point of the separate chat axis.
  *
- * NO ECHO TO THE SENDER (item 4), AND THIS IS A DELIBERATE DIVERGENCE FROM THE GROUP PATTERN.
+ * NO ECHO TO THE SENDER, AND THIS IS A DELIBERATE DIVERGENCE FROM THE GROUP PATTERN.
  * GroupsMessagingModule sends to self first of all (GroupsMessagingModule.cs:330-333) because a
  * the local echo of a group voice session is how the sender's own panel fills. A conference here does not want
  * that: the viewer already renders what it just sent into the ad-hoc session it owns, so echoing
@@ -43,7 +43,7 @@
  * KNOWN DIFFERENCE from the group path rather than an oversight, because the next person to read
  * both will otherwise "fix" it back.
  *
- * OFFLINE MEMBERS GET NOTHING STORED (item 5), and three independent things say so:
+ * OFFLINE MEMBERS GET NOTHING STORED, and three independent things say so:
  *     OfflineMessageModule.cs:228-233        allowlist = MessageFromObject, MessageFromAgent,
  *                                            GroupNotice, GroupInvitation, InventoryOffered,
  *                                            TaskInventoryOffered -> anything else returns early
@@ -73,15 +73,26 @@ namespace osWebRtcVoice.NonSpatial
         public UUID Sender { get; }
         public string Message { get; }
 
-        /// <summary>Every OTHER seat holder. Never contains <see cref="Sender"/>.</summary>
+        /// <summary>Every OTHER member this process records as in the conversation. Never contains <see cref="Sender"/>.</summary>
         public IReadOnlyList<UUID> Recipients { get; }
 
-        public AdhocTextPlan(NonSpatialVoiceSession session, UUID sender, string message, IReadOnlyList<UUID> recipients)
+        /// <summary>
+        /// Members this process does not record as in the conversation but who may be, because they answered the
+        /// invitation in another server process that this one has not heard from: an invitee still marked as
+        /// invited, and the member who started the conversation when this process adopted it from a ring. A
+        /// line is only ever CARRIED to these, never delivered here, and the process that holds their record
+        /// decides. Never contains <see cref="Sender"/>.
+        /// </summary>
+        public IReadOnlyList<UUID> Elsewhere { get; }
+
+        public AdhocTextPlan(NonSpatialVoiceSession session, UUID sender, string message, IReadOnlyList<UUID> recipients,
+                             IReadOnlyList<UUID> elsewhere = null)
         {
             Session = session;
             Sender = sender;
             Message = message ?? string.Empty;
             Recipients = recipients ?? new List<UUID>();
+            Elsewhere = elsewhere ?? new List<UUID>();
         }
     }
 
@@ -97,6 +108,9 @@ namespace osWebRtcVoice.NonSpatial
 
         public const string DecisionDelivered = "adhoc-text-delivered";
         public const string DecisionNotMember = "adhoc-text-refused-not-member";
+
+        /// <summary>A carried line reached a process whose record does not have the addressee in the conversation.</summary>
+        public const string DecisionRecipientNotInChat = "adhoc-text-recipient-not-in-chat";
         public const string DecisionNoRecipients = "adhoc-text-no-recipients";
         public const string DecisionEmpty = "adhoc-text-refused-empty";
         public const string DecisionDisabled = "adhoc-text-refused-disabled";
@@ -136,7 +150,7 @@ namespace osWebRtcVoice.NonSpatial
             NonSpatialMember from = session.Find(sender);
             if (from is null || !from.InChat)
             {
-                // Item 4: a non-member's SessionSend for this voice session is refused and logged. This
+                // A non-member's SessionSend for this voice session is refused and logged. This
                 // covers the stranger, the invitee who never accepted, the decliner and the member
                 // who already left -- none of them is in the conversation.
                 //
@@ -163,9 +177,53 @@ namespace osWebRtcVoice.NonSpatial
             }
 
             List<UUID> recipients = Recipients(session, sender);
-            decision = recipients.Count == 0 ? DecisionNoRecipients : DecisionDelivered;
-            plan = new AdhocTextPlan(session, sender, message, recipients);
+            List<UUID> elsewhere = Elsewhere(session, sender);
+            decision = recipients.Count == 0 && elsewhere.Count == 0 ? DecisionNoRecipients : DecisionDelivered;
+            plan = new AdhocTextPlan(session, sender, message, recipients, elsewhere);
             return true;
+        }
+
+        /// <summary>
+        /// Members this process cannot rule in or out of the conversation: those still recorded as invited (they may
+        /// have answered in another server process, which tells this one nothing), and the member who started the
+        /// conversation when this process holds no record of them (a process that adopted the conversation from a
+        /// ring learns only the invitees). Members who declined or left are never listed. The sender is excluded.
+        /// </summary>
+        public static List<UUID> Elsewhere(NonSpatialVoiceSession session, UUID sender)
+        {
+            List<UUID> to = new List<UUID>();
+            if (session is null)
+                return to;
+            foreach (NonSpatialMember m in session.Members)
+                if (m.AgentId != sender && !m.InChat && m.State == MemberState.Invited)
+                    to.Add(m.AgentId);
+            UUID creator = session.Creator;
+            if (creator != UUID.Zero && creator != sender && session.Find(creator) is null)
+                to.Add(creator);
+            return to;
+        }
+
+        /// <summary>
+        /// May this agent speak into the conversation, as far as THIS process's record can tell? A member who has
+        /// not declined or left, or the member who started it. A line carried from another process was already
+        /// checked there against the sender being in the conversation; this is the second check, against this
+        /// process's own copy of the record.
+        /// </summary>
+        public static bool IsParticipant(NonSpatialVoiceSession session, UUID agent)
+        {
+            if (session is null || agent == UUID.Zero)
+                return false;
+            NonSpatialMember m = session.Find(agent);
+            if (m is null)
+                return agent == session.Creator;
+            return m.State != MemberState.Declined && m.State != MemberState.Departed;
+        }
+
+        /// <summary>Is this agent in the conversation according to THIS process's record? The only members a line is delivered to.</summary>
+        public static bool IsInChat(NonSpatialVoiceSession session, UUID agent)
+        {
+            NonSpatialMember m = session?.Find(agent);
+            return m is not null && m.InChat && m.State != MemberState.Declined && m.State != MemberState.Departed;
         }
 
         /// <summary>

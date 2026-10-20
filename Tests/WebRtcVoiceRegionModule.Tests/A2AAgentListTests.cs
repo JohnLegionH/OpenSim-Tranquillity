@@ -12,7 +12,7 @@
  * treats can_voice_chat:false for the peer on a P2P channel as a decline and hangs up the call
  * (P2PCallDeclined + endCall, llimview.cpp:4366-4382). The group pattern's 1-arg ctor defaults
  * canVoice to FALSE (IEventQueue.cs:43-50); these tests assert the false case is impossible by
- * construction in every update this slice can produce.
+ * construction in every update this feature can produce.
  */
 using System;
 using System.Collections.Generic;

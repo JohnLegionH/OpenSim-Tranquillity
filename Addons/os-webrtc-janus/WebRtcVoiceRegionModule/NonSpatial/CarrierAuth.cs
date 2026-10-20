@@ -115,6 +115,34 @@ namespace osWebRtcVoice.NonSpatial
         }
 
         /// <summary>
+        /// The start-up line about <c>[WebRtcVoice] CarrierSecret</c>. <paramref name="problem"/> is the result of
+        /// <see cref="CheckSecret"/>; <paramref name="gridStore"/> is true when SessionStoreMode is grid. With the
+        /// grid session service the receiving region asks the service whether a ring is genuine and the service keeps
+        /// each conference's text key, so rings and conference text cross processes without a CarrierSecret. With the
+        /// in-process store a carrier needs the secret. The secret itself is never part of the line.
+        /// </summary>
+        public static (bool IsError, string Text) StartupLine(string problem, bool gridStore)
+        {
+            if (problem == null)
+                return (false, "cross-process voice carriers on: group and conference rings and "
+                    + "conference text are signed with [WebRtcVoice] CarrierSecret");
+            if (gridStore)
+                return problem == "too-short"
+                    ? (true, "[WebRtcVoice] CarrierSecret is shorter than " + MinSecretLength + " characters and is refused; "
+                        + "it is not needed with SessionStoreMode grid")
+                    : (false, "cross-process voice carriers: [WebRtcVoice] CarrierSecret is not set and is not needed "
+                        + "with SessionStoreMode grid. Rings and conference text cross processes, and the grid session "
+                        + "service verifies them");
+            return problem == "too-short"
+                ? (true, "[WebRtcVoice] CarrierSecret is shorter than " + MinSecretLength + " characters and is refused; "
+                    + "cross-process voice carriers are off")
+                : (false, "cross-process voice carriers are off: [WebRtcVoice] CarrierSecret is not set. "
+                    + "None is sent and every incoming one is refused. A grid that runs regions in more than one process "
+                    + "sets the same CarrierSecret (at least " + MinSecretLength + " characters) on every region server for group and "
+                    + "conference calls to ring across them");
+        }
+
+        /// <summary>
         /// The auth block for one outgoing carrier, or null when the signer is off. The caller adds it to
         /// the carrier's payload under <see cref="AuthKey"/>. Every call draws a fresh nonce.
         /// </summary>

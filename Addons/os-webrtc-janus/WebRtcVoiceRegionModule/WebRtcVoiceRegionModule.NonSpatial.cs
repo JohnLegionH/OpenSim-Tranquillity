@@ -106,22 +106,12 @@ public partial class WebRtcVoiceRegionModule
     {
         string secret = m_Config.GetString("CarrierSecret", string.Empty);
         string problem = CarrierAuth.CheckSecret(secret);
-        if (problem is null)
-        {
-            m_carrierAuth = new CarrierAuth(secret);
-            m_log.LogInformation("{LogHeader} cross-process voice carriers on: group and conference rings and "
-                + "conference text are signed with [WebRtcVoice] CarrierSecret", logHeader);
-            return;
-        }
-        m_carrierAuth = CarrierAuth.Off();
-        if (problem == "too-short")
-            m_log.LogError("{LogHeader} [WebRtcVoice] CarrierSecret is shorter than {Min} characters and is refused; "
-                + "cross-process voice carriers are off", logHeader, CarrierAuth.MinSecretLength);
+        m_carrierAuth = problem is null ? new CarrierAuth(secret) : CarrierAuth.Off();
+        (bool isError, string text) = CarrierAuth.StartupLine(problem, SessionStoreSettings.Read(m_Config).Grid);
+        if (isError)
+            m_log.LogError("{LogHeader} {Line}", logHeader, text);
         else
-            m_log.LogInformation("{LogHeader} cross-process voice carriers are off: [WebRtcVoice] CarrierSecret is not set. "
-                + "None is sent and every incoming one is refused. A grid that runs regions in more than one process "
-                + "sets the same CarrierSecret (at least {Min} characters) on every region server for group and "
-                + "conference calls to ring across them", logHeader, CarrierAuth.MinSecretLength);
+            m_log.LogInformation("{LogHeader} {Line}", logHeader, text);
     }
 
     private void LogCarrierOff(UUID session)

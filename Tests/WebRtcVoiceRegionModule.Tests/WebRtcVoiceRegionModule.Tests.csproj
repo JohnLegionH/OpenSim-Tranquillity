@@ -35,6 +35,7 @@
     <Compile Include="RingVerificationTests.cs" />
     <Compile Include="SessionStoreReportTests.cs" />
     <Compile Include="CarrierKeyTests.cs" />
+    <Compile Include="CarrierStartupLineTests.cs" />
     <Compile Include="RegionStartSeatReleaseTests.cs" />
     <Compile Include="P2PCallRulesTests.cs" />
     <Compile Include="SeatRenewalTests.cs" />
@@ -88,6 +89,13 @@
     <Compile Include="CallMuteEnforcementTests.cs" />
     <Compile Include="CallTextMuteTests.cs" />
     <Compile Include="GridStoreResilienceTests.cs" />
+    <Compile Include="GridStoreProcessTests.cs" />
+    <Compile Include="CrossProcessHarness.cs" />
+    <Compile Include="A2ARingRootOnlyTests.cs" />
+    <Compile Include="GroupRingRootOnlyTests.cs" />
+    <Compile Include="AdhocRingRootOnlyTests.cs" />
+    <Compile Include="AdhocTextCrossProcessTests.cs" />
+    <Compile Include="AdhocTextGridModeTests.cs" />
     <Compile Include="StockModerationTests.cs" />
     <Compile Include="ProvisionPassthroughTests.cs" />
     <Compile Include="StockPluginSwitchTests.cs" />

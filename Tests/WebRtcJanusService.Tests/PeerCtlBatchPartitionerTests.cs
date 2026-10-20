@@ -137,7 +137,7 @@ namespace osWebRtcVoice.Tests
         public void Partition_SourceTheResolverCannotPlace_IsFilteredOutOfEveryColumn_AndCounted()
         {
             // 2: a source the sim cannot place is in no room, so it survives in no column. Before 0.8c2 it
-            // was treated as an estate-room source and kept for estate-room listeners; that was the guess this slice
+            // was treated as an estate-room source and kept for estate-room listeners; that was the guess this change
             // removes. A source resolved to the estate room by its PARCEL still behaves exactly as it did - that is
             // the case below, where listener 7 and source 9 are both placed there.
             var excl = Excl((1, new[] { 9 }), (7, new[] { 9 }));
