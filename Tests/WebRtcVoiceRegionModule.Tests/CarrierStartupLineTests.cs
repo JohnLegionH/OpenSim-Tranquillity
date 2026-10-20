@@ -36,7 +36,7 @@ namespace osWebRtcVoice.Tests
 
             Assert.That(isError, Is.False);
             Assert.That(text, Does.Contain("not needed with SessionStoreMode grid"));
-            Assert.That(text, Does.Contain("Rings and conference text cross processes"));
+            Assert.That(text, Does.Contain("Rings, avatar-to-avatar calls and conference text cross processes"));
             Assert.That(text, Does.Contain("service verifies them"));
             Assert.That(text, Does.Not.Contain("None is sent"));
             Assert.That(text, Does.Not.Contain("are off"));
