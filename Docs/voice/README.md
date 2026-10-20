@@ -104,7 +104,9 @@ The shipped `os-webrtc-janus.ini` lists it commented out with a public server as
 `A2AVoiceEnabled`. Handles the viewer's "call" and "start p2p voice" requests: the region records the
 invitation, delivers it to the callee, and provisions a two-party voice session for the pair.
 With the switch off the chat session handler behaves as it does without the feature. Calls are tracked per region
-server process, so both avatars must be on regions hosted by the same process (see known limits).
+server process. When the callee is in a region hosted by another process, the call rings there through the signed
+carrier, which needs `CarrierSecret` set to the same value on every region server (see configuration); without it
+a callee in another process is not rung and the caller's call rings out.
 
 ### Group voice
 
@@ -188,8 +190,9 @@ with this guide or `configuration.md`, the code and the shipped ini file are wha
 - **TURN is not delivered.** The addon can advertise STUN servers only. It has no setting for TURN, so stock
   viewers behind networks that block direct UDP will not get a relay from the addon.
 - **Sessions are held in memory, per region server process.** Call invitations, group and conference seats,
-  and moderation state are not stored in a database and are lost when the process restarts. Calls between
-  avatars on different region server processes are not supported.
+  and moderation state are not stored in a database and are lost when the process restarts. Calls, group calls
+  and conferences between avatars on different region server processes need `CarrierSecret` on every region
+  server; each process keeps its own copy of the call.
 - **Only the slvoice mixer enforces visibility.** With the stock plugin every listener in a room hears every
   source, whatever the visibility switches say.
 - **Calls, groups and conferences have only been exercised against the slvoice mixer.**
