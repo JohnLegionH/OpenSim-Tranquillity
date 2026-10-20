@@ -101,6 +101,8 @@ namespace osWebRtcVoice
         private readonly Dictionary<UUID, long> _retryAt = new Dictionary<UUID, long>();
         private readonly Dictionary<UUID, int> _retryBackoffMs = new Dictionary<UUID, int>();   // doubling, per listener
         private readonly HashSet<int> _roomsBackingOff = new HashSet<int>();                    // for one WARN / one INFO
+        private readonly HashSet<int> _roomsKnown = new HashSet<int>();                         // answered applied, or proved to exist
+        private readonly HashSet<int> _roomsFirstMiss = new HashSet<int>();                     // missed once, never known: the first miss was expected
         private readonly Dictionary<UUID, int> _roomOfListener = new Dictionary<UUID, int>();   // where a backoff came from
         private readonly Dictionary<UUID, long> _rearm = new Dictionary<UUID, long>();   // listener -> requested at
         private bool _rearmAll;
@@ -399,6 +401,15 @@ namespace osWebRtcVoice
                 _roomOfListener[l] = room;   // so RoomExists(room) can release exactly these listeners
                 n++;
             }
+            // A room the mixer has never answered for is created by the first provision into it, and the first arming
+            // pass can come before that provision. The first unknown_room for such a room is expected, so it is a Debug
+            // line; a second one, or one for a room that was known, is a Warning as before.
+            if (why == "unknown_room" && !_roomsKnown.Contains(room) && _roomsFirstMiss.Add(room))
+            {
+                m_log.LogDebug("{LogHeader} region {Region} room {Room}: {Why}; the mixer has not created this room yet, " +
+                    "{Count} listener(s) wait for it. Retrying in {Retry} ms", LogHeader, _region, room, why, n, delay);
+                return;
+            }
             if (_roomsBackingOff.Add(room))
                 m_log.LogWarning("{LogHeader} region {Region} room {Room}: {Why}; {Count} listener(s) not armed. Retrying in " +
                     "{Retry} ms, doubling to {Max} ms while it persists, or at the listener's next provision. This is logged " +
@@ -413,6 +424,7 @@ namespace osWebRtcVoice
         {
             lock (_lock)
             {
+                MarkRoomKnownLocked(room);
                 if (_armed.TryGetValue(room, out Dictionary<UUID, uint> armed))
                     foreach (UUID l in new List<UUID>(armed.Keys))
                     {
@@ -432,10 +444,17 @@ namespace osWebRtcVoice
             }
         }
 
+        private void MarkRoomKnownLocked(int room)
+        {
+            _roomsKnown.Add(room);
+            _roomsFirstMiss.Remove(room);
+        }
+
         /// <summary>Note that a room answered again, so the next failure logs afresh. Called on any applied
         /// outcome for the room.</summary>
         private void ClearRoomBackoffLocked(int room)
         {
+            MarkRoomKnownLocked(room);
             if (_roomsBackingOff.Remove(room))
                 m_log.LogInformation("{LogHeader} region {Region} room {Room}: answering again; arming resumes",
                     LogHeader, _region, room);
