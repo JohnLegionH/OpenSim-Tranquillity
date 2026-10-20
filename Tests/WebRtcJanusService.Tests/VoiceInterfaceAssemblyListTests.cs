@@ -30,7 +30,11 @@ using NUnit.Framework;
 
 namespace osWebRtcVoice.Tests
 {
+    // This fixture only reads files, so it has no hang to guard against and takes no wall-clock limit:
+    // on a machine with a cold file cache, reading every .cs file under Source and Addons for the first
+    // time can take longer than the assembly-wide default, and a build that is merely slow must not fail.
     [TestFixture]
+    [NUnit.Framework.Timeout(System.Threading.Timeout.Infinite)]
     public class VoiceInterfaceAssemblyListTests
     {
         private const string Interface = "IWebRtcVoiceService";
