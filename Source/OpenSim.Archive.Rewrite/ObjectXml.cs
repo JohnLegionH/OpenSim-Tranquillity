@@ -85,7 +85,7 @@ internal static class ObjectXml
         {
             if (!done.Add(part.Id))
                 throw new InvalidDataException("part " + part.Id + " appears twice in '" + entryName + "'");
-            foreach (ElementEdit edit in patches[part.Id].Edits)
+            foreach (ElementEdit edit in patches[part.Id].EditsFor(new HashSet<string>(part.ByPath.Keys, StringComparer.Ordinal)))
             {
                 if (!part.ByPath.TryGetValue(edit.Path, out List<Span> spans) || spans.Count == 0)
                     throw new InvalidDataException("part " + part.Id + " in '" + entryName + "' has no element '" + edit.Path + "'");

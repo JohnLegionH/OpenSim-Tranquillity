@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyTitle>OpenSim.Archive.Converter</AssemblyTitle>
+    <Company>http://opensimulator.org</Company>
+    <Product>OpenSim</Product>
+    <Copyright>OpenSimulator developers</Copyright>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../Source/OpenSim.Framework/OpenSim.Framework.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Framework.Serialization/OpenSim.Framework.Serialization.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Archive.Inspection/OpenSim.Archive.Inspection.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Archive.GltfExport/OpenSim.Archive.GltfExport.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Archive.Rewrite/OpenSim.Archive.Rewrite.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Archive.Compare/OpenSim.Archive.Compare.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Archive.Eligibility/OpenSim.Archive.Eligibility.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="OpenSim.Archive.Converter.Tests" />
+  </ItemGroup>
+</Project>

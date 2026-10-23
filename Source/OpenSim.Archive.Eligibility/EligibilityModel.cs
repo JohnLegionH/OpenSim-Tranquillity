@@ -5,6 +5,8 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+using OpenSim.Archive.Inspection;
+
 namespace OpenSim.Archive.Eligibility;
 
 /// <summary>What the converter does with one part.</summary>
@@ -32,6 +34,10 @@ public static class ReasonCodes
     public const string ScriptUncertain = "SCRIPT_UNCERTAIN";
     public const string FaceCountMismatch = "FACECOUNT_MISMATCH";
     public const string SculptMapMissing = "SCULPT_MAP_MISSING";
+    /// <summary>A script turns physics on at run time (STATUS_PHYSICS, PRIM_PHYSICS or a vehicle call); the part would become a physical convex-hull mesh.</summary>
+    public const string PhysicalScript = "PHYSICAL_SCRIPT";
+    /// <summary>The server and viewer face counts differ for a reason that is not one of the settled cases (see FaceRuleCases).</summary>
+    public const string FaceRuleUnverified = "FACERULE_UNVERIFIED";
     /// <summary>A warning, not a reason to keep: the side count changes and no script was seen to depend on it.</summary>
     public const string SideCountChanges = "SIDE_COUNT_CHANGES";
 }
@@ -80,6 +86,9 @@ public sealed class EligibilityOptions
 {
     /// <summary>Treat a script with no readable source as harmless. Off by default; the report says loudly when it is on.</summary>
     public bool AssumeSafeUnscanned { get; set; }
+
+    /// <summary>Called once for every part read in the archive pass, so a caller can keep what it needs of the part without a second pass.</summary>
+    public Action<ParsedPart> PartObserver { get; set; }
 }
 
 public sealed class EligibilityResult

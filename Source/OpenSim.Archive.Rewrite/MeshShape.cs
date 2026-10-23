@@ -74,7 +74,9 @@ public static class MeshShape
         edits.Add(ElementEdit.SetText(idPath, new UUID(meshAssetId).ToString()));
         Number("SculptType", s.SculptType);
         edits.Add(ElementEdit.SetText(Shape + "SculptEntry", "true"));
-        edits.Add(ElementEdit.SetText(Shape + "ExtraParams", Convert.ToBase64String(WithSculptBlock(currentExtraParams, meshAssetId, s.SculptType))));
+        // A part with no ExtraParams element is complete without it: the Sculpt* elements above are read after it and decide.
+        if (present == null || present.Contains(Shape + "ExtraParams"))
+            edits.Add(ElementEdit.SetText(Shape + "ExtraParams", Convert.ToBase64String(WithSculptBlock(currentExtraParams, meshAssetId, s.SculptType))));
         return edits;
     }
 

@@ -76,6 +76,8 @@ public sealed class ArchiveEligibility
         {
             foreach (ParsedGroup group in obj.Groups)
                 foreach (ParsedPart p in group.Parts)
+                {
+                    m_options.PartObserver?.Invoke(p);
                     facts.Add(new PartFacts
                     {
                         Entry = entry,
@@ -91,6 +93,7 @@ public sealed class ArchiveEligibility
                         Creator = p.Part.Creator,
                         OwnerId = p.Part.OwnerId
                     });
+                }
         };
 
         ScanResult scan = new ArchiveScriptScanner(scanOptions).Scan(path);
@@ -140,13 +143,11 @@ public sealed class ArchiveEligibility
     /// The stand-in for a mesh asset id in a draft plan. The prefix is not a random version-4 id, so a later step can tell
     /// a stand-in from a real id and replace it.
     /// </summary>
-    public static readonly string PlaceholderPrefix = "00000000-0000-4000-8000-";
+    public static readonly string PlaceholderPrefix = StandInIds.Prefix;
 
-    public static Guid PlaceholderId(int ordinal) =>
-        Guid.Parse(PlaceholderPrefix + ordinal.ToString("x12", CultureInfo.InvariantCulture));
+    public static Guid PlaceholderId(int ordinal) => StandInIds.Make(ordinal);
 
-    public static bool IsPlaceholder(Guid id) =>
-        id.ToString().StartsWith(PlaceholderPrefix, StringComparison.Ordinal);
+    public static bool IsPlaceholder(Guid id) => StandInIds.Is(id);
 
     private EligibilityRow Decide(PartRow scanRow, PartFacts f, HashSet<UUID> assetIds)
     {
@@ -217,6 +218,13 @@ public sealed class ArchiveEligibility
         if (f.Flexible)
             Add(PartAction.KeepPrim, ReasonCodes.Flexi, "the part is flexible");
 
+        // A script that turns physics on later would leave a physical convex-hull mesh (the stored flag above only covers a part that is already physical).
+        PartReason physicsCall = scanRow.Reasons.FirstOrDefault(r => r.Level == "warning" && r.Code == "PHYSICS_CALL" && r.Detail != "PRIM_PHYSICS_SHAPE_TYPE");
+        if (physicsCall != null)
+            Add(PartAction.KeepPrim, ReasonCodes.PhysicalScript, "a script turns physics on at run time"
+                + (string.IsNullOrEmpty(physicsCall.Detail) ? "" : " (" + Sanitize.Text(physicsCall.Detail) + ")")
+                + (string.IsNullOrEmpty(physicsCall.Script) ? "" : " in script '" + Sanitize.Text(physicsCall.Script) + "'"));
+
         if (er.ViewerFaces > MeshShape.MaxFaces)
             Add(PartAction.KeepPrim, ReasonCodes.FacesGt8, "the viewer gives the shape " + er.ViewerFaces + " faces and a mesh has at most " + MeshShape.MaxFaces);
 
@@ -232,6 +240,9 @@ public sealed class ArchiveEligibility
                 detail += " (script '" + Sanitize.Text(first.Script) + "'" + (first.Line > 0 ? " line " + first.Line.ToString(CultureInfo.InvariantCulture) : "") + ")";
             Add(PartAction.KeepPrim, unsafeHit ? ReasonCodes.ScriptUnsafe : ReasonCodes.ScriptUncertain, detail);
         }
+
+        if (isPrimCode && !isSculpt && er.ServerFaces != er.ViewerFaces && FaceRuleCases.Explain(shape) == null)
+            Add(PartAction.KeepPrim, ReasonCodes.FaceRuleUnverified, "the server counts " + er.ServerFaces + " sides and the viewer " + er.ViewerFaces + ", and the difference is not one the viewer source has been checked for");
 
         if (isPrimCode && !isSculpt && er.ServerFaces != er.ViewerFaces)
         {

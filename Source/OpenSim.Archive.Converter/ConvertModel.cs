@@ -1,0 +1,166 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+using System.Globalization;
+using System.Text;
+using System.Text.Json;
+using OpenSim.Archive.Compare;
+using OpenSim.Archive.Eligibility;
+using OpenSim.Archive.GltfExport;
+using OpenSim.Archive.Rewrite;
+
+namespace OpenSim.Archive.Converter;
+
+public sealed class ConvertException : Exception
+{
+    public ConvertException(string message, Exception inner = null) : base(message, inner) { }
+}
+
+public sealed class ConvertOptions
+{
+    /// <summary>Treat a script with no readable source as harmless (see the eligibility command). Off by default.</summary>
+    public bool AssumeSafeUnscanned { get; set; }
+    /// <summary>Writes the mesh assets. Null means the stand-in encoder, whose output is not a valid mesh.</summary>
+    public IMeshEncoder Encoder { get; set; }
+    /// <summary>Supplies sculpt maps. Null means the maps are read from the source archive.</summary>
+    public ISculptMapSource SculptMaps { get; set; }
+}
+
+/// <summary>Where the converter gets the pixels of a sculpt map.</summary>
+public interface ISculptMapSource
+{
+    SculptMap Get(Guid textureId, out string problem);
+}
+
+public sealed class ConvertedPart
+{
+    public Guid PartId { get; set; }
+    public string Build { get; set; }
+    public int LinkNum { get; set; }
+    public string Name { get; set; }
+    public string Kind { get; set; }
+    public int Faces { get; set; }
+    public int EmptyFaces { get; set; }
+    public int Triangles { get; set; }
+    /// <summary>Triangles the mesher built that belong to no viewer face; left out of the mesh.</summary>
+    public int UnnumberedTriangles { get; set; }
+    public Guid MeshId { get; set; }
+    public int ServerFacesBefore { get; set; }
+    public List<string> Warnings { get; set; } = new List<string>();
+}
+
+/// <summary>A part the converter left as it was: the eligibility rules kept it, or the geometry step could not give it a mesh.</summary>
+public sealed class KeptPart
+{
+    public Guid PartId { get; set; }
+    public string Build { get; set; }
+    public int LinkNum { get; set; }
+    public string Name { get; set; }
+    public string Code { get; set; }
+    public string Detail { get; set; }
+    /// <summary>True when the geometry step kept it after eligibility had passed it.</summary>
+    public bool ByConverter { get; set; }
+}
+
+public sealed class ConvertResult
+{
+    public string Source { get; set; }
+    public string Output { get; set; }
+    public string EncoderName { get; set; }
+    public bool EncoderValid { get; set; }
+    public int Parts { get; set; }
+    public List<ConvertedPart> Converted { get; } = new List<ConvertedPart>();
+    public List<KeptPart> Kept { get; } = new List<KeptPart>();
+    public SortedDictionary<string, int> Skipped { get; } = new SortedDictionary<string, int>(StringComparer.Ordinal);
+    public int SkippedTotal => Skipped.Values.Sum();
+    /// <summary>Distinct mesh assets written (identical meshes share one).</summary>
+    public int MeshesAdded { get; set; }
+    public RewriteSummary Rewrite { get; set; }
+    public CompareResult Parity { get; set; }
+    public string PlanJson { get; set; }
+    public bool AssumeSafeUnscanned { get; set; }
+    public double Seconds { get; set; }
+
+    public bool Pass => Parity != null && Parity.Pass;
+
+    public SortedDictionary<string, int> KeptByCode()
+    {
+        SortedDictionary<string, int> d = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        foreach (KeptPart k in Kept)
+            d[k.Code] = d.TryGetValue(k.Code, out int n) ? n + 1 : 1;
+        return d;
+    }
+
+    public string ToText()
+    {
+        StringBuilder sb = new StringBuilder();
+        CultureInfo ci = CultureInfo.InvariantCulture;
+        sb.AppendLine(Pass ? "PASS: the rewritten archive matches the plan" : "FAIL: the rewritten archive does not match the plan");
+        sb.AppendLine("source: " + System.IO.Path.GetFileName(Source) + "; output: " + System.IO.Path.GetFileName(Output));
+        sb.AppendLine("encoder: " + EncoderName + (EncoderValid ? string.Empty : "  -- THE MESH ASSETS ARE NOT VALID MESHES; do not load this archive"));
+        if (AssumeSafeUnscanned)
+            sb.AppendLine("WARNING: --assume-safe-unscanned was used; scripts with no source were treated as harmless");
+        sb.AppendLine(string.Format(ci, "parts: {0}; converted: {1}; kept: {2}; skipped: {3}; mesh assets added: {4}",
+            Parts, Converted.Count, Kept.Count, SkippedTotal, MeshesAdded));
+        if (Skipped.Count > 0)
+            sb.AppendLine("skipped: " + string.Join(", ", Skipped.Select(k => k.Key + " " + k.Value)));
+        if (Kept.Count > 0)
+            sb.AppendLine("kept: " + string.Join(", ", KeptByCode().Select(k => k.Key + " " + k.Value)));
+        if (Parity != null)
+            sb.AppendLine(string.Format(ci, "parity: {0} parts matched, {1} unplanned difference(s), {2} planned difference(s) matched, {3} planned change(s) not found",
+                Parity.PartsMatched, Parity.Unplanned.Count, Parity.Planned.Count, Parity.UnmetPlan.Count));
+        sb.AppendLine(string.Format(ci, "{0:0.0} s", Seconds));
+
+        if (Kept.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("Kept parts:");
+            foreach (KeptPart k in Kept)
+                sb.AppendLine(string.Format(ci, "  {0} link {1} '{2}': {3}{4}: {5}", k.Build, k.LinkNum, k.Name, k.Code, k.ByConverter ? " (geometry step)" : string.Empty, k.Detail));
+        }
+        int warned = Converted.Count(c => c.Warnings.Count > 0);
+        if (warned > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("Converted parts with a warning:");
+            foreach (ConvertedPart c in Converted.Where(c => c.Warnings.Count > 0))
+                sb.AppendLine(string.Format(ci, "  {0} link {1} '{2}': {3}", c.Build, c.LinkNum, c.Name, string.Join("; ", c.Warnings)));
+        }
+        if (Parity != null && !Parity.Pass)
+        {
+            sb.AppendLine();
+            sb.Append(Parity.ToText());
+        }
+        return sb.ToString();
+    }
+
+    public string ToJson()
+    {
+        var doc = new
+        {
+            schema = "oar-convert",
+            version = 1,
+            source = System.IO.Path.GetFileName(Source),
+            output = System.IO.Path.GetFileName(Output),
+            encoder = EncoderName,
+            encoderProducesValidMesh = EncoderValid,
+            assumeSafeUnscanned = AssumeSafeUnscanned,
+            parity = Parity == null ? null : new { pass = Parity.Pass, partsMatched = Parity.PartsMatched, unplanned = Parity.Unplanned.Count, planned = Parity.Planned.Count, unmetPlan = Parity.UnmetPlan.Count },
+            parts = Parts,
+            converted = Converted.Count,
+            kept = Kept.Count,
+            skipped = SkippedTotal,
+            skippedByCode = Skipped,
+            keptByCode = KeptByCode(),
+            meshesAdded = MeshesAdded,
+            seconds = Math.Round(Seconds, 1),
+            convertedParts = Converted.Select(c => new { part = c.PartId, build = c.Build, link = c.LinkNum, name = c.Name, kind = c.Kind, faces = c.Faces, emptyFaces = c.EmptyFaces, triangles = c.Triangles, unnumberedTriangles = c.UnnumberedTriangles, mesh = c.MeshId, serverFacesBefore = c.ServerFacesBefore, warnings = c.Warnings }),
+            keptParts = Kept.Select(k => new { part = k.PartId, build = k.Build, link = k.LinkNum, name = k.Name, code = k.Code, detail = k.Detail, byConverter = k.ByConverter })
+        };
+        return JsonSerializer.Serialize(doc, new JsonSerializerOptions { WriteIndented = true });
+    }
+}

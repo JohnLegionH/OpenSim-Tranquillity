@@ -40,6 +40,9 @@ public sealed class ShapeData
     public bool SculptEntry;
     /// <summary>The text forms of the profile and hollow shape, when the object XML carries them (they override ProfileCurve, as the loader does).</summary>
     public string ProfileShapeName, HollowShapeName;
+
+    /// <summary>A copy that can be changed without touching this one.</summary>
+    public ShapeData Clone() => (ShapeData)MemberwiseClone();
 }
 
 /// <summary>One part as read from an object body: the record the inspector reports plus the fields a geometry export needs.</summary>

@@ -56,7 +56,10 @@ public sealed class ElementEdit
 /// <summary>The edits for one part, found by the part's UUID wherever it sits in the archive's object files.</summary>
 public sealed class PartPatch
 {
+    private readonly Func<ISet<string>, IReadOnlyList<ElementEdit>> m_deferred;
+
     public Guid PartId { get; }
+    /// <summary>The edits of an ordinary patch; empty for a deferred one (see <see cref="EditsFor"/>).</summary>
     public IReadOnlyList<ElementEdit> Edits { get; }
 
     public PartPatch(Guid partId, params ElementEdit[] edits)
@@ -65,5 +68,28 @@ public sealed class PartPatch
             throw new ArgumentException("a patch needs at least one edit", nameof(edits));
         PartId = partId;
         Edits = edits;
+    }
+
+    /// <summary>
+    /// A patch whose edits depend on which elements the part has: <paramref name="make"/> is called with the part's element
+    /// paths (such as "Shape/ProfileShape") when the object file is patched.
+    /// </summary>
+    public PartPatch(Guid partId, Func<ISet<string>, IReadOnlyList<ElementEdit>> make)
+    {
+        ArgumentNullException.ThrowIfNull(make);
+        PartId = partId;
+        Edits = Array.Empty<ElementEdit>();
+        m_deferred = make;
+    }
+
+    /// <summary>The edits to apply to a part that has the given element paths.</summary>
+    public IReadOnlyList<ElementEdit> EditsFor(ISet<string> present)
+    {
+        if (m_deferred == null)
+            return Edits;
+        IReadOnlyList<ElementEdit> edits = m_deferred(present);
+        if (edits == null || edits.Count == 0)
+            throw new InvalidOperationException("the patch for part " + PartId + " produced no edits");
+        return edits;
     }
 }

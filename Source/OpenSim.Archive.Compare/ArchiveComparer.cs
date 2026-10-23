@@ -9,6 +9,8 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 
+using OpenSim.Archive.Inspection;
+
 namespace OpenSim.Archive.Compare;
 
 /// <summary>One thing that differs between the two archives.</summary>
@@ -163,6 +165,7 @@ public sealed class ArchiveComparer
 
         CompareEntries(a, b, plan, r, usedEntryLines);
         CompareParts(a, b, plan, r, usedAdded, usedRemoved);
+        CheckStandIns(b, plan, r);
 
         foreach (PartChange c in plan.PartChanges.Where(c => !c.Met))
             r.UnmetPlan.Add(ComparePlan.Describe(c));
@@ -177,6 +180,31 @@ public sealed class ArchiveComparer
         foreach (Guid id in plan.RemovedPartIds.Where(id => !usedRemoved.Contains(id)))
             r.UnmetPlan.Add("removed part " + id + " is still in the rewritten archive, or was not in the original");
         return r;
+    }
+
+    /// <summary>
+    /// A stand-in mesh id (see StandInIds) is never a real asset. The plan, the rewritten archive's entries and its parts'
+    /// shapes must not hold one, whatever the plan allows; this is a failure, not a difference a plan can cover.
+    /// </summary>
+    private static void CheckStandIns(ArchiveSnapshot b, ComparePlan plan, CompareResult r)
+    {
+        void Fail(string where, string text) => r.Unplanned.Add(new Difference
+        {
+            Build = CompareResult.ArchiveBuild, Field = "standInId", Kind = "standIn", PartName = where,
+            Text = where + ": holds a stand-in mesh id (" + StandInIds.Prefix + "...); the mesh was never really added" + text
+        });
+
+        foreach (string s in plan.AddedEntries.Concat(plan.ChangedEntries).Concat(plan.RemovedEntries))
+            if (StandInIds.Is(s))
+                Fail("plan entry " + s, string.Empty);
+        foreach (string entry in b.Entries.Keys)
+            if (StandInIds.Is(entry))
+                Fail("entry " + entry, string.Empty);
+        foreach (PartSnapshot p in b.Parts.Values)
+            foreach (KeyValuePair<string, SortedDictionary<string, string>> g in p.Groups)
+                foreach (KeyValuePair<string, string> v in g.Value)
+                    if (StandInIds.Is(v.Value))
+                        Fail(PartTag(p) + " " + g.Key + "/" + v.Key, string.Empty);
     }
 
     private static void CompareEntries(ArchiveSnapshot a, ArchiveSnapshot b, ComparePlan plan, CompareResult r, HashSet<string> used)
