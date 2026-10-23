@@ -210,7 +210,12 @@ internal static class FaceMaterials
     /// <summary>Adds the assets a part's faces name: textures, legacy materials and PBR materials.</summary>
     public static void CollectAssetIds(ParsedPart pp, HashSet<UUID> into)
     {
-        if (pp.Shape == null || pp.TextureEntry.Length <= 16)
+        if (pp.Shape == null)
+            return;
+        // a sculpt map or mesh asset is named by the shape
+        if (pp.Shape.SculptTexture != UUID.Zero && (pp.Shape.SculptEntry || (pp.Shape.SculptType & 7) != 0))
+            into.Add(pp.Shape.SculptTexture);
+        if (pp.TextureEntry.Length <= 16)
             return;
         try
         {
@@ -473,6 +478,31 @@ internal static class FaceMaterials
         if (use.Status == "embedded")
             image = ctx.Assets.Decode(id, out _);
         return use.Status;
+    }
+
+    /// <summary>
+    /// Notes the use of the asset a sculpt or mesh part is built from (role "sculpt" or "mesh"), queues it for copying
+    /// unchanged and returns the manifest row. The caller sets the status once it has tried to read the asset.
+    /// </summary>
+    public static ManifestTexture NoteGeometryAsset(MaterialContext ctx, UUID id, string role, out AssetBlob blob)
+    {
+        blob = ctx.Assets?.Get(id);
+        (UUID, string) key = (id, role);
+        if (!ctx.Used.TryGetValue(key, out ManifestTexture use))
+        {
+            use = new ManifestTexture { TextureId = id.ToString(), Role = role };
+            ctx.Used[key] = use;
+            if (blob == null)
+                use.Status = ctx.Assets != null && ctx.Assets.OverLimit.Contains(id) ? "over-size-limit" : "missing-from-archive";
+            else
+            {
+                ctx.Copies[id] = blob;
+                use.CopiedTo = blob.Folder + "/" + id + blob.Extension;
+                use.Status = "copied";
+            }
+        }
+        use.Faces++;
+        return use;
     }
 
     private static GltfTextureRef TextureRef(MaterialContext ctx, UUID id, TextureImage image)

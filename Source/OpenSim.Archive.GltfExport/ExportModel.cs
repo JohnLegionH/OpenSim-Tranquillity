@@ -84,6 +84,13 @@ public sealed class ManifestPart
     /// <summary>Prim faces written (exported parts only).</summary>
     public int? Faces { get; set; }
     public int? Triangles { get; set; }
+    /// <summary>The sculpt map or mesh asset the part is built from (sculpt and mesh parts only).</summary>
+    public string GeometryAssetId { get; set; }
+    /// <summary>Status of that asset: copied, missing-from-archive, over-size-limit or undecodable.</summary>
+    public string GeometryAssetStatus { get; set; }
+    /// <summary>A mesh that is rigged: it is exported static, in its bind pose.</summary>
+    public bool? Rigged { get; set; }
+    public List<string> JointNames { get; set; }
 }
 
 /// <summary>A texture (or other image asset) a build's faces use.</summary>
@@ -100,7 +107,7 @@ public sealed class ManifestTexture
     public int? Width { get; set; }
     public int? Height { get; set; }
     public bool? HasAlpha { get; set; }
-    /// <summary>Number of faces that use it in this role.</summary>
+    /// <summary>Number of faces that use it in this role (for a sculpt map or a mesh asset, the number of parts).</summary>
     public int Faces { get; set; }
 }
 
@@ -123,6 +130,8 @@ public sealed class BuildManifest
     public int TexturesEmbedded { get; set; }
     public int TexturesMissing { get; set; }
     public int TexturesCopied { get; set; }
+    /// <summary>Mesh assets copied unchanged into the build's assets folder.</summary>
+    public int AssetsCopied { get; set; }
     public List<ManifestTexture> Textures { get; set; } = new List<ManifestTexture>();
 }
 
@@ -159,6 +168,14 @@ public sealed class ExportSummary
     public int TexturesMissing { get; set; }
     /// <summary>Asset files copied unchanged into a build's textures folder.</summary>
     public int TexturesCopied { get; set; }
+    /// <summary>Mesh assets copied unchanged into a build's assets folder.</summary>
+    public int AssetsCopied { get; set; }
+    /// <summary>Sculpt parts whose geometry is in a file.</summary>
+    public int SculptsExported { get; set; }
+    /// <summary>Mesh parts whose geometry is in a file.</summary>
+    public int MeshesExported { get; set; }
+    /// <summary>Of those, meshes that are rigged (exported static).</summary>
+    public int RiggedMeshes { get; set; }
     /// <summary>Count of parts per placeheld or skipped reason.</summary>
     public Dictionary<string, int> Reasons { get; set; } = new Dictionary<string, int>();
     public double Seconds { get; set; }

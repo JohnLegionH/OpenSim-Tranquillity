@@ -29,8 +29,12 @@ internal sealed class AssetBlob
         (int)AssetType.ImageJPEG => ".jpg",
         (int)AssetType.OSMaterial => ".material.xml",
         (int)AssetType.Material => ".gltf-material.json",
+        (int)AssetType.Mesh => ".llmesh",
         _ => ".bin"
     };
+
+    /// <summary>Folder, beside the glTF file, a copy of this asset goes in: textures (and the materials that belong with them), or assets for a mesh.</summary>
+    public string Folder => Type == (int)AssetType.Mesh ? "assets" : "textures";
 }
 
 /// <summary>A texture decoded to PNG without any change to its pixels.</summary>
@@ -59,6 +63,27 @@ internal sealed class ArchiveAssets
     public long MaxDecodedBytes { get; set; } = 512L * 1024 * 1024;
 
     public bool Has(UUID id) => m_blobs.ContainsKey(id);
+
+    private readonly Dictionary<UUID, (SculptMap map, string problem)> m_sculptMaps = new Dictionary<UUID, (SculptMap, string)>();
+
+    /// <summary>A sculpt map's pixels as the archive's texture holds them, or null with the reason.</summary>
+    public SculptMap DecodeSculptMap(UUID id, out string problem)
+    {
+        if (m_sculptMaps.TryGetValue(id, out var cached))
+        {
+            problem = cached.problem;
+            return cached.map;
+        }
+        AssetBlob blob = Get(id);
+        SculptMap map = null;
+        problem = blob == null ? "not loaded" : null;
+        if (blob != null)
+            map = TextureDecoder.DecodeRgb(blob, out problem);
+        // maps are small (usually 64 x 64); keep the count of kept maps bounded
+        if (m_sculptMaps.Count < 4096)
+            m_sculptMaps[id] = (map, problem);
+        return map;
+    }
 
     public bool Wants(UUID id, int type, long size)
     {
@@ -129,6 +154,64 @@ internal static class TextureDecoder
         }
         using (bitmap)
             return FromBitmap(bitmap, out problem);
+    }
+
+    /// <summary>A texture's red, green and blue as stored, top row first, for the sculpt rule (which ignores any alpha channel).</summary>
+    public static SculptMap DecodeRgb(AssetBlob blob, out string problem)
+    {
+        problem = null;
+        if (blob.Type != (int)AssetType.Texture)
+        {
+            problem = "the sculpt map is not a JPEG 2000 texture (asset type " + blob.Type + ")";
+            return null;
+        }
+        if (!SkiaImageUtils.TryDecodeFromJ2K(blob.Bytes, out SKBitmap bitmap) || bitmap == null)
+        {
+            problem = "the JPEG 2000 data could not be decoded";
+            return null;
+        }
+        using (bitmap)
+        {
+            int w = bitmap.Width, h = bitmap.Height;
+            if (w < 1 || h < 1)
+            {
+                problem = "the image is empty";
+                return null;
+            }
+            SKBitmap source = bitmap;
+            bool own = false;
+            if (bitmap.ColorType != SKColorType.Rgb888x && bitmap.ColorType != SKColorType.Bgra8888 && bitmap.ColorType != SKColorType.Rgba8888)
+            {
+                source = bitmap.Copy(SKColorType.Rgba8888);
+                own = true;
+                if (source == null)
+                {
+                    problem = "the pixel format " + bitmap.ColorType + " is not handled";
+                    return null;
+                }
+            }
+            try
+            {
+                ReadOnlySpan<byte> px = source.GetPixelSpan();
+                int stride = source.RowBytes;
+                bool bgra = source.ColorType == SKColorType.Bgra8888;
+                byte[] rgb = new byte[w * h * 3];
+                for (int y = 0; y < h; y++)
+                    for (int x = 0; x < w; x++)
+                    {
+                        int s = y * stride + x * 4, d = (y * w + x) * 3;
+                        rgb[d] = px[s + (bgra ? 2 : 0)];
+                        rgb[d + 1] = px[s + 1];
+                        rgb[d + 2] = px[s + (bgra ? 0 : 2)];
+                    }
+                return new SculptMap { Width = w, Height = h, Rgb = rgb };
+            }
+            finally
+            {
+                if (own)
+                    source.Dispose();
+            }
+        }
     }
 
     /// <summary>Reads the pixels as stored in the bitmap: no scaling, no change of colour.</summary>

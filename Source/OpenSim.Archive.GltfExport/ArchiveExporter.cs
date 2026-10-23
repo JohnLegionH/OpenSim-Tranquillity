@@ -152,11 +152,11 @@ public static class ArchiveExporter
         }
         if (build.Copies.Count > 0)
         {
-            string texDir = Path.Combine(dir, "textures");
-            Directory.CreateDirectory(texDir);
             foreach (AssetBlob blob in build.Copies)
             {
-                File.WriteAllBytes(Path.Combine(texDir, blob.Id + blob.Extension), blob.Bytes);
+                string copyDir = Path.Combine(dir, blob.Folder);
+                Directory.CreateDirectory(copyDir);
+                File.WriteAllBytes(Path.Combine(copyDir, blob.Id + blob.Extension), blob.Bytes);
                 bytes += blob.Bytes.Length;
             }
         }
@@ -176,14 +176,26 @@ public static class ArchiveExporter
         summary.TexturesEmbedded += m.TexturesEmbedded;
         summary.TexturesMissing += m.TexturesMissing;
         summary.TexturesCopied += m.TexturesCopied;
+        summary.AssetsCopied += m.AssetsCopied;
         summary.OutputBytes += bytes;
+        foreach (ManifestPart p in m.Parts)
+        {
+            if (p.Status == ExportStatus.Exported && p.Kind == PartKinds.Sculpt)
+                summary.SculptsExported++;
+            if (p.Status == ExportStatus.Exported && p.Kind == PartKinds.Mesh)
+            {
+                summary.MeshesExported++;
+                if (p.Rigged == true)
+                    summary.RiggedMeshes++;
+            }
+        }
         foreach (ManifestPart p in m.Parts)
             if (p.Status != ExportStatus.Exported)
             {
                 string key = p.Status + ": " + (p.Reason ?? string.Empty);
                 // the sculpt and mesh reasons name an asset; count them by kind instead
                 if (p.Status == ExportStatus.Placeheld && (p.Kind == PartKinds.Sculpt || p.Kind == PartKinds.Mesh))
-                    key = p.Status + ": " + p.Kind + " geometry is not exported yet";
+                    key = p.Status + ": " + p.Kind + " - " + (p.GeometryAssetStatus is null or "copied" ? "geometry could not be built" : p.GeometryAssetStatus);
                 summary.Reasons[key] = summary.Reasons.TryGetValue(key, out int c) ? c + 1 : 1;
             }
         summary.BuildList.Add(new SummaryBuild
