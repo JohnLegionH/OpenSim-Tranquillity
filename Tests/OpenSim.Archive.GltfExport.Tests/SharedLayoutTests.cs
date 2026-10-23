@@ -373,6 +373,38 @@ public class SharedLayoutTests
     }
 
     [Fact]
+    public void ReleasingTheCachesKeepsEveryAssetAndReadsItBackFromTheCacheFolder()
+    {
+        ArchiveAssets assets = new ArchiveAssets { CacheDirectory = Path.Combine(NewFolder(), "cache"), MaxMemoryBytes = 8L * 1024 * 1024 };
+        byte[] big = Noise(200_000), small = Noise(100);
+        assets.Wanted.Add(TexA);
+        assets.Wanted.Add(TexB);
+        assets.Add(TexA, (int)AssetType.Texture, "assets/a", big);
+        assets.Add(TexB, (int)AssetType.Texture, "assets/b", small);
+        Assert.Equal(big, assets.Get(TexA).Bytes);
+        assets.ReleaseCaches();
+        Assert.Equal(big, assets.Get(TexA).Bytes);
+        Assert.Equal(small, assets.Get(TexB).Bytes);
+        Assert.Equal(200_100, assets.StoredBytes);
+    }
+
+    [Fact]
+    public void BodiesBeyondTheResidentShareOfTheMemoryCapGoToTheCacheFolderWhateverTheirSize()
+    {
+        string cache = Path.Combine(NewFolder(), "cache");
+        // 1 MB cap: a tenth, about 100 KB, may stay in memory
+        ArchiveAssets assets = new ArchiveAssets { CacheDirectory = cache, MaxMemoryBytes = 1024L * 1024, SpillBytes = 64 * 1024 };
+        for (int i = 0; i < 10; i++)
+        {
+            UUID id = UUID.Random();
+            assets.Wanted.Add(id);
+            assets.Add(id, (int)AssetType.Texture, "assets/x", Noise(30_000 + i));   // each under the spill size
+        }
+        Assert.True(assets.CacheBytesWritten > 0, "the small bodies past the resident share were written to the cache folder");
+        Assert.True(Directory.GetFiles(cache).Length >= 6);
+    }
+
+    [Fact]
     public void TheEstimateCountsASharedTextureOnceAndASelfContainedOneForEveryBuild()
     {
         Case c = MakeArchive();

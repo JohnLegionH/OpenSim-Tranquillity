@@ -90,9 +90,9 @@ internal sealed class ArchiveAssets
         set
         {
             m_maxMemory = value;
-            MaxResidentBytes = value * 15 / 100;
-            MaxLoadedBytes = value * 20 / 100;
-            MaxDecodedBytes = value * 25 / 100;
+            MaxResidentBytes = value * 10 / 100;
+            MaxLoadedBytes = value * 15 / 100;
+            MaxDecodedBytes = value * 15 / 100;
         }
     }
     private long m_maxMemory = 1024L * 1024 * 1024;
@@ -151,6 +151,17 @@ internal sealed class ArchiveAssets
             CapEvents.Add("MEMORY CAP REACHED (--max-memory-mb): " + m_decodeOutOfMemory + " texture(s) could not be decoded within the cap and are reported undecodable; the first is " + m_firstDecodeOutOfMemory + ". Run again with a larger --max-memory-mb.");
         if (m_overMemory > 0)
             CapEvents.Add("MEMORY CAP REACHED (--max-memory-mb): " + m_overMemory + " asset(s) are too large to handle within the cap and are reported over-memory-limit; the first is " + m_firstOverMemory + ". Run again with a larger --max-memory-mb.");
+    }
+
+    /// <summary>Lets go of the decoded images and the bodies read back from the cache folder (they are read or decoded again when needed).</summary>
+    public void ReleaseCaches()
+    {
+        m_decoded.Clear();
+        m_decodedBytes = 0;
+        m_loaded.Clear();
+        m_loadedOrder.Clear();
+        m_loadedBytes = 0;
+        m_sculptMaps.Clear();
     }
 
     private int m_decodeOutOfMemory;

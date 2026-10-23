@@ -425,7 +425,20 @@ public static class ArchiveExporter
             folder = baseName + "_" + idPart.Substring(0, Math.Min(12, idPart.Length)) + "-" + n;
 
         string glbName = folder + ".glb";
-        BuiltBuild build = LinksetExporter.Build(group, archiveName, entry, glbName, world, assets, shared);
+        BuiltBuild build;
+        try
+        {
+            build = LinksetExporter.Build(group, archiveName, entry, glbName, world, assets, shared);
+        }
+        catch (OutOfMemoryException)
+        {
+            // near the memory cap a build can fail only because the caches and a fragmented heap leave no room: drop the
+            // caches, compact the heap and try the build once more. A second failure is the cap, reported as such.
+            assets.ReleaseCaches();
+            System.Runtime.GCSettings.LargeObjectHeapCompactionMode = System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
+            GC.Collect();
+            build = LinksetExporter.Build(group, archiveName, entry, glbName, world, assets, shared);
+        }
 
         string dir = Path.Combine(outDir, folder);
         Directory.CreateDirectory(dir);
