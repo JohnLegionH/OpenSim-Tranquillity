@@ -23,12 +23,15 @@ Reads an OAR or IAR and reports who is credited for what, without extracting or 
 Exit codes: 0 read fully with no Warning, 1 partial (see the report), 2 not an archive or unreadable,
             3 read fully with at least one Warning (the creator flags are Warnings), 64 bad command line.
 
-Other command: OpenSim.ArchiveInspector oar-export --help  (writes each build of an OAR as glTF)";
+Other commands: OpenSim.ArchiveInspector oar-export --help  (writes each build of an OAR as glTF)
+                OpenSim.ArchiveInspector oar-compare --help  (checks a rewritten OAR against its original)";
 
     public static int Main(string[] args)
     {
         if (args.Length > 0 && args[0] == "oar-export")
             return ExportCommand.Run(args.Skip(1).ToArray());
+        if (args.Length > 0 && args[0] == "oar-compare")
+            return CompareCommand.Run(args.Skip(1).ToArray());
 
         string input = null, jsonPath = null;
         bool all = false, stats = false;
