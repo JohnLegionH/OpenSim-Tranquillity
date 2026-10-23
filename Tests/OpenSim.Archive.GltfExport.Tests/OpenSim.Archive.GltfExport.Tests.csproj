@@ -18,6 +18,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The region's own sculpt mesher, compiled only to compare which way it faces a surface with the exporter (a reference, not the rule). -->
+    <Compile Include="..\..\Source\OpenSim.Region.PhysicsModules.Meshing\Meshmerizer\SculptMap.cs" Link="Reference\SculptMap.cs" />
+    <Compile Include="..\..\Source\OpenSim.Region.PhysicsModules.Meshing\Meshmerizer\SculptMesh.cs" Link="Reference\SculptMesh.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

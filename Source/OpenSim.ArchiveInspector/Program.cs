@@ -30,6 +30,10 @@ Other commands: OpenSim.ArchiveInspector oar-export --help  (writes each build o
 
     public static int Main(string[] args)
     {
+#if OAR_EXPORT_ONLY
+        // the oar-export build of this program: only the exporter, with or without the word oar-export first
+        return ExportCommand.Run(args.Length > 0 && args[0] == "oar-export" ? args.Skip(1).ToArray() : args);
+#else
         if (args.Length > 0 && args[0] == "oar-export")
             return ExportCommand.Run(args.Skip(1).ToArray());
         if (args.Length > 0 && args[0] == "oar-compare")
@@ -106,6 +110,7 @@ Other commands: OpenSim.ArchiveInspector oar-export --help  (writes each build o
         }
 
         return report.ExitCode;
+#endif
     }
 
     private static int Fail(string message)

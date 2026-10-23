@@ -20,6 +20,8 @@ internal sealed class BuiltBuild
     public byte[] Glb;
     /// <summary>Asset files (textures, materials) to write unchanged beside the glTF file, in a folder named textures.</summary>
     public List<AssetBlob> Copies = new List<AssetBlob>();
+    /// <summary>The PNG files the glTF file points at (shared layout), by texture id; empty when the images are inside the file.</summary>
+    public Dictionary<UUID, byte[]> Pngs = new Dictionary<UUID, byte[]>();
 }
 
 /// <summary>
@@ -37,7 +39,7 @@ internal static class LinksetExporter
     private const byte NewTreeCode = 111;
     private const byte TreeCode = 255;
 
-    public static BuiltBuild Build(ParsedGroup g, string archiveName, string entry, string glbFileName, bool world = false, ArchiveAssets assets = null)
+    public static BuiltBuild Build(ParsedGroup g, string archiveName, string entry, string glbFileName, bool world = false, ArchiveAssets assets = null, bool shared = false)
     {
         // link-number order; the file order is not the link order. A stable sort keeps file order for equal numbers.
         List<ParsedPart> parts = g.Parts.Select((p, i) => (p, i)).OrderBy(t => t.p.Part.LinkNum).ThenBy(t => t.i).Select(t => t.p).ToList();
@@ -80,7 +82,8 @@ internal static class LinksetExporter
             PartCount = parts.Count
         };
 
-        MaterialContext materials = new MaterialContext { Doc = doc, Assets = assets };
+        MaterialContext materials = new MaterialContext { Doc = doc, Assets = assets, Shared = shared };
+        manifest.Layout = shared ? "shared" : "self-contained";
 
         foreach (ParsedPart pp in parts)
         {
@@ -109,12 +112,22 @@ internal static class LinksetExporter
             JsonObject extras = NodeExtras(pp, mp);
             bool done = false;
 
-            if (kind == PartKinds.Prim)
+            if (kind == PartKinds.Prim || kind == PartKinds.Sculpt || kind == PartKinds.Mesh)
             {
                 try
                 {
-                    GltfMesh mesh = BuildPartMesh(pp, doc, materials, out int faces, out int triangles);
-                    if (faces > 0)
+                    GltfMesh mesh;
+                    int faces, triangles;
+                    if (kind == PartKinds.Prim)
+                        mesh = BuildPrimMesh(pp, doc, materials, out faces, out triangles);
+                    else if (!BuildAssetPart(pp, kind, doc, materials, mp, extras, out mesh, out faces, out triangles, out string assetPending))
+                    {
+                        mesh = null;
+                        faces = 0;
+                        triangles = 0;
+                        pendingWhat = assetPending;
+                    }
+                    if (mesh != null && faces > 0)
                     {
                         doc.Meshes.Add(mesh);
                         node.Mesh = doc.Meshes.Count - 1;
@@ -127,12 +140,14 @@ internal static class LinksetExporter
                         manifest.Exported++;
                         done = true;
                     }
-                    else
+                    else if (kind == PartKinds.Prim)
                         pendingWhat = "the mesher produced no faces for this shape";
+                    else if (string.IsNullOrEmpty(pendingWhat))
+                        pendingWhat = "no geometry could be built from the " + (kind == PartKinds.Mesh ? "mesh asset" : "sculpt map");
                 }
                 catch (Exception e) when (e is not OutOfMemoryException)
                 {
-                    pendingWhat = "the mesher failed: " + Text.Clean(e.GetType().Name + ": " + e.Message);
+                    pendingWhat = "the " + (kind == PartKinds.Prim ? "mesher" : kind == PartKinds.Mesh ? "mesh decoder" : "sculpt builder") + " failed: " + Text.Clean(e.GetType().Name + ": " + e.Message);
                 }
             }
 
@@ -156,7 +171,17 @@ internal static class LinksetExporter
         manifest.TexturesEmbedded = manifest.Textures.Count(t => t.Status == "embedded");
         manifest.TexturesMissing = manifest.Textures.Count(t => t.Status != "embedded" && t.Status != "copied");
         result.Copies.AddRange(materials.Copies.Values.OrderBy(c => c.Id.ToString(), StringComparer.Ordinal));
-        manifest.TexturesCopied = result.Copies.Count;
+        result.Pngs = materials.Pngs;
+        foreach (AssetBlob c in result.Copies)
+            manifest.Files.Add(new ManifestFile { Id = c.Id.ToString(), Kind = "original", Path = materials.Prefix + c.Folder + "/" + c.Id + c.Extension });
+        foreach (UUID pngId in materials.Pngs.Keys.OrderBy(k => k.ToString(), StringComparer.Ordinal))
+        {
+            manifest.Files.Add(new ManifestFile { Id = pngId.ToString(), Kind = "png", Path = "../textures/" + pngId + ".png" });
+            foreach (ManifestTexture t in manifest.Textures.Where(t => t.TextureId == pngId.ToString() && t.Status == "embedded"))
+                t.ImagePath = "../textures/" + pngId + ".png";
+        }
+        manifest.TexturesCopied = result.Copies.Count(c => c.Folder == "textures");
+        manifest.AssetsCopied = result.Copies.Count(c => c.Folder != "textures");
         if (objectNode.Children.Count > 0)
         {
             result.Glb = doc.ToGlb();
@@ -286,16 +311,163 @@ internal static class LinksetExporter
 
     // ------------------------------------------------------------------ geometry
 
-    private static GltfMesh BuildPartMesh(ParsedPart pp, GltfDocument doc, MaterialContext materials, out int faceCount, out int triangleCount)
+    private static GltfMesh BuildPrimMesh(ParsedPart pp, GltfDocument doc, MaterialContext materials, out int faceCount, out int triangleCount)
     {
         PrimParams prm = PrimParams.FromShape(pp.Shape);
         List<PrimFace> faces = PrimGeometry.BuildFaces(prm, DetailLevel.High, out int viewerFaceCount, out int unnumbered);
+        return BuildPartMesh(pp, doc, materials, faces, viewerFaceCount, unnumbered, out faceCount, out triangleCount);
+    }
+
+    /// <summary>
+    /// Builds a sculpt or mesh part's geometry from the asset its shape names. Returns false, with the reason in
+    /// <paramref name="pending"/>, when the part stays a placeholder.
+    /// </summary>
+    private static bool BuildAssetPart(ParsedPart pp, string kind, GltfDocument doc, MaterialContext materials, ManifestPart mp, JsonObject extras,
+        out GltfMesh mesh, out int faceCount, out int triangleCount, out string pending)
+    {
+        mesh = null;
+        faceCount = 0;
+        triangleCount = 0;
+        pending = null;
+        ShapeData s = pp.Shape;
+        bool isMesh = kind == PartKinds.Mesh;
+        string what = isMesh ? "mesh asset" : "sculpt map";
+        UUID id = s.SculptTexture;
+        if (id == UUID.Zero)
+        {
+            mp.GeometryAssetStatus = "no-asset-named";
+            pending = "the part names no " + what;
+            return false;
+        }
+
+        ManifestTexture use = FaceMaterials.NoteGeometryAsset(materials, id, isMesh ? "mesh" : "sculpt", out AssetBlob blob);
+        mp.GeometryAssetId = id.ToString();
+        mp.GeometryAssetStatus = use.Status;
+        JsonObject assetInfo = new JsonObject
+        {
+            ["role"] = isMesh ? "mesh" : "sculpt",
+            ["id"] = id.ToString(),
+            ["status"] = use.Status,
+            ["copiedTo"] = use.CopiedTo
+        };
+        extras["geometryAsset"] = assetInfo;
+        if (blob == null)
+        {
+            pending = "the " + what + " " + id + (use.Status == ArchiveAssets.OverDiskStatus ? " was over --max-cache-mb" : use.Status == ArchiveAssets.OverMemoryStatus ? " was too large for --max-memory-mb" : " is not in the archive");
+            return false;
+        }
+
+        List<PrimFace> faces;
+        int viewerFaceCount;
+        bool applyPartSize = true;
+        if (isMesh)
+        {
+            if (!MeshAsset.TryDecode(blob.Bytes, out MeshModel model, out string problem))
+            {
+                use.Status = "undecodable";
+                use.Reason = problem;
+                mp.GeometryAssetStatus = "undecodable";
+                assetInfo["status"] = "undecodable";
+                pending = problem;
+                return false;
+            }
+            faces = MeshGeometry.ToFaces(model, s.SculptType, out int beyond, out int noNormals, out int noUvs, out int badTriangles);
+            viewerFaceCount = Math.Min(model.Faces.Count, MeshAsset.MaxFaces);
+
+            JsonObject info = new JsonObject
+            {
+                ["blocks"] = new JsonArray(model.Blocks.Select(b => (JsonNode)JsonValue.Create(b)).ToArray()),
+                ["submeshes"] = model.Faces.Count,
+                ["levelOfDetail"] = "highest present",
+                ["note"] = "lower levels of detail and the physics shape stay in the copied asset and are not in the glTF file"
+            };
+            if (beyond > 0) info["submeshesBeyondEightFaces"] = beyond;
+            if (noNormals > 0) info["facesWithoutNormals"] = noNormals;
+            if (noUvs > 0) info["facesWithoutTextureCoordinates"] = noUvs;
+            if (badTriangles > 0) info["trianglesWithBadIndices"] = badTriangles;
+            extras["mesh"] = info;
+
+            mp.Rigged = model.Skin != null;
+            extras["rigged"] = model.Skin != null;
+            if (model.Skin != null)
+                extras["bindShapeApplied"] = true;
+            if (model.Skin != null)
+            {
+                // The viewer draws a rigged mesh with its bind shape matrix in place of the part's size (llface.cpp, getGeometryVolume:
+                // mat_vert is the bind shape matrix, mat_normal its inverse transpose), so the vertices are exported multiplied by it.
+                BindShape.Apply(faces, model.Skin.BindShapeMatrix);
+                applyPartSize = false;
+                mp.JointNames = model.Skin.JointNames.Select(Text.Clean).ToList();
+                JsonObject skin = new JsonObject
+                {
+                    ["jointNames"] = new JsonArray(mp.JointNames.Select(j => (JsonNode)JsonValue.Create(j)).ToArray()),
+                    ["inverseBindMatrices"] = model.Skin.InverseBindMatrices,
+                    ["note"] = "the vertices are multiplied by the bind shape matrix (the true bind pose) and the part's size is not applied; bindShapeMatrix below is the matrix that was applied, so a return path can multiply by its inverse. The skin itself is kept in the copied asset and is not in the glTF file",
+                    ["bindShapeApplied"] = true
+                };
+                if (model.Skin.BindShapeMatrix != null)
+                    skin["bindShapeMatrix"] = new JsonArray(model.Skin.BindShapeMatrix.Select(f => (JsonNode)JsonValue.Create(float.IsFinite(f) ? f : 0f)).ToArray());
+                extras["skin"] = skin;
+            }
+        }
+        else
+        {
+            SculptMap map = materials.Assets.DecodeSculptMap(id, out string problem);
+            if (map == null)
+            {
+                use.Status = "undecodable";
+                use.Reason = problem;
+                mp.GeometryAssetStatus = "undecodable";
+                assetInfo["status"] = "undecodable";
+                pending = "the sculpt map " + id + " could not be read: " + problem;
+                return false;
+            }
+            use.Width = map.Width;
+            use.Height = map.Height;
+            PrimParams shapeParams = PrimParams.FromShape(s);
+            bool volumeFaces = SculptGeometry.HasProfileFaces(shapeParams);
+            SculptResult r = SculptGeometry.BuildVolume(map, s.SculptType, shapeParams);
+            JsonObject info = new JsonObject
+            {
+                ["sculptType"] = s.SculptType,
+                ["stitching"] = ((SculptType)(s.SculptType & 7)).ToString(),
+                ["mirror"] = (s.SculptType & SculptGeometry.FlagMirror) != 0,
+                ["invert"] = (s.SculptType & SculptGeometry.FlagInvert) != 0,
+                ["mapWidth"] = map.Width,
+                ["mapHeight"] = map.Height,
+                ["gridRows"] = r.Rows,
+                ["gridColumns"] = r.Columns,
+                ["surfaceArea"] = float.IsFinite(r.SurfaceArea) ? r.SurfaceArea : 0f
+            };
+            if (r.DegenerateTrianglesDropped > 0) info["degenerateTrianglesDropped"] = r.DegenerateTrianglesDropped;
+            if (volumeFaces)
+                info["profileFaces"] = "the part has a profile cut, a hollow or an open path; its faces are the ones the viewer gives its profile, numbered as the viewer numbers them";
+            else if (s.ProfileHollow != 0 || s.ProfileBegin != 0 || s.ProfileEnd != 0 || s.PathBegin != 0 || s.PathEnd != 0)
+                info["shapeFieldsNote"] = "the part also carries profile or path cuts or a hollow on a profile or path that is not a circle; the viewer would apply them to the faces, the exporter builds the one face the map gives";
+            extras["sculpt"] = info;
+            if (r.Face == null)
+            {
+                pending = r.Problem;
+                return false;
+            }
+            faces = r.Faces;
+            viewerFaceCount = r.ViewerFaceCount;
+        }
+
+        mesh = BuildPartMesh(pp, doc, materials, faces, viewerFaceCount, 0, out faceCount, out triangleCount, applyPartSize);
+        return faceCount > 0;
+    }
+
+    private static GltfMesh BuildPartMesh(ParsedPart pp, GltfDocument doc, MaterialContext materials, List<PrimFace> faces, int viewerFaceCount, int unnumbered, out int faceCount, out int triangleCount, bool applyPartSize = true)
+    {
         TextureLookup textures = TextureLookup.Read(pp.TextureEntry);
         PartMaterialInfo materialInfo = PartMaterialInfo.Read(pp);
 
         GltfMesh mesh = new GltfMesh { Name = Text.Clean(pp.Part.Name) };
         JsonArray numbers = new JsonArray();
-        float sx = pp.Scale.X, sy = pp.Scale.Y, sz = pp.Scale.Z;
+        // a rigged mesh is drawn with its bind shape matrix instead of the part's size (see BindShape), so its size is not applied
+        float sx = applyPartSize ? pp.Scale.X : 1f, sy = applyPartSize ? pp.Scale.Y : 1f, sz = applyPartSize ? pp.Scale.Z : 1f;
+        float partLink = pp.Part.LinkNum;
         float isx = sx != 0 ? 1f / sx : 1f, isy = sy != 0 ? 1f / sy : 1f, isz = sz != 0 ? 1f / sz : 1f;
         triangleCount = 0;
 
@@ -322,6 +494,13 @@ internal static class LinksetExporter
 
             float[] faceNumbers = new float[n / 3];
             Array.Fill(faceNumbers, (float)f.Number);
+            float[] partLinks = new float[n / 3];
+            Array.Fill(partLinks, partLink);
+
+            FaceSettings settings = FaceMaterials.Read(textures.Face(f.Number), f.Number);
+            int materialIndex = FaceMaterials.Material(materials, settings, materialInfo, pp, out bool bakedUv);
+            if (bakedUv)
+                UvTransform.Bake(uv, settings.RepeatU, settings.RepeatV, settings.OffsetU, settings.OffsetV, settings.Rotation);
 
             GltfPrimitive prim = new GltfPrimitive
             {
@@ -329,7 +508,8 @@ internal static class LinksetExporter
                 Normals = nor,
                 Uvs = uv,
                 FaceNumbers = faceNumbers,
-                Material = FaceMaterials.Material(materials, FaceMaterials.Read(textures.Face(f.Number), f.Number), materialInfo, pp),
+                PartLinks = partLinks,
+                Material = materialIndex,
                 Extras = new JsonObject { ["primFace"] = f.Number }
             };
             mesh.Primitives.Add(prim);

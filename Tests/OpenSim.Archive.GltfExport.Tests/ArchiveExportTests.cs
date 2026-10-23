@@ -38,7 +38,7 @@ public class ArchiveExportTests
         (string archive, string outDir, PartSpec tree, PartSpec house) = MakeArchive();
         string before = Hash(archive);
 
-        ExportSummary s = ArchiveExporter.Export(archive, new ExportOptions { OutputDirectory = outDir });
+        ExportSummary s = ArchiveExporter.Export(archive, new ExportOptions { SelfContained = true, OutputDirectory = outDir });
 
         Assert.Equal(before, Hash(archive));
         Assert.Equal("Complete", s.ReadStatus);
@@ -75,19 +75,19 @@ public class ArchiveExportTests
     public void ObjectFilterTakesARootIdOrAName()
     {
         (string archive, string outDir, PartSpec tree, PartSpec house) = MakeArchive();
-        ExportSummary byId = ArchiveExporter.Export(archive, new ExportOptions { OutputDirectory = outDir + "-id", Object = house.Id.ToString() });
+        ExportSummary byId = ArchiveExporter.Export(archive, new ExportOptions { SelfContained = true, OutputDirectory = outDir + "-id", Object = house.Id.ToString() });
         Assert.Equal(new[] { "House" }, byId.BuildList.Select(b => b.Name).ToArray());
-        ExportSummary byName = ArchiveExporter.Export(archive, new ExportOptions { OutputDirectory = outDir + "-name", Object = "oak" });
+        ExportSummary byName = ArchiveExporter.Export(archive, new ExportOptions { SelfContained = true, OutputDirectory = outDir + "-name", Object = "oak" });
         Assert.Equal(new[] { "Oak" }, byName.BuildList.Select(b => b.Name).ToArray());
         Assert.Equal(tree.Id.ToString(), byName.BuildList.Single().RootPartUuid);
-        Assert.Empty(ArchiveExporter.Export(archive, new ExportOptions { OutputDirectory = outDir + "-none", Object = "nothing by this name" }).BuildList);
+        Assert.Empty(ArchiveExporter.Export(archive, new ExportOptions { SelfContained = true, OutputDirectory = outDir + "-none", Object = "nothing by this name" }).BuildList);
     }
 
     [Fact]
     public void LimitStopsAfterThatManyBuilds()
     {
         (string archive, string outDir, _, _) = MakeArchive();
-        ExportSummary s = ArchiveExporter.Export(archive, new ExportOptions { OutputDirectory = outDir, Limit = 2 });
+        ExportSummary s = ArchiveExporter.Export(archive, new ExportOptions { SelfContained = true, OutputDirectory = outDir, Limit = 2 });
         Assert.Equal(2, s.Builds);
         Assert.Equal(2, Directory.GetDirectories(outDir).Length);
     }
@@ -98,14 +98,14 @@ public class ArchiveExportTests
         string dir = NewFolder();
         string iar = Path.Combine(dir, "items.iar");
         File.WriteAllBytes(iar, Tar(new[] { ("archive.xml", IarControl()) }));
-        Assert.Throws<InvalidDataException>(() => ArchiveExporter.Export(iar, new ExportOptions { OutputDirectory = Path.Combine(dir, "out") }));
+        Assert.Throws<InvalidDataException>(() => ArchiveExporter.Export(iar, new ExportOptions { SelfContained = true, OutputDirectory = Path.Combine(dir, "out") }));
     }
 
     [Fact]
     public void TheOutputFolderCannotBeTheArchiveItself()
     {
         (string archive, _, _, _) = MakeArchive();
-        Assert.Throws<ArgumentException>(() => ArchiveExporter.Export(archive, new ExportOptions { OutputDirectory = archive }));
+        Assert.Throws<ArgumentException>(() => ArchiveExporter.Export(archive, new ExportOptions { SelfContained = true, OutputDirectory = archive }));
         Assert.Throws<ArgumentException>(() => ArchiveExporter.Export(archive, new ExportOptions()));
     }
 
@@ -115,7 +115,7 @@ public class ArchiveExportTests
         string dir = NewFolder();
         string junk = Path.Combine(dir, "junk.oar");
         File.WriteAllBytes(junk, new byte[3000]);
-        ExportSummary s = ArchiveExporter.Export(junk, new ExportOptions { OutputDirectory = Path.Combine(dir, "out") });
+        ExportSummary s = ArchiveExporter.Export(junk, new ExportOptions { SelfContained = true, OutputDirectory = Path.Combine(dir, "out") });
         Assert.Equal("NotAnArchive", s.ReadStatus);
         Assert.Equal(0, s.Builds);
     }
@@ -129,7 +129,7 @@ public class ArchiveExportTests
         PartSpec house = new PartSpec { Name = "House", Link = 0 };
         byte[] whole = Tar(new[] { ("archive.xml", OarControl()), ("objects/House_1.xml", Utf8(ObjectXml(house))), ("objects/Tree_2.xml", Utf8(ObjectXml(new PartSpec { Name = "Tree" }))) }, gzip: false);
         File.WriteAllBytes(cut, whole.Take(whole.Length - 1500).ToArray());
-        ExportSummary s = ArchiveExporter.Export(cut, new ExportOptions { OutputDirectory = outDir });
+        ExportSummary s = ArchiveExporter.Export(cut, new ExportOptions { SelfContained = true, OutputDirectory = outDir });
         Assert.Equal("Partial", s.ReadStatus);
         Assert.Equal(1, s.Builds);
         Assert.Equal("House", s.BuildList.Single().Name);
@@ -145,6 +145,64 @@ public class ArchiveExportTests
         Assert.Equal(64, RunCli("oar-export", archive, "--out", outDir, "--limit", "0"));
         Assert.Equal(64, RunCli("oar-export", "--out", outDir));
         Assert.Equal(2, RunCli("oar-export", archive, "--out", archive));
+    }
+
+    [Fact]
+    public void TheMaxAssetOptionIsParsedAndAZeroIsRefused()
+    {
+        string dir = TestKit.NewFolder();
+        string file = Path.Combine(dir, "a.oar");
+        File.WriteAllBytes(file, TestKit.Oar(("box", TestKit.ObjectXml(new TestKit.PartSpec { Name = "Box" }))));
+        Assert.Equal(0, RunCli("oar-export", file, "--out", Path.Combine(dir, "out"), "--max-asset-mb", "4"));
+        Assert.Equal(64, RunCli("oar-export", file, "--out", Path.Combine(dir, "out2"), "--max-asset-mb", "0"));
+        Assert.Equal(64, RunCli("oar-export", file, "--out", Path.Combine(dir, "out3"), "--max-asset-mb"));
+    }
+
+    [Fact]
+    public void TheCommandLineTakesTheMemoryCacheLayoutAndSpaceOptions()
+    {
+        string dir = TestKit.NewFolder();
+        string file = Path.Combine(dir, "a.oar");
+        File.WriteAllBytes(file, TestKit.Oar(("box", TestKit.ObjectXml(new TestKit.PartSpec { Name = "Box" }))));
+        Assert.Equal(0, RunCli("oar-export", file, "--out", Path.Combine(dir, "o1"), "--max-memory-mb", "512", "--max-cache-mb", "64", "--self-contained", "--skip-space-check"));
+        Assert.False(Directory.Exists(Path.Combine(dir, "o1", "textures")));
+        Assert.Equal(64, RunCli("oar-export", file, "--out", Path.Combine(dir, "o2"), "--max-memory-mb", "0"));
+        Assert.Equal(64, RunCli("oar-export", file, "--out", Path.Combine(dir, "o3"), "--max-cache-mb", "0"));
+        Assert.Equal(64, RunCli("oar-export", file, "--out", Path.Combine(dir, "o4"), "--max-memory-mb"));
+    }
+
+    [Fact]
+    public void TheCommandLineSaysArchiveIncompleteFirstAndExitsFour()
+    {
+        string dir = TestKit.NewFolder();
+        byte[] whole = TestKit.Tar(new[] { ("archive.xml", TestKit.OarControl()), ("objects/House_1.xml", TestKit.Utf8(TestKit.ObjectXml(new TestKit.PartSpec { Name = "House" }))), ("objects/Tree_2.xml", TestKit.Utf8(TestKit.ObjectXml(new TestKit.PartSpec { Name = "Tree" }))) }, gzip: false);
+        string cut = Path.Combine(dir, "cut.oar");
+        File.WriteAllBytes(cut, whole.Take(whole.Length - 1500).ToArray());
+        (int code, string text) = RunCliCaptured("oar-export", cut, "--out", Path.Combine(dir, "out"));
+        Assert.Equal(4, code);
+        Assert.Equal("ARCHIVE INCOMPLETE", text.Split((char)10)[0].TrimEnd((char)13));
+        Assert.Equal("ARCHIVE INCOMPLETE", File.ReadLines(Path.Combine(dir, "out", "export-summary.txt")).First());
+    }
+
+    private static (int code, string stdout) RunCliCaptured(params string[] args)
+    {
+        lock (ConsoleLock)
+        {
+            TextWriter o = Console.Out, e = Console.Error;
+            StringWriter captured = new StringWriter();
+            try
+            {
+                Console.SetOut(captured);
+                Console.SetError(new StringWriter());
+                int code = OpenSim.ArchiveInspector.Program.Main(args);
+                return (code, captured.ToString());
+            }
+            finally
+            {
+                Console.SetOut(o);
+                Console.SetError(e);
+            }
+        }
     }
 
     private static int RunCli(params string[] args)

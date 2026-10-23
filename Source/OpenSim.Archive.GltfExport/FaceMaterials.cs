@@ -38,6 +38,30 @@ internal static class UvTransform
         scale = new[] { repeatU, repeatV };
         exact = MathF.Abs(s * (repeatU - repeatV)) < 1e-6f;
     }
+
+    /// <summary>True when KHR_texture_transform can say this face's transform exactly (no rotation, or equal repeats).</summary>
+    public static bool IsExactInKhr(float repeatU, float repeatV, float rotation) =>
+        MathF.Abs(MathF.Sin(rotation) * (repeatU - repeatV)) < 1e-6f;
+
+    /// <summary>
+    /// Applies the viewer's transform to texture coordinates in place, for a face the extension cannot describe. The
+    /// coordinates have v down, the viewer's rule has v up, so v is flipped before and after.
+    /// </summary>
+    public static void Bake(float[] uvs, float repeatU, float repeatV, float offsetU, float offsetV, float rotation)
+    {
+        float c = MathF.Cos(rotation), s = MathF.Sin(rotation);
+        for (int i = 0; i + 1 < uvs.Length; i += 2)
+        {
+            float u = uvs[i] - 0.5f;
+            float t = (1f - uvs[i + 1]) - 0.5f;
+            float ru = u * c + t * s;
+            float rt = -u * s + t * c;
+            ru = ru * repeatU + offsetU + 0.5f;
+            rt = rt * repeatV + offsetV + 0.5f;
+            uvs[i] = ru;
+            uvs[i + 1] = 1f - rt;
+        }
+    }
 }
 
 /// <summary>The settings one face carries in a texture entry, as stored.</summary>
@@ -100,6 +124,64 @@ internal sealed class LegacyMaterial
 }
 
 /// <summary>What a part stores beside its texture entry that bears on its faces' materials.</summary>
+/// <summary>
+/// The textures a PBR material asset (a glTF material text, as the viewer uploads it) names: the images list holds their ids as
+/// URIs, and the material points at them through the textures list.
+/// </summary>
+internal sealed class PbrMaterial
+{
+    public UUID BaseColor, Normal, MetallicRoughness, Emissive, Occlusion;
+
+    public IEnumerable<UUID> All => new[] { BaseColor, Normal, MetallicRoughness, Emissive, Occlusion }.Where(u => u != UUID.Zero);
+
+    public static PbrMaterial Parse(byte[] text)
+    {
+        if (text == null || text.Length == 0 || text.Length > 4 * 1024 * 1024)
+            return null;
+        try
+        {
+            JsonNode root = JsonNode.Parse(text);
+            JsonArray images = root?["images"] as JsonArray, textures = root?["textures"] as JsonArray, materials = root?["materials"] as JsonArray;
+            if (images == null || materials == null || materials.Count == 0)
+                return null;
+            UUID Resolve(JsonNode reference)
+            {
+                int? index = reference?["index"]?.GetValue<int>();
+                if (!index.HasValue || index < 0)
+                    return UUID.Zero;
+                int source = index.Value;
+                if (textures != null)
+                {
+                    if (index >= textures.Count)
+                        return UUID.Zero;
+                    int? s = textures[index.Value]?["source"]?.GetValue<int>();
+                    if (!s.HasValue)
+                        return UUID.Zero;
+                    source = s.Value;
+                }
+                if (source < 0 || source >= images.Count)
+                    return UUID.Zero;
+                string uri = images[source]?["uri"]?.GetValue<string>();
+                return UUID.TryParse(uri, out UUID id) ? id : UUID.Zero;
+            }
+            JsonNode m = materials[0];
+            JsonNode mr = m?["pbrMetallicRoughness"];
+            return new PbrMaterial
+            {
+                BaseColor = Resolve(mr?["baseColorTexture"]),
+                MetallicRoughness = Resolve(mr?["metallicRoughnessTexture"]),
+                Normal = Resolve(m?["normalTexture"]),
+                Emissive = Resolve(m?["emissiveTexture"]),
+                Occlusion = Resolve(m?["occlusionTexture"])
+            };
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+}
+
 internal sealed class PartMaterialInfo
 {
     /// <summary>Face number to the PBR material asset the face names, from the part's render materials.</summary>
@@ -163,6 +245,12 @@ internal sealed class MaterialContext
     /// <summary>The asset files to copy unchanged into the build's textures folder.</summary>
     public Dictionary<UUID, AssetBlob> Copies = new Dictionary<UUID, AssetBlob>();
     public Dictionary<UUID, LegacyMaterial> LegacyCache = new Dictionary<UUID, LegacyMaterial>();
+    /// <summary>True for the shared layout: textures and assets are files in folders beside the build folders, and the glTF file points at the PNG files.</summary>
+    public bool Shared;
+    /// <summary>What a path to a shared folder starts with, seen from the build's folder: "../" when shared, nothing otherwise.</summary>
+    public string Prefix => Shared ? "../" : string.Empty;
+    /// <summary>The PNG files the glTF file points at (shared layout), by texture id.</summary>
+    public Dictionary<UUID, byte[]> Pngs = new Dictionary<UUID, byte[]>();
 }
 
 internal static class FaceMaterials
@@ -186,7 +274,12 @@ internal static class FaceMaterials
     /// <summary>Adds the assets a part's faces name: textures, legacy materials and PBR materials.</summary>
     public static void CollectAssetIds(ParsedPart pp, HashSet<UUID> into)
     {
-        if (pp.Shape == null || pp.TextureEntry.Length <= 16)
+        if (pp.Shape == null)
+            return;
+        // a sculpt map or mesh asset is named by the shape
+        if (pp.Shape.SculptTexture != UUID.Zero && (pp.Shape.SculptEntry || (pp.Shape.SculptType & 7) != 0))
+            into.Add(pp.Shape.SculptTexture);
+        if (pp.TextureEntry.Length <= 16)
             return;
         try
         {
@@ -218,8 +311,9 @@ internal static class FaceMaterials
     /// The glTF material for a face, created once per distinct combination of texture and settings. The material's extras
     /// hold every value the face carries, so its name (the texture id) can be changed by a tool without losing anything.
     /// </summary>
-    public static int Material(MaterialContext ctx, FaceSettings f, PartMaterialInfo info, ParsedPart pp)
+    public static int Material(MaterialContext ctx, FaceSettings f, PartMaterialInfo info, ParsedPart pp, out bool bakedUv)
     {
+        bakedUv = false;
         JsonObject extras = new JsonObject
         {
             ["kind"] = "face-material",
@@ -259,11 +353,25 @@ internal static class FaceMaterials
         if (image != null)
         {
             m.BaseColorTexture = TextureRef(ctx, f.TextureId, image);
-            UvTransform.ToKhr(f.RepeatU, f.RepeatV, f.OffsetU, f.OffsetV, f.Rotation, out float[] off, out float[] scale, out bool exact);
-            m.BaseColorTexture.Offset = off;
-            m.BaseColorTexture.Rotation = f.Rotation;
-            m.BaseColorTexture.Scale = scale;
-            extras["khrTextureTransformExact"] = exact;
+            if (UvTransform.IsExactInKhr(f.RepeatU, f.RepeatV, f.Rotation))
+            {
+                UvTransform.ToKhr(f.RepeatU, f.RepeatV, f.OffsetU, f.OffsetV, f.Rotation, out float[] off, out float[] scale, out _);
+                m.BaseColorTexture.Offset = off;
+                m.BaseColorTexture.Rotation = f.Rotation;
+                m.BaseColorTexture.Scale = scale;
+                extras["khrTextureTransformExact"] = true;
+            }
+            else
+            {
+                // rotation with unequal repeats: the extension cannot say it, so the face's UVs carry the viewer's
+                // transform and the extension is the identity
+                m.BaseColorTexture.Offset = new[] { 0f, 0f };
+                m.BaseColorTexture.Rotation = 0f;
+                m.BaseColorTexture.Scale = new[] { 1f, 1f };
+                extras["khrTextureTransformExact"] = true;
+                extras["uvTransformBaked"] = true;
+                bakedUv = true;
+            }
         }
 
         bool tintBlend = f.Color.A < 0.999f;
@@ -323,10 +431,35 @@ internal static class FaceMaterials
                     pbr["material"] = Encoding.UTF8.GetString(blob.Bytes);
                 if (blob != null)
                     ctx.Copies[pbrId] = blob;
+                PbrMaterial parsed = blob != null ? PbrMaterial.Parse(blob.Bytes) : null;
+                if (parsed != null)
+                {
+                    // the textures the material names are fetched, copied and embedded like a face's own texture
+                    JsonObject textures = new JsonObject();
+                    GltfTextureRef Fetch(UUID id, string role)
+                    {
+                        if (id == UUID.Zero)
+                            return null;
+                        string st = TextureStatus(ctx, id, role, out TextureImage img);
+                        textures[role] = new JsonObject { ["id"] = id.ToString(), ["status"] = st };
+                        return img != null ? TextureRef(ctx, id, img) : null;
+                    }
+                    GltfTextureRef baseColor = Fetch(parsed.BaseColor, "pbr-base-color");
+                    GltfTextureRef normal = Fetch(parsed.Normal, "pbr-normal");
+                    GltfTextureRef mr = Fetch(parsed.MetallicRoughness, "pbr-metallic-roughness");
+                    GltfTextureRef emissive = Fetch(parsed.Emissive, "pbr-emissive");
+                    Fetch(parsed.Occlusion, "pbr-occlusion");
+                    // a face that names a PBR material has no diffuse texture of its own to keep
+                    if (m.BaseColorTexture == null) m.BaseColorTexture = baseColor;
+                    if (m.NormalTexture == null) m.NormalTexture = normal;
+                    m.MetallicRoughnessTexture = mr;
+                    m.EmissiveTexture = emissive;
+                    pbr["textures"] = textures;
+                }
             }
             if (info.PbrOverride.TryGetValue(f.Number, out string ovr))
                 pbr["override"] = ovr;
-            pbr["note"] = "stored PBR data is carried as it is; its textures are not converted or copied";
+            pbr["note"] = "stored PBR data is carried as it is; the textures its material names are copied and embedded as images of the glTF material";
             extras["pbr"] = pbr;
         }
 
@@ -407,13 +540,13 @@ internal static class FaceMaterials
             AssetBlob blob = ctx.Assets?.Get(id);
             if (blob == null)
             {
-                use.Status = ctx.Assets != null && ctx.Assets.OverLimit.Contains(id) ? "over-size-limit"
+                use.Status = ctx.Assets != null && ctx.Assets.OverLimit.TryGetValue(id, out string cap) ? cap
                     : WellKnownAssets.IsWellKnown(id) || id == PlywoodTexture ? "library-default" : "missing-from-archive";
             }
             else
             {
                 ctx.Copies[id] = blob;
-                use.CopiedTo = "textures/" + id + blob.Extension;
+                use.CopiedTo = ctx.Prefix + "textures/" + id + blob.Extension;
                 TextureImage decoded = ctx.Assets.Decode(id, out string problem);
                 if (decoded == null)
                 {
@@ -436,11 +569,42 @@ internal static class FaceMaterials
         return use.Status;
     }
 
+    /// <summary>
+    /// Notes the use of the asset a sculpt or mesh part is built from (role "sculpt" or "mesh"), queues it for copying
+    /// unchanged and returns the manifest row. The caller sets the status once it has tried to read the asset.
+    /// </summary>
+    public static ManifestTexture NoteGeometryAsset(MaterialContext ctx, UUID id, string role, out AssetBlob blob)
+    {
+        blob = ctx.Assets?.Get(id);
+        (UUID, string) key = (id, role);
+        if (!ctx.Used.TryGetValue(key, out ManifestTexture use))
+        {
+            use = new ManifestTexture { TextureId = id.ToString(), Role = role };
+            ctx.Used[key] = use;
+            if (blob == null)
+                use.Status = ctx.Assets != null && ctx.Assets.OverLimit.TryGetValue(id, out string cap) ? cap : "missing-from-archive";
+            else
+            {
+                ctx.Copies[id] = blob;
+                use.CopiedTo = ctx.Prefix + blob.Folder + "/" + id + blob.Extension;
+                use.Status = "copied";
+            }
+        }
+        use.Faces++;
+        return use;
+    }
+
     private static GltfTextureRef TextureRef(MaterialContext ctx, UUID id, TextureImage image)
     {
         if (!ctx.GltfTextures.TryGetValue(id, out int texture))
         {
-            ctx.Doc.Images.Add(new GltfImage { Name = id.ToString(), Png = image.Png });
+            if (ctx.Shared)
+            {
+                ctx.Pngs[id] = image.Png;
+                ctx.Doc.Images.Add(new GltfImage { Name = id.ToString(), Uri = "../textures/" + id + ".png" });
+            }
+            else
+                ctx.Doc.Images.Add(new GltfImage { Name = id.ToString(), Png = image.Png });
             ctx.Doc.Textures.Add(ctx.Doc.Images.Count - 1);
             texture = ctx.Doc.Textures.Count - 1;
             ctx.GltfTextures[id] = texture;

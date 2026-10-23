@@ -92,6 +92,8 @@ public sealed class ParsedObject
     public int ScriptStates;
     public int PhloxScriptStates;
     public bool Coalesced;
+    /// <summary>SHA-256 of the object file's bytes (hex), set only when <see cref="InspectorOptions.HashObjectBodies"/> is on.</summary>
+    public string BodyHash;
 }
 
 /// <summary>

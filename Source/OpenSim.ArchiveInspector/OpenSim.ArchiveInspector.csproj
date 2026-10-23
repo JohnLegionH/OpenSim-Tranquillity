@@ -4,6 +4,19 @@
     <AssemblyTitle>OpenSim.ArchiveInspector</AssemblyTitle>
   </PropertyGroup>
 
+  <!-- dotnet publish -p:OarExportExe=true builds the exporter alone as oar-export(.exe); an ordinary build is unchanged -->
+  <PropertyGroup Condition="'$(OarExportExe)' == 'true'">
+    <AssemblyName>oar-export</AssemblyName>
+    <AssemblyTitle>oar-export</AssemblyTitle>
+    <DefineConstants>$(DefineConstants);OAR_EXPORT_ONLY</DefineConstants>
+  </PropertyGroup>
+
+  <!-- the single-file build carries the image library's native code for both platforms it is published for -->
+  <ItemGroup Condition="'$(OarExportExe)' == 'true'">
+    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="4.151.1" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.151.1" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="../../Source/OpenSim.Archive.Inspection/OpenSim.Archive.Inspection.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Archive.GltfExport/OpenSim.Archive.GltfExport.csproj" />

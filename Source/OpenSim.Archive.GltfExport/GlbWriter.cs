@@ -31,6 +31,8 @@ internal sealed class GltfImage
 {
     public string Name;
     public byte[] Png;
+    /// <summary>Relative URI of a PNG file kept beside the glTF file (the shared layout); when set the PNG is not embedded.</summary>
+    public string Uri;
 }
 
 internal sealed class GltfMaterial
@@ -43,6 +45,8 @@ internal sealed class GltfMaterial
     public float AlphaCutoff = 0.5f;
     public GltfTextureRef BaseColorTexture;
     public GltfTextureRef NormalTexture;
+    public GltfTextureRef MetallicRoughnessTexture;
+    public GltfTextureRef EmissiveTexture;
     public JsonObject Extras;
 }
 
@@ -53,6 +57,8 @@ internal sealed class GltfPrimitive
     public float[] Uvs;
     /// <summary>One value per vertex, written as the application attribute _PRIM_FACE; it keeps the prim face number when a tool merges primitives.</summary>
     public float[] FaceNumbers;
+    /// <summary>One value per vertex, written as the application attribute _PART_LINK: the link number of the part the vertex belongs to (0 for a single-part build), so a tool that joins parts' meshes keeps which part each vertex came from.</summary>
+    public float[] PartLinks;
     public int Material = -1;
     public JsonObject Extras;
 }
@@ -91,18 +97,19 @@ internal sealed class GltfDocument
         List<(int offset, int length, int target)> views = new List<(int, int, int)>();
         List<(int view, int count, string type, float[] min, float[] max)> accessors = new List<(int, int, string, float[], float[])>();
         // per mesh, per primitive: accessor indices of position, normal, uv
-        List<List<(int pos, int nor, int uv, int face)>> meshAccessors = new List<List<(int, int, int, int)>>();
+        List<List<(int pos, int nor, int uv, int face, int link)>> meshAccessors = new List<List<(int, int, int, int, int)>>();
 
         foreach (GltfMesh mesh in Meshes)
         {
-            List<(int, int, int, int)> list = new List<(int, int, int, int)>();
+            List<(int, int, int, int, int)> list = new List<(int, int, int, int, int)>();
             foreach (GltfPrimitive p in mesh.Primitives)
             {
                 int pos = AddFloats(bin, views, accessors, p.Positions, 3, "VEC3", true);
                 int nor = p.Normals != null ? AddFloats(bin, views, accessors, p.Normals, 3, "VEC3", false) : -1;
                 int uv = p.Uvs != null ? AddFloats(bin, views, accessors, p.Uvs, 2, "VEC2", false) : -1;
                 int face = p.FaceNumbers != null ? AddFloats(bin, views, accessors, p.FaceNumbers, 1, "SCALAR", false) : -1;
-                list.Add((pos, nor, uv, face));
+                int link = p.PartLinks != null ? AddFloats(bin, views, accessors, p.PartLinks, 1, "SCALAR", false) : -1;
+                list.Add((pos, nor, uv, face, link));
             }
             meshAccessors.Add(list);
         }
@@ -110,6 +117,11 @@ internal sealed class GltfDocument
         List<int> imageViews = new List<int>();
         foreach (GltfImage image in Images)
         {
+            if (image.Uri != null)
+            {
+                imageViews.Add(-1);
+                continue;
+            }
             while (bin.Length % 4 != 0)
                 bin.WriteByte(0);
             views.Add(((int)bin.Length, image.Png.Length, 0));
@@ -177,7 +189,7 @@ internal sealed class GltfDocument
     }
 
     private byte[] WriteJson(List<(int offset, int length, int target)> views, List<(int view, int count, string type, float[] min, float[] max)> accessors,
-        List<List<(int pos, int nor, int uv, int face)>> meshAccessors, List<int> imageViews, int binLength)
+        List<List<(int pos, int nor, int uv, int face, int link)>> meshAccessors, List<int> imageViews, int binLength)
     {
         using MemoryStream ms = new MemoryStream();
         using (Utf8JsonWriter w = new Utf8JsonWriter(ms, new JsonWriterOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping }))
@@ -242,7 +254,7 @@ internal sealed class GltfDocument
                     for (int p = 0; p < mesh.Primitives.Count; p++)
                     {
                         GltfPrimitive prim = mesh.Primitives[p];
-                        (int pos, int nor, int uv, int face) = meshAccessors[m][p];
+                        (int pos, int nor, int uv, int face, int link) = meshAccessors[m][p];
                         w.WriteStartObject();
                         w.WriteStartObject("attributes");
                         w.WriteNumber("POSITION", pos);
@@ -252,6 +264,8 @@ internal sealed class GltfDocument
                             w.WriteNumber("TEXCOORD_0", uv);
                         if (face >= 0)
                             w.WriteNumber("_PRIM_FACE", face);
+                        if (link >= 0)
+                            w.WriteNumber("_PART_LINK", link);
                         w.WriteEndObject();
                         if (prim.Material >= 0)
                             w.WriteNumber("material", prim.Material);
@@ -278,11 +292,21 @@ internal sealed class GltfDocument
                     WriteFloats(w, "baseColorFactor", mat.Color);
                     if (mat.BaseColorTexture != null)
                         WriteTextureRef(w, "baseColorTexture", mat.BaseColorTexture);
-                    w.WriteNumber("metallicFactor", 0);
+                    if (mat.MetallicRoughnessTexture != null)
+                        WriteTextureRef(w, "metallicRoughnessTexture", mat.MetallicRoughnessTexture);
+                    // with a metallic-roughness texture the factors scale it, so the metal is not switched off
+                    w.WriteNumber("metallicFactor", mat.MetallicRoughnessTexture != null ? 1 : 0);
                     w.WriteNumber("roughnessFactor", 1);
                     w.WriteEndObject();
                     if (mat.NormalTexture != null)
                         WriteTextureRef(w, "normalTexture", mat.NormalTexture);
+                    if (mat.EmissiveTexture != null)
+                    {
+                        WriteTextureRef(w, "emissiveTexture", mat.EmissiveTexture);
+                        w.WriteStartArray("emissiveFactor");
+                        w.WriteNumberValue(1); w.WriteNumberValue(1); w.WriteNumberValue(1);
+                        w.WriteEndArray();
+                    }
                     w.WriteString("alphaMode", mat.AlphaMode);
                     if (mat.AlphaMode == "MASK")
                         w.WriteNumber("alphaCutoff", mat.AlphaCutoff);
@@ -298,7 +322,10 @@ internal sealed class GltfDocument
                 for (int i = 0; i < Images.Count; i++)
                 {
                     w.WriteStartObject();
-                    w.WriteNumber("bufferView", imageViews[i]);
+                    if (Images[i].Uri != null)
+                        w.WriteString("uri", Images[i].Uri);
+                    else
+                        w.WriteNumber("bufferView", imageViews[i]);
                     w.WriteString("mimeType", "image/png");
                     if (Images[i].Name != null)
                         w.WriteString("name", Images[i].Name);

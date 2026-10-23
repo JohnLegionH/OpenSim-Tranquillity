@@ -37,8 +37,40 @@ public sealed class ExportOptions
     public string Object { get; set; }
     /// <summary>Export at most this many builds (after the filter); 0 for all.</summary>
     public int Limit { get; set; }
-    /// <summary>Most megabytes of texture and material assets held in memory at once; 0 for the default of 2048.</summary>
-    public int MaxAssetMegabytes { get; set; }
+    /// <summary>
+    /// Memory the export aims to stay within, in megabytes; 0 for the default of 1024. Asset bodies beyond a share of it wait
+    /// in the cache folder, and the decoded-image and read-back caches are sized from it. An asset that is larger than half
+    /// of it cannot be handled: it is reported over-memory-limit and the run ends with exit code 4.
+    /// </summary>
+    public int MaxMemoryMegabytes { get; set; }
+    /// <summary>
+    /// Most megabytes of asset bodies the cache folder and memory may hold together; 0 (the default) for no limit. An asset
+    /// that would take the total past it is reported over-size-limit and the run ends with exit code 4.
+    /// </summary>
+    public int MaxCacheMegabytes { get; set; }
+    /// <summary>
+    /// Folder the asset bodies are kept in while the builds are written, so memory does not grow with the archive. Left
+    /// in place when the run ends (the files can be removed by hand). Default: a folder named .asset-cache in the output folder.
+    /// </summary>
+    public string CacheDirectory { get; set; }
+    /// <summary>
+    /// Keep each build's textures and assets in its own folder, and the PNG images inside its glTF file (one build can then be
+    /// moved alone). The default is one shared textures folder and one shared assets folder beside the build folders, each
+    /// file named by its id, and the glTF files point at the shared PNG files by relative path.
+    /// </summary>
+    public bool SelfContained { get; set; }
+    /// <summary>Accepted and ignored: the up-front free-space estimate is a warning only. Kept so earlier command lines still work.</summary>
+    public bool SkipSpaceCheck { get; set; }
+    /// <summary>Free bytes on the output drive below which the run stops after the current build; 0 for the default of 2 GB. A test hook.</summary>
+    public long MinFreeBytes { get; set; }
+    /// <summary>Free bytes on the drive that holds a path; null reads the real drive. A test hook.</summary>
+    public Func<string, long?> FreeBytes { get; set; }
+    /// <summary>Write every build again, even one the output folder already holds from this archive by this tool version.</summary>
+    public bool Force { get; set; }
+    /// <summary>Report progress after this many builds (and at least every ten seconds); 0 for 25.</summary>
+    public int ProgressEvery { get; set; }
+    /// <summary>Receives the progress lines and the notes about a build that failed; null for none.</summary>
+    public Action<string> Progress { get; set; }
     /// <summary>
     /// Put the build node at the root part's position and rotation in the region. When false (the default) the build node
     /// is at the origin with the root part's own frame, and the region position and rotation are in its extras.
@@ -84,6 +116,13 @@ public sealed class ManifestPart
     /// <summary>Prim faces written (exported parts only).</summary>
     public int? Faces { get; set; }
     public int? Triangles { get; set; }
+    /// <summary>The sculpt map or mesh asset the part is built from (sculpt and mesh parts only).</summary>
+    public string GeometryAssetId { get; set; }
+    /// <summary>Status of that asset: copied, missing-from-archive, over-size-limit or undecodable.</summary>
+    public string GeometryAssetStatus { get; set; }
+    /// <summary>A mesh that is rigged: it is exported static, in its bind pose.</summary>
+    public bool? Rigged { get; set; }
+    public List<string> JointNames { get; set; }
 }
 
 /// <summary>A texture (or other image asset) a build's faces use.</summary>
@@ -97,11 +136,23 @@ public sealed class ManifestTexture
     public string Reason { get; set; }
     /// <summary>Path of the unchanged copy of the asset, relative to the build's folder (empty when the asset is not in the archive).</summary>
     public string CopiedTo { get; set; }
+    /// <summary>Path of the PNG file the glTF file points at, relative to the build's folder (shared layout only; in the self-contained layout the PNG is inside the glTF file).</summary>
+    public string ImagePath { get; set; }
     public int? Width { get; set; }
     public int? Height { get; set; }
     public bool? HasAlpha { get; set; }
-    /// <summary>Number of faces that use it in this role.</summary>
+    /// <summary>Number of faces that use it in this role (for a sculpt map or a mesh asset, the number of parts).</summary>
     public int Faces { get; set; }
+}
+
+/// <summary>A file a build uses that is kept outside its glTF file.</summary>
+public sealed class ManifestFile
+{
+    public string Id { get; set; }
+    /// <summary>original (the asset exactly as the archive holds it) or png (the decoded texture the glTF file points at).</summary>
+    public string Kind { get; set; }
+    /// <summary>Path relative to the build's folder.</summary>
+    public string Path { get; set; }
 }
 
 public sealed class BuildManifest
@@ -115,19 +166,45 @@ public sealed class BuildManifest
     public string RootPartUuid { get; set; }
     public string File { get; set; }
     public int PartCount { get; set; }
+    /// <summary>"shared" (textures and assets in folders beside the build folders) or "self-contained" (in the build's own folder).</summary>
+    public string Layout { get; set; }
     public int Exported { get; set; }
     public int Placeheld { get; set; }
     public int Skipped { get; set; }
+    /// <summary>Every file this build uses outside its glTF file, with where it lives (a path relative to the build's folder).</summary>
+    public List<ManifestFile> Files { get; set; } = new List<ManifestFile>();
     /// <summary>Parts in link-number order.</summary>
     public List<ManifestPart> Parts { get; set; } = new List<ManifestPart>();
     public int TexturesEmbedded { get; set; }
     public int TexturesMissing { get; set; }
     public int TexturesCopied { get; set; }
+    /// <summary>Mesh assets copied unchanged into the build's assets folder.</summary>
+    public int AssetsCopied { get; set; }
     public List<ManifestTexture> Textures { get; set; } = new List<ManifestTexture>();
 }
 
 public sealed class SummaryBuild
 {
+    /// <summary>ok, or failed (the build's error is in <see cref="Error"/> and nothing of it is relied on).</summary>
+    public string Status { get; set; } = "ok";
+    public string Error { get; set; }
+    /// <summary>SHA-256 of the archive's object file the build was read from, and the tool version that wrote it: a rerun skips the build when both match.</summary>
+    public string SourceHash { get; set; }
+    public string ToolVersion { get; set; }
+    public string ArchiveEntry { get; set; }
+    /// <summary>Which of the builds with the same root part and source hash this is (0 for the first).</summary>
+    public int Occurrence { get; set; }
+    public long OutputBytes { get; set; }
+    
+    public int AssetsCopied { get; set; }
+    public int SculptsExported { get; set; }
+    public int MeshesExported { get; set; }
+    public int RiggedMeshes { get; set; }
+    /// <summary>shared or self-contained: a rerun leaves a build only when it was written in the layout asked for now.</summary>
+    public string Layout { get; set; }
+    /// <summary>The shared files (paths relative to the output folder) this build points at; a rerun leaves the build only when they are still there.</summary>
+    public List<string> SharedFiles { get; set; }
+    public Dictionary<string, int> Reasons { get; set; }
     public string Folder { get; set; }
     public string Name { get; set; }
     public string RootPartUuid { get; set; }
@@ -141,14 +218,44 @@ public sealed class SummaryBuild
     public int TexturesCopied { get; set; }
 }
 
+public static class ExitCodes
+{
+    public const int Done = 0, Unreadable = 2, EveryBuildFailed = 3, Incomplete = 4, LowDiskSpace = 5, BadCommandLine = 64;
+}
+
 public sealed class ExportSummary
 {
     public string Tool { get; set; } = "OpenSim.Archive.GltfExport";
     public string Archive { get; set; }
+    /// <summary>The exit code the command line ends with.</summary>
+    public int ExitCode { get; set; }
+    /// <summary>True when the archive was damaged or cut short: everything readable was exported and the rest is missing.</summary>
+    public bool ArchiveIncomplete { get; set; }
+    /// <summary>shared or self-contained.</summary>
+    public string Layout { get; set; }
+    /// <summary>Each memory or disk cap that was reached, with what it cost; any entry makes the exit code 4.</summary>
+    public List<string> CapsReached { get; set; } = new List<string>();
+    /// <summary>Set when the run stopped between builds because the output drive's free space fell below the floor; the exit code is then 5.</summary>
+    public string DiskSpaceStop { get; set; }
+    /// <summary>Builds left undone by that stop; running the same line again does them.</summary>
+    public int BuildsNotDone { get; set; }
+    /// <summary>Notes that do not change the exit code, such as a free-space estimate that looks too small.</summary>
+    public List<string> Warnings { get; set; } = new List<string>();
     public string ReadStatus { get; set; }
     public string StoppedAt { get; set; }
     public int Builds { get; set; }
     public int BuildsWithAFile { get; set; }
+    /// <summary>Builds whose export failed; each is listed in the build list with its error.</summary>
+    public int BuildsFailed { get; set; }
+    /// <summary>Builds left as an earlier run wrote them (same source hash and tool version).</summary>
+    public int BuildsResumed { get; set; }
+    public string ToolVersion { get; set; }
+    /// <summary>Highest working set of the process, in megabytes.</summary>
+    public double PeakWorkingSetMegabytes { get; set; }
+    /// <summary>Asset bytes written to the cache folder in this run.</summary>
+    public long CacheBytesWritten { get; set; }
+    /// <summary>Times the archive was read: 1, plus one for each round that went back for assets seen before a build asked for them.</summary>
+    public int ArchivePasses { get; set; }
     public int Parts { get; set; }
     public int Exported { get; set; }
     public int Placeheld { get; set; }
@@ -159,10 +266,20 @@ public sealed class ExportSummary
     public int TexturesMissing { get; set; }
     /// <summary>Asset files copied unchanged into a build's textures folder.</summary>
     public int TexturesCopied { get; set; }
+    /// <summary>Mesh assets copied unchanged into a build's assets folder.</summary>
+    public int AssetsCopied { get; set; }
+    /// <summary>Sculpt parts whose geometry is in a file.</summary>
+    public int SculptsExported { get; set; }
+    /// <summary>Mesh parts whose geometry is in a file.</summary>
+    public int MeshesExported { get; set; }
+    /// <summary>Of those, meshes that are rigged (exported static).</summary>
+    public int RiggedMeshes { get; set; }
     /// <summary>Count of parts per placeheld or skipped reason.</summary>
     public Dictionary<string, int> Reasons { get; set; } = new Dictionary<string, int>();
     public double Seconds { get; set; }
     public long OutputBytes { get; set; }
+    /// <summary>Of those, the bytes of the shared textures and assets folders (shared layout).</summary>
+    public long SharedBytes { get; set; }
     public List<SummaryBuild> BuildList { get; set; } = new List<SummaryBuild>();
 }
 
