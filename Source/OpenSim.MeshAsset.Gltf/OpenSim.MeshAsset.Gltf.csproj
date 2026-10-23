@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    OpenSim.MeshAsset.Gltf: converts a glTF model to a mesh asset (the way the viewer's glTF loader does) and a
+    mesh asset back to a GLB for inspection. Depends on OpenSim.MeshAsset and SharpGLTF only; no OpenSim project.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>OpenSim.MeshAsset.Gltf</RootNamespace>
+    <AssemblyName>OpenSim.MeshAsset.Gltf</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Remove="nini-core" />
+    <PackageReference Remove="UtopiaSkye.OpenMetaverse" />
+    <PackageReference Remove="UtopiaSkye.OpenMetaverse.Types" />
+    <PackageReference Remove="UtopiaSkye.OpenMetaverse.StructuredData" />
+    <PackageReference Remove="UtopiaSkye.OpenMetaverse.Rendering.Meshmerizer" />
+    <PackageReference Remove="UtopiaSkye.OpenMetaverse.Rendering.Simple" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SharpGLTF.Core" Version="1.0.7" />
+    <PackageReference Include="SharpGLTF.Toolkit" Version="1.0.7" />
+    <ProjectReference Include="../OpenSim.MeshAsset/OpenSim.MeshAsset.csproj" />
+  </ItemGroup>
+
+</Project>
