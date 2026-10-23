@@ -37,6 +37,8 @@ public sealed class ExportOptions
     public string Object { get; set; }
     /// <summary>Export at most this many builds (after the filter); 0 for all.</summary>
     public int Limit { get; set; }
+    /// <summary>Most megabytes of texture and material assets held in memory at once; 0 for the default of 2048.</summary>
+    public int MaxAssetMegabytes { get; set; }
     /// <summary>
     /// Put the build node at the root part's position and rotation in the region. When false (the default) the build node
     /// is at the origin with the root part's own frame, and the region position and rotation are in its extras.
@@ -84,6 +86,24 @@ public sealed class ManifestPart
     public int? Triangles { get; set; }
 }
 
+/// <summary>A texture (or other image asset) a build's faces use.</summary>
+public sealed class ManifestTexture
+{
+    public string TextureId { get; set; }
+    /// <summary>diffuse, normal or specular.</summary>
+    public string Role { get; set; }
+    /// <summary>embedded (a texture of the glTF material), copied (kept as a file only: a specular map), missing-from-archive, library-default, over-size-limit, or undecodable.</summary>
+    public string Status { get; set; }
+    public string Reason { get; set; }
+    /// <summary>Path of the unchanged copy of the asset, relative to the build's folder (empty when the asset is not in the archive).</summary>
+    public string CopiedTo { get; set; }
+    public int? Width { get; set; }
+    public int? Height { get; set; }
+    public bool? HasAlpha { get; set; }
+    /// <summary>Number of faces that use it in this role.</summary>
+    public int Faces { get; set; }
+}
+
 public sealed class BuildManifest
 {
     public string Tool { get; set; } = "OpenSim.Archive.GltfExport";
@@ -100,6 +120,10 @@ public sealed class BuildManifest
     public int Skipped { get; set; }
     /// <summary>Parts in link-number order.</summary>
     public List<ManifestPart> Parts { get; set; } = new List<ManifestPart>();
+    public int TexturesEmbedded { get; set; }
+    public int TexturesMissing { get; set; }
+    public int TexturesCopied { get; set; }
+    public List<ManifestTexture> Textures { get; set; } = new List<ManifestTexture>();
 }
 
 public sealed class SummaryBuild
@@ -112,6 +136,9 @@ public sealed class SummaryBuild
     public int Placeheld { get; set; }
     public int Skipped { get; set; }
     public string File { get; set; }
+    public int TexturesEmbedded { get; set; }
+    public int TexturesMissing { get; set; }
+    public int TexturesCopied { get; set; }
 }
 
 public sealed class ExportSummary
@@ -126,6 +153,12 @@ public sealed class ExportSummary
     public int Exported { get; set; }
     public int Placeheld { get; set; }
     public int Skipped { get; set; }
+    /// <summary>Textures embedded in a build's file, counted once per build.</summary>
+    public int TexturesEmbedded { get; set; }
+    /// <summary>Textures a build's faces name that are not in the archive or could not be decoded, counted once per build.</summary>
+    public int TexturesMissing { get; set; }
+    /// <summary>Asset files copied unchanged into a build's textures folder.</summary>
+    public int TexturesCopied { get; set; }
     /// <summary>Count of parts per placeheld or skipped reason.</summary>
     public Dictionary<string, int> Reasons { get; set; } = new Dictionary<string, int>();
     public double Seconds { get; set; }

@@ -9,6 +9,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using OpenMetaverse;
 using OpenSim.Archive.Inspection;
 
 namespace OpenSim.Archive.GltfExport;
@@ -42,6 +43,12 @@ public static class ArchiveExporter
         HashSet<string> usedFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         Stopwatch clock = Stopwatch.StartNew();
 
+        // Pass one reads the objects and notes which assets their faces name. Textures usually come after the objects in
+        // an archive, so a second pass collects those assets, and a third builds and writes.
+        ArchiveAssets assets = new ArchiveAssets();
+        if (options.MaxAssetMegabytes > 0)
+            assets.MaxBytes = options.MaxAssetMegabytes * 1024L * 1024;
+        List<(ParsedGroup group, string entry)> groups = new List<(ParsedGroup, string)>();
         InspectorOptions inspect = new InspectorOptions { StandardChecks = false, MaxRetainedRecords = 1 };
         inspect.ObjectObserver = (obj, entry, regionDir) =>
         {
@@ -51,9 +58,11 @@ public static class ArchiveExporter
                     continue;
                 if (!Matches(group, options.Object))
                     continue;
-                if (options.Limit > 0 && summary.Builds >= options.Limit)
+                if (options.Limit > 0 && groups.Count >= options.Limit)
                     return;
-                WriteBuild(group, archiveName, entry, fullOut, usedFolders, summary, options.World);
+                groups.Add((group, entry));
+                foreach (ParsedPart part in group.Parts)
+                    FaceMaterials.CollectAssetIds(part, assets.Wanted);
             }
         };
 
@@ -63,10 +72,54 @@ public static class ArchiveExporter
         if (report.Status != InspectionStatus.NotAnArchive && report.Archive.Kind == ArchiveKind.Iar)
             throw new InvalidDataException("the file is an inventory archive (IAR); only region archives (OAR) can be exported");
 
+        CollectAssets(fullArchive, assets);
+        foreach ((ParsedGroup group, string entry) in groups)
+            WriteBuild(group, archiveName, entry, fullOut, usedFolders, summary, options.World, assets);
+
         clock.Stop();
         summary.Seconds = Math.Round(clock.Elapsed.TotalSeconds, 2);
         File.WriteAllText(Path.Combine(fullOut, "export-summary.json"), JsonSerializer.Serialize(summary, JsonOptions), new UTF8Encoding(false));
         return summary;
+    }
+
+    /// <summary>
+    /// Reads the asset bodies the faces name. A legacy material names two more textures (its normal and specular
+    /// maps), so the archive is read again while new names turn up.
+    /// </summary>
+    private static void CollectAssets(string archive, ArchiveAssets assets)
+    {
+        HashSet<UUID> asked = new HashSet<UUID>();
+        for (int round = 0; round < 4; round++)
+        {
+            List<UUID> todo = assets.Wanted.Where(id => !asked.Contains(id) && !assets.Has(id)).ToList();
+            if (todo.Count == 0)
+                break;
+            asked.UnionWith(todo);
+
+            InspectorOptions opt = new InspectorOptions { StandardChecks = false, MaxRetainedRecords = 1 };
+            opt.WantAssetBody = (id, type, size) => assets.Wants(id, type, size);
+            opt.AssetBodyObserver = (id, type, entry, bytes) =>
+            {
+                assets.Add(id, type, entry, bytes);
+                if (type == (int)OpenMetaverse.AssetType.OSMaterial && bytes != null)
+                {
+                    try
+                    {
+                        LegacyMaterial m = LegacyMaterial.Parse(bytes);
+                        if (m != null)
+                        {
+                            if (m.NormalMap != UUID.Zero) assets.Wanted.Add(m.NormalMap);
+                            if (m.SpecularMap != UUID.Zero) assets.Wanted.Add(m.SpecularMap);
+                        }
+                    }
+                    catch (Exception)
+                    {
+                        // a damaged material names nothing more
+                    }
+                }
+            };
+            new ArchiveInspector(opt).Inspect(archive);
+        }
     }
 
     private static bool Matches(ParsedGroup g, string filter)
@@ -78,7 +131,7 @@ public static class ArchiveExporter
         return string.Equals(g.Name, filter, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static void WriteBuild(ParsedGroup group, string archiveName, string entry, string outDir, HashSet<string> usedFolders, ExportSummary summary, bool world)
+    private static void WriteBuild(ParsedGroup group, string archiveName, string entry, string outDir, HashSet<string> usedFolders, ExportSummary summary, bool world, ArchiveAssets assets)
     {
         string baseName = FileSafe(group.Name);
         string idPart = group.RootId.ToString().Replace("-", string.Empty);
@@ -87,7 +140,7 @@ public static class ArchiveExporter
             folder = baseName + "_" + idPart.Substring(0, Math.Min(12, idPart.Length)) + "-" + n;
 
         string glbName = folder + ".glb";
-        BuiltBuild build = LinksetExporter.Build(group, archiveName, entry, glbName, world);
+        BuiltBuild build = LinksetExporter.Build(group, archiveName, entry, glbName, world, assets);
 
         string dir = Path.Combine(outDir, folder);
         Directory.CreateDirectory(dir);
@@ -96,6 +149,16 @@ public static class ArchiveExporter
         {
             File.WriteAllBytes(Path.Combine(dir, glbName), build.Glb);
             bytes += build.Glb.Length;
+        }
+        if (build.Copies.Count > 0)
+        {
+            string texDir = Path.Combine(dir, "textures");
+            Directory.CreateDirectory(texDir);
+            foreach (AssetBlob blob in build.Copies)
+            {
+                File.WriteAllBytes(Path.Combine(texDir, blob.Id + blob.Extension), blob.Bytes);
+                bytes += blob.Bytes.Length;
+            }
         }
         string manifest = JsonSerializer.Serialize(build.Manifest, JsonOptions);
         byte[] manifestBytes = new UTF8Encoding(false).GetBytes(manifest);
@@ -110,6 +173,9 @@ public static class ArchiveExporter
         summary.Exported += m.Exported;
         summary.Placeheld += m.Placeheld;
         summary.Skipped += m.Skipped;
+        summary.TexturesEmbedded += m.TexturesEmbedded;
+        summary.TexturesMissing += m.TexturesMissing;
+        summary.TexturesCopied += m.TexturesCopied;
         summary.OutputBytes += bytes;
         foreach (ManifestPart p in m.Parts)
             if (p.Status != ExportStatus.Exported)
@@ -129,6 +195,9 @@ public static class ArchiveExporter
             Exported = m.Exported,
             Placeheld = m.Placeheld,
             Skipped = m.Skipped,
+            TexturesEmbedded = m.TexturesEmbedded,
+            TexturesMissing = m.TexturesMissing,
+            TexturesCopied = m.TexturesCopied,
             File = build.Glb != null ? glbName : null
         });
     }

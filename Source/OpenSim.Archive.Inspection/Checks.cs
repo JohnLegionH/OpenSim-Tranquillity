@@ -162,6 +162,15 @@ public class InspectorOptions
     /// only valid during the call.
     /// </summary>
     public Action<ParsedObject, string, string> ObjectObserver { get; set; }
+    /// <summary>
+    /// Asks, for every asset file that is not an object or a scanned text type, whether its body is wanted (asset id,
+    /// asset type, size in bytes). Wanted bodies up to <see cref="MaxWantedAssetBytes"/> are read and handed to
+    /// <see cref="AssetBodyObserver"/>; a wanted body over the limit is handed over as null.
+    /// </summary>
+    public Func<UUID, int, long, bool> WantAssetBody { get; set; }
+    /// <summary>Receives a wanted asset's body: asset id, asset type, archive entry name, body (null when over the limit).</summary>
+    public Action<UUID, int, string, byte[]> AssetBodyObserver { get; set; }
+    public long MaxWantedAssetBytes { get; set; } = 256L * 1024 * 1024;
     /// <summary>Extra checks run in the same pass, after the built-in creator analysis.</summary>
     public List<IArchiveCheck> Checks { get; set; } = new List<IArchiveCheck>();
 }

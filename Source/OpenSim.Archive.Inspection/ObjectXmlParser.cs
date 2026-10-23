@@ -59,6 +59,12 @@ public sealed class ParsedPart
     public ShapeData Shape;
     /// <summary>The texture entry block as stored (empty when absent).</summary>
     public byte[] TextureEntry = Array.Empty<byte>();
+    /// <summary>The shape's extra parameters block as stored (flexible path, light, sculpt, render materials; empty when absent).</summary>
+    public byte[] ExtraParams = Array.Empty<byte>();
+    /// <summary>The shape's per-face material override block as stored (empty when absent).</summary>
+    public byte[] MaterialOverrides = Array.Empty<byte>();
+    /// <summary>The part's texture animation block as stored (empty when absent).</summary>
+    public byte[] TextureAnimation = Array.Empty<byte>();
 }
 
 /// <summary>One linkset as read from an object body.</summary>
@@ -340,6 +346,7 @@ internal static class ObjectXmlParser
                 }
                 case "ParticleSystem": ReadParticle(XmlRead.Text(r), pp); break;
                 case "SOPAnims": ReadAnims(XmlRead.Text(r), pp); break;
+                case "TextureAnimation": pp.TextureAnimation = TryBase64(XmlRead.Text(r)) ?? Array.Empty<byte>(); break;
                 case "DynAttrs": pp.HasDynAttrs = true; r.Skip(); break;
                 default: r.Skip(); break;
             }
@@ -479,7 +486,13 @@ internal static class ObjectXmlParser
                     ReadTextureEntry(teText, pp);
                     break;
                 }
-                case "ExtraParams": ReadExtraParams(XmlRead.Text(r), pp); break;
+                case "ExtraParams":
+                {
+                    string extraText = XmlRead.Text(r);
+                    pp.ExtraParams = TryBase64(extraText) ?? Array.Empty<byte>();
+                    ReadExtraParams(extraText, pp);
+                    break;
+                }
                 case "SculptTexture":
                 {
                     UUID id = XmlRead.Uuid(r);
@@ -491,6 +504,7 @@ internal static class ObjectXmlParser
                 case "MatOvrd":
                 {
                     byte[] data = TryBase64(XmlRead.Text(r));
+                    pp.MaterialOverrides = data ?? Array.Empty<byte>();
                     if (data != null && data.Length > 36)
                         foreach (UUID id in TextScan.EmbeddedUuids(data))
                             pp.Refs.Add(new RefInfo { Id = id, Kind = ReferenceKind.MaterialOverride, Certainty = Certainty.Uncertain });

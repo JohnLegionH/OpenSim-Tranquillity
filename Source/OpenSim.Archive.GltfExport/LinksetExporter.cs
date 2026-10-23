@@ -18,6 +18,8 @@ internal sealed class BuiltBuild
     public BuildManifest Manifest;
     /// <summary>The glTF binary, or null when no part of the build is in the file.</summary>
     public byte[] Glb;
+    /// <summary>Asset files (textures, materials) to write unchanged beside the glTF file, in a folder named textures.</summary>
+    public List<AssetBlob> Copies = new List<AssetBlob>();
 }
 
 /// <summary>
@@ -34,9 +36,8 @@ internal static class LinksetExporter
     private const byte GrassCode = 95;
     private const byte NewTreeCode = 111;
     private const byte TreeCode = 255;
-    private static readonly UUID PlywoodTexture = new UUID("89556747-24cb-43ed-920b-47caed15465f");
 
-    public static BuiltBuild Build(ParsedGroup g, string archiveName, string entry, string glbFileName, bool world = false)
+    public static BuiltBuild Build(ParsedGroup g, string archiveName, string entry, string glbFileName, bool world = false, ArchiveAssets assets = null)
     {
         // link-number order; the file order is not the link order. A stable sort keeps file order for equal numbers.
         List<ParsedPart> parts = g.Parts.Select((p, i) => (p, i)).OrderBy(t => t.p.Part.LinkNum).ThenBy(t => t.i).Select(t => t.p).ToList();
@@ -79,7 +80,7 @@ internal static class LinksetExporter
             PartCount = parts.Count
         };
 
-        Dictionary<string, int> materials = new Dictionary<string, int>();
+        MaterialContext materials = new MaterialContext { Doc = doc, Assets = assets };
 
         foreach (ParsedPart pp in parts)
         {
@@ -151,6 +152,11 @@ internal static class LinksetExporter
         }
 
         BuiltBuild result = new BuiltBuild { Manifest = manifest };
+        manifest.Textures = materials.Used.Values.OrderBy(t => t.Role, StringComparer.Ordinal).ThenBy(t => t.TextureId, StringComparer.Ordinal).ToList();
+        manifest.TexturesEmbedded = manifest.Textures.Count(t => t.Status == "embedded");
+        manifest.TexturesMissing = manifest.Textures.Count(t => t.Status != "embedded" && t.Status != "copied");
+        result.Copies.AddRange(materials.Copies.Values.OrderBy(c => c.Id.ToString(), StringComparer.Ordinal));
+        manifest.TexturesCopied = result.Copies.Count;
         if (objectNode.Children.Count > 0)
         {
             result.Glb = doc.ToGlb();
@@ -280,11 +286,12 @@ internal static class LinksetExporter
 
     // ------------------------------------------------------------------ geometry
 
-    private static GltfMesh BuildPartMesh(ParsedPart pp, GltfDocument doc, Dictionary<string, int> materials, out int faceCount, out int triangleCount)
+    private static GltfMesh BuildPartMesh(ParsedPart pp, GltfDocument doc, MaterialContext materials, out int faceCount, out int triangleCount)
     {
         PrimParams prm = PrimParams.FromShape(pp.Shape);
         List<PrimFace> faces = PrimGeometry.BuildFaces(prm, DetailLevel.High, out int viewerFaceCount, out int unnumbered);
         TextureLookup textures = TextureLookup.Read(pp.TextureEntry);
+        PartMaterialInfo materialInfo = PartMaterialInfo.Read(pp);
 
         GltfMesh mesh = new GltfMesh { Name = Text.Clean(pp.Part.Name) };
         JsonArray numbers = new JsonArray();
@@ -322,7 +329,7 @@ internal static class LinksetExporter
                 Normals = nor,
                 Uvs = uv,
                 FaceNumbers = faceNumbers,
-                Material = Material(doc, materials, textures, f.Number),
+                Material = FaceMaterials.Material(materials, FaceMaterials.Read(textures.Face(f.Number), f.Number), materialInfo, pp),
                 Extras = new JsonObject { ["primFace"] = f.Number }
             };
             mesh.Primitives.Add(prim);
@@ -345,41 +352,6 @@ internal static class LinksetExporter
     private static float Finite(float v) => float.IsFinite(v) ? v : 0f;
 
     // ------------------------------------------------------------------ materials
-
-    private static int Material(GltfDocument doc, Dictionary<string, int> cache, TextureLookup textures, int faceNumber)
-    {
-        Primitive.TextureEntryFace face = textures.Face(faceNumber);
-        UUID texture = face?.TextureID ?? PlywoodTexture;
-        Color4 color = face?.RGBA ?? new Color4(1f, 1f, 1f, 1f);
-        float repU = face?.RepeatU ?? 1f, repV = face?.RepeatV ?? 1f, offU = face?.OffsetU ?? 0f, offV = face?.OffsetV ?? 0f, rot = face?.Rotation ?? 0f;
-        float glow = face?.Glow ?? 0f;
-        bool fullbright = face?.Fullbright ?? false;
-
-        string key = string.Join("|", texture, color.R, color.G, color.B, color.A, repU, repV, offU, offV, rot, glow, fullbright);
-        if (cache.TryGetValue(key, out int index))
-            return index;
-
-        GltfMaterial m = new GltfMaterial
-        {
-            Name = texture.ToString(),
-            Color = new[] { Finite(color.R), Finite(color.G), Finite(color.B), Finite(color.A) },
-            Blend = color.A < 0.999f,
-            Extras = new JsonObject
-            {
-                ["placeholder"] = true,
-                ["textureId"] = texture.ToString(),
-                ["repeat"] = new JsonArray(repU, repV),
-                ["offset"] = new JsonArray(offU, offV),
-                ["rotation"] = rot,
-                ["glow"] = glow,
-                ["fullbright"] = fullbright
-            }
-        };
-        doc.Materials.Add(m);
-        index = doc.Materials.Count - 1;
-        cache[key] = index;
-        return index;
-    }
 
     private sealed class TextureLookup
     {

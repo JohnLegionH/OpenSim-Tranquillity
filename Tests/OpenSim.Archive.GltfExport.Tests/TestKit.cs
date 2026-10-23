@@ -33,6 +33,9 @@ internal static class TestKit
         public Vector3 Scale = new Vector3(1, 1, 1);
         public string Shape = Box();
         public string TextureEntryBase64 = "";
+        public string ExtraParamsBase64 = "";
+        public string MatOvrdBase64 = "";
+        public string TextureAnimationBase64 = "";
         public string Inventory = "";
         public uint BaseMask = 0x7fffffff, OwnerMask = 0x7fffffff, GroupMask = 0, EveryoneMask = 0, NextOwnerMask = 0x82000;
     }
@@ -72,9 +75,15 @@ internal static class TestKit
         sb.Append("<BaseMask>").Append(p.BaseMask).Append("</BaseMask><OwnerMask>").Append(p.OwnerMask).Append("</OwnerMask><GroupMask>").Append(p.GroupMask)
           .Append("</GroupMask><EveryoneMask>").Append(p.EveryoneMask).Append("</EveryoneMask><NextOwnerMask>").Append(p.NextOwnerMask).Append("</NextOwnerMask>");
         sb.Append(p.Inventory.Length > 0 ? p.Inventory : "<TaskInventory />");
+        if (p.TextureAnimationBase64.Length > 0)
+            sb.Append("<TextureAnimation>").Append(p.TextureAnimationBase64).Append("</TextureAnimation>");
         string shape = p.Shape;
         if (p.TextureEntryBase64.Length > 0)
             shape = shape.Replace("<Shape>", "<Shape><TextureEntry>" + p.TextureEntryBase64 + "</TextureEntry>");
+        if (p.ExtraParamsBase64.Length > 0)
+            shape = shape.Replace("</Shape>", "<ExtraParams>" + p.ExtraParamsBase64 + "</ExtraParams></Shape>");
+        if (p.MatOvrdBase64.Length > 0)
+            shape = shape.Replace("</Shape>", "<MatOvrd>" + p.MatOvrdBase64 + "</MatOvrd></Shape>");
         sb.Append(shape);
         sb.Append("</SceneObjectPart>");
         _ = root;
@@ -145,6 +154,17 @@ internal static class TestKit
         List<(string, byte[])> entries = new List<(string, byte[])> { ("archive.xml", OarControl()) };
         foreach ((string objectName, string xml) in objects)
             entries.Add(("objects/" + objectName + ".xml", Utf8(xml)));
+        return Tar(entries);
+    }
+
+    /// <summary>A region archive with objects and asset files ("assets/&lt;id&gt;&lt;type extension&gt;"); the assets come after the objects, as a saved archive has them.</summary>
+    public static byte[] OarWithAssets((string objectName, string xml)[] objects, (UUID id, sbyte type, byte[] data)[] assets)
+    {
+        List<(string, byte[])> entries = new List<(string, byte[])> { ("archive.xml", OarControl()) };
+        foreach ((string objectName, string xml) in objects)
+            entries.Add(("objects/" + objectName + ".xml", Utf8(xml)));
+        foreach ((UUID id, sbyte type, byte[] data) in assets)
+            entries.Add((ArchiveConstants.ASSETS_PATH + id + ArchiveConstants.ASSET_TYPE_TO_EXTENSION[type], data));
         return Tar(entries);
     }
 

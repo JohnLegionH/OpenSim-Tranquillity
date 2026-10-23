@@ -785,10 +785,28 @@ public sealed class ArchiveInspector
             bool isObject = type == (int)AssetType.Object;
             bool isText = TextScan.IsScannedType(type);
             byte[] body = null;
+            bool wantBody = !isObject && m_opt.WantAssetBody != null && m_opt.AssetBodyObserver != null && m_opt.WantAssetBody(id, type, h.Size);
             if (isObject)
                 body = ReadCapped(tar, h, m_opt.MaxObjectBodyBytes, "object asset");
             else if (isText)
+            {
                 body = ReadCapped(tar, h, m_opt.MaxTextBodyBytes, "text asset");
+                if (wantBody)
+                    m_opt.AssetBodyObserver(id, type, h.Name, body);
+            }
+            else if (wantBody)
+            {
+                if (h.Size > m_opt.MaxWantedAssetBytes)
+                {
+                    tar.SkipBody();
+                    m_opt.AssetBodyObserver(id, type, h.Name, null);
+                }
+                else
+                {
+                    byte[] wanted = tar.ReadBody();
+                    m_opt.AssetBodyObserver(id, type, h.Name, wanted);
+                }
+            }
             else
                 tar.SkipBody();
 

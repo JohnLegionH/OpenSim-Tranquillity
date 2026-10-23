@@ -12,15 +12,37 @@ using System.Text.Json.Nodes;
 
 namespace OpenSim.Archive.GltfExport;
 
-// A small glTF 2.0 binary writer: nodes, meshes made of non-indexed triangle primitives, and materials.
+// A small glTF 2.0 binary writer: nodes, meshes made of non-indexed triangle primitives, materials, and PNG images.
+// Texture transforms use the KHR_texture_transform extension (Khronos),
+// https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_texture_transform
 // Written to the glTF 2.0 specification (Khronos), https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html
+
+/// <summary>A glTF texture used by a material, with the texture transform to apply to the texture coordinates.</summary>
+internal sealed class GltfTextureRef
+{
+    public int Texture;
+    /// <summary>KHR_texture_transform offset, rotation (radians) and scale; null offset means no transform.</summary>
+    public float[] Offset;
+    public float Rotation;
+    public float[] Scale;
+}
+
+internal sealed class GltfImage
+{
+    public string Name;
+    public byte[] Png;
+}
 
 internal sealed class GltfMaterial
 {
     public string Name;
-    /// <summary>Linear base colour, red green blue alpha.</summary>
+    /// <summary>Base colour factor, red green blue alpha, as given.</summary>
     public float[] Color = { 1, 1, 1, 1 };
-    public bool Blend;
+    /// <summary>OPAQUE, MASK or BLEND.</summary>
+    public string AlphaMode = "OPAQUE";
+    public float AlphaCutoff = 0.5f;
+    public GltfTextureRef BaseColorTexture;
+    public GltfTextureRef NormalTexture;
     public JsonObject Extras;
 }
 
@@ -57,6 +79,9 @@ internal sealed class GltfDocument
     public List<GltfNode> Nodes = new List<GltfNode>();
     public List<GltfMesh> Meshes = new List<GltfMesh>();
     public List<GltfMaterial> Materials = new List<GltfMaterial>();
+    public List<GltfImage> Images = new List<GltfImage>();
+    /// <summary>One entry per glTF texture: the index of its image. All textures share one repeating sampler.</summary>
+    public List<int> Textures = new List<int>();
     /// <summary>Written to asset.generator.</summary>
     public string Generator = "OpenSim.Archive.GltfExport";
 
@@ -82,7 +107,17 @@ internal sealed class GltfDocument
             meshAccessors.Add(list);
         }
 
-        byte[] json = WriteJson(views, accessors, meshAccessors, (int)bin.Length);
+        List<int> imageViews = new List<int>();
+        foreach (GltfImage image in Images)
+        {
+            while (bin.Length % 4 != 0)
+                bin.WriteByte(0);
+            views.Add(((int)bin.Length, image.Png.Length, 0));
+            bin.Write(image.Png, 0, image.Png.Length);
+            imageViews.Add(views.Count - 1);
+        }
+
+        byte[] json = WriteJson(views, accessors, meshAccessors, imageViews, (int)bin.Length);
         int jsonPad = (4 - json.Length % 4) % 4;
         int binLen = (int)bin.Length;
         int binPad = (4 - binLen % 4) % 4;
@@ -142,7 +177,7 @@ internal sealed class GltfDocument
     }
 
     private byte[] WriteJson(List<(int offset, int length, int target)> views, List<(int view, int count, string type, float[] min, float[] max)> accessors,
-        List<List<(int pos, int nor, int uv, int face)>> meshAccessors, int binLength)
+        List<List<(int pos, int nor, int uv, int face)>> meshAccessors, List<int> imageViews, int binLength)
     {
         using MemoryStream ms = new MemoryStream();
         using (Utf8JsonWriter w = new Utf8JsonWriter(ms, new JsonWriterOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping }))
@@ -152,6 +187,14 @@ internal sealed class GltfDocument
             w.WriteString("version", "2.0");
             w.WriteString("generator", Generator);
             w.WriteEndObject();
+
+            bool usesTransform = Materials.Any(m => m.BaseColorTexture?.Offset != null || m.NormalTexture?.Offset != null);
+            if (usesTransform)
+            {
+                w.WriteStartArray("extensionsUsed");
+                w.WriteStringValue("KHR_texture_transform");
+                w.WriteEndArray();
+            }
 
             w.WriteNumber("scene", 0);
             w.WriteStartArray("scenes");
@@ -233,11 +276,51 @@ internal sealed class GltfDocument
                         w.WriteString("name", mat.Name);
                     w.WriteStartObject("pbrMetallicRoughness");
                     WriteFloats(w, "baseColorFactor", mat.Color);
+                    if (mat.BaseColorTexture != null)
+                        WriteTextureRef(w, "baseColorTexture", mat.BaseColorTexture);
                     w.WriteNumber("metallicFactor", 0);
                     w.WriteNumber("roughnessFactor", 1);
                     w.WriteEndObject();
-                    w.WriteString("alphaMode", mat.Blend ? "BLEND" : "OPAQUE");
+                    if (mat.NormalTexture != null)
+                        WriteTextureRef(w, "normalTexture", mat.NormalTexture);
+                    w.WriteString("alphaMode", mat.AlphaMode);
+                    if (mat.AlphaMode == "MASK")
+                        w.WriteNumber("alphaCutoff", mat.AlphaCutoff);
                     WriteExtras(w, mat.Extras);
+                    w.WriteEndObject();
+                }
+                w.WriteEndArray();
+            }
+
+            if (Textures.Count > 0)
+            {
+                w.WriteStartArray("images");
+                for (int i = 0; i < Images.Count; i++)
+                {
+                    w.WriteStartObject();
+                    w.WriteNumber("bufferView", imageViews[i]);
+                    w.WriteString("mimeType", "image/png");
+                    if (Images[i].Name != null)
+                        w.WriteString("name", Images[i].Name);
+                    w.WriteEndObject();
+                }
+                w.WriteEndArray();
+
+                w.WriteStartArray("samplers");
+                w.WriteStartObject();
+                w.WriteNumber("magFilter", 9729);
+                w.WriteNumber("minFilter", 9987);
+                w.WriteNumber("wrapS", 10497);
+                w.WriteNumber("wrapT", 10497);
+                w.WriteEndObject();
+                w.WriteEndArray();
+
+                w.WriteStartArray("textures");
+                foreach (int source in Textures)
+                {
+                    w.WriteStartObject();
+                    w.WriteNumber("sampler", 0);
+                    w.WriteNumber("source", source);
                     w.WriteEndObject();
                 }
                 w.WriteEndArray();
@@ -258,7 +341,8 @@ internal sealed class GltfDocument
                     w.WriteNumber("buffer", 0);
                     w.WriteNumber("byteOffset", v.offset);
                     w.WriteNumber("byteLength", v.length);
-                    w.WriteNumber("target", v.target);
+                    if (v.target != 0)
+                        w.WriteNumber("target", v.target);
                     w.WriteEndObject();
                 }
                 w.WriteEndArray();
@@ -284,6 +368,23 @@ internal sealed class GltfDocument
             w.WriteEndObject();
         }
         return ms.ToArray();
+    }
+
+    private static void WriteTextureRef(Utf8JsonWriter w, string name, GltfTextureRef t)
+    {
+        w.WriteStartObject(name);
+        w.WriteNumber("index", t.Texture);
+        if (t.Offset != null)
+        {
+            w.WriteStartObject("extensions");
+            w.WriteStartObject("KHR_texture_transform");
+            WriteFloats(w, "offset", t.Offset);
+            w.WriteNumber("rotation", t.Rotation);
+            WriteFloats(w, "scale", t.Scale);
+            w.WriteEndObject();
+            w.WriteEndObject();
+        }
+        w.WriteEndObject();
     }
 
     private static void WriteFloats(Utf8JsonWriter w, string name, float[] values)
