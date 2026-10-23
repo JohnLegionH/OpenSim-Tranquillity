@@ -116,7 +116,7 @@ public class MeshTests
         return ms.ToArray();
     }
 
-    private static SubMesh Triangle(float z = 0f, bool normals = true, bool uvs = true) => new SubMesh
+    internal static SubMesh Triangle(float z = 0f, bool normals = true, bool uvs = true) => new SubMesh
     {
         Positions = new[] { -0.5f, -0.5f, z, 0.5f, -0.5f, z, 0f, 0.5f, z },
         Normals = normals ? new[] { 0f, 0f, 1f, 0f, 0f, 1f, 0f, 0f, 1f } : null,

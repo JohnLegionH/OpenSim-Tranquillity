@@ -320,7 +320,7 @@ public class SculptTests
 
     private static readonly UUID MapId = UUID.Parse("a0000000-0000-4000-8000-0000000000b1");
 
-    private static byte[] J2k(SculptMap m)
+    internal static byte[] J2k(SculptMap m)
     {
         using SKBitmap bmp = new SKBitmap(new SKImageInfo(m.Width, m.Height, SKColorType.Rgb888x, SKAlphaType.Opaque));
         for (int y = 0; y < m.Height; y++)
