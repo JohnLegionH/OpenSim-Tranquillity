@@ -35,7 +35,7 @@ public class ArchiveScaleTests
 
     private static ExportSummary Run(string archive, string output, Action<ExportOptions> tune = null, List<string> lines = null)
     {
-        ExportOptions o = new ExportOptions { OutputDirectory = output };
+        ExportOptions o = new ExportOptions { SelfContained = true, OutputDirectory = output };
         if (lines != null)
             o.Progress = lines.Add;
         tune?.Invoke(o);

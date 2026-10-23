@@ -236,7 +236,7 @@ public class TextureExportTests
 
     private static (ExportSummary summary, Glb glb, JsonElement manifest, string folder) Run(Archive a, ExportOptions options = null)
     {
-        options ??= new ExportOptions();
+        options ??= new ExportOptions { SelfContained = true };
         options.OutputDirectory = a.Out;
         ExportSummary s = ArchiveExporter.Export(a.File, options);
         SummaryBuild b = Assert.Single(s.BuildList);

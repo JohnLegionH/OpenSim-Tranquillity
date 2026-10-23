@@ -33,7 +33,7 @@ public class BakedUvTests
         string dir = NewFolder();
         string file = Path.Combine(dir, "baked.oar");
         File.WriteAllBytes(file, OarWithAssets(new[] { ("baked", ObjectXml(root)) }, new[] { (Tex, (sbyte)AssetType.Texture, j2k) }));
-        ExportSummary s = ArchiveExporter.Export(file, new ExportOptions { OutputDirectory = Path.Combine(dir, "out") });
+        ExportSummary s = ArchiveExporter.Export(file, new ExportOptions { SelfContained = true, OutputDirectory = Path.Combine(dir, "out") });
         SummaryBuild b = Assert.Single(s.BuildList);
         return Path.Combine(dir, "out", b.Folder, b.File);
     }

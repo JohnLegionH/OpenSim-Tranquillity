@@ -4,6 +4,13 @@
     <AssemblyTitle>OpenSim.ArchiveInspector</AssemblyTitle>
   </PropertyGroup>
 
+  <!-- dotnet publish -p:OarExportExe=true builds the exporter alone as oar-export(.exe); an ordinary build is unchanged -->
+  <PropertyGroup Condition="'$(OarExportExe)' == 'true'">
+    <AssemblyName>oar-export</AssemblyName>
+    <AssemblyTitle>oar-export</AssemblyTitle>
+    <DefineConstants>$(DefineConstants);OAR_EXPORT_ONLY</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="../../Source/OpenSim.Archive.Inspection/OpenSim.Archive.Inspection.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Archive.GltfExport/OpenSim.Archive.GltfExport.csproj" />

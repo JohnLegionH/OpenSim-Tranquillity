@@ -160,7 +160,7 @@ public class SculptFacesAndRiggedMeshTests
             Shape = Box(profileCurve: 0, pathCurve: 32, hollow: 25000, sculptType: SculptGeometry.TypeTorus, sculptTexture: MapId.ToString(), sculptEntry: true)
         };
         File.WriteAllBytes(file, OarWithAssets(new[] { ("hollow", ObjectXml(root)) }, new[] { (MapId, (sbyte)AssetType.Texture, SculptTests.J2k(SculptTests.TorusMap())) }));
-        ExportSummary s = ArchiveExporter.Export(file, new ExportOptions { OutputDirectory = Path.Combine(dir, "out") });
+        ExportSummary s = ArchiveExporter.Export(file, new ExportOptions { SelfContained = true, OutputDirectory = Path.Combine(dir, "out") });
         SummaryBuild b = Assert.Single(s.BuildList);
         Glb glb = ReadGlb(File.ReadAllBytes(Path.Combine(dir, "out", b.Folder, b.File)));
         JsonElement mesh = glb.Root.GetProperty("meshes")[0];
@@ -218,7 +218,7 @@ public class SculptFacesAndRiggedMeshTests
         string dir = NewFolder();
         string file = Path.Combine(dir, "two.oar");
         File.WriteAllBytes(file, Oar(("two", ObjectXml(root, child)), ("one", ObjectXml(new PartSpec { Name = "Lone" }))));
-        ExportSummary s = ArchiveExporter.Export(file, new ExportOptions { OutputDirectory = Path.Combine(dir, "out") });
+        ExportSummary s = ArchiveExporter.Export(file, new ExportOptions { SelfContained = true, OutputDirectory = Path.Combine(dir, "out") });
         Assert.Equal(2, s.Builds);
         foreach (SummaryBuild b in s.BuildList)
         {

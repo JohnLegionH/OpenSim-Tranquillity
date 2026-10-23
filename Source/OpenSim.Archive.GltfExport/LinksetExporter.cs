@@ -20,6 +20,8 @@ internal sealed class BuiltBuild
     public byte[] Glb;
     /// <summary>Asset files (textures, materials) to write unchanged beside the glTF file, in a folder named textures.</summary>
     public List<AssetBlob> Copies = new List<AssetBlob>();
+    /// <summary>The PNG files the glTF file points at (shared layout), by texture id; empty when the images are inside the file.</summary>
+    public Dictionary<UUID, byte[]> Pngs = new Dictionary<UUID, byte[]>();
 }
 
 /// <summary>
@@ -37,7 +39,7 @@ internal static class LinksetExporter
     private const byte NewTreeCode = 111;
     private const byte TreeCode = 255;
 
-    public static BuiltBuild Build(ParsedGroup g, string archiveName, string entry, string glbFileName, bool world = false, ArchiveAssets assets = null)
+    public static BuiltBuild Build(ParsedGroup g, string archiveName, string entry, string glbFileName, bool world = false, ArchiveAssets assets = null, bool shared = false)
     {
         // link-number order; the file order is not the link order. A stable sort keeps file order for equal numbers.
         List<ParsedPart> parts = g.Parts.Select((p, i) => (p, i)).OrderBy(t => t.p.Part.LinkNum).ThenBy(t => t.i).Select(t => t.p).ToList();
@@ -80,7 +82,8 @@ internal static class LinksetExporter
             PartCount = parts.Count
         };
 
-        MaterialContext materials = new MaterialContext { Doc = doc, Assets = assets };
+        MaterialContext materials = new MaterialContext { Doc = doc, Assets = assets, Shared = shared };
+        manifest.Layout = shared ? "shared" : "self-contained";
 
         foreach (ParsedPart pp in parts)
         {
@@ -168,6 +171,15 @@ internal static class LinksetExporter
         manifest.TexturesEmbedded = manifest.Textures.Count(t => t.Status == "embedded");
         manifest.TexturesMissing = manifest.Textures.Count(t => t.Status != "embedded" && t.Status != "copied");
         result.Copies.AddRange(materials.Copies.Values.OrderBy(c => c.Id.ToString(), StringComparer.Ordinal));
+        result.Pngs = materials.Pngs;
+        foreach (AssetBlob c in result.Copies)
+            manifest.Files.Add(new ManifestFile { Id = c.Id.ToString(), Kind = "original", Path = materials.Prefix + c.Folder + "/" + c.Id + c.Extension });
+        foreach (UUID pngId in materials.Pngs.Keys.OrderBy(k => k.ToString(), StringComparer.Ordinal))
+        {
+            manifest.Files.Add(new ManifestFile { Id = pngId.ToString(), Kind = "png", Path = "../textures/" + pngId + ".png" });
+            foreach (ManifestTexture t in manifest.Textures.Where(t => t.TextureId == pngId.ToString() && t.Status == "embedded"))
+                t.ImagePath = "../textures/" + pngId + ".png";
+        }
         manifest.TexturesCopied = result.Copies.Count(c => c.Folder == "textures");
         manifest.AssetsCopied = result.Copies.Count(c => c.Folder != "textures");
         if (objectNode.Children.Count > 0)
@@ -341,7 +353,7 @@ internal static class LinksetExporter
         extras["geometryAsset"] = assetInfo;
         if (blob == null)
         {
-            pending = "the " + what + " " + id + (use.Status == "over-size-limit" ? " was over the asset size limit" : " is not in the archive");
+            pending = "the " + what + " " + id + (use.Status == ArchiveAssets.OverDiskStatus ? " was over --max-cache-mb" : use.Status == ArchiveAssets.OverMemoryStatus ? " was too large for --max-memory-mb" : " is not in the archive");
             return false;
         }
 

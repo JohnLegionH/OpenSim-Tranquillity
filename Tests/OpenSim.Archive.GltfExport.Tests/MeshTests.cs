@@ -203,7 +203,7 @@ public class MeshTests
         string file = Path.Combine(dir, "mesh.oar");
         File.WriteAllBytes(file, OarWithAssets(new[] { ("mesh", ObjectXml(root)) },
             include ? new[] { (MeshId, (sbyte)AssetType.Mesh, asset) } : Array.Empty<(UUID, sbyte, byte[])>()));
-        ExportSummary s = ArchiveExporter.Export(file, new ExportOptions { OutputDirectory = Path.Combine(dir, "out") });
+        ExportSummary s = ArchiveExporter.Export(file, new ExportOptions { SelfContained = true, OutputDirectory = Path.Combine(dir, "out") });
         SummaryBuild b = Assert.Single(s.BuildList);
         string folder = Path.Combine(dir, "out", b.Folder);
         Glb glb = b.File == null ? null : ReadGlb(File.ReadAllBytes(Path.Combine(folder, b.File)));

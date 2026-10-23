@@ -75,17 +75,89 @@ internal sealed class ArchiveAssets
     /// <summary>Every asset id the archive's pass came across, wanted at that moment or not.</summary>
     public HashSet<UUID> Seen { get; } = new HashSet<UUID>();
     /// <summary>Wanted assets that were not kept because the size limit was reached or they were over the per-asset limit.</summary>
-    public HashSet<UUID> OverLimit { get; } = new HashSet<UUID>();
-    /// <summary>Most bytes of asset bodies kept, in memory and in the cache folder together.</summary>
-    public long MaxBytes { get; set; } = 2048L * 1024 * 1024;
+    public Dictionary<UUID, string> OverLimit { get; } = new Dictionary<UUID, string>();
+    /// <summary>Status the manifest gives an asset that a cap kept out: over-size-limit (disk) or over-memory-limit.</summary>
+    public const string OverDiskStatus = "over-size-limit", OverMemoryStatus = "over-memory-limit";
+    /// <summary>Each cap that was reached, one line per kind with the first asset it hit and how many it hit.</summary>
+    public List<string> CapEvents { get; } = new List<string>();
+    private int m_overDisk, m_overMemory;
+    private string m_firstOverDisk, m_firstOverMemory;
+
+    /// <summary>Memory the asset stores aim to stay within; the shares below are taken from it.</summary>
+    public long MaxMemoryBytes
+    {
+        get => m_maxMemory;
+        set
+        {
+            m_maxMemory = value;
+            MaxResidentBytes = value * 15 / 100;
+            MaxLoadedBytes = value * 20 / 100;
+            MaxDecodedBytes = value * 25 / 100;
+        }
+    }
+    private long m_maxMemory = 1024L * 1024 * 1024;
+    /// <summary>Most bytes of asset bodies kept, in memory and in the cache folder together; 0 for no limit.</summary>
+    public long MaxBytes { get; set; }
     /// <summary>Decoded PNGs kept for reuse by later builds, in bytes.</summary>
-    public long MaxDecodedBytes { get; set; } = 512L * 1024 * 1024;
+    public long MaxDecodedBytes { get; private set; } = 256L * 1024 * 1024;
+    /// <summary>Bodies held in memory (the small ones); beyond it a body goes to the cache folder whatever its size.</summary>
+    public long MaxResidentBytes { get; private set; } = 150L * 1024 * 1024;
     /// <summary>Folder bodies over <see cref="SpillBytes"/> are written to; null keeps every body in memory.</summary>
     public string CacheDirectory { get; set; }
     public long SpillBytes { get; set; } = 64 * 1024;
     /// <summary>Bodies read back from the cache folder that stay in memory for the next build.</summary>
-    public long MaxLoadedBytes { get; set; } = 256L * 1024 * 1024;
+    public long MaxLoadedBytes { get; private set; } = 200L * 1024 * 1024;
     public long CacheBytesWritten { get; private set; }
+    private long m_residentBytes;
+
+    /// <summary>Stored size and asset type of a kept asset, for the estimate of the output size.</summary>
+    public bool TryGetInfo(UUID id, out int type, out long size)
+    {
+        if (m_blobs.TryGetValue(id, out Stored st))
+        {
+            type = st.Type;
+            size = st.Size;
+            return true;
+        }
+        type = 0;
+        size = 0;
+        return false;
+    }
+
+    /// <summary>Total bytes of the asset bodies kept.</summary>
+    public long StoredBytes => m_bytes;
+
+    private void NoteOverDisk(UUID id)
+    {
+        OverLimit[id] = OverDiskStatus;
+        if (m_overDisk++ == 0)
+            m_firstOverDisk = id.ToString();
+    }
+
+    private void NoteOverMemory(UUID id)
+    {
+        OverLimit[id] = OverMemoryStatus;
+        if (m_overMemory++ == 0)
+            m_firstOverMemory = id.ToString();
+    }
+
+    /// <summary>Called when the archive has been read: turns the counts of cap hits into the lines for the report.</summary>
+    public void CloseCapEvents()
+    {
+        CapEvents.Clear();
+        if (m_overDisk > 0)
+            CapEvents.Add("DISK CAP REACHED (--max-cache-mb): " + m_overDisk + " asset(s) were not kept and are reported over-size-limit; the first is " + m_firstOverDisk + ". Run again with a larger --max-cache-mb or none.");
+        if (m_decodeOutOfMemory > 0)
+            CapEvents.Add("MEMORY CAP REACHED (--max-memory-mb): " + m_decodeOutOfMemory + " texture(s) could not be decoded within the cap and are reported undecodable; the first is " + m_firstDecodeOutOfMemory + ". Run again with a larger --max-memory-mb.");
+        if (m_overMemory > 0)
+            CapEvents.Add("MEMORY CAP REACHED (--max-memory-mb): " + m_overMemory + " asset(s) are too large to handle within the cap and are reported over-memory-limit; the first is " + m_firstOverMemory + ". Run again with a larger --max-memory-mb.");
+    }
+
+    private int m_decodeOutOfMemory;
+    private string m_firstDecodeOutOfMemory;
+
+    /// <summary>Textures that could not be decoded within the memory cap.</summary>
+    public int DecodeOutOfMemory => m_decodeOutOfMemory;
 
     public bool Has(UUID id) => m_blobs.ContainsKey(id);
 
@@ -113,23 +185,33 @@ internal sealed class ArchiveAssets
     public bool Wants(UUID id, int type, long size)
     {
         Seen.Add(id);
-        if (!Wanted.Contains(id) || m_blobs.ContainsKey(id))
+        if (!Wanted.Contains(id) || m_blobs.ContainsKey(id) || OverLimit.ContainsKey(id))
             return false;
         _ = type;
-        _ = size;
+        // a body that alone is more than half the memory cap cannot be held, read back and decoded within it
+        if (size > MaxMemoryBytes / 2)
+        {
+            NoteOverMemory(id);
+            return false;
+        }
         return true;
     }
 
     public void Add(UUID id, int type, string entry, byte[] bytes)
     {
-        if (bytes == null || m_bytes + bytes.Length > MaxBytes)
+        if (bytes == null || (MaxBytes > 0 && m_bytes + bytes.Length > MaxBytes))
         {
-            OverLimit.Add(id);
+            NoteOverDisk(id);
+            return;
+        }
+        if (bytes.Length > MaxMemoryBytes / 2)
+        {
+            NoteOverMemory(id);
             return;
         }
         m_bytes += bytes.Length;
         Stored stored = new Stored { Type = type, Entry = entry, Size = bytes.Length, Bytes = bytes };
-        if (CacheDirectory != null && bytes.Length > SpillBytes)
+        if (CacheDirectory != null && (bytes.Length > SpillBytes || m_residentBytes + bytes.Length > MaxResidentBytes))
         {
             Directory.CreateDirectory(CacheDirectory);
             stored.Path = Path.Combine(CacheDirectory, id.ToString() + ".bin");
@@ -137,6 +219,8 @@ internal sealed class ArchiveAssets
             CacheBytesWritten += bytes.Length;
             stored.Bytes = null;
         }
+        else
+            m_residentBytes += bytes.Length;
         m_blobs[id] = stored;
     }
 
@@ -176,7 +260,19 @@ internal sealed class ArchiveAssets
             return null;
         }
 
-        TextureImage image = TextureDecoder.Decode(blob, out problem);
+        TextureImage image;
+        try
+        {
+            image = TextureDecoder.Decode(blob, out problem);
+        }
+        catch (OutOfMemoryException)
+        {
+            // the cap was too small for this image: said loudly in the report, never a silent placeholder
+            image = null;
+            problem = "out of memory while decoding the image within --max-memory-mb";
+            m_decodeOutOfMemory++;
+            m_firstDecodeOutOfMemory ??= id.ToString();
+        }
         if (image == null)
         {
             m_decodeFailures[id] = problem;

@@ -245,6 +245,12 @@ internal sealed class MaterialContext
     /// <summary>The asset files to copy unchanged into the build's textures folder.</summary>
     public Dictionary<UUID, AssetBlob> Copies = new Dictionary<UUID, AssetBlob>();
     public Dictionary<UUID, LegacyMaterial> LegacyCache = new Dictionary<UUID, LegacyMaterial>();
+    /// <summary>True for the shared layout: textures and assets are files in folders beside the build folders, and the glTF file points at the PNG files.</summary>
+    public bool Shared;
+    /// <summary>What a path to a shared folder starts with, seen from the build's folder: "../" when shared, nothing otherwise.</summary>
+    public string Prefix => Shared ? "../" : string.Empty;
+    /// <summary>The PNG files the glTF file points at (shared layout), by texture id.</summary>
+    public Dictionary<UUID, byte[]> Pngs = new Dictionary<UUID, byte[]>();
 }
 
 internal static class FaceMaterials
@@ -534,13 +540,13 @@ internal static class FaceMaterials
             AssetBlob blob = ctx.Assets?.Get(id);
             if (blob == null)
             {
-                use.Status = ctx.Assets != null && ctx.Assets.OverLimit.Contains(id) ? "over-size-limit"
+                use.Status = ctx.Assets != null && ctx.Assets.OverLimit.TryGetValue(id, out string cap) ? cap
                     : WellKnownAssets.IsWellKnown(id) || id == PlywoodTexture ? "library-default" : "missing-from-archive";
             }
             else
             {
                 ctx.Copies[id] = blob;
-                use.CopiedTo = "textures/" + id + blob.Extension;
+                use.CopiedTo = ctx.Prefix + "textures/" + id + blob.Extension;
                 TextureImage decoded = ctx.Assets.Decode(id, out string problem);
                 if (decoded == null)
                 {
@@ -576,11 +582,11 @@ internal static class FaceMaterials
             use = new ManifestTexture { TextureId = id.ToString(), Role = role };
             ctx.Used[key] = use;
             if (blob == null)
-                use.Status = ctx.Assets != null && ctx.Assets.OverLimit.Contains(id) ? "over-size-limit" : "missing-from-archive";
+                use.Status = ctx.Assets != null && ctx.Assets.OverLimit.TryGetValue(id, out string cap) ? cap : "missing-from-archive";
             else
             {
                 ctx.Copies[id] = blob;
-                use.CopiedTo = blob.Folder + "/" + id + blob.Extension;
+                use.CopiedTo = ctx.Prefix + blob.Folder + "/" + id + blob.Extension;
                 use.Status = "copied";
             }
         }
@@ -592,7 +598,13 @@ internal static class FaceMaterials
     {
         if (!ctx.GltfTextures.TryGetValue(id, out int texture))
         {
-            ctx.Doc.Images.Add(new GltfImage { Name = id.ToString(), Png = image.Png });
+            if (ctx.Shared)
+            {
+                ctx.Pngs[id] = image.Png;
+                ctx.Doc.Images.Add(new GltfImage { Name = id.ToString(), Uri = "../textures/" + id + ".png" });
+            }
+            else
+                ctx.Doc.Images.Add(new GltfImage { Name = id.ToString(), Png = image.Png });
             ctx.Doc.Textures.Add(ctx.Doc.Images.Count - 1);
             texture = ctx.Doc.Textures.Count - 1;
             ctx.GltfTextures[id] = texture;

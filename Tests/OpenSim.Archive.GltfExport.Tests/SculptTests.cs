@@ -344,7 +344,7 @@ public class SculptTests
         string file = Path.Combine(dir, "sculpt.oar");
         File.WriteAllBytes(file, OarWithAssets(new[] { ("sculpt", ObjectXml(root)) },
             withMap ? new[] { (MapId, (sbyte)AssetType.Texture, j2k) } : Array.Empty<(UUID, sbyte, byte[])>()));
-        ExportSummary s = ArchiveExporter.Export(file, new ExportOptions { OutputDirectory = Path.Combine(dir, "out") });
+        ExportSummary s = ArchiveExporter.Export(file, new ExportOptions { SelfContained = true, OutputDirectory = Path.Combine(dir, "out") });
         SummaryBuild b = Assert.Single(s.BuildList);
         string folder = Path.Combine(dir, "out", b.Folder);
         Glb glb = b.File == null ? null : ReadGlb(File.ReadAllBytes(Path.Combine(folder, b.File)));
@@ -470,7 +470,7 @@ public class SculptTests
         string file = Path.Combine(dir, "bad.oar");
         PartSpec root = new PartSpec { Name = "Sculpt", Shape = Box(sculptType: 1, sculptTexture: MapId.ToString(), sculptEntry: true) };
         File.WriteAllBytes(file, OarWithAssets(new[] { ("sculpt", ObjectXml(root)) }, new[] { (MapId, (sbyte)AssetType.Texture, new byte[] { 1, 2, 3, 4 }) }));
-        ExportSummary s = ArchiveExporter.Export(file, new ExportOptions { OutputDirectory = Path.Combine(dir, "out") });
+        ExportSummary s = ArchiveExporter.Export(file, new ExportOptions { SelfContained = true, OutputDirectory = Path.Combine(dir, "out") });
         Assert.Equal((0, 1), (s.Exported, s.Placeheld));
         Assert.Contains("undecodable", s.Reasons.Keys.Single());
     }

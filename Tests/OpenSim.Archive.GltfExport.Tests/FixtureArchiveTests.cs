@@ -76,7 +76,7 @@ public class FixtureArchiveTests
         }, assets.ToArray()));
         byte[] before = File.ReadAllBytes(file);
 
-        ExportSummary s = ArchiveExporter.Export(file, new ExportOptions { OutputDirectory = Path.Combine(dir, "out") });
+        ExportSummary s = ArchiveExporter.Export(file, new ExportOptions { SelfContained = true, OutputDirectory = Path.Combine(dir, "out") });
         Assert.Equal(before, File.ReadAllBytes(file));
         Assert.Equal((3, 10, 10, 0), (s.Builds, s.Parts, s.Exported, s.Placeheld));
         Assert.Equal(5, s.SculptsExported);

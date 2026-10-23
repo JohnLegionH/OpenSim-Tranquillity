@@ -31,6 +31,8 @@ internal sealed class GltfImage
 {
     public string Name;
     public byte[] Png;
+    /// <summary>Relative URI of a PNG file kept beside the glTF file (the shared layout); when set the PNG is not embedded.</summary>
+    public string Uri;
 }
 
 internal sealed class GltfMaterial
@@ -115,6 +117,11 @@ internal sealed class GltfDocument
         List<int> imageViews = new List<int>();
         foreach (GltfImage image in Images)
         {
+            if (image.Uri != null)
+            {
+                imageViews.Add(-1);
+                continue;
+            }
             while (bin.Length % 4 != 0)
                 bin.WriteByte(0);
             views.Add(((int)bin.Length, image.Png.Length, 0));
@@ -315,7 +322,10 @@ internal sealed class GltfDocument
                 for (int i = 0; i < Images.Count; i++)
                 {
                     w.WriteStartObject();
-                    w.WriteNumber("bufferView", imageViews[i]);
+                    if (Images[i].Uri != null)
+                        w.WriteString("uri", Images[i].Uri);
+                    else
+                        w.WriteNumber("bufferView", imageViews[i]);
                     w.WriteString("mimeType", "image/png");
                     if (Images[i].Name != null)
                         w.WriteString("name", Images[i].Name);
