@@ -22,6 +22,8 @@ The archive is only read. Parts whose creator did not allow export are listed in
   --out <folder>       where to write (created when missing); required
   --object <uuid|name> only the build whose root part has this id, or whose name is this
   --limit N            write at most N builds
+  --world              put each build at its root part's position and rotation in the region (default: at the origin, the
+                       region position and rotation are in the build node's extras)
 
 Exit codes: 0 done, 1 the archive was only partly readable (what was read is written), 2 not a region archive or
             unreadable, 64 bad command line.";
@@ -47,6 +49,9 @@ Exit codes: 0 done, 1 the archive was only partly readable (what was read is wri
                     if (i + 1 >= args.Length || !int.TryParse(args[++i], NumberStyles.Integer, CultureInfo.InvariantCulture, out int n) || n < 1)
                         return Fail("--limit needs a number of at least 1");
                     options.Limit = n;
+                    break;
+                case "--world":
+                    options.World = true;
                     break;
                 case "-h":
                 case "--help":

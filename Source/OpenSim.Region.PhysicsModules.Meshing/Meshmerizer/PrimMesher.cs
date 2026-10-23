@@ -307,9 +307,26 @@ public struct Face
     }
 }
 
+/// <summary>What a viewer-mode triangle belongs to. Set only by PrimMesh.Extrude in viewer mode.</summary>
+public enum ViewerFaceRole
+{
+    Unknown = 0,
+    /// <summary>The end cap at the far end of the path (face 0 of a prim).</summary>
+    Top,
+    /// <summary>The end cap at the start of the path.</summary>
+    Bottom,
+    Outer,
+    Hollow,
+    /// <summary>The flat face along the start of a profile cut.</summary>
+    CutBegin,
+    /// <summary>The flat face along the end of a profile cut.</summary>
+    CutEnd
+}
+
 public struct ViewerFace
 {
     public int primFaceNumber;
+    public ViewerFaceRole role;
 
     public Coord v1;
     public Coord v2;
@@ -1778,6 +1795,7 @@ public class PrimMesh
                 {
                     Coord faceNormal = newLayer.faceNormal;
                     ViewerFace newViewerFace = new ViewerFace(profile.bottomFaceNumber);
+                    newViewerFace.role = ViewerFaceRole.Bottom;
                     int numFaces = newLayer.faces.Count;
                     List<Face> faces = newLayer.faces;
 
@@ -1959,6 +1977,16 @@ public class PrimMesh
                         newViewerFace2.coordIndex2 = newFace2.v2;
                         newViewerFace2.coordIndex3 = newFace2.v3;
 
+                        // On a closed hollow profile the loop of profile points runs from the outer ring into the hollow
+                        // ring and back; the two edges that join the rings lie inside the wall and are no face of the prim.
+                        bool ringJoin = hasHollow && !hasProfileCut && (whichVert == profile.numOuterVerts - 1 || whichVert == numVerts - 1);
+                        ViewerFaceRole role = whichVert == cut1Vert ? ViewerFaceRole.CutBegin
+                            : whichVert == cut2Vert ? ViewerFaceRole.CutEnd
+                            : hasHollow && whichVert >= profile.numOuterVerts ? ViewerFaceRole.Hollow
+                            : ViewerFaceRole.Outer;
+                        newViewerFace1.role = role;
+                        newViewerFace2.role = role;
+
                         // profile cut faces
                         if (whichVert == cut1Vert)
                         {
@@ -2002,8 +2030,11 @@ public class PrimMesh
                             }
                         }
 
-                        this.viewerFaces.Add(newViewerFace1);
-                        this.viewerFaces.Add(newViewerFace2);
+                        if (!ringJoin)
+                        {
+                            this.viewerFaces.Add(newViewerFace1);
+                            this.viewerFaces.Add(newViewerFace2);
+                        }
 
                     }
                 }
@@ -2018,6 +2049,7 @@ public class PrimMesh
                 // add the top faces to the viewerFaces list here
                 Coord faceNormal = newLayer.faceNormal;
                 ViewerFace newViewerFace = new ViewerFace(0);
+                newViewerFace.role = ViewerFaceRole.Top;
                 int numFaces = newLayer.faces.Count;
                 List<Face> faces = newLayer.faces;
 

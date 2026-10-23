@@ -74,6 +74,56 @@ public class ExporterTests
     }
 
     [Fact]
+    public void TextureCoordinatesPutTheTopOfTheImageAtTheTopOfASide()
+    {
+        // glTF puts v = 0 at the top row of an image: the top edge of a box side is at v = 0, the bottom edge at v = 1
+        Glb glb = ReadGlb(Build(Group(Part("Box", 0))).Glb);
+        JsonElement mesh = glb.Root.GetProperty("meshes")[0];
+        int sides = 0;
+        foreach (JsonElement prim in mesh.GetProperty("primitives").EnumerateArray())
+        {
+            int face = prim.GetProperty("extras").GetProperty("primFace").GetInt32();
+            if (face < 1 || face > 4)
+                continue;
+            float[] pos = glb.Floats(prim.GetProperty("attributes").GetProperty("POSITION").GetInt32());
+            float[] uv = glb.Floats(prim.GetProperty("attributes").GetProperty("TEXCOORD_0").GetInt32());
+            for (int i = 0; i < pos.Length / 3; i++)
+            {
+                float height = pos[i * 3 + 1]; // glTF y is the prim's z
+                Assert.Equal(height > 0 ? 0f : 1f, uv[i * 2 + 1], 3);
+            }
+            sides++;
+        }
+        Assert.Equal(4, sides);
+    }
+
+    [Fact]
+    public void TheBuildNodeStaysInTheRootPartFrameUnlessWorldIsAsked()
+    {
+        // the test objects sit at (10, 20, 30) in the region
+        PartSpec root = Part("Root", 1, rot: Quaternion.CreateFromAxisAngle(Vector3.UnitZ, MathF.PI / 2));
+        ParsedGroup g = Group(root, Part("Child", 2, offset: new Vector3(1, 0, 0)));
+
+        JsonElement flat = ReadGlb(LinksetExporter.Build(g, "test.oar", "objects/test.xml", "test.glb").Glb).ObjectNode;
+        Assert.False(flat.TryGetProperty("translation", out _));
+        Assert.False(flat.TryGetProperty("rotation", out _));
+        Assert.Equal("root-part", flat.GetProperty("extras").GetProperty("placement").GetString());
+        Assert.Equal(10f, flat.GetProperty("extras").GetProperty("regionPosition")[0].GetSingle());
+
+        JsonElement world = ReadGlb(LinksetExporter.Build(g, "test.oar", "objects/test.xml", "test.glb", world: true).Glb).ObjectNode;
+        float[] t = world.GetProperty("translation").EnumerateArray().Select(e => e.GetSingle()).ToArray();
+        Assert.Equal(new[] { 10f, 30f, -20f }, t); // viewer (x, y, z) is glTF (x, z, -y)
+        float[] r = world.GetProperty("rotation").EnumerateArray().Select(e => e.GetSingle()).ToArray();
+        Assert.Equal(0f, r[0], 4);
+        Assert.Equal(MathF.Sqrt(0.5f), r[1], 4); // a quarter turn about the viewer's z is a quarter turn about glTF's y
+        Assert.Equal(0f, r[2], 4);
+        Assert.Equal(MathF.Sqrt(0.5f), r[3], 4);
+        Assert.Equal("world", world.GetProperty("extras").GetProperty("placement").GetString());
+        // the extras keep the region position either way
+        Assert.Equal(30f, world.GetProperty("extras").GetProperty("regionPosition")[2].GetSingle());
+    }
+
+    [Fact]
     public void ASinglePartKeepsLinkNumberZero()
     {
         BuiltBuild b = Build(Group(Part("Lonely", 0)));

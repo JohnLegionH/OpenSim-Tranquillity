@@ -37,6 +37,11 @@ public sealed class ExportOptions
     public string Object { get; set; }
     /// <summary>Export at most this many builds (after the filter); 0 for all.</summary>
     public int Limit { get; set; }
+    /// <summary>
+    /// Put the build node at the root part's position and rotation in the region. When false (the default) the build node
+    /// is at the origin with the root part's own frame, and the region position and rotation are in its extras.
+    /// </summary>
+    public bool World { get; set; }
 }
 
 public sealed class ManifestPermissions

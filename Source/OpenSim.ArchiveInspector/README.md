@@ -154,7 +154,7 @@ Further checks implement `IArchiveCheck` and are added to `InspectorOptions.Chec
 ## oar-export: build geometry as glTF
 
 ```
-OpenSim.ArchiveInspector oar-export <archive.oar> --out <folder> [--object <uuid|name>] [--limit N]
+OpenSim.ArchiveInspector oar-export <archive.oar> --out <folder> [--object <uuid|name>] [--limit N] [--world]
 ```
 
 Writes each build (linkset) of a region archive as a glTF 2.0 binary for Blender and other tools, keeping every part's name, link number and description, because scripts address child prims by name and by link number. The archive is only read. Exit codes: 0 done, 1 the archive was only partly readable (what was read is written), 2 not a region archive or unreadable, 64 bad command line.
@@ -165,6 +165,8 @@ Output, under `<folder>`:
 - `export-summary.json`: the archive's file name, how it was read, per-build counts, and the number of parts exported, placeheld and skipped with the reasons.
 
 `--object` keeps one build, matched by the root part's id or the object's name (case-insensitive). `--limit` stops after that many builds.
+
+`--world` puts each build node at its root part's position and rotation in the region (in glTF's axes). Without it the build node sits at the origin with the root part's own frame, which is the better start for taking a build apart in Blender, and the region position and rotation are in the build node's extras (`regionPosition`, `regionRotation`, and `placement`: `root-part` or `world`). Either way the parts are placed relative to the root part.
 
 ### What is in the glTF file
 

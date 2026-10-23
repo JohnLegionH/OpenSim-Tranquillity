@@ -53,7 +53,7 @@ public static class ArchiveExporter
                     continue;
                 if (options.Limit > 0 && summary.Builds >= options.Limit)
                     return;
-                WriteBuild(group, archiveName, entry, fullOut, usedFolders, summary);
+                WriteBuild(group, archiveName, entry, fullOut, usedFolders, summary, options.World);
             }
         };
 
@@ -78,7 +78,7 @@ public static class ArchiveExporter
         return string.Equals(g.Name, filter, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static void WriteBuild(ParsedGroup group, string archiveName, string entry, string outDir, HashSet<string> usedFolders, ExportSummary summary)
+    private static void WriteBuild(ParsedGroup group, string archiveName, string entry, string outDir, HashSet<string> usedFolders, ExportSummary summary, bool world)
     {
         string baseName = FileSafe(group.Name);
         string idPart = group.RootId.ToString().Replace("-", string.Empty);
@@ -87,7 +87,7 @@ public static class ArchiveExporter
             folder = baseName + "_" + idPart.Substring(0, Math.Min(12, idPart.Length)) + "-" + n;
 
         string glbName = folder + ".glb";
-        BuiltBuild build = LinksetExporter.Build(group, archiveName, entry, glbName);
+        BuiltBuild build = LinksetExporter.Build(group, archiveName, entry, glbName, world);
 
         string dir = Path.Combine(outDir, folder);
         Directory.CreateDirectory(dir);

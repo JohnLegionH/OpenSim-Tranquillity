@@ -28,8 +28,8 @@
 // Adapted 2026 by Legion Builds from OpenSim.Region.PhysicsModules.Meshing/Meshmerizer/Meshmerizer.cs
 // (GenerateCoordsAndFacesFromPrimShapeData): the decoding of the stored shape fields and their use as PrimMesh
 // settings. The mesher runs in viewer mode, which gives the faces, normals and texture coordinates a viewer draws.
-// The face numbering follows the Second Life prim face convention (a texture entry has one slot per prim face);
-// the grouping and renumbering below is written for this exporter.
+// The face numbering follows the Second Life viewer's rule (a texture entry has one slot per prim face), see
+// ViewerFaceRule; the grouping below is written for this exporter.
 
 using OpenMetaverse;
 using OpenSim.Archive.Inspection;
@@ -110,7 +110,8 @@ public sealed class PrimFace
 {
     /// <summary>The face number a texture entry uses for this face.</summary>
     public int Number;
-    /// <summary>The number the mesher gave the face before empty groups were dropped.</summary>
+    public PrimFaceKind Kind;
+    /// <summary>The number the mesher gave the first triangle of this face; for information only.</summary>
     public int MesherNumber;
     public float[] Positions;
     public float[] Normals;
@@ -194,93 +195,121 @@ public static class PrimGeometry
     }
 
     /// <summary>
-    /// The mesher's end faces exist on a straight path always, and on a circular path when it is cut, tapered, skewed,
-    /// twisted or offset (the same test PrimMesh.Extrude makes).
-    /// </summary>
-    public static bool HasEndFaces(PrimParams p)
-    {
-        if (p.PathCurve == 16 || p.PathCurve == 128)
-            return true;
-        int twistBegin = (int)(360 * p.PathTwistBegin), twistEnd = (int)(360 * p.PathTwist);
-        return p.PathBegin != 0f || p.PathEnd != 1f || p.PathTaperX != 0f || p.PathTaperY != 0f || p.PathSkew != 0f || twistEnd - twistBegin != 0 || p.PathRadiusOffset != 0f;
-    }
-
-    /// <summary>
-    /// The mesher's triangles with the bottom end cap's texture coordinates mirrored in V, so the cap reads the right
-    /// way up from below, as the browser viewer draws it. The mesher writes the bottom cap first.
+    /// The mesher's triangles. Their texture coordinates are in glTF's convention, v = 0 at the top of the image: the top
+    /// edge of a side face has v = 0 where the viewer has v = 1 (the viewer's v is 1 minus this). In that convention the
+    /// viewer's cap rule (LLVolumeFace::createCap in indra/llmath/llvolume.cpp: u = x + 0.5 and v = y + 0.5 on the top
+    /// cap, v = 0.5 - y on the bottom cap, x and y being the profile point) reads u = x + 0.5 with v = 0.5 - y on the top
+    /// cap and v = 0.5 + y on the bottom cap, which is what the mesher writes for straight and circular paths alike, so
+    /// no coordinate is changed here.
     /// </summary>
     public static List<ViewerFace> BuildViewerFaces(PrimParams p, DetailLevel lod, out int bottomMesherNumber)
     {
         PrimMesh mesh = BuildMesh(p, lod);
         List<ViewerFace> faces = mesh.viewerFaces;
         bottomMesherNumber = -1;
-        if (faces.Count > 0 && HasEndFaces(p))
-        {
-            bottomMesherNumber = faces[0].primFaceNumber;
-            for (int i = 0; i < faces.Count; i++)
+        foreach (ViewerFace f in faces)
+            if (f.role == ViewerFaceRole.Bottom)
             {
-                ViewerFace f = faces[i];
-                if (f.primFaceNumber != bottomMesherNumber)
-                    continue;
-                f.uv1.V = 1f - f.uv1.V;
-                f.uv2.V = 1f - f.uv2.V;
-                f.uv3.V = 1f - f.uv3.V;
-                faces[i] = f;
+                bottomMesherNumber = f.primFaceNumber;
+                break;
             }
-        }
         return faces;
     }
 
-    /// <summary>Shape to faces, one entry per prim face in face-number order.</summary>
+    /// <summary>Shape to faces, one entry per prim face that has area, in face-number order.</summary>
     public static List<PrimFace> BuildFaces(PrimParams p, DetailLevel lod = DetailLevel.High)
     {
-        return GroupFaces(BuildViewerFaces(p, lod, out _));
+        return BuildFaces(p, lod, out _, out _);
     }
 
     /// <summary>
-    /// Groups the mesher's triangles by its face number, drops triangles with no area, and numbers the remaining groups
-    /// 0, 1, 2 ... in the mesher's order. A closed three or four sided profile carries a duplicate closing vertex whose
-    /// zero-area quad would otherwise take a face number of its own and push the bottom cap off its texture-entry slot
-    /// (a box has 0 top, 1 to 4 the sides, 5 bottom); a sphere carries two such seam groups.
+    /// Shape to faces. The faces a prim has, and their numbers, come from <see cref="ViewerFaceRule"/>; the mesher
+    /// supplies the triangles of each. A face the viewer lists but that has no area (the cut faces of a sphere lie on its
+    /// axis) is left out and its number stays unused. Triangles the mesher makes that belong to no face of the viewer's
+    /// list (the end caps it adds to a sphere with a radius offset) are counted in <paramref name="unnumberedTriangles"/>
+    /// and left out.
     /// </summary>
-    public static List<PrimFace> GroupFaces(List<ViewerFace> viewerFaces)
+    /// <param name="faceCount">How many faces the viewer gives the prim, including faces with no area.</param>
+    public static List<PrimFace> BuildFaces(PrimParams p, DetailLevel lod, out int faceCount, out int unnumberedTriangles)
     {
-        SortedDictionary<int, List<ViewerFace>> byFace = new SortedDictionary<int, List<ViewerFace>>();
+        List<ViewerFace> viewerFaces = BuildViewerFaces(p, lod, out _);
+        List<PrimFaceKind> kinds = ViewerFaceRule.Faces(p);
+        faceCount = kinds.Count;
+
+        // triangles with area, by what they belong to; the outer sides of a square or triangle profile by their mesher number
+        List<ViewerFace> top = new List<ViewerFace>(), bottom = new List<ViewerFace>(), inner = new List<ViewerFace>();
+        List<ViewerFace> cutBegin = new List<ViewerFace>(), cutEnd = new List<ViewerFace>();
+        SortedDictionary<int, List<ViewerFace>> outer = new SortedDictionary<int, List<ViewerFace>>();
+        bool oneOuterFace = (p.ProfileCurve & 0x0F) == 0 || (p.ProfileCurve & 0x0F) == 5;
         foreach (ViewerFace vf in viewerFaces)
         {
             if (Area(vf) < MinArea)
                 continue;
-            if (!byFace.TryGetValue(vf.primFaceNumber, out List<ViewerFace> list))
-                byFace[vf.primFaceNumber] = list = new List<ViewerFace>();
-            list.Add(vf);
+            switch (vf.role)
+            {
+                case ViewerFaceRole.Top: top.Add(vf); break;
+                case ViewerFaceRole.Bottom: bottom.Add(vf); break;
+                case ViewerFaceRole.Hollow: inner.Add(vf); break;
+                case ViewerFaceRole.CutBegin: cutBegin.Add(vf); break;
+                case ViewerFaceRole.CutEnd: cutEnd.Add(vf); break;
+                default:
+                    int key = oneOuterFace ? 0 : vf.primFaceNumber;
+                    if (!outer.TryGetValue(key, out List<ViewerFace> list))
+                        outer[key] = list = new List<ViewerFace>();
+                    list.Add(vf);
+                    break;
+            }
         }
 
-        List<PrimFace> result = new List<PrimFace>(byFace.Count);
-        int number = 0;
-        foreach (KeyValuePair<int, List<ViewerFace>> kv in byFace)
+        List<List<ViewerFace>> outers = outer.Values.ToList();
+        int total = top.Count + bottom.Count + inner.Count + cutBegin.Count + cutEnd.Count + outers.Sum(o => o.Count);
+        int used = 0;
+        int nextOuter = 0;
+        List<PrimFace> result = new List<PrimFace>();
+        for (int number = 0; number < kinds.Count; number++)
         {
-            List<ViewerFace> tris = kv.Value;
-            PrimFace f = new PrimFace
+            PrimFaceKind kind = kinds[number];
+            List<ViewerFace> tris = kind switch
             {
-                Number = number++,
-                MesherNumber = kv.Key,
-                Positions = new float[tris.Count * 9],
-                Normals = new float[tris.Count * 9],
-                Uvs = new float[tris.Count * 6]
+                PrimFaceKind.Top => top,
+                PrimFaceKind.Bottom => bottom,
+                PrimFaceKind.Inner => inner,
+                PrimFaceKind.ProfileCutBegin => cutBegin,
+                PrimFaceKind.ProfileCutEnd => cutEnd,
+                _ => nextOuter < outers.Count ? outers[nextOuter++] : null
             };
-            for (int i = 0; i < tris.Count; i++)
-            {
-                ViewerFace t = tris[i];
-                Put(f.Positions, i * 9, t.v1, t.v2, t.v3);
-                Put(f.Normals, i * 9, t.n1, t.n2, t.n3);
-                int u = i * 6;
-                f.Uvs[u] = t.uv1.U; f.Uvs[u + 1] = t.uv1.V;
-                f.Uvs[u + 2] = t.uv2.U; f.Uvs[u + 3] = t.uv2.V;
-                f.Uvs[u + 4] = t.uv3.U; f.Uvs[u + 5] = t.uv3.V;
-            }
-            result.Add(f);
+            if (tris == null || tris.Count == 0)
+                continue;
+            used += tris.Count;
+            result.Add(MakeFace(number, kind, tris));
         }
+
+        unnumberedTriangles = total - used;
         return result;
+    }
+
+    private static PrimFace MakeFace(int number, PrimFaceKind kind, List<ViewerFace> tris)
+    {
+        PrimFace f = new PrimFace
+        {
+            Number = number,
+            Kind = kind,
+            MesherNumber = tris[0].primFaceNumber,
+            Positions = new float[tris.Count * 9],
+            Normals = new float[tris.Count * 9],
+            Uvs = new float[tris.Count * 6]
+        };
+        for (int i = 0; i < tris.Count; i++)
+        {
+            ViewerFace t = tris[i];
+            Put(f.Positions, i * 9, t.v1, t.v2, t.v3);
+            Put(f.Normals, i * 9, t.n1, t.n2, t.n3);
+            int u = i * 6;
+            f.Uvs[u] = t.uv1.U; f.Uvs[u + 1] = t.uv1.V;
+            f.Uvs[u + 2] = t.uv2.U; f.Uvs[u + 3] = t.uv2.V;
+            f.Uvs[u + 4] = t.uv3.U; f.Uvs[u + 5] = t.uv3.V;
+        }
+        return f;
     }
 
     private static void Put(float[] into, int at, Coord a, Coord b, Coord c)

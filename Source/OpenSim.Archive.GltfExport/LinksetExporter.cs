@@ -36,7 +36,7 @@ internal static class LinksetExporter
     private const byte TreeCode = 255;
     private static readonly UUID PlywoodTexture = new UUID("89556747-24cb-43ed-920b-47caed15465f");
 
-    public static BuiltBuild Build(ParsedGroup g, string archiveName, string entry, string glbFileName)
+    public static BuiltBuild Build(ParsedGroup g, string archiveName, string entry, string glbFileName, bool world = false)
     {
         // link-number order; the file order is not the link order. A stable sort keeps file order for equal numbers.
         List<ParsedPart> parts = g.Parts.Select((p, i) => (p, i)).OrderBy(t => t.p.Part.LinkNum).ThenBy(t => t.i).Select(t => t.p).ToList();
@@ -57,9 +57,16 @@ internal static class LinksetExporter
                 ["archiveEntry"] = Text.Clean(entry),
                 ["regionPosition"] = Vec(new Vector3(g.X, g.Y, g.Z)),
                 ["regionRotation"] = Quat(root.RotationOffset),
+                ["placement"] = world ? "world" : "root-part",
                 ["coordinateSystem"] = "Node transforms and vertices are glTF Y-up: (x, z, -y) of the viewer's Z-up axes. Values in extras use the viewer's Z-up axes."
             }
         };
+        if (world)
+        {
+            // the build node takes the root part's place in the region; its children stay relative to the root part
+            objectNode.Translation = Glt(new Vector3(g.X, g.Y, g.Z));
+            objectNode.Rotation = GltQuat(root.RotationOffset);
+        }
         doc.Nodes.Add(objectNode);
 
         BuildManifest manifest = new BuildManifest
@@ -276,7 +283,7 @@ internal static class LinksetExporter
     private static GltfMesh BuildPartMesh(ParsedPart pp, GltfDocument doc, Dictionary<string, int> materials, out int faceCount, out int triangleCount)
     {
         PrimParams prm = PrimParams.FromShape(pp.Shape);
-        List<PrimFace> faces = PrimGeometry.BuildFaces(prm);
+        List<PrimFace> faces = PrimGeometry.BuildFaces(prm, DetailLevel.High, out int viewerFaceCount, out int unnumbered);
         TextureLookup textures = TextureLookup.Read(pp.TextureEntry);
 
         GltfMesh mesh = new GltfMesh { Name = Text.Clean(pp.Part.Name) };
@@ -302,11 +309,9 @@ internal static class LinksetExporter
                 if (len > 1e-12f) { nx /= len; ny /= len; nz /= len; }
                 nor[i] = nx; nor[i + 1] = nz; nor[i + 2] = -ny;
             }
-            for (int i = 0; i < uv.Length; i += 2)
-            {
+            // the mesher's coordinates already have v = 0 at the top of the image, which is glTF's convention
+            for (int i = 0; i < uv.Length; i++)
                 uv[i] = Finite(f.Uvs[i]);
-                uv[i + 1] = 1f - Finite(f.Uvs[i + 1]);
-            }
 
             float[] faceNumbers = new float[n / 3];
             Array.Fill(faceNumbers, (float)f.Number);
@@ -325,7 +330,14 @@ internal static class LinksetExporter
             triangleCount += f.TriangleCount;
         }
 
-        mesh.Extras = new JsonObject { ["primFaces"] = numbers };
+        mesh.Extras = new JsonObject
+        {
+            ["primFaces"] = numbers,
+            ["primFaceCount"] = viewerFaceCount,
+            ["primFaceKinds"] = new JsonArray(faces.Select(f => (JsonNode)JsonValue.Create(f.Kind.ToString())).ToArray())
+        };
+        if (unnumbered > 0)
+            mesh.Extras["unnumberedTriangles"] = unnumbered;
         faceCount = faces.Count;
         return mesh;
     }
