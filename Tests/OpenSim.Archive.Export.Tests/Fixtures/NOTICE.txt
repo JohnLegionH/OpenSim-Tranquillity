@@ -1,0 +1,9 @@
+Golden shapes for the prim mesher checks.
+
+The 17 JSON files hold a prim shape (decoded values) and the mesh summary a prim mesher is expected to give for it:
+triangle and vertex counts, triangles per mesher face number, the bounding box, and sample triangles.
+
+Fourteen ("source": "csharp-3.1.4-with-flag-fix") were produced by running the LibreMetaverse 3.1.4 PrimMesher
+(BSD-3-Clause, Copyright (c) 2006-2016 openmetaverse.co; Copyright (c) 2017-2025 Sjofn LLC) with its hollow and profile-cut flags
+forced to the original semantics. That build never emits the bottom end cap, so the comparison leaves the bottom face out.
+Three ("source": "port") were frozen from a TypeScript port of the same mesher and checked by eye.

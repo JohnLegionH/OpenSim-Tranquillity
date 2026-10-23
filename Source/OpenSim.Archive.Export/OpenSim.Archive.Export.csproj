@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyTitle>OpenSim.Archive.Export</AssemblyTitle>
+    <Company>http://opensimulator.org</Company>
+    <Product>OpenSim</Product>
+    <Copyright>OpenSimulator developers</Copyright>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../Source/OpenSim.Framework/OpenSim.Framework.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Archive.Inspection/OpenSim.Archive.Inspection.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The prim mesher is compiled from its one source file (it has no dependencies), so the exporter does not pull in
+         the physics mesher's assembly with its image libraries and OpenSim.Region.Framework. -->
+    <Compile Include="../OpenSim.Region.PhysicsModules.Meshing/Meshmerizer/PrimMesher.cs" Link="PrimMesher/PrimMesher.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="OpenSim.Archive.Export.Tests" />
+  </ItemGroup>
+</Project>

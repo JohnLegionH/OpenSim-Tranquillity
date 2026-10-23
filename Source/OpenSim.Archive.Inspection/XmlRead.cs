@@ -121,6 +121,36 @@ internal static class XmlRead
         return f;
     }
 
+    /// <summary>Reads the X, Y, Z and W children of the element the reader is on; an empty element reads as the identity.</summary>
+    public static Quaternion Quaternion(XmlReader r)
+    {
+        float x = 0, y = 0, z = 0, w = 1;
+        if (r.IsEmptyElement)
+        {
+            r.Read();
+            return new Quaternion(0, 0, 0, 1);
+        }
+
+        int depth = r.Depth;
+        r.Read();
+        while (!r.EOF && !(r.NodeType == XmlNodeType.EndElement && r.Depth == depth))
+        {
+            if (r.NodeType == XmlNodeType.Element)
+            {
+                string n = r.Name;
+                string t = Text(r);
+                if (n == "X" || n == "x") x = Float(t);
+                else if (n == "Y" || n == "y") y = Float(t);
+                else if (n == "Z" || n == "z") z = Float(t);
+                else if (n == "W" || n == "w") w = Float(t);
+            }
+            else
+                r.Read();
+        }
+        r.Read();
+        return new Quaternion(x, y, z, w);
+    }
+
     /// <summary>Reads X, Y, Z children of the element the reader is on.</summary>
     public static void Vector(XmlReader r, out float x, out float y, out float z)
     {

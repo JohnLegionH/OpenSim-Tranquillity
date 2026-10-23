@@ -19,16 +19,50 @@ internal sealed class RefInfo
     public int? AssetType;
 }
 
-internal sealed class ParsedPart
+/// <summary>The raw shape fields of a part, as the object XML stores them.</summary>
+public sealed class ShapeData
+{
+    public int ProfileCurve;
+    public int PathCurve;
+    public int PathBegin, PathEnd;
+    public int PathScaleX, PathScaleY;
+    public int PathShearX, PathShearY;
+    public int PathTwist, PathTwistBegin;
+    public int PathRadiusOffset, PathRevolutions;
+    public int PathTaperX, PathTaperY;
+    public int PathSkew;
+    public int ProfileBegin, ProfileEnd, ProfileHollow;
+    public int PCode;
+    /// <summary>The shape state byte; for a built-in tree it is the species.</summary>
+    public int State;
+    public int SculptType;
+    public UUID SculptTexture;
+    public bool SculptEntry;
+    /// <summary>The text forms of the profile and hollow shape, when the object XML carries them (they override ProfileCurve, as the loader does).</summary>
+    public string ProfileShapeName, HollowShapeName;
+}
+
+/// <summary>One part as read from an object body: the record the inspector reports plus the fields a geometry export needs.</summary>
+public sealed class ParsedPart
 {
     public PartRecord Part;
     public List<ItemRecord> Items = new List<ItemRecord>();
-    public List<RefInfo> Refs = new List<RefInfo>();
-    public List<UUID> ItemAssetRefs = new List<UUID>();
-    public bool HasDynAttrs;
+    internal List<RefInfo> Refs = new List<RefInfo>();
+    internal List<UUID> ItemAssetRefs = new List<UUID>();
+    internal bool HasDynAttrs;
+    public string Description = string.Empty;
+    /// <summary>Position inside the group: relative to the root part for a child, the world position for the root.</summary>
+    public Vector3 OffsetPosition;
+    /// <summary>Rotation inside the group: relative to the root part for a child, the world rotation for the root.</summary>
+    public Quaternion RotationOffset = Quaternion.Identity;
+    public Vector3 Scale = Vector3.One;
+    public ShapeData Shape;
+    /// <summary>The texture entry block as stored (empty when absent).</summary>
+    public byte[] TextureEntry = Array.Empty<byte>();
 }
 
-internal sealed class ParsedGroup
+/// <summary>One linkset as read from an object body.</summary>
+public sealed class ParsedGroup
 {
     public List<ParsedPart> Parts = new List<ParsedPart>();
     public UUID RootId;
@@ -36,7 +70,8 @@ internal sealed class ParsedGroup
     public float X, Y, Z;
 }
 
-internal sealed class ParsedObject
+/// <summary>The linksets found in one object body.</summary>
+public sealed class ParsedObject
 {
     public string Format;
     public List<ParsedGroup> Groups = new List<ParsedGroup>();
@@ -271,6 +306,10 @@ internal static class ObjectXmlParser
                 case "CreatorData": creatorData = XmlRead.Text(r); break;
                 case "UUID": part.PartId = XmlRead.Uuid(r); break;
                 case "Name": part.Name = XmlRead.Text(r); break;
+                case "Description": pp.Description = XmlRead.Text(r); break;
+                case "OffsetPosition": { XmlRead.Vector(r, out float ox, out float oy, out float oz); pp.OffsetPosition = new Vector3(ox, oy, oz); break; }
+                case "RotationOffset": pp.RotationOffset = XmlRead.Quaternion(r); break;
+                case "Scale": { XmlRead.Vector(r, out float sx, out float sy, out float sz); pp.Scale = new Vector3(sx, sy, sz); break; }
                 case "LinkNum": { XmlRead.TryInt(XmlRead.Text(r), out int ln); part.LinkNum = ln; break; }
                 case "GroupPosition": { XmlRead.Vector(r, out float gx, out float gy, out float gz); part.X = gx; part.Y = gy; part.Z = gz; break; }
                 case "CreationDate": part.CreationDate = XmlRead.Date(XmlRead.Text(r)); break;
@@ -390,6 +429,7 @@ internal static class ObjectXmlParser
 
     private static void ReadShape(XmlReader r, ParsedPart pp)
     {
+        ShapeData sd = pp.Shape = new ShapeData();
         if (r.IsEmptyElement)
         {
             r.Read();
@@ -408,12 +448,42 @@ internal static class ObjectXmlParser
 
             switch (r.Name)
             {
-                case "PCode": { if (XmlRead.TryInt(XmlRead.Text(r), out int pc)) pp.Part.PCode = pc; break; }
-                case "TextureEntry": ReadTextureEntry(XmlRead.Text(r), pp); break;
+                case "PCode": { if (XmlRead.TryInt(XmlRead.Text(r), out int pc)) { pp.Part.PCode = pc; sd.PCode = pc; } break; }
+                case "State": sd.State = ShapeInt(r); break;
+                case "ProfileCurve": sd.ProfileCurve = ShapeInt(r); break;
+                case "ProfileShape": sd.ProfileShapeName = XmlRead.Text(r); break;
+                case "HollowShape": sd.HollowShapeName = XmlRead.Text(r); break;
+                case "PathCurve": sd.PathCurve = ShapeInt(r); break;
+                case "PathBegin": sd.PathBegin = ShapeInt(r); break;
+                case "PathEnd": sd.PathEnd = ShapeInt(r); break;
+                case "PathScaleX": sd.PathScaleX = ShapeInt(r); break;
+                case "PathScaleY": sd.PathScaleY = ShapeInt(r); break;
+                case "PathShearX": sd.PathShearX = ShapeInt(r); break;
+                case "PathShearY": sd.PathShearY = ShapeInt(r); break;
+                case "PathTwist": sd.PathTwist = ShapeInt(r); break;
+                case "PathTwistBegin": sd.PathTwistBegin = ShapeInt(r); break;
+                case "PathRadiusOffset": sd.PathRadiusOffset = ShapeInt(r); break;
+                case "PathRevolutions": sd.PathRevolutions = ShapeInt(r); break;
+                case "PathTaperX": sd.PathTaperX = ShapeInt(r); break;
+                case "PathTaperY": sd.PathTaperY = ShapeInt(r); break;
+                case "PathSkew": sd.PathSkew = ShapeInt(r); break;
+                case "ProfileBegin": sd.ProfileBegin = ShapeInt(r); break;
+                case "ProfileEnd": sd.ProfileEnd = ShapeInt(r); break;
+                case "ProfileHollow": sd.ProfileHollow = ShapeInt(r); break;
+                case "SculptType": sd.SculptType = ShapeInt(r); break;
+                case "SculptEntry": sd.SculptEntry = string.Equals(XmlRead.Text(r), "true", StringComparison.OrdinalIgnoreCase); break;
+                case "TextureEntry":
+                {
+                    string teText = XmlRead.Text(r);
+                    pp.TextureEntry = TryBase64(teText) ?? Array.Empty<byte>();
+                    ReadTextureEntry(teText, pp);
+                    break;
+                }
                 case "ExtraParams": ReadExtraParams(XmlRead.Text(r), pp); break;
                 case "SculptTexture":
                 {
                     UUID id = XmlRead.Uuid(r);
+                    sd.SculptTexture = id;
                     if (id != UUID.Zero)
                         pp.Refs.Add(new RefInfo { Id = id, Kind = ReferenceKind.Sculpt, Certainty = Certainty.Certain, AssetType = (int)AssetType.Texture });
                     break;
@@ -430,6 +500,12 @@ internal static class ObjectXmlParser
             }
         }
         r.Read();
+    }
+
+    private static int ShapeInt(XmlReader r)
+    {
+        XmlRead.TryInt(XmlRead.Text(r), out int v);
+        return v;
     }
 
     private static byte[] TryBase64(string s)

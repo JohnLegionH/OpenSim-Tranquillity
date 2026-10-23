@@ -6,5 +6,6 @@
 
   <ItemGroup>
     <ProjectReference Include="../../Source/OpenSim.Archive.Inspection/OpenSim.Archive.Inspection.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Archive.Export/OpenSim.Archive.Export.csproj" />
   </ItemGroup>
 </Project>

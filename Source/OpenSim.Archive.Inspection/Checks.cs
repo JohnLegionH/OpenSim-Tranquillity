@@ -156,6 +156,12 @@ public class InspectorOptions
     public int MaxFindingExamples { get; set; } = 100_000;
     /// <summary>Run the file-only checks (structure, permissions, references, author lines, creator data, integrity). Tests of a single check turn this off.</summary>
     public bool StandardChecks { get; set; } = true;
+    /// <summary>
+    /// Called once for every object file read directly from the archive (not for boxed objects), with the parsed
+    /// linksets, the entry name and the region folder, before the records are emitted. The parsed object is
+    /// only valid during the call.
+    /// </summary>
+    public Action<ParsedObject, string, string> ObjectObserver { get; set; }
     /// <summary>Extra checks run in the same pass, after the built-in creator analysis.</summary>
     public List<IArchiveCheck> Checks { get; set; } = new List<IArchiveCheck>();
 }
