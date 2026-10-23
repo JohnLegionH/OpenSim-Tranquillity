@@ -147,6 +147,17 @@ public class ArchiveExportTests
         Assert.Equal(2, RunCli("oar-export", archive, "--out", archive));
     }
 
+    [Fact]
+    public void TheMaxAssetOptionIsParsedAndAZeroIsRefused()
+    {
+        string dir = TestKit.NewFolder();
+        string file = Path.Combine(dir, "a.oar");
+        File.WriteAllBytes(file, TestKit.Oar(("box", TestKit.ObjectXml(new TestKit.PartSpec { Name = "Box" }))));
+        Assert.Equal(0, RunCli("oar-export", file, "--out", Path.Combine(dir, "out"), "--max-asset-mb", "4"));
+        Assert.Equal(64, RunCli("oar-export", file, "--out", Path.Combine(dir, "out2"), "--max-asset-mb", "0"));
+        Assert.Equal(64, RunCli("oar-export", file, "--out", Path.Combine(dir, "out3"), "--max-asset-mb"));
+    }
+
     private static int RunCli(params string[] args)
     {
         // Console.Out and Console.Error are process-wide, so the tests that redirect them run one at a time

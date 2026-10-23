@@ -15,13 +15,15 @@ namespace OpenSim.ArchiveInspector;
 internal static class ExportCommand
 {
     public const string Usage =
-@"Usage: OpenSim.ArchiveInspector oar-export <archive.oar> --out <folder> [--object <uuid|name>] [--limit N]
+@"Usage: OpenSim.ArchiveInspector oar-export <archive.oar> --out <folder> [--object <uuid|name>] [--limit N] [--max-asset-mb N]
 
 Writes one folder per build (linkset) under <folder>: <name>_<id>.glb and manifest.json, plus export-summary.json.
 The archive is only read. Parts whose creator did not allow export are listed in the manifest as skipped.
   --out <folder>       where to write (created when missing); required
   --object <uuid|name> only the build whose root part has this id, or whose name is this
   --limit N            write at most N builds
+  --max-asset-mb N     most megabytes of texture and material assets held in memory at once (default 2048); a texture
+                       beyond that is reported over-size-limit and its face gets a placeholder
   --world              put each build at its root part's position and rotation in the region (default: at the origin, the
                        region position and rotation are in the build node's extras)
 
@@ -49,6 +51,11 @@ Exit codes: 0 done, 1 the archive was only partly readable (what was read is wri
                     if (i + 1 >= args.Length || !int.TryParse(args[++i], NumberStyles.Integer, CultureInfo.InvariantCulture, out int n) || n < 1)
                         return Fail("--limit needs a number of at least 1");
                     options.Limit = n;
+                    break;
+                case "--max-asset-mb":
+                    if (i + 1 >= args.Length || !int.TryParse(args[++i], NumberStyles.Integer, CultureInfo.InvariantCulture, out int mb) || mb < 1)
+                        return Fail("--max-asset-mb needs a number of at least 1");
+                    options.MaxAssetMegabytes = mb;
                     break;
                 case "--world":
                     options.World = true;

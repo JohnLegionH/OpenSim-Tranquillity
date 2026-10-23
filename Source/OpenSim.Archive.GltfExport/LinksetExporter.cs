@@ -323,13 +323,18 @@ internal static class LinksetExporter
             float[] faceNumbers = new float[n / 3];
             Array.Fill(faceNumbers, (float)f.Number);
 
+            FaceSettings settings = FaceMaterials.Read(textures.Face(f.Number), f.Number);
+            int materialIndex = FaceMaterials.Material(materials, settings, materialInfo, pp, out bool bakedUv);
+            if (bakedUv)
+                UvTransform.Bake(uv, settings.RepeatU, settings.RepeatV, settings.OffsetU, settings.OffsetV, settings.Rotation);
+
             GltfPrimitive prim = new GltfPrimitive
             {
                 Positions = pos,
                 Normals = nor,
                 Uvs = uv,
                 FaceNumbers = faceNumbers,
-                Material = FaceMaterials.Material(materials, FaceMaterials.Read(textures.Face(f.Number), f.Number), materialInfo, pp),
+                Material = materialIndex,
                 Extras = new JsonObject { ["primFace"] = f.Number }
             };
             mesh.Primitives.Add(prim);

@@ -38,6 +38,30 @@ internal static class UvTransform
         scale = new[] { repeatU, repeatV };
         exact = MathF.Abs(s * (repeatU - repeatV)) < 1e-6f;
     }
+
+    /// <summary>True when KHR_texture_transform can say this face's transform exactly (no rotation, or equal repeats).</summary>
+    public static bool IsExactInKhr(float repeatU, float repeatV, float rotation) =>
+        MathF.Abs(MathF.Sin(rotation) * (repeatU - repeatV)) < 1e-6f;
+
+    /// <summary>
+    /// Applies the viewer's transform to texture coordinates in place, for a face the extension cannot describe. The
+    /// coordinates have v down, the viewer's rule has v up, so v is flipped before and after.
+    /// </summary>
+    public static void Bake(float[] uvs, float repeatU, float repeatV, float offsetU, float offsetV, float rotation)
+    {
+        float c = MathF.Cos(rotation), s = MathF.Sin(rotation);
+        for (int i = 0; i + 1 < uvs.Length; i += 2)
+        {
+            float u = uvs[i] - 0.5f;
+            float t = (1f - uvs[i + 1]) - 0.5f;
+            float ru = u * c + t * s;
+            float rt = -u * s + t * c;
+            ru = ru * repeatU + offsetU + 0.5f;
+            rt = rt * repeatV + offsetV + 0.5f;
+            uvs[i] = ru;
+            uvs[i + 1] = 1f - rt;
+        }
+    }
 }
 
 /// <summary>The settings one face carries in a texture entry, as stored.</summary>
@@ -218,8 +242,9 @@ internal static class FaceMaterials
     /// The glTF material for a face, created once per distinct combination of texture and settings. The material's extras
     /// hold every value the face carries, so its name (the texture id) can be changed by a tool without losing anything.
     /// </summary>
-    public static int Material(MaterialContext ctx, FaceSettings f, PartMaterialInfo info, ParsedPart pp)
+    public static int Material(MaterialContext ctx, FaceSettings f, PartMaterialInfo info, ParsedPart pp, out bool bakedUv)
     {
+        bakedUv = false;
         JsonObject extras = new JsonObject
         {
             ["kind"] = "face-material",
@@ -259,11 +284,25 @@ internal static class FaceMaterials
         if (image != null)
         {
             m.BaseColorTexture = TextureRef(ctx, f.TextureId, image);
-            UvTransform.ToKhr(f.RepeatU, f.RepeatV, f.OffsetU, f.OffsetV, f.Rotation, out float[] off, out float[] scale, out bool exact);
-            m.BaseColorTexture.Offset = off;
-            m.BaseColorTexture.Rotation = f.Rotation;
-            m.BaseColorTexture.Scale = scale;
-            extras["khrTextureTransformExact"] = exact;
+            if (UvTransform.IsExactInKhr(f.RepeatU, f.RepeatV, f.Rotation))
+            {
+                UvTransform.ToKhr(f.RepeatU, f.RepeatV, f.OffsetU, f.OffsetV, f.Rotation, out float[] off, out float[] scale, out _);
+                m.BaseColorTexture.Offset = off;
+                m.BaseColorTexture.Rotation = f.Rotation;
+                m.BaseColorTexture.Scale = scale;
+                extras["khrTextureTransformExact"] = true;
+            }
+            else
+            {
+                // rotation with unequal repeats: the extension cannot say it, so the face's UVs carry the viewer's
+                // transform and the extension is the identity
+                m.BaseColorTexture.Offset = new[] { 0f, 0f };
+                m.BaseColorTexture.Rotation = 0f;
+                m.BaseColorTexture.Scale = new[] { 1f, 1f };
+                extras["khrTextureTransformExact"] = true;
+                extras["uvTransformBaked"] = true;
+                bakedUv = true;
+            }
         }
 
         bool tintBlend = f.Color.A < 0.999f;
