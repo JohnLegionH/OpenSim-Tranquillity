@@ -95,6 +95,10 @@ public sealed class ArchiveEligibility
 
         ScanResult scan = new ArchiveScriptScanner(scanOptions).Scan(path);
 
+        // An inventory archive keeps its objects boxed as assets; the converter reads region archives only for now.
+        if (scan.ArchiveKind != "oar")
+            throw new ScanException("'" + scan.Archive + "' is not a region archive (OAR); only region archives can be assessed");
+
         Dictionary<(string, Guid), PartFacts> byKey = new Dictionary<(string, Guid), PartFacts>();
         Dictionary<Guid, PartFacts> byId = new Dictionary<Guid, PartFacts>();
         foreach (PartFacts f in facts)

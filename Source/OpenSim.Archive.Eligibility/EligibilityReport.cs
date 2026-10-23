@@ -78,8 +78,9 @@ public static class EligibilityReport
         {
             sb.Append("  KEEP-PRIM (").Append(p.Code).Append(") | ").Append(Sanitize.Text(p.Build)).Append(" | link ").Append(p.LinkNum)
               .Append(" | ").Append(Sanitize.Text(p.Name)).Append(" | ").Append(p.Reasons[0].Detail);
-            if (p.Reasons.Count > 1)
-                sb.Append(" (+").Append(p.Reasons.Count - 1).Append(" more: ").Append(string.Join(",", p.Reasons.Skip(1).Select(x => x.Code).Distinct())).Append(')');
+            List<string> more = p.Reasons.Skip(1).Select(x => x.Code).Where(c => c != p.Code).Distinct().ToList();
+            if (more.Count > 0)
+                sb.Append(" (also: ").Append(string.Join(",", more)).Append(')');
             sb.AppendLine();
         }
 
