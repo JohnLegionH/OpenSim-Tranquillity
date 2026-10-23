@@ -16,19 +16,29 @@ internal static class ExportCommand
 {
     public const string Usage =
 @"Usage: OpenSim.ArchiveInspector oar-export <archive.oar> --out <folder> [--object <uuid|name>] [--limit N] [--max-asset-mb N]
+       [--world] [--force] [--cache-dir <folder>] [--progress-every N]
 
 Writes one folder per build (linkset) under <folder>: <name>_<id>.glb and manifest.json, plus export-summary.json.
 The archive is only read. Parts whose creator did not allow export are listed in the manifest as skipped.
   --out <folder>       where to write (created when missing); required
   --object <uuid|name> only the build whose root part has this id, or whose name is this
   --limit N            write at most N builds
-  --max-asset-mb N     most megabytes of texture and material assets held in memory at once (default 2048); a texture
-                       beyond that is reported over-size-limit and its face gets a placeholder
+  --max-asset-mb N     most megabytes of texture, material and mesh bodies kept for the builds, in memory and in the cache
+                       folder together (default 2048); an asset beyond that is reported over-size-limit and its face gets a
+                       placeholder
+  --cache-dir <folder> where asset bodies wait while the builds are written (default: .asset-cache in the output folder);
+                       left in place at the end, safe to remove
+  --force              write every build again; by default a build that an earlier run into the same folder wrote from the
+                       same object file with the same tool version is left as it is
+  --progress-every N   print progress after every N builds (default 25) and at least every ten seconds, on standard error
   --world              put each build at its root part's position and rotation in the region (default: at the origin, the
                        region position and rotation are in the build node's extras)
 
-Exit codes: 0 done, 1 the archive was only partly readable (what was read is written), 2 not a region archive or
-            unreadable, 64 bad command line.";
+A build that fails is recorded in export-summary.json with its error and the others go on. A partly readable archive
+is exported as far as it was read (readStatus Partial in the summary, a warning on standard error).
+
+Exit codes: 0 done (also when some builds failed), 2 not a region archive or unreadable, 3 every build failed,
+            64 bad command line.";
 
     public static int Run(string[] args)
     {
@@ -60,6 +70,18 @@ Exit codes: 0 done, 1 the archive was only partly readable (what was read is wri
                 case "--world":
                     options.World = true;
                     break;
+                case "--force":
+                    options.Force = true;
+                    break;
+                case "--cache-dir":
+                    if (i + 1 >= args.Length) return Fail("--cache-dir needs a folder");
+                    options.CacheDirectory = args[++i];
+                    break;
+                case "--progress-every":
+                    if (i + 1 >= args.Length || !int.TryParse(args[++i], NumberStyles.Integer, CultureInfo.InvariantCulture, out int every) || every < 1)
+                        return Fail("--progress-every needs a number of at least 1");
+                    options.ProgressEvery = every;
+                    break;
                 case "-h":
                 case "--help":
                     Console.Out.WriteLine(Usage);
@@ -75,6 +97,7 @@ Exit codes: 0 done, 1 the archive was only partly readable (what was read is wri
         if (input == null) return Fail("no archive file given");
         if (string.IsNullOrEmpty(options.OutputDirectory)) return Fail("--out is required");
 
+        options.Progress = line => Console.Error.WriteLine(Sanitize.Text(line));
         ExportSummary summary;
         try
         {
@@ -92,8 +115,12 @@ Exit codes: 0 done, 1 the archive was only partly readable (what was read is wri
         foreach (KeyValuePair<string, int> r in summary.Reasons.OrderByDescending(r => r.Value))
             Console.Out.WriteLine("  " + r.Value.ToString(CultureInfo.InvariantCulture) + " x " + Sanitize.Text(r.Key));
 
+        Console.Out.WriteLine(string.Format(CultureInfo.InvariantCulture, "builds failed: {0}; left as an earlier run wrote them: {1}; archive passes: {2}; peak memory {3:0} MB",
+            summary.BuildsFailed, summary.BuildsResumed, summary.ArchivePasses, summary.PeakWorkingSetMegabytes));
         if (summary.ReadStatus == nameof(InspectionStatus.NotAnArchive)) return 2;
-        return summary.ReadStatus == nameof(InspectionStatus.Partial) ? 1 : 0;
+        if (summary.ReadStatus == nameof(InspectionStatus.Partial))
+            Console.Error.WriteLine("warning: the archive was only partly readable; what was read has been exported");
+        return summary.Builds > 0 && summary.BuildsFailed == summary.Builds ? 3 : 0;
     }
 
     private static int Fail(string message)

@@ -43,6 +43,8 @@ internal sealed class GltfMaterial
     public float AlphaCutoff = 0.5f;
     public GltfTextureRef BaseColorTexture;
     public GltfTextureRef NormalTexture;
+    public GltfTextureRef MetallicRoughnessTexture;
+    public GltfTextureRef EmissiveTexture;
     public JsonObject Extras;
 }
 
@@ -283,11 +285,21 @@ internal sealed class GltfDocument
                     WriteFloats(w, "baseColorFactor", mat.Color);
                     if (mat.BaseColorTexture != null)
                         WriteTextureRef(w, "baseColorTexture", mat.BaseColorTexture);
-                    w.WriteNumber("metallicFactor", 0);
+                    if (mat.MetallicRoughnessTexture != null)
+                        WriteTextureRef(w, "metallicRoughnessTexture", mat.MetallicRoughnessTexture);
+                    // with a metallic-roughness texture the factors scale it, so the metal is not switched off
+                    w.WriteNumber("metallicFactor", mat.MetallicRoughnessTexture != null ? 1 : 0);
                     w.WriteNumber("roughnessFactor", 1);
                     w.WriteEndObject();
                     if (mat.NormalTexture != null)
                         WriteTextureRef(w, "normalTexture", mat.NormalTexture);
+                    if (mat.EmissiveTexture != null)
+                    {
+                        WriteTextureRef(w, "emissiveTexture", mat.EmissiveTexture);
+                        w.WriteStartArray("emissiveFactor");
+                        w.WriteNumberValue(1); w.WriteNumberValue(1); w.WriteNumberValue(1);
+                        w.WriteEndArray();
+                    }
                     w.WriteString("alphaMode", mat.AlphaMode);
                     if (mat.AlphaMode == "MASK")
                         w.WriteNumber("alphaCutoff", mat.AlphaCutoff);

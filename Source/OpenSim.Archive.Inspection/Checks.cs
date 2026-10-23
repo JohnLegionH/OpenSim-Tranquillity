@@ -162,6 +162,8 @@ public class InspectorOptions
     /// only valid during the call.
     /// </summary>
     public Action<ParsedObject, string, string> ObjectObserver { get; set; }
+    /// <summary>Hash each object file (SHA-256) into <see cref="ParsedObject.BodyHash"/> before the observer is called. Off by default.</summary>
+    public bool HashObjectBodies { get; set; }
     /// <summary>
     /// Asks, for every asset file that is not an object or a scanned text type, whether its body is wanted (asset id,
     /// asset type, size in bytes). Wanted bodies up to <see cref="MaxWantedAssetBytes"/> are read and handed to

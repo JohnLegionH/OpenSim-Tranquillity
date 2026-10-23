@@ -46,21 +46,46 @@ internal sealed class TextureImage
     public byte[] Png;
 }
 
-/// <summary>The asset bodies an export needs, collected from the archive, and the decoded textures.</summary>
+/// <summary>
+/// The asset bodies an export needs, collected from the archive in its one pass, and the decoded textures. A body larger
+/// than <see cref="SpillBytes"/> is written to the cache folder (when there is one) and read back when a build asks for it,
+/// so the memory held does not grow with the archive.
+/// </summary>
 internal sealed class ArchiveAssets
 {
-    private readonly Dictionary<UUID, AssetBlob> m_blobs = new Dictionary<UUID, AssetBlob>();
+    private sealed class Stored
+    {
+        public int Type;
+        public string Entry;
+        public long Size;
+        public byte[] Bytes;
+        public string Path;
+    }
+
+    private readonly Dictionary<UUID, Stored> m_blobs = new Dictionary<UUID, Stored>();
     private readonly Dictionary<UUID, TextureImage> m_decoded = new Dictionary<UUID, TextureImage>();
     private readonly Dictionary<UUID, string> m_decodeFailures = new Dictionary<UUID, string>();
+    private readonly Dictionary<UUID, byte[]> m_loaded = new Dictionary<UUID, byte[]>();
+    private readonly Queue<UUID> m_loadedOrder = new Queue<UUID>();
+    private long m_loadedBytes;
     private long m_bytes;
     private long m_decodedBytes;
 
     public HashSet<UUID> Wanted { get; } = new HashSet<UUID>();
+    /// <summary>Every asset id the archive's pass came across, wanted at that moment or not.</summary>
+    public HashSet<UUID> Seen { get; } = new HashSet<UUID>();
     /// <summary>Wanted assets that were not kept because the size limit was reached or they were over the per-asset limit.</summary>
     public HashSet<UUID> OverLimit { get; } = new HashSet<UUID>();
+    /// <summary>Most bytes of asset bodies kept, in memory and in the cache folder together.</summary>
     public long MaxBytes { get; set; } = 2048L * 1024 * 1024;
     /// <summary>Decoded PNGs kept for reuse by later builds, in bytes.</summary>
     public long MaxDecodedBytes { get; set; } = 512L * 1024 * 1024;
+    /// <summary>Folder bodies over <see cref="SpillBytes"/> are written to; null keeps every body in memory.</summary>
+    public string CacheDirectory { get; set; }
+    public long SpillBytes { get; set; } = 64 * 1024;
+    /// <summary>Bodies read back from the cache folder that stay in memory for the next build.</summary>
+    public long MaxLoadedBytes { get; set; } = 256L * 1024 * 1024;
+    public long CacheBytesWritten { get; private set; }
 
     public bool Has(UUID id) => m_blobs.ContainsKey(id);
 
@@ -87,6 +112,7 @@ internal sealed class ArchiveAssets
 
     public bool Wants(UUID id, int type, long size)
     {
+        Seen.Add(id);
         if (!Wanted.Contains(id) || m_blobs.ContainsKey(id))
             return false;
         _ = type;
@@ -102,10 +128,38 @@ internal sealed class ArchiveAssets
             return;
         }
         m_bytes += bytes.Length;
-        m_blobs[id] = new AssetBlob { Id = id, Type = type, Entry = entry, Bytes = bytes };
+        Stored stored = new Stored { Type = type, Entry = entry, Size = bytes.Length, Bytes = bytes };
+        if (CacheDirectory != null && bytes.Length > SpillBytes)
+        {
+            Directory.CreateDirectory(CacheDirectory);
+            stored.Path = Path.Combine(CacheDirectory, id.ToString() + ".bin");
+            File.WriteAllBytes(stored.Path, bytes);
+            CacheBytesWritten += bytes.Length;
+            stored.Bytes = null;
+        }
+        m_blobs[id] = stored;
     }
 
-    public AssetBlob Get(UUID id) => m_blobs.TryGetValue(id, out AssetBlob b) ? b : null;
+    public AssetBlob Get(UUID id)
+    {
+        if (!m_blobs.TryGetValue(id, out Stored st))
+            return null;
+        byte[] bytes = st.Bytes;
+        if (bytes == null && !m_loaded.TryGetValue(id, out bytes))
+        {
+            bytes = File.ReadAllBytes(st.Path);
+            m_loaded[id] = bytes;
+            m_loadedOrder.Enqueue(id);
+            m_loadedBytes += bytes.Length;
+            while (m_loadedBytes > MaxLoadedBytes && m_loadedOrder.Count > 1)
+            {
+                UUID old = m_loadedOrder.Dequeue();
+                if (m_loaded.Remove(old, out byte[] gone))
+                    m_loadedBytes -= gone.Length;
+            }
+        }
+        return new AssetBlob { Id = id, Type = st.Type, Entry = st.Entry, Bytes = bytes };
+    }
 
     /// <summary>The texture as PNG, or null with the reason in <paramref name="problem"/>.</summary>
     public TextureImage Decode(UUID id, out string problem)

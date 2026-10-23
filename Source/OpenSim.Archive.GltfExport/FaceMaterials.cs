@@ -124,6 +124,64 @@ internal sealed class LegacyMaterial
 }
 
 /// <summary>What a part stores beside its texture entry that bears on its faces' materials.</summary>
+/// <summary>
+/// The textures a PBR material asset (a glTF material text, as the viewer uploads it) names: the images list holds their ids as
+/// URIs, and the material points at them through the textures list.
+/// </summary>
+internal sealed class PbrMaterial
+{
+    public UUID BaseColor, Normal, MetallicRoughness, Emissive, Occlusion;
+
+    public IEnumerable<UUID> All => new[] { BaseColor, Normal, MetallicRoughness, Emissive, Occlusion }.Where(u => u != UUID.Zero);
+
+    public static PbrMaterial Parse(byte[] text)
+    {
+        if (text == null || text.Length == 0 || text.Length > 4 * 1024 * 1024)
+            return null;
+        try
+        {
+            JsonNode root = JsonNode.Parse(text);
+            JsonArray images = root?["images"] as JsonArray, textures = root?["textures"] as JsonArray, materials = root?["materials"] as JsonArray;
+            if (images == null || materials == null || materials.Count == 0)
+                return null;
+            UUID Resolve(JsonNode reference)
+            {
+                int? index = reference?["index"]?.GetValue<int>();
+                if (!index.HasValue || index < 0)
+                    return UUID.Zero;
+                int source = index.Value;
+                if (textures != null)
+                {
+                    if (index >= textures.Count)
+                        return UUID.Zero;
+                    int? s = textures[index.Value]?["source"]?.GetValue<int>();
+                    if (!s.HasValue)
+                        return UUID.Zero;
+                    source = s.Value;
+                }
+                if (source < 0 || source >= images.Count)
+                    return UUID.Zero;
+                string uri = images[source]?["uri"]?.GetValue<string>();
+                return UUID.TryParse(uri, out UUID id) ? id : UUID.Zero;
+            }
+            JsonNode m = materials[0];
+            JsonNode mr = m?["pbrMetallicRoughness"];
+            return new PbrMaterial
+            {
+                BaseColor = Resolve(mr?["baseColorTexture"]),
+                MetallicRoughness = Resolve(mr?["metallicRoughnessTexture"]),
+                Normal = Resolve(m?["normalTexture"]),
+                Emissive = Resolve(m?["emissiveTexture"]),
+                Occlusion = Resolve(m?["occlusionTexture"])
+            };
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+}
+
 internal sealed class PartMaterialInfo
 {
     /// <summary>Face number to the PBR material asset the face names, from the part's render materials.</summary>
@@ -367,10 +425,35 @@ internal static class FaceMaterials
                     pbr["material"] = Encoding.UTF8.GetString(blob.Bytes);
                 if (blob != null)
                     ctx.Copies[pbrId] = blob;
+                PbrMaterial parsed = blob != null ? PbrMaterial.Parse(blob.Bytes) : null;
+                if (parsed != null)
+                {
+                    // the textures the material names are fetched, copied and embedded like a face's own texture
+                    JsonObject textures = new JsonObject();
+                    GltfTextureRef Fetch(UUID id, string role)
+                    {
+                        if (id == UUID.Zero)
+                            return null;
+                        string st = TextureStatus(ctx, id, role, out TextureImage img);
+                        textures[role] = new JsonObject { ["id"] = id.ToString(), ["status"] = st };
+                        return img != null ? TextureRef(ctx, id, img) : null;
+                    }
+                    GltfTextureRef baseColor = Fetch(parsed.BaseColor, "pbr-base-color");
+                    GltfTextureRef normal = Fetch(parsed.Normal, "pbr-normal");
+                    GltfTextureRef mr = Fetch(parsed.MetallicRoughness, "pbr-metallic-roughness");
+                    GltfTextureRef emissive = Fetch(parsed.Emissive, "pbr-emissive");
+                    Fetch(parsed.Occlusion, "pbr-occlusion");
+                    // a face that names a PBR material has no diffuse texture of its own to keep
+                    if (m.BaseColorTexture == null) m.BaseColorTexture = baseColor;
+                    if (m.NormalTexture == null) m.NormalTexture = normal;
+                    m.MetallicRoughnessTexture = mr;
+                    m.EmissiveTexture = emissive;
+                    pbr["textures"] = textures;
+                }
             }
             if (info.PbrOverride.TryGetValue(f.Number, out string ovr))
                 pbr["override"] = ovr;
-            pbr["note"] = "stored PBR data is carried as it is; its textures are not converted or copied";
+            pbr["note"] = "stored PBR data is carried as it is; the textures its material names are copied and embedded as images of the glTF material";
             extras["pbr"] = pbr;
         }
 

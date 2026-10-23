@@ -37,8 +37,22 @@ public sealed class ExportOptions
     public string Object { get; set; }
     /// <summary>Export at most this many builds (after the filter); 0 for all.</summary>
     public int Limit { get; set; }
-    /// <summary>Most megabytes of texture and material assets held in memory at once; 0 for the default of 2048.</summary>
+    /// <summary>
+    /// Most megabytes of texture, material and mesh bodies kept for the builds (in memory and in the cache folder together);
+    /// 0 for the default of 2048. An asset that would take the total past it is reported over-size-limit.
+    /// </summary>
     public int MaxAssetMegabytes { get; set; }
+    /// <summary>
+    /// Folder the asset bodies are kept in while the builds are written, so memory does not grow with the archive. Left
+    /// in place when the run ends (the files can be removed by hand). Default: a folder named .asset-cache in the output folder.
+    /// </summary>
+    public string CacheDirectory { get; set; }
+    /// <summary>Write every build again, even one the output folder already holds from this archive by this tool version.</summary>
+    public bool Force { get; set; }
+    /// <summary>Report progress after this many builds (and at least every ten seconds); 0 for 25.</summary>
+    public int ProgressEvery { get; set; }
+    /// <summary>Receives the progress lines and the notes about a build that failed; null for none.</summary>
+    public Action<string> Progress { get; set; }
     /// <summary>
     /// Put the build node at the root part's position and rotation in the region. When false (the default) the build node
     /// is at the origin with the root part's own frame, and the region position and rotation are in its extras.
@@ -137,6 +151,22 @@ public sealed class BuildManifest
 
 public sealed class SummaryBuild
 {
+    /// <summary>ok, or failed (the build's error is in <see cref="Error"/> and nothing of it is relied on).</summary>
+    public string Status { get; set; } = "ok";
+    public string Error { get; set; }
+    /// <summary>SHA-256 of the archive's object file the build was read from, and the tool version that wrote it: a rerun skips the build when both match.</summary>
+    public string SourceHash { get; set; }
+    public string ToolVersion { get; set; }
+    public string ArchiveEntry { get; set; }
+    /// <summary>Which of the builds with the same root part and source hash this is (0 for the first).</summary>
+    public int Occurrence { get; set; }
+    public long OutputBytes { get; set; }
+    
+    public int AssetsCopied { get; set; }
+    public int SculptsExported { get; set; }
+    public int MeshesExported { get; set; }
+    public int RiggedMeshes { get; set; }
+    public Dictionary<string, int> Reasons { get; set; }
     public string Folder { get; set; }
     public string Name { get; set; }
     public string RootPartUuid { get; set; }
@@ -158,6 +188,17 @@ public sealed class ExportSummary
     public string StoppedAt { get; set; }
     public int Builds { get; set; }
     public int BuildsWithAFile { get; set; }
+    /// <summary>Builds whose export failed; each is listed in the build list with its error.</summary>
+    public int BuildsFailed { get; set; }
+    /// <summary>Builds left as an earlier run wrote them (same source hash and tool version).</summary>
+    public int BuildsResumed { get; set; }
+    public string ToolVersion { get; set; }
+    /// <summary>Highest working set of the process, in megabytes.</summary>
+    public double PeakWorkingSetMegabytes { get; set; }
+    /// <summary>Asset bytes written to the cache folder in this run.</summary>
+    public long CacheBytesWritten { get; set; }
+    /// <summary>Times the archive was read: 1, plus one for each round that went back for assets seen before a build asked for them.</summary>
+    public int ArchivePasses { get; set; }
     public int Parts { get; set; }
     public int Exported { get; set; }
     public int Placeheld { get; set; }
