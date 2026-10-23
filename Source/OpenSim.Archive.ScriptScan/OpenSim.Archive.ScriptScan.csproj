@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyTitle>OpenSim.Archive.ScriptScan</AssemblyTitle>
+    <Company>http://opensimulator.org</Company>
+    <Product>OpenSim</Product>
+    <Copyright>OpenSimulator developers</Copyright>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../Source/OpenSim.Framework/OpenSim.Framework.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Archive.Inspection/OpenSim.Archive.Inspection.csproj" />
+    <!-- The constant tables (LSL and OSSL) come from the script base class, so they never drift from the server. -->
+    <ProjectReference Include="../../Source/OpenSim.Region.ScriptEngine.Shared/OpenSim.Region.ScriptEngine.Shared.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="OpenSim.Archive.ScriptScan.Tests" />
+  </ItemGroup>
+</Project>

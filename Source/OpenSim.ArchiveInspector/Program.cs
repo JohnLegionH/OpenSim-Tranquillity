@@ -24,7 +24,8 @@ Exit codes: 0 read fully with no Warning, 1 partial (see the report), 2 not an a
             3 read fully with at least one Warning (the creator flags are Warnings), 64 bad command line.
 
 Other commands: OpenSim.ArchiveInspector oar-export --help  (writes each build of an OAR as glTF)
-                OpenSim.ArchiveInspector oar-compare --help  (checks a rewritten OAR against its original)";
+                OpenSim.ArchiveInspector oar-compare --help  (checks a rewritten OAR against its original)
+                OpenSim.ArchiveInspector oar-scan --help  (finds parts whose scripts could break if they became mesh)";
 
     public static int Main(string[] args)
     {
@@ -32,6 +33,8 @@ Other commands: OpenSim.ArchiveInspector oar-export --help  (writes each build o
             return ExportCommand.Run(args.Skip(1).ToArray());
         if (args.Length > 0 && args[0] == "oar-compare")
             return CompareCommand.Run(args.Skip(1).ToArray());
+        if (args.Length > 0 && args[0] == "oar-scan")
+            return ScanCommand.Run(args.Skip(1).ToArray());
 
         string input = null, jsonPath = null;
         bool all = false, stats = false;

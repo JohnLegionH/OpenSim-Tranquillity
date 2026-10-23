@@ -8,5 +8,6 @@
     <ProjectReference Include="../../Source/OpenSim.Archive.Inspection/OpenSim.Archive.Inspection.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Archive.GltfExport/OpenSim.Archive.GltfExport.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Archive.Compare/OpenSim.Archive.Compare.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Archive.ScriptScan/OpenSim.Archive.ScriptScan.csproj" />
   </ItemGroup>
 </Project>
