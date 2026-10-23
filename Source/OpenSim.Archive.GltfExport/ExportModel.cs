@@ -59,8 +59,10 @@ public sealed class ExportOptions
     /// file named by its id, and the glTF files point at the shared PNG files by relative path.
     /// </summary>
     public bool SelfContained { get; set; }
-    /// <summary>Do not refuse to start when the free disk space looks too small for the estimated output.</summary>
+    /// <summary>Accepted and ignored: the up-front free-space estimate is a warning only. Kept so earlier command lines still work.</summary>
     public bool SkipSpaceCheck { get; set; }
+    /// <summary>Free bytes on the output drive below which the run stops after the current build; 0 for the default of 2 GB. A test hook.</summary>
+    public long MinFreeBytes { get; set; }
     /// <summary>Free bytes on the drive that holds a path; null reads the real drive. A test hook.</summary>
     public Func<string, long?> FreeBytes { get; set; }
     /// <summary>Write every build again, even one the output folder already holds from this archive by this tool version.</summary>
@@ -216,15 +218,9 @@ public sealed class SummaryBuild
     public int TexturesCopied { get; set; }
 }
 
-/// <summary>The output folder cannot hold the export: refused before anything was written to it.</summary>
-public sealed class ExportRefusedException : IOException
-{
-    public ExportRefusedException(string message) : base(message) { }
-}
-
 public static class ExitCodes
 {
-    public const int Done = 0, Unreadable = 2, EveryBuildFailed = 3, Incomplete = 4, Refused = 5, BadCommandLine = 64;
+    public const int Done = 0, Unreadable = 2, EveryBuildFailed = 3, Incomplete = 4, LowDiskSpace = 5, BadCommandLine = 64;
 }
 
 public sealed class ExportSummary
@@ -239,6 +235,12 @@ public sealed class ExportSummary
     public string Layout { get; set; }
     /// <summary>Each memory or disk cap that was reached, with what it cost; any entry makes the exit code 4.</summary>
     public List<string> CapsReached { get; set; } = new List<string>();
+    /// <summary>Set when the run stopped between builds because the output drive's free space fell below the floor; the exit code is then 5.</summary>
+    public string DiskSpaceStop { get; set; }
+    /// <summary>Builds left undone by that stop; running the same line again does them.</summary>
+    public int BuildsNotDone { get; set; }
+    /// <summary>Notes that do not change the exit code, such as a free-space estimate that looks too small.</summary>
+    public List<string> Warnings { get; set; } = new List<string>();
     public string ReadStatus { get; set; }
     public string StoppedAt { get; set; }
     public int Builds { get; set; }

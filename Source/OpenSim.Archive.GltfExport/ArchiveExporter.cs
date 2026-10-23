@@ -89,16 +89,17 @@ public static class ArchiveExporter
         summary.Layout = options.SelfContained ? "self-contained" : "shared";
         bool shared = !options.SelfContained;
         Func<string, long?> freeBytes = options.FreeBytes ?? FreeBytesOnDrive;
+        long floor = options.MinFreeBytes > 0 ? options.MinFreeBytes : MinFreeBytes;
 
-        // The cache holds, at most, the asset bodies of the archive: refuse at once if its drive cannot hold them.
-        if (!options.SkipSpaceCheck)
+        // The cache holds, at most, the asset bodies of the archive: say so if its drive looks too small. A warning only;
+        // the run itself stops cleanly when the free space falls below MinFreeBytes.
         {
             long archiveBytes = new FileInfo(fullArchive).Length;
             string cacheRoot = assets.CacheDirectory;
             long? free = freeBytes(cacheRoot);
             if (free.HasValue && free.Value < archiveBytes * 2)
-                throw new ExportRefusedException(string.Format(CultureInfo.InvariantCulture,
-                    "NOT ENOUGH FREE DISK SPACE: the asset cache folder {0} has {1:N0} MB free and about {2:N0} MB are needed to read this archive. Nothing was written. Free some space, or give --cache-dir a folder on a drive with more room.",
+                Warn(summary, say, string.Format(CultureInfo.InvariantCulture,
+                    "LOW DISK SPACE WARNING: the asset cache folder {0} has {1:N0} MB free and about {2:N0} MB are needed to read this archive. Starting anyway; give --cache-dir a folder on a drive with more room if it stops.",
                     cacheRoot, free.Value / 1048576, archiveBytes * 2 / 1048576));
         }
 
@@ -180,15 +181,14 @@ public static class ArchiveExporter
         foreach (string cap in assets.CapEvents)
             say(cap);
 
-        // Will the output fit? Refuse before the first build is written.
-        if (!options.SkipSpaceCheck)
+        // Will the output fit? A warning only: the estimate can be wrong either way.
         {
             long estimate = EstimateOutputBytes(groups.Where(g => g.Resumed == null).Select(g => g.Group), assets, shared);
             long? free = freeBytes(fullOut);
             if (free.HasValue && free.Value < estimate + estimate / 10)
-                throw new ExportRefusedException(string.Format(CultureInfo.InvariantCulture,
-                    "NOT ENOUGH FREE DISK SPACE: the output folder {0} has {1:N0} MB free and this export is estimated at {2:N0} MB. Nothing was written. Free some space or choose another --out; --skip-space-check starts anyway.",
-                    fullOut, free.Value / 1048576, estimate / 1048576));
+                Warn(summary, say, string.Format(CultureInfo.InvariantCulture,
+                    "LOW DISK SPACE WARNING: the output folder {0} has {1:N0} MB free and this export is estimated at {2:N0} MB. Starting anyway; the run stops cleanly if the free space falls below {3:N0} MB, and running the same line again carries on.",
+                    fullOut, free.Value / 1048576, estimate / 1048576, floor / 1048576));
         }
 
         // The builds.
@@ -217,6 +217,17 @@ public static class ArchiveExporter
             }
             else
             {
+                // Stop cleanly between builds when the output drive is nearly full; a rerun carries on from the journal.
+                long? freeNow = freeBytes(fullOut);
+                if (freeNow.HasValue && freeNow.Value < floor)
+                {
+                    summary.BuildsNotDone = groups.Count - finished;
+                    summary.DiskSpaceStop = string.Format(CultureInfo.InvariantCulture,
+                        "STOPPED: LOW DISK SPACE. The output drive has {0:N0} MB free, below the {1:N0} MB this program keeps free. {2} builds were written in this run and {3} are not done. Free some space and run the same line again: it carries on where it stopped.",
+                        freeNow.Value / 1048576, floor / 1048576, written, summary.BuildsNotDone);
+                    say(summary.DiskSpaceStop);
+                    break;
+                }
                 try
                 {
                     BeforeBuild?.Invoke(p.Group);
@@ -279,11 +290,22 @@ public static class ArchiveExporter
     /// <summary>The memory the export aims to stay within when the caller names none, in megabytes.</summary>
     public const int DefaultMaxMemoryMegabytes = 1024;
 
-    /// <summary>0 done; 2 not a region archive; 3 every build failed; 4 the archive was incomplete or a cap was reached.</summary>
+    /// <summary>The output drive is not written to once its free space is below this: 2 GB.</summary>
+    public const long MinFreeBytes = 2L * 1024 * 1024 * 1024;
+
+    private static void Warn(ExportSummary summary, Action<string> say, string text)
+    {
+        summary.Warnings.Add(text);
+        say(text);
+    }
+
+    /// <summary>0 done; 2 not a region archive; 5 stopped for low disk space; 3 every build failed; 4 the archive was incomplete or a cap was reached.</summary>
     internal static int ExitCodeOf(ExportSummary s)
     {
         if (s.ReadStatus == nameof(InspectionStatus.NotAnArchive))
             return ExitCodes.Unreadable;
+        if (!string.IsNullOrEmpty(s.DiskSpaceStop))
+            return ExitCodes.LowDiskSpace;
         if (s.Builds > 0 && s.BuildsFailed == s.Builds)
             return ExitCodes.EveryBuildFailed;
         if (s.ArchiveIncomplete || s.CapsReached.Count > 0)

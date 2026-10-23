@@ -13,13 +13,15 @@ namespace OpenSim.Archive.GltfExport;
 
 /// <summary>
 /// The plain-text summary of an export, shown on the console and written beside the JSON summary. When the archive was
-/// damaged or cut short, or a memory or disk cap was reached, those lines come first so they cannot be missed.
+/// damaged or cut short, the run stopped for low disk space, or a memory or disk cap was reached, those lines come first so they cannot be missed.
 /// </summary>
 public static class SummaryText
 {
     public static string Build(ExportSummary summary)
     {
         StringBuilder sb = new StringBuilder();
+        if (!string.IsNullOrEmpty(summary.DiskSpaceStop))
+            sb.AppendLine(Sanitize.Text(summary.DiskSpaceStop));
         if (summary.ArchiveIncomplete)
         {
             sb.AppendLine("ARCHIVE INCOMPLETE");
@@ -27,6 +29,8 @@ public static class SummaryText
         }
         foreach (string cap in summary.CapsReached)
             sb.AppendLine(Sanitize.Text(cap));
+        foreach (string warning in summary.Warnings)
+            sb.AppendLine(Sanitize.Text(warning));
 
         sb.AppendLine(string.Format(CultureInfo.InvariantCulture,
             "read: {0}; layout: {1}; builds: {2} ({3} with a file); parts: {4} (exported {5}, placeheld {6}, skipped {7}); {8:0.0} s; {9} bytes written",

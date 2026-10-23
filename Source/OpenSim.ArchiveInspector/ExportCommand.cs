@@ -34,7 +34,7 @@ The archive is only read. Parts whose creator did not allow export are listed in
   --max-cache-mb N     most megabytes of asset bodies to keep in the cache folder and memory together (default: no limit);
                        an asset beyond it is reported over-size-limit and the run ends with exit code 4.
                        (--max-asset-mb is the same option under its earlier name)
-  --skip-space-check   start even when the free disk space looks too small for the estimated output
+  --skip-space-check   accepted and ignored (the free-space estimate is only a warning now); kept for old command lines
   --cache-dir <folder> where asset bodies wait while the builds are written (default: .asset-cache in the output folder);
                        left in place at the end, safe to remove
   --force              write every build again; by default a build that an earlier run into the same folder wrote from the
@@ -48,7 +48,8 @@ archive is exported as far as it can be read; the first line of the summary then
 
 Exit codes: 0 done (also when some builds failed), 2 not a region archive or unreadable, 3 every build failed,
             4 the archive was incomplete, or a memory or disk cap was reached (everything else was exported),
-            5 refused before writing: not enough free disk space for the estimated output,
+            5 stopped between builds because the free space on the output drive fell below 2 GB (run the same line
+              again to carry on),
             64 bad command line.";
 
     public static int Run(string[] args)
@@ -126,11 +127,6 @@ Exit codes: 0 done (also when some builds failed), 2 not a region archive or unr
         try
         {
             summary = ArchiveExporter.Export(input, options);
-        }
-        catch (ExportRefusedException e)
-        {
-            Console.Error.WriteLine(Sanitize.Text(e.Message));
-            return ExitCodes.Refused;
         }
         catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is ArgumentException || e is InvalidDataException)
         {

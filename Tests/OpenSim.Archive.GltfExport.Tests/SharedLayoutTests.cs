@@ -340,36 +340,90 @@ public class SharedLayoutTests
 
     // ------------------------------------------------------------ free disk space
 
-    [Fact]
-    public void NotEnoughFreeSpaceForTheCacheRefusesBeforeAnythingIsWritten()
+    // Free space on the output drive for the call numbered n (1 is the estimate check, then one per build still to do).
+    private static Func<string, long?> OutputDriveSpace(Func<int, long> forCall)
     {
-        Case c = MakeArchive();
-        ExportRefusedException e = Assert.Throws<ExportRefusedException>(() => Run(c, o => o.FreeBytes = _ => 1000));
-        Assert.StartsWith("NOT ENOUGH FREE DISK SPACE", e.Message);
-        Assert.Contains("cache", e.Message);
-        Assert.False(File.Exists(Path.Combine(c.Out, "export-summary.json")));
-        Assert.Empty(Directory.GetDirectories(c.Out).Where(d => !d.EndsWith(".asset-cache")));
+        int calls = 0;
+        return p => p.EndsWith(".asset-cache") ? long.MaxValue : forCall(++calls);
     }
 
     [Fact]
-    public void NotEnoughFreeSpaceForTheEstimatedOutputRefusesBeforeTheFirstBuildIsWritten()
+    public void ACacheDriveThatLooksTooSmallOnlyWarnsAndTheExportRunsToTheEnd()
     {
         Case c = MakeArchive();
-        ExportRefusedException e = Assert.Throws<ExportRefusedException>(() => Run(c, o => o.FreeBytes = p => p.EndsWith(".asset-cache") ? long.MaxValue : 5000));
-        Assert.StartsWith("NOT ENOUGH FREE DISK SPACE", e.Message);
-        Assert.Contains("estimated", e.Message);
-        Assert.False(File.Exists(Path.Combine(c.Out, "export-summary.json")));
-        Assert.Empty(Directory.GetDirectories(c.Out).Where(d => !d.EndsWith(".asset-cache")));
-        Assert.False(File.Exists(Path.Combine(c.Out, ArchiveExporter.JournalName)) && new FileInfo(Path.Combine(c.Out, ArchiveExporter.JournalName)).Length > 0);
+        ExportSummary s = Run(c, o => o.FreeBytes = p => p.EndsWith(".asset-cache") ? 1000 : long.MaxValue);
+        Assert.Equal(4, s.BuildsWithAFile);
+        Assert.Equal(0, s.ExitCode);
+        Assert.Contains(s.Warnings, w => w.StartsWith("LOW DISK SPACE WARNING") && w.Contains("cache"));
+        Assert.Contains("LOW DISK SPACE WARNING", File.ReadAllText(Path.Combine(c.Out, "export-summary.txt")));
     }
 
     [Fact]
-    public void TheSpaceCheckCanBeSkippedAndAGenerousDriveIsNotRefused()
+    public void AnEstimateAboveTheFreeSpaceOnlyWarnsAndTheExportRunsToTheEnd()
     {
         Case c = MakeArchive();
-        Assert.Equal(4, Run(c, o => { o.FreeBytes = _ => 1000; o.SkipSpaceCheck = true; }).BuildsWithAFile);
-        Case d = new Case { Dir = c.Dir, Archive = c.Archive, Out = Path.Combine(c.Dir, "out2") };
-        Assert.Equal(4, Run(d, o => o.FreeBytes = _ => long.MaxValue).BuildsWithAFile);
+        // 5000 bytes free is under the estimate but above the (lowered) floor, so nothing stops the run
+        ExportSummary s = Run(c, o => { o.MinFreeBytes = 1; o.FreeBytes = OutputDriveSpace(_ => 5000); });
+        Assert.Equal(4, s.BuildsWithAFile);
+        Assert.Equal(0, s.ExitCode);
+        Assert.Null(s.DiskSpaceStop);
+        Assert.Contains(s.Warnings, w => w.StartsWith("LOW DISK SPACE WARNING") && w.Contains("estimated"));
+    }
+
+    [Fact]
+    public void FreeSpaceBelowTheFloorStopsAfterTheCurrentBuildWritesTheSummaryAndExitsFive()
+    {
+        Case c = MakeArchive();
+        // call 1 is the estimate, calls 2 and 3 are the checks before builds one and two; from call 4 the drive is nearly full
+        ExportSummary s = Run(c, o => o.FreeBytes = OutputDriveSpace(n => n <= 3 ? long.MaxValue : 1L << 30));
+        Assert.Equal(ExitCodes.LowDiskSpace, s.ExitCode);
+        Assert.StartsWith("STOPPED: LOW DISK SPACE", s.DiskSpaceStop);
+        Assert.Equal(2, s.BuildsWithAFile);
+        Assert.Equal(2, s.BuildsNotDone);
+        Assert.Equal(2, s.BuildList.Count);
+        string text = File.ReadAllText(Path.Combine(c.Out, "export-summary.txt"));
+        Assert.StartsWith("STOPPED: LOW DISK SPACE", text);
+        Assert.EndsWith("exit code 5" + Environment.NewLine, text);
+        Assert.True(File.Exists(Path.Combine(c.Out, "export-summary.json")));
+        // each finished build is complete: its folder holds a manifest and a glb
+        foreach (SummaryBuild b in s.BuildList)
+        {
+            Assert.True(File.Exists(Path.Combine(c.Out, b.Folder, b.File)));
+            Assert.True(File.Exists(Path.Combine(c.Out, b.Folder, "manifest.json")));
+        }
+    }
+
+    [Fact]
+    public void ARerunAfterALowDiskStopCarriesOnAndFinishesTheArchive()
+    {
+        Case c = MakeArchive();
+        Assert.Equal(ExitCodes.LowDiskSpace, Run(c, o => o.FreeBytes = OutputDriveSpace(n => n <= 3 ? long.MaxValue : 1L << 30)).ExitCode);
+        ExportSummary again = Run(c, o => o.FreeBytes = _ => long.MaxValue);
+        Assert.Equal(0, again.ExitCode);
+        Assert.Equal(4, again.BuildsWithAFile);
+        Assert.Equal(2, again.BuildsResumed);
+        Assert.Null(again.DiskSpaceStop);
+    }
+
+    [Fact]
+    public void ADriveAlreadyBelowTheFloorStopsBeforeTheFirstBuildAndTheOldSkipFlagChangesNothing()
+    {
+        Case c = MakeArchive();
+        ExportSummary s = Run(c, o => { o.FreeBytes = _ => 1000; o.SkipSpaceCheck = true; });
+        Assert.Equal(ExitCodes.LowDiskSpace, s.ExitCode);
+        Assert.Equal(0, s.BuildsWithAFile);
+        Assert.Equal(4, s.BuildsNotDone);
+        Assert.True(File.Exists(Path.Combine(c.Out, "export-summary.txt")));
+    }
+
+    [Fact]
+    public void AGenerousDriveIsNeverStopped()
+    {
+        Case c = MakeArchive();
+        ExportSummary s = Run(c, o => o.FreeBytes = _ => long.MaxValue);
+        Assert.Equal(4, s.BuildsWithAFile);
+        Assert.Equal(0, s.ExitCode);
+        Assert.Empty(s.Warnings);
     }
 
     [Fact]
