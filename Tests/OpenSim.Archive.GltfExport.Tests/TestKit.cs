@@ -12,7 +12,7 @@ using OpenMetaverse;
 using OpenSim.Archive.Inspection;
 using OpenSim.Framework.Serialization;
 
-namespace OpenSim.Archive.Export.Tests;
+namespace OpenSim.Archive.GltfExport.Tests;
 
 /// <summary>Object XML, archives and glTF reading for the exporter tests.</summary>
 internal static class TestKit
@@ -172,7 +172,8 @@ internal static class TestKit
             JsonElement a = Root.GetProperty("accessors")[accessor];
             JsonElement v = Root.GetProperty("bufferViews")[a.GetProperty("bufferView").GetInt32()];
             int offset = v.GetProperty("byteOffset").GetInt32();
-            int comps = a.GetProperty("type").GetString() == "VEC3" ? 3 : 2;
+            string type = a.GetProperty("type").GetString();
+            int comps = type == "VEC3" ? 3 : type == "VEC2" ? 2 : 1;
             float[] result = new float[a.GetProperty("count").GetInt32() * comps];
             Buffer.BlockCopy(Bin, offset, result, 0, result.Length * 4);
             return result;

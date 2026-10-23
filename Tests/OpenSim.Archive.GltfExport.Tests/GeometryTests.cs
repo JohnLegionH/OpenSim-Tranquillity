@@ -11,7 +11,7 @@ using OpenSim.Region.PhysicsModules.Meshing.PrimMesher;
 using Xunit;
 using Path = System.IO.Path;
 
-namespace OpenSim.Archive.Export.Tests;
+namespace OpenSim.Archive.GltfExport.Tests;
 
 /// <summary>The prim mesher in viewer mode against the golden shapes, and the three faults a first port of it had.</summary>
 public class GeometryTests

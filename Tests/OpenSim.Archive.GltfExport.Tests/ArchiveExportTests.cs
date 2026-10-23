@@ -9,9 +9,9 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using OpenMetaverse;
 using Xunit;
-using static OpenSim.Archive.Export.Tests.TestKit;
+using static OpenSim.Archive.GltfExport.Tests.TestKit;
 
-namespace OpenSim.Archive.Export.Tests;
+namespace OpenSim.Archive.GltfExport.Tests;
 
 /// <summary>A whole archive in, a folder per build out; the archive itself untouched.</summary>
 public class ArchiveExportTests

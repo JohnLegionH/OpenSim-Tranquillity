@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <AssemblyTitle>OpenSim.Archive.Export</AssemblyTitle>
+    <AssemblyTitle>OpenSim.Archive.GltfExport</AssemblyTitle>
     <Company>http://opensimulator.org</Company>
     <Product>OpenSim</Product>
     <Copyright>OpenSimulator developers</Copyright>
@@ -19,6 +19,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="OpenSim.Archive.Export.Tests" />
+    <InternalsVisibleTo Include="OpenSim.Archive.GltfExport.Tests" />
   </ItemGroup>
 </Project>

@@ -195,9 +195,9 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.ArchiveInspector", 
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Archive.Inspection.Tests", "Tests\OpenSim.Archive.Inspection.Tests\OpenSim.Archive.Inspection.Tests.csproj", "{CE6C454F-1526-4648-9830-BB74445E3F17}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Archive.Export", "Source\OpenSim.Archive.Export\OpenSim.Archive.Export.csproj", "{089E95B3-AEA3-4E8E-AF18-B11484B82D4D}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Archive.GltfExport", "Source\OpenSim.Archive.GltfExport\OpenSim.Archive.GltfExport.csproj", "{089E95B3-AEA3-4E8E-AF18-B11484B82D4D}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Archive.Export.Tests", "Tests\OpenSim.Archive.Export.Tests\OpenSim.Archive.Export.Tests.csproj", "{A54DB8E6-9E3E-4037-9FB0-F9C210D21D14}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Archive.GltfExport.Tests", "Tests\OpenSim.Archive.GltfExport.Tests\OpenSim.Archive.GltfExport.Tests.csproj", "{A54DB8E6-9E3E-4037-9FB0-F9C210D21D14}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

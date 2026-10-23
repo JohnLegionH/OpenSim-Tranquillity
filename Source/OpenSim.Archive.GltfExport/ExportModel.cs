@@ -7,7 +7,7 @@
 
 using OpenSim.Archive.Inspection;
 
-namespace OpenSim.Archive.Export;
+namespace OpenSim.Archive.GltfExport;
 
 public static class ExportStatus
 {
@@ -81,7 +81,7 @@ public sealed class ManifestPart
 
 public sealed class BuildManifest
 {
-    public string Tool { get; set; } = "OpenSim.Archive.Export";
+    public string Tool { get; set; } = "OpenSim.Archive.GltfExport";
     public int SchemaVersion { get; set; } = 1;
     /// <summary>File name of the archive, without its folder.</summary>
     public string Archive { get; set; }
@@ -111,7 +111,7 @@ public sealed class SummaryBuild
 
 public sealed class ExportSummary
 {
-    public string Tool { get; set; } = "OpenSim.Archive.Export";
+    public string Tool { get; set; } = "OpenSim.Archive.GltfExport";
     public string Archive { get; set; }
     public string ReadStatus { get; set; }
     public string StoppedAt { get; set; }

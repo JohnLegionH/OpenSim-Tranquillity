@@ -11,7 +11,7 @@ using System.Text.Json.Nodes;
 using OpenMetaverse;
 using OpenSim.Archive.Inspection;
 
-namespace OpenSim.Archive.Export;
+namespace OpenSim.Archive.GltfExport;
 
 internal sealed class BuiltBuild
 {
@@ -27,6 +27,9 @@ internal sealed class BuiltBuild
 /// </summary>
 internal static class LinksetExporter
 {
+    /// <summary>Added to the object's name for the glTF node that holds the parts.</summary>
+    internal const string ObjectNodeSuffix = " [build]";
+
     private const byte PrimCode = 9;
     private const byte GrassCode = 95;
     private const byte NewTreeCode = 111;
@@ -40,9 +43,11 @@ internal static class LinksetExporter
         ParsedPart root = parts.FirstOrDefault(p => p.Part.IsRoot) ?? parts[0];
 
         GltfDocument doc = new GltfDocument();
+        // The object node is named apart from the parts: the root part has the object's name, and two nodes of one
+        // name would make Blender rename one of them.
         GltfNode objectNode = new GltfNode
         {
-            Name = Text.Clean(g.Name),
+            Name = Text.Clean(g.Name) + ObjectNodeSuffix,
             Extras = new JsonObject
             {
                 ["kind"] = "object",
@@ -303,11 +308,15 @@ internal static class LinksetExporter
                 uv[i + 1] = 1f - Finite(f.Uvs[i + 1]);
             }
 
+            float[] faceNumbers = new float[n / 3];
+            Array.Fill(faceNumbers, (float)f.Number);
+
             GltfPrimitive prim = new GltfPrimitive
             {
                 Positions = pos,
                 Normals = nor,
                 Uvs = uv,
+                FaceNumbers = faceNumbers,
                 Material = Material(doc, materials, textures, f.Number),
                 Extras = new JsonObject { ["primFace"] = f.Number }
             };

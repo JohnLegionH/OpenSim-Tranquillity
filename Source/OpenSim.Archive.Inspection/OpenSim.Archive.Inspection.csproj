@@ -14,7 +14,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="OpenSim.Archive.Inspection.Tests" />
-    <InternalsVisibleTo Include="OpenSim.Archive.Export" />
-    <InternalsVisibleTo Include="OpenSim.Archive.Export.Tests" />
+    <InternalsVisibleTo Include="OpenSim.Archive.GltfExport" />
+    <InternalsVisibleTo Include="OpenSim.Archive.GltfExport.Tests" />
   </ItemGroup>
 </Project>

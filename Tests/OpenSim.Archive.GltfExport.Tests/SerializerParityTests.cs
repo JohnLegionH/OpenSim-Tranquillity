@@ -13,9 +13,9 @@ using OpenSim.Region.Framework.Scenes;
 using OpenSim.Region.Framework.Scenes.Serialization;
 using OpenSim.Tests.Common;
 using Xunit;
-using static OpenSim.Archive.Export.Tests.TestKit;
+using static OpenSim.Archive.GltfExport.Tests.TestKit;
 
-namespace OpenSim.Archive.Export.Tests;
+namespace OpenSim.Archive.GltfExport.Tests;
 
 /// <summary>The exporter's reading against what the repository's own serializer writes, field by field.</summary>
 [Collection(SceneStateCollection.Name)]

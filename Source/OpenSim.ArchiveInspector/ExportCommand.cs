@@ -6,7 +6,7 @@
  */
 
 using System.Globalization;
-using OpenSim.Archive.Export;
+using OpenSim.Archive.GltfExport;
 using OpenSim.Archive.Inspection;
 
 namespace OpenSim.ArchiveInspector;

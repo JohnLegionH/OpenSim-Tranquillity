@@ -11,7 +11,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using OpenSim.Archive.Inspection;
 
-namespace OpenSim.Archive.Export;
+namespace OpenSim.Archive.GltfExport;
 
 /// <summary>
 /// Reads an OAR with the archive inspector's reader (so its limits and damage handling apply) and writes one folder

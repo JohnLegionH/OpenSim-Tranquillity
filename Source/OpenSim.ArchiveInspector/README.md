@@ -149,3 +149,42 @@ XML is read with DTD processing prohibited and no resolver. Control characters a
 
 `OpenSim.Archive.Inspection` holds the reader. `ArchiveInspector.Inspect(path or stream)` returns an `ArchiveReport`.
 Further checks implement `IArchiveCheck` and are added to `InspectorOptions.Checks`; each receives every parsed record once, in file order, and the body of every text-type asset within the size cap.
+
+
+## oar-export: build geometry as glTF
+
+```
+OpenSim.ArchiveInspector oar-export <archive.oar> --out <folder> [--object <uuid|name>] [--limit N]
+```
+
+Writes each build (linkset) of a region archive as a glTF 2.0 binary for Blender and other tools, keeping every part's name, link number and description, because scripts address child prims by name and by link number. The archive is only read. Exit codes: 0 done, 1 the archive was only partly readable (what was read is written), 2 not a region archive or unreadable, 64 bad command line.
+
+Output, under `<folder>`:
+
+- `<name>_<id>/<name>_<id>.glb` and `<name>_<id>/manifest.json` for each build (`<id>` is the first 12 hex digits of the root part's id). A build whose parts are all skipped has a manifest and no `.glb`.
+- `export-summary.json`: the archive's file name, how it was read, per-build counts, and the number of parts exported, placeheld and skipped with the reasons.
+
+`--object` keeps one build, matched by the root part's id or the object's name (case-insensitive). `--limit` stops after that many builds.
+
+### What is in the glTF file
+
+- Node 0 is the build, named `<object name> [build]` (the suffix keeps it apart from the root part, which has the object's name). Its extras hold `kind` (`object`), the root part's id, the part count, the archive entry, and the root part's region position and rotation. The node itself has no transform, so a build opens at the origin.
+- Its children are one node per part, named exactly as the part, in link-number order (the order in the archive file is not the link order). A single-part object keeps link number 0.
+- Part transforms are relative to the root part: the root part has none, the others use the stored offset position and rotation. Part size is applied to the vertices, so node scale is 1.
+- Axes: the viewer is Z up, glTF is Y up. Node transforms and vertices use (x, y, z) to (x, z, -y), which Blender's importer undoes. Values in extras use the viewer's axes.
+- Each part node's extras: `kind` (`prim`, `sculpt`, `mesh`, `tree`, `grass`, `other`), `linkNumber`, `partUuid`, `partName` (the exact name; Blender renames repeated names), `description`, `isRoot`, `creatorId`, `creatorName`, `ownerId`, `permissions` (`base`, `owner`, `group`, `everyone`, `nextOwner`), `size`, `contentsCount`, `pcode`, `geometry` (`exported` or `pending`) and, for a part with geometry, `faces` and `triangles`.
+- A prim is meshed in the prim mesher's viewer mode with one glTF primitive per prim face. Each primitive's extras carry `primFace` (the face number a texture entry uses), the mesh's extras list them in `primFaces`, and every vertex has the application attribute `_PRIM_FACE`. The attribute is what survives a tool that merges primitives (Blender does when faces share a material). Texture coordinates are the viewer's, with V turned for glTF; the bottom end cap's V is mirrored, as the browser viewer draws it.
+- Materials are placeholders named by the face's texture id (`extras.textureId`), with the face colour and alpha, and the repeat, offset, rotation, glow and fullbright values in extras. Textures are not exported yet.
+- Sculpted parts, mesh parts and the built-in trees and grass are named empty nodes in the right place, with `geometry: pending` and `geometryPending` saying why (sculpt and mesh parts also carry `sculptType` and `sculptTexture`, trees and grass their `species`). They are not skipped: link order and names stay complete.
+
+### manifest.json
+
+One per build: the archive's file name (no folder), the archive entry, the object name, the root part's id, the file name, counts, and a list of every part in link-number order with its link number, name, description, id, creator (id, name, home), owner id, permission masks, `contents` (item names with asset type and inventory type), `kind`, `status` (`exported`, `placeheld` or `skipped`), the `reason` for the last two, and `faces` and `triangles` for an exported prim.
+
+### Export permission
+
+A part is skipped, and listed in the manifest with the reason, when the creator refused export: the part is held by someone other than its creator, its base mask carries the export right, and neither its owner nor its everyone mask grants it. Parts held by their creator, library content, parts with no known creator or owner, and parts whose base mask has no export bit (archives saved before the bit existed) are exported. This is the rule the inspector's permission check uses. There is no option to widen it. A skipped part has no node in the file; its manifest entry has its link number, name, creator and masks, and no contents.
+
+### Through Blender
+
+Checked with Blender's glTF importer and exporter (extras on both ways): node names, `extras` on every part node, the mesh-level `primFaces` and the `_PRIM_FACE` vertex attribute survive. Blender keeps object names unique, so a repeated part name comes back as `Name.001`, `Name.002` (the exact name stays in `extras.partName`); Blender writes a node's children sorted by name, so the node order after a round trip is the link order only when the names sort in link order (use `extras.linkNumber` to restore it); primitive-level extras are dropped and primitives that share a material are merged.

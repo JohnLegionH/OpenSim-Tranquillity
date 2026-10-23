@@ -36,7 +36,7 @@ using OpenSim.Archive.Inspection;
 using OpenSim.Framework;
 using OpenSim.Region.PhysicsModules.Meshing.PrimMesher;
 
-namespace OpenSim.Archive.Export;
+namespace OpenSim.Archive.GltfExport;
 
 /// <summary>A shape with its fields decoded to the values the mesher takes.</summary>
 public sealed class PrimParams

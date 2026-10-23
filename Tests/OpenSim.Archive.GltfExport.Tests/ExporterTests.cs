@@ -9,9 +9,9 @@ using System.Text.Json;
 using OpenMetaverse;
 using OpenSim.Archive.Inspection;
 using Xunit;
-using static OpenSim.Archive.Export.Tests.TestKit;
+using static OpenSim.Archive.GltfExport.Tests.TestKit;
 
-namespace OpenSim.Archive.Export.Tests;
+namespace OpenSim.Archive.GltfExport.Tests;
 
 /// <summary>One linkset to one glTF binary and one manifest, built from object XML written in the tests.</summary>
 public class ExporterTests
@@ -128,6 +128,33 @@ public class ExporterTests
             Assert.True(a.TryGetProperty("POSITION", out _) && a.TryGetProperty("NORMAL", out _) && a.TryGetProperty("TEXCOORD_0", out _));
             Assert.Equal(4, p.GetProperty("mode").GetInt32());
         }
+    }
+
+    [Fact]
+    public void EveryVertexCarriesItsFaceNumberSoAToolThatMergesPrimitivesKeepsThem()
+    {
+        Glb glb = ReadGlb(Build(Group(Part("Box", 0))).Glb);
+        foreach (JsonElement prim in glb.Root.GetProperty("meshes")[0].GetProperty("primitives").EnumerateArray())
+        {
+            int face = prim.GetProperty("extras").GetProperty("primFace").GetInt32();
+            float[] values = glb.Floats(prim.GetProperty("attributes").GetProperty("_PRIM_FACE").GetInt32());
+            float[] positions = glb.Floats(prim.GetProperty("attributes").GetProperty("POSITION").GetInt32());
+            Assert.Equal(positions.Length / 3, values.Length);
+            Assert.All(values, v => Assert.Equal((float)face, v));
+        }
+    }
+
+    [Fact]
+    public void TheObjectNodeIsNamedApartFromTheRootPart()
+    {
+        Glb glb = ReadGlb(Build(Group(Part("Root", 1), Part("Child", 2))).Glb);
+        Assert.Equal("Root [build]", glb.ObjectNode.GetProperty("name").GetString());
+        Assert.Equal("Root", glb.PartNodes.First().GetProperty("name").GetString());
+        JsonElement o = glb.ObjectNode.GetProperty("extras");
+        Assert.Equal("object", o.GetProperty("kind").GetString());
+        Assert.Equal("Root", o.GetProperty("name").GetString());
+        Assert.Equal(2, o.GetProperty("partCount").GetInt32());
+        Assert.Equal(new[] { 10f, 20f, 30f }, o.GetProperty("regionPosition").EnumerateArray().Select(x => x.GetSingle()).ToArray());
     }
 
     [Fact]
