@@ -330,9 +330,9 @@ public class SculptTests
         return encoded;
     }
 
-    private static (ExportSummary summary, Glb glb, JsonElement manifest, string folder, byte[] j2k) Export(int sculptType, bool withMap, Primitive.TextureEntry te = null)
+    private static (ExportSummary summary, Glb glb, JsonElement manifest, string folder, byte[] j2k) Export(int sculptType, bool withMap, Primitive.TextureEntry te = null, SculptMap sculptMap = null)
     {
-        SculptMap map = SphereMap();
+        SculptMap map = sculptMap ?? SphereMap();
         byte[] j2k = J2k(map);
         PartSpec root = new PartSpec
         {
@@ -384,6 +384,55 @@ public class SculptTests
         Assert.Equal("copied", row.GetProperty("status").GetString());
         Assert.Equal("textures/" + MapId + ".jp2", row.GetProperty("copiedTo").GetString());
         Assert.Equal(MapId.ToString(), part.GetProperty("geometryAssetId").GetString());
+    }
+
+    /// <summary>
+    /// A deliberately lopsided sphere map: a long north half (picture top) and a short south half (picture bottom). Put through
+    /// the repo's JPEG 2000 encoder and the exporter's decoder, the viewer's row 0 is the bottom row of the picture
+    /// (llimagej2coj.cpp 861-868 writes the decoded rows bottom first; llvovolume.cpp 1347-1447 hands that buffer to the sculpt),
+    /// so the grid starts at the short south pole, and the surface still faces outward.
+    /// </summary>
+    [Fact]
+    public void ALopsidedMapThroughJpeg2000StartsTheGridAtTheBottomRowOfThePicture()
+    {
+        SculptMap egg = Map(64, 64, (c, r) =>
+        {
+            double theta = Math.PI * r / 63, phi = 2 * Math.PI * c / 64;
+            double cz = Math.Cos(theta), zScale = cz > 0 ? 0.45 : 0.15;
+            return (0.2 * Math.Sin(theta) * Math.Cos(phi), 0.2 * Math.Sin(theta) * Math.Sin(phi), zScale * cz);
+        });
+        (_, Glb glb, _, _, _) = Export(SculptGeometry.TypeSphere, true, null, egg);
+        JsonElement prim = glb.Root.GetProperty("meshes")[0].GetProperty("primitives")[0];
+        float[] pos = glb.Floats(prim.GetProperty("attributes").GetProperty("POSITION").GetInt32());
+        float[] uv = glb.Floats(prim.GetProperty("attributes").GetProperty("TEXCOORD_0").GetInt32());
+
+        // the picture's bottom row (south pole) and top row (north pole), read from the map as generated; size is 2 x 3 x 4
+        float south = (egg.Rgb[((63 * 64) + 32) * 3 + 2] / 255f - 0.5f) * 4f;
+        float north = (egg.Rgb[(0 * 64 + 32) * 3 + 2] / 255f - 0.5f) * 4f;
+        Assert.True(south < -0.5f && north > 1.5f, "the test map is lopsided");
+
+        // the very first vertex is the grid's row 0, column 0: the pinched pole of the picture's bottom row, v = 0 in the
+        // viewer's v-up convention, 1 in glTF's. glTF's y is the viewer's z.
+        Assert.Equal(south, pos[1], 2);
+        Assert.Equal(1f, uv[1], 4);
+        // the lowest and highest vertices are the two poles; the pole row at the far end of the grid has v = 0 in glTF
+        float lowest = float.MaxValue, highest = float.MinValue;
+        for (int i = 0; i < pos.Length / 3; i++)
+        {
+            lowest = Math.Min(lowest, pos[i * 3 + 1]);
+            highest = Math.Max(highest, pos[i * 3 + 1]);
+        }
+        Assert.Equal(south, lowest, 2);
+        Assert.Equal(north, highest, 2);
+        float vAtHighest = float.MaxValue;
+        for (int i = 0; i < pos.Length / 3; i++)
+            if (pos[i * 3 + 1] > highest - 1e-4f)
+                vAtHighest = Math.Min(vAtHighest, uv[i * 2 + 1]);
+        Assert.Equal(0f, vAtHighest, 4);
+
+        // a sphere map laid out like SphereMap (north at the top, longitude to the right) faces the same way as that one,
+        // which the region's own sculpt mesher agrees with (TheSurfaceFacesTheWayTheRegionsOwnSculptMesherFacesIt)
+        Assert.Equal(Math.Sign(Volume(SculptGeometry.Build(SphereMap(), SculptGeometry.TypeSphere).Face.Positions)), Math.Sign(Volume(pos)));
     }
 
     [Fact]

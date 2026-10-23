@@ -349,3 +349,54 @@ public static class MeshGeometry
         return result;
     }
 }
+
+/// <summary>
+/// The bind shape matrix of a rigged mesh. The viewer holds it as 16 numbers in rows, a point as a row vector multiplied on
+/// the left, translation in the fourth row (llmodel.cpp 1667-1677), and draws a rigged mesh with that matrix in place of the
+/// part's size: positions through it, normals through its inverse transpose (llface.cpp 1555-1583).
+/// </summary>
+internal static class BindShape
+{
+    public static void Apply(List<PrimFace> faces, float[] m)
+    {
+        if (m == null || m.Length < 16)
+            return;
+        // the normal matrix: the inverse transpose of the upper 3 x 3, when it can be inverted
+        bool haveNormalMatrix = Invert3(m, out float[] inv);
+        foreach (PrimFace f in faces)
+        {
+            for (int i = 0; i + 2 < f.Positions.Length; i += 3)
+            {
+                float x = f.Positions[i], y = f.Positions[i + 1], z = f.Positions[i + 2];
+                f.Positions[i] = x * m[0] + y * m[4] + z * m[8] + m[12];
+                f.Positions[i + 1] = x * m[1] + y * m[5] + z * m[9] + m[13];
+                f.Positions[i + 2] = x * m[2] + y * m[6] + z * m[10] + m[14];
+                if (!haveNormalMatrix)
+                    continue;
+                // row vector times the inverse transpose = (inverse times the column vector)
+                float nx = f.Normals[i], ny = f.Normals[i + 1], nz = f.Normals[i + 2];
+                float ox = nx * inv[0] + ny * inv[1] + nz * inv[2];
+                float oy = nx * inv[3] + ny * inv[4] + nz * inv[5];
+                float oz = nx * inv[6] + ny * inv[7] + nz * inv[8];
+                float len = MathF.Sqrt(ox * ox + oy * oy + oz * oz);
+                if (len > 1e-12f) { ox /= len; oy /= len; oz /= len; }
+                f.Normals[i] = ox; f.Normals[i + 1] = oy; f.Normals[i + 2] = oz;
+            }
+        }
+    }
+
+    /// <summary>The inverse of the upper 3 x 3 of a row-major 4 x 4, row-major; false when it is singular.</summary>
+    private static bool Invert3(float[] m, out float[] inv)
+    {
+        double a = m[0], b = m[1], c = m[2], d = m[4], e = m[5], f = m[6], g = m[8], h = m[9], i = m[10];
+        double det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+        inv = new float[9];
+        if (!double.IsFinite(det) || Math.Abs(det) < 1e-18)
+            return false;
+        double k = 1.0 / det;
+        inv[0] = (float)((e * i - f * h) * k); inv[1] = (float)((c * h - b * i) * k); inv[2] = (float)((b * f - c * e) * k);
+        inv[3] = (float)((f * g - d * i) * k); inv[4] = (float)((a * i - c * g) * k); inv[5] = (float)((c * d - a * f) * k);
+        inv[6] = (float)((d * h - e * g) * k); inv[7] = (float)((b * g - a * h) * k); inv[8] = (float)((a * e - b * d) * k);
+        return true;
+    }
+}

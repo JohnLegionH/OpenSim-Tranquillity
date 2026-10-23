@@ -23,6 +23,13 @@ public sealed class SculptResult
 {
     /// <summary>The face (face number 0), or null when the viewer shows its placeholder sphere.</summary>
     public PrimFace Face;
+    /// <summary>
+    /// Every face with geometry, by face number. A plain sculpt has the one face; a sculpt with a profile cut, a hollow or an
+    /// open path has the faces the viewer gives its profile (see <see cref="SculptGeometry.BuildVolume"/>).
+    /// </summary>
+    public List<PrimFace> Faces = new List<PrimFace>();
+    /// <summary>Faces the viewer lists for the part, counting any that have no area.</summary>
+    public int ViewerFaceCount = 1;
     /// <summary>Why there is no face.</summary>
     public string Problem;
     /// <summary>Vertex grid: rows along the path, columns along the profile, seam vertices included.</summary>
@@ -38,7 +45,7 @@ public sealed class SculptResult
 /// entirely from the map: each vertex of a grid is one pixel (red, green, blue become x, y, z, 0 to 255 becoming -0.5 to
 /// 0.5, so the vertices are in the unit cube the part's size scales).
 /// </summary>
-public static class SculptGeometry
+public static partial class SculptGeometry
 {
     public const int TypeNone = 0, TypeSphere = 1, TypeTorus = 2, TypePlane = 3, TypeCylinder = 4, TypeMesh = 5;
     public const int FlagInvert = 0x40, FlagMirror = 0x80;
@@ -91,43 +98,7 @@ public static class SculptGeometry
         result.Rows = rows;
         result.Columns = cols;
 
-        // vertex grid
-        float[] grid = new float[rows * cols * 3];
-        for (int s = 0; s < rows; s++)
-        {
-            for (int t = 0; t < cols; t++)
-            {
-                int reversedT = reverseHorizontal ? cols - t - 1 : t;
-                uint x = (uint)((float)reversedT / (cols - 1) * (float)map.Width);
-                uint y = (uint)((float)s / (rows - 1) * (float)map.Height);
-
-                if (y == 0 && stitching == TypeSphere)
-                    x = (uint)(map.Width / 2);   // the first row is pinched to one point
-
-                if (y == (uint)map.Height)       // past the last row
-                {
-                    y = stitching == TypeTorus ? 0u : (uint)(map.Height - 1);   // a torus wraps to the first row
-                    if (stitching == TypeSphere)
-                        x = (uint)(map.Width / 2);
-                }
-
-                if (x == (uint)map.Width)        // past the last column
-                    x = stitching == TypeSphere || stitching == TypeTorus || stitching == TypeCylinder ? 0u : (uint)(map.Width - 1);
-
-                // The viewer's rows count from the bottom of the picture (its image buffers start at the bottom row),
-                // while the map's pixels are held from the top, so row y of the viewer is row Height - 1 - y here.
-                int pixel = ((map.Height - 1 - (int)y) * map.Width + (int)x) * 3;
-                const float scale = 1f / 255f;
-                float px = map.Rgb[pixel] * scale - 0.5f;
-                float py = map.Rgb[pixel + 1] * scale - 0.5f;
-                float pz = map.Rgb[pixel + 2] * scale - 0.5f;
-                if (mirror)
-                    px = -px;
-
-                int o = (s * cols + t) * 3;
-                grid[o] = px; grid[o + 1] = py; grid[o + 2] = pz;
-            }
-        }
+        float[] grid = SampleGrid(map, stitching, mirror, reverseHorizontal, rows, cols);
 
         // a map with almost no variation, or one that spans an absurd size, is shown as a placeholder sphere
         result.SurfaceArea = Area(grid, rows, cols);
@@ -173,7 +144,54 @@ public static class SculptGeometry
             Normals = nor.ToArray(),
             Uvs = uv.ToArray()
         };
+        result.Faces.Add(result.Face);
         return result;
+    }
+
+    /// <summary>
+    /// The vertex grid: row s along the path, column t along the profile, each one pixel of the map (the viewer's rule for
+    /// where a grid position falls on the map, including the stitching at the poles and seams).
+    /// </summary>
+    internal static float[] SampleGrid(SculptMap map, int stitching, bool mirror, bool reverseHorizontal, int rows, int cols)
+    {
+        float[] grid = new float[rows * cols * 3];
+        for (int s = 0; s < rows; s++)
+        {
+            for (int t = 0; t < cols; t++)
+            {
+                int reversedT = reverseHorizontal ? cols - t - 1 : t;
+                uint x = (uint)((float)reversedT / (cols - 1) * (float)map.Width);
+                uint y = (uint)((float)s / (rows - 1) * (float)map.Height);
+
+                if (y == 0 && stitching == TypeSphere)
+                    x = (uint)(map.Width / 2);   // the first row is pinched to one point
+
+                if (y == (uint)map.Height)       // past the last row
+                {
+                    y = stitching == TypeTorus ? 0u : (uint)(map.Height - 1);   // a torus wraps to the first row
+                    if (stitching == TypeSphere)
+                        x = (uint)(map.Width / 2);
+                }
+
+                if (x == (uint)map.Width)        // past the last column
+                    x = stitching == TypeSphere || stitching == TypeTorus || stitching == TypeCylinder ? 0u : (uint)(map.Width - 1);
+
+                // The viewer's rows count from the bottom of the picture (its decoder writes the picture's bottom row first,
+                // llimagej2coj.cpp 861-868, and the sculpt reads that buffer as it is), while the map's pixels are held from
+                // the top, so row y of the viewer is row Height - 1 - y here.
+                int pixel = ((map.Height - 1 - (int)y) * map.Width + (int)x) * 3;
+                const float scale = 1f / 255f;
+                float px = map.Rgb[pixel] * scale - 0.5f;
+                float py = map.Rgb[pixel + 1] * scale - 0.5f;
+                float pz = map.Rgb[pixel + 2] * scale - 0.5f;
+                if (mirror)
+                    px = -px;
+
+                int o = (s * cols + t) * 3;
+                grid[o] = px; grid[o + 1] = py; grid[o + 2] = pz;
+            }
+        }
+        return grid;
     }
 
     private static void AddTriangle(float[] grid, float[] normals, int rows, int cols, bool reverseHorizontal, int a, int b, int c,

@@ -347,6 +347,7 @@ internal static class LinksetExporter
 
         List<PrimFace> faces;
         int viewerFaceCount;
+        bool applyPartSize = true;
         if (isMesh)
         {
             if (!MeshAsset.TryDecode(blob.Bytes, out MeshModel model, out string problem))
@@ -377,13 +378,20 @@ internal static class LinksetExporter
             mp.Rigged = model.Skin != null;
             extras["rigged"] = model.Skin != null;
             if (model.Skin != null)
+                extras["bindShapeApplied"] = true;
+            if (model.Skin != null)
             {
+                // The viewer draws a rigged mesh with its bind shape matrix in place of the part's size (llface.cpp, getGeometryVolume:
+                // mat_vert is the bind shape matrix, mat_normal its inverse transpose), so the vertices are exported multiplied by it.
+                BindShape.Apply(faces, model.Skin.BindShapeMatrix);
+                applyPartSize = false;
                 mp.JointNames = model.Skin.JointNames.Select(Text.Clean).ToList();
                 JsonObject skin = new JsonObject
                 {
                     ["jointNames"] = new JsonArray(mp.JointNames.Select(j => (JsonNode)JsonValue.Create(j)).ToArray()),
                     ["inverseBindMatrices"] = model.Skin.InverseBindMatrices,
-                    ["note"] = "the geometry is exported static, as stored; the skin is kept in the copied asset and is not in the glTF file"
+                    ["note"] = "the vertices are multiplied by the bind shape matrix (the true bind pose) and the part's size is not applied; bindShapeMatrix below is the matrix that was applied, so a return path can multiply by its inverse. The skin itself is kept in the copied asset and is not in the glTF file",
+                    ["bindShapeApplied"] = true
                 };
                 if (model.Skin.BindShapeMatrix != null)
                     skin["bindShapeMatrix"] = new JsonArray(model.Skin.BindShapeMatrix.Select(f => (JsonNode)JsonValue.Create(float.IsFinite(f) ? f : 0f)).ToArray());
@@ -404,7 +412,9 @@ internal static class LinksetExporter
             }
             use.Width = map.Width;
             use.Height = map.Height;
-            SculptResult r = SculptGeometry.Build(map, s.SculptType);
+            PrimParams shapeParams = PrimParams.FromShape(s);
+            bool volumeFaces = SculptGeometry.HasProfileFaces(shapeParams);
+            SculptResult r = SculptGeometry.BuildVolume(map, s.SculptType, shapeParams);
             JsonObject info = new JsonObject
             {
                 ["sculptType"] = s.SculptType,
@@ -418,30 +428,34 @@ internal static class LinksetExporter
                 ["surfaceArea"] = float.IsFinite(r.SurfaceArea) ? r.SurfaceArea : 0f
             };
             if (r.DegenerateTrianglesDropped > 0) info["degenerateTrianglesDropped"] = r.DegenerateTrianglesDropped;
-            if (s.ProfileHollow != 0 || s.ProfileBegin != 0 || s.ProfileEnd != 0 || s.PathBegin != 0 || s.PathEnd != 0)
-                info["shapeFieldsNote"] = "the part also carries profile or path cuts or a hollow; the viewer would apply them to the faces, the exporter builds the one face the map gives";
+            if (volumeFaces)
+                info["profileFaces"] = "the part has a profile cut, a hollow or an open path; its faces are the ones the viewer gives its profile, numbered as the viewer numbers them";
+            else if (s.ProfileHollow != 0 || s.ProfileBegin != 0 || s.ProfileEnd != 0 || s.PathBegin != 0 || s.PathEnd != 0)
+                info["shapeFieldsNote"] = "the part also carries profile or path cuts or a hollow on a profile or path that is not a circle; the viewer would apply them to the faces, the exporter builds the one face the map gives";
             extras["sculpt"] = info;
             if (r.Face == null)
             {
                 pending = r.Problem;
                 return false;
             }
-            faces = new List<PrimFace> { r.Face };
-            viewerFaceCount = 1;
+            faces = r.Faces;
+            viewerFaceCount = r.ViewerFaceCount;
         }
 
-        mesh = BuildPartMesh(pp, doc, materials, faces, viewerFaceCount, 0, out faceCount, out triangleCount);
+        mesh = BuildPartMesh(pp, doc, materials, faces, viewerFaceCount, 0, out faceCount, out triangleCount, applyPartSize);
         return faceCount > 0;
     }
 
-    private static GltfMesh BuildPartMesh(ParsedPart pp, GltfDocument doc, MaterialContext materials, List<PrimFace> faces, int viewerFaceCount, int unnumbered, out int faceCount, out int triangleCount)
+    private static GltfMesh BuildPartMesh(ParsedPart pp, GltfDocument doc, MaterialContext materials, List<PrimFace> faces, int viewerFaceCount, int unnumbered, out int faceCount, out int triangleCount, bool applyPartSize = true)
     {
         TextureLookup textures = TextureLookup.Read(pp.TextureEntry);
         PartMaterialInfo materialInfo = PartMaterialInfo.Read(pp);
 
         GltfMesh mesh = new GltfMesh { Name = Text.Clean(pp.Part.Name) };
         JsonArray numbers = new JsonArray();
-        float sx = pp.Scale.X, sy = pp.Scale.Y, sz = pp.Scale.Z;
+        // a rigged mesh is drawn with its bind shape matrix instead of the part's size (see BindShape), so its size is not applied
+        float sx = applyPartSize ? pp.Scale.X : 1f, sy = applyPartSize ? pp.Scale.Y : 1f, sz = applyPartSize ? pp.Scale.Z : 1f;
+        float partLink = pp.Part.LinkNum;
         float isx = sx != 0 ? 1f / sx : 1f, isy = sy != 0 ? 1f / sy : 1f, isz = sz != 0 ? 1f / sz : 1f;
         triangleCount = 0;
 
@@ -468,6 +482,8 @@ internal static class LinksetExporter
 
             float[] faceNumbers = new float[n / 3];
             Array.Fill(faceNumbers, (float)f.Number);
+            float[] partLinks = new float[n / 3];
+            Array.Fill(partLinks, partLink);
 
             FaceSettings settings = FaceMaterials.Read(textures.Face(f.Number), f.Number);
             int materialIndex = FaceMaterials.Material(materials, settings, materialInfo, pp, out bool bakedUv);
@@ -480,6 +496,7 @@ internal static class LinksetExporter
                 Normals = nor,
                 Uvs = uv,
                 FaceNumbers = faceNumbers,
+                PartLinks = partLinks,
                 Material = materialIndex,
                 Extras = new JsonObject { ["primFace"] = f.Number }
             };

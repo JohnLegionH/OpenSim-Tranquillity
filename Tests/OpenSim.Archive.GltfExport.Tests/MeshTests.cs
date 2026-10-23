@@ -79,7 +79,7 @@ public class MeshTests
     }
 
     /// <summary>A mesh asset: a header naming each block by offset and size, then the zlib-compressed blocks.</summary>
-    public static byte[] Asset(IEnumerable<SubMesh> high, IEnumerable<SubMesh> low = null, string[] joints = null, bool physics = false)
+    public static byte[] Asset(IEnumerable<SubMesh> high, IEnumerable<SubMesh> low = null, string[] joints = null, bool physics = false, float[] bindShape = null)
     {
         List<(string name, byte[] data)> blocks = new List<(string, byte[])>();
         if (low != null) blocks.Add(("low_lod", Zip(Level(low))));
@@ -89,7 +89,7 @@ public class MeshTests
             OSDArray names = new OSDArray();
             foreach (string j in joints) names.Add(OSD.FromString(j));
             OSDArray bind = new OSDArray();
-            for (int i = 0; i < 16; i++) bind.Add(OSD.FromReal(i % 5 == 0 ? 1.0 : 0.0));
+            for (int i = 0; i < 16; i++) bind.Add(OSD.FromReal(bindShape != null ? bindShape[i] : i % 5 == 0 ? 1.0 : 0.0));
             OSDMap skin = new OSDMap { ["joint_names"] = names, ["bind_shape_matrix"] = bind, ["inverse_bind_matrix"] = new OSDArray { bind, bind } };
             blocks.Add(("skin", Zip(skin)));
         }
@@ -191,7 +191,7 @@ public class MeshTests
 
     private static readonly UUID MeshId = UUID.Parse("a0000000-0000-4000-8000-0000000000d1");
 
-    private static (ExportSummary summary, Glb glb, JsonElement manifest, string folder) Export(byte[] asset, int sculptType = 5, Vector3? scale = null, Primitive.TextureEntry te = null, bool include = true)
+    internal static (ExportSummary summary, Glb glb, JsonElement manifest, string folder) Export(byte[] asset, int sculptType = 5, Vector3? scale = null, Primitive.TextureEntry te = null, bool include = true)
     {
         PartSpec root = new PartSpec
         {

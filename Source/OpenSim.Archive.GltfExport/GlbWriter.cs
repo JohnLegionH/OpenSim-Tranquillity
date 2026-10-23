@@ -53,6 +53,8 @@ internal sealed class GltfPrimitive
     public float[] Uvs;
     /// <summary>One value per vertex, written as the application attribute _PRIM_FACE; it keeps the prim face number when a tool merges primitives.</summary>
     public float[] FaceNumbers;
+    /// <summary>One value per vertex, written as the application attribute _PART_LINK: the link number of the part the vertex belongs to (0 for a single-part build), so a tool that joins parts' meshes keeps which part each vertex came from.</summary>
+    public float[] PartLinks;
     public int Material = -1;
     public JsonObject Extras;
 }
@@ -91,18 +93,19 @@ internal sealed class GltfDocument
         List<(int offset, int length, int target)> views = new List<(int, int, int)>();
         List<(int view, int count, string type, float[] min, float[] max)> accessors = new List<(int, int, string, float[], float[])>();
         // per mesh, per primitive: accessor indices of position, normal, uv
-        List<List<(int pos, int nor, int uv, int face)>> meshAccessors = new List<List<(int, int, int, int)>>();
+        List<List<(int pos, int nor, int uv, int face, int link)>> meshAccessors = new List<List<(int, int, int, int, int)>>();
 
         foreach (GltfMesh mesh in Meshes)
         {
-            List<(int, int, int, int)> list = new List<(int, int, int, int)>();
+            List<(int, int, int, int, int)> list = new List<(int, int, int, int, int)>();
             foreach (GltfPrimitive p in mesh.Primitives)
             {
                 int pos = AddFloats(bin, views, accessors, p.Positions, 3, "VEC3", true);
                 int nor = p.Normals != null ? AddFloats(bin, views, accessors, p.Normals, 3, "VEC3", false) : -1;
                 int uv = p.Uvs != null ? AddFloats(bin, views, accessors, p.Uvs, 2, "VEC2", false) : -1;
                 int face = p.FaceNumbers != null ? AddFloats(bin, views, accessors, p.FaceNumbers, 1, "SCALAR", false) : -1;
-                list.Add((pos, nor, uv, face));
+                int link = p.PartLinks != null ? AddFloats(bin, views, accessors, p.PartLinks, 1, "SCALAR", false) : -1;
+                list.Add((pos, nor, uv, face, link));
             }
             meshAccessors.Add(list);
         }
@@ -177,7 +180,7 @@ internal sealed class GltfDocument
     }
 
     private byte[] WriteJson(List<(int offset, int length, int target)> views, List<(int view, int count, string type, float[] min, float[] max)> accessors,
-        List<List<(int pos, int nor, int uv, int face)>> meshAccessors, List<int> imageViews, int binLength)
+        List<List<(int pos, int nor, int uv, int face, int link)>> meshAccessors, List<int> imageViews, int binLength)
     {
         using MemoryStream ms = new MemoryStream();
         using (Utf8JsonWriter w = new Utf8JsonWriter(ms, new JsonWriterOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping }))
@@ -242,7 +245,7 @@ internal sealed class GltfDocument
                     for (int p = 0; p < mesh.Primitives.Count; p++)
                     {
                         GltfPrimitive prim = mesh.Primitives[p];
-                        (int pos, int nor, int uv, int face) = meshAccessors[m][p];
+                        (int pos, int nor, int uv, int face, int link) = meshAccessors[m][p];
                         w.WriteStartObject();
                         w.WriteStartObject("attributes");
                         w.WriteNumber("POSITION", pos);
@@ -252,6 +255,8 @@ internal sealed class GltfDocument
                             w.WriteNumber("TEXCOORD_0", uv);
                         if (face >= 0)
                             w.WriteNumber("_PRIM_FACE", face);
+                        if (link >= 0)
+                            w.WriteNumber("_PART_LINK", link);
                         w.WriteEndObject();
                         if (prim.Material >= 0)
                             w.WriteNumber("material", prim.Material);
