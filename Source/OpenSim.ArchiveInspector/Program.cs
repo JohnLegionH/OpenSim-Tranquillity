@@ -25,7 +25,8 @@ Exit codes: 0 read fully with no Warning, 1 partial (see the report), 2 not an a
 
 Other commands: OpenSim.ArchiveInspector oar-export --help  (writes each build of an OAR as glTF)
                 OpenSim.ArchiveInspector oar-compare --help  (checks a rewritten OAR against its original)
-                OpenSim.ArchiveInspector oar-scan --help  (finds parts whose scripts could break if they became mesh)";
+                OpenSim.ArchiveInspector oar-scan --help  (finds parts whose scripts could break if they became mesh)
+                OpenSim.ArchiveInspector oar-eligibility --help  (decides which parts become mesh, which stay as they are, and why)";
 
     public static int Main(string[] args)
     {
@@ -35,6 +36,8 @@ Other commands: OpenSim.ArchiveInspector oar-export --help  (writes each build o
             return CompareCommand.Run(args.Skip(1).ToArray());
         if (args.Length > 0 && args[0] == "oar-scan")
             return ScanCommand.Run(args.Skip(1).ToArray());
+        if (args.Length > 0 && args[0] == "oar-eligibility")
+            return EligibilityCommand.Run(args.Skip(1).ToArray());
 
         string input = null, jsonPath = null;
         bool all = false, stats = false;

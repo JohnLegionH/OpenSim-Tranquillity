@@ -37,6 +37,8 @@ public sealed class ArchiveScriptScanner
         ScanCheck check = new ScanCheck(m_options);
         InspectorOptions io = new InspectorOptions { StandardChecks = false };
         io.Checks.Add(check);
+        io.Checks.AddRange(m_options.ExtraChecks);
+        io.ObjectObserver = m_options.ObjectObserver;
 
         ArchiveReport report = new ArchiveInspector(io).Inspect(path);
         if (report.Status == InspectionStatus.NotAnArchive)

@@ -65,6 +65,14 @@ public sealed class ParsedPart
     public byte[] MaterialOverrides = Array.Empty<byte>();
     /// <summary>The part's texture animation block as stored (empty when absent).</summary>
     public byte[] TextureAnimation = Array.Empty<byte>();
+    /// <summary>True when the part's Flags include Physics (the part is a physical object).</summary>
+    public bool PhysicsFlag;
+    /// <summary>True when the part carries a Vehicle element (parameters set by llSetVehicle* calls).</summary>
+    public bool HasVehicleParams;
+    /// <summary>The vehicle type stored in the Vehicle element (0 when none or unreadable).</summary>
+    public int VehicleType;
+    /// <summary>True when the shape is flexible: the extra parameters hold a flexible-path block or FlexiEntry is true.</summary>
+    public bool Flexible;
 }
 
 /// <summary>One linkset as read from an object body.</summary>
@@ -346,6 +354,8 @@ internal static class ObjectXmlParser
                 }
                 case "ParticleSystem": ReadParticle(XmlRead.Text(r), pp); break;
                 case "SOPAnims": ReadAnims(XmlRead.Text(r), pp); break;
+                case "Flags": pp.PhysicsFlag = HasPhysicsFlag(XmlRead.Text(r)); break;
+                case "Vehicle": ReadVehicle(r, pp); break;
                 case "TextureAnimation": pp.TextureAnimation = TryBase64(XmlRead.Text(r)) ?? Array.Empty<byte>(); break;
                 case "DynAttrs": pp.HasDynAttrs = true; r.Skip(); break;
                 default: r.Skip(); break;
@@ -478,6 +488,7 @@ internal static class ObjectXmlParser
                 case "ProfileEnd": sd.ProfileEnd = ShapeInt(r); break;
                 case "ProfileHollow": sd.ProfileHollow = ShapeInt(r); break;
                 case "SculptType": sd.SculptType = ShapeInt(r); break;
+                case "FlexiEntry": if (string.Equals(XmlRead.Text(r), "true", StringComparison.OrdinalIgnoreCase)) pp.Flexible = true; break;
                 case "SculptEntry": sd.SculptEntry = string.Equals(XmlRead.Text(r), "true", StringComparison.OrdinalIgnoreCase); break;
                 case "TextureEntry":
                 {
@@ -560,6 +571,44 @@ internal static class ObjectXmlParser
         }
     }
 
+    /// <summary>The Flags element is the PrimFlags enumeration as names separated by spaces, or a number.</summary>
+    private static bool HasPhysicsFlag(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+        if (XmlRead.TryInt(text.Trim(), out int bits))
+            return (bits & (int)PrimFlags.Physics) != 0;
+        foreach (string word in text.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries))
+            if (string.Equals(word, "Physics", StringComparison.OrdinalIgnoreCase))
+                return true;
+        return false;
+    }
+
+    private static void ReadVehicle(XmlReader r, ParsedPart pp)
+    {
+        pp.HasVehicleParams = true;
+        if (r.IsEmptyElement)
+        {
+            r.Read();
+            return;
+        }
+        int depth = r.Depth;
+        r.Read();
+        while (!r.EOF && !(r.NodeType == XmlNodeType.EndElement && r.Depth == depth))
+        {
+            if (r.NodeType == XmlNodeType.Element && r.Name == "TYPE")
+            {
+                if (XmlRead.TryInt(XmlRead.Text(r), out int type))
+                    pp.VehicleType = type;
+            }
+            else if (r.NodeType == XmlNodeType.Element)
+                r.Skip();
+            else
+                r.Read();
+        }
+        r.Read();
+    }
+
     private static void ReadExtraParams(string text, ParsedPart pp)
     {
         byte[] data = TryBase64(text);
@@ -569,6 +618,8 @@ internal static class ObjectXmlParser
         {
             PrimitiveBaseShape shape = new PrimitiveBaseShape();
             shape.ReadInExtraParamsBytes(data);
+            if (shape.FlexiEntry)
+                pp.Flexible = true;
             if (shape.ProjectionTextureUUID != UUID.Zero)
                 pp.Refs.Add(new RefInfo { Id = shape.ProjectionTextureUUID, Kind = ReferenceKind.ProjectionTexture, Certainty = Certainty.Certain, AssetType = (int)AssetType.Texture });
             if (shape.RenderMaterials?.entries != null)

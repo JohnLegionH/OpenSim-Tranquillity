@@ -92,6 +92,10 @@ public sealed class ScanOptions
     public bool AssumeSafeUnscanned { get; set; }
     /// <summary>Most reasons listed for one part; the decision always uses all of them.</summary>
     public int MaxReasonsPerPart { get; set; } = 40;
+    /// <summary>Called with each archive-level object as the inspector reads it, so a caller can collect part fields in the same pass (see InspectorOptions.ObjectObserver).</summary>
+    public Action<OpenSim.Archive.Inspection.ParsedObject, string, string> ObjectObserver { get; set; }
+    /// <summary>More checks to run in the same pass over the archive.</summary>
+    public List<OpenSim.Archive.Inspection.IArchiveCheck> ExtraChecks { get; } = new List<OpenSim.Archive.Inspection.IArchiveCheck>();
 }
 
 public sealed class ScanException : Exception
