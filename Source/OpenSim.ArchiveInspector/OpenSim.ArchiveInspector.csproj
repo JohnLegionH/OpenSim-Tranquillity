@@ -20,6 +20,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="OpenSim.Archive.GltfExport.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../../Source/OpenSim.Archive.Inspection/OpenSim.Archive.Inspection.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Archive.GltfExport/OpenSim.Archive.GltfExport.csproj" />
   </ItemGroup>

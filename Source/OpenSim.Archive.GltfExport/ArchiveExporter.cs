@@ -62,6 +62,10 @@ public static class ArchiveExporter
     {
         if (string.IsNullOrEmpty(options.OutputDirectory))
             throw new ArgumentException("an output folder is needed");
+        // before anything is read or written: a missing image library would otherwise turn every texture into a placeholder
+        string imageProblem = (options.ImageCheck ?? ImageSelfCheck.Problem)();
+        if (imageProblem != null)
+            throw new ImageLibraryException(imageProblem);
         string fullArchive = Path.GetFullPath(archivePath);
         string fullOut = Path.GetFullPath(options.OutputDirectory);
         if (string.Equals(fullArchive, fullOut, StringComparison.OrdinalIgnoreCase))

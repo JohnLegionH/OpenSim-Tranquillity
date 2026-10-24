@@ -33,6 +33,11 @@ public sealed class ExportOptions
 {
     /// <summary>Folder the builds are written to; created when missing.</summary>
     public string OutputDirectory { get; set; }
+    /// <summary>
+    /// The start-up check of the image library: returns null when it works, otherwise the reason it does not (the export
+    /// then stops before writing anything). Null runs the built-in check, <see cref="ImageSelfCheck.Problem"/>; tests replace it.
+    /// </summary>
+    public Func<string> ImageCheck { get; set; }
     /// <summary>Only the build whose root part has this id or whose name is this (case-insensitive).</summary>
     public string Object { get; set; }
     /// <summary>Export at most this many builds (after the filter); 0 for all.</summary>

@@ -46,11 +46,15 @@ The archive is only read. Parts whose creator did not allow export are listed in
 A build that fails is recorded in export-summary.json with its error and the others go on. A damaged or cut-short
 archive is exported as far as it can be read; the first line of the summary then says ARCHIVE INCOMPLETE.
 
-Exit codes: 0 done (also when some builds failed), 2 not a region archive or unreadable, 3 every build failed,
+Exit codes: 0 done (also when some builds failed), 2 not a region archive or unreadable, or the image library does not
+              work (nothing is written: the program decodes a small built-in image first), 3 every build failed,
             4 the archive was incomplete, or a memory or disk cap was reached (everything else was exported),
             5 stopped between builds because the free space on the output drive fell below 2 GB (run the same line
               again to carry on),
             64 bad command line.";
+
+    /// <summary>Replaces the image library's start-up check; the tests use it. Null runs the real check.</summary>
+    internal static Func<string> ImageCheck;
 
     public static int Run(string[] args)
     {
@@ -122,6 +126,7 @@ Exit codes: 0 done (also when some builds failed), 2 not a region archive or unr
         if (string.IsNullOrEmpty(options.OutputDirectory)) return Fail("--out is required");
 
         options.Progress = line => Console.Error.WriteLine(Sanitize.Text(line));
+        options.ImageCheck = ImageCheck;
         LimitManagedMemory(options.MaxMemoryMegabytes > 0 ? options.MaxMemoryMegabytes : ArchiveExporter.DefaultMaxMemoryMegabytes);
         ExportSummary summary;
         try
