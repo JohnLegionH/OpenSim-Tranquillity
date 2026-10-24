@@ -37,13 +37,13 @@ public class PhysicsModelTests
     private static KitPart Fixture(string shape, string modifier, string name, string scale = "2,3,4") =>
         new KitPart(name) { Shape = FaceMatrix.Shape(shape, modifier), Scale = scale };
 
-    private static ConvertResult Convert(string source, out string output)
+    internal static ConvertResult Convert(string source, out string output)
     {
         output = Path.Combine(Path.GetDirectoryName(source), Guid.NewGuid().ToString("N") + "-out.oar");
         return new ArchiveConverter(new ConvertOptions { SculptMaps = new FakeSculptMaps() }).Convert(source, output);
     }
 
-    private static Dictionary<Guid, SceneObjectPart> LoadParts(string archive, Dictionary<string, byte[]> assets = null)
+    internal static Dictionary<Guid, SceneObjectPart> LoadParts(string archive, Dictionary<string, byte[]> assets = null)
     {
         Dictionary<Guid, SceneObjectPart> parts = new Dictionary<Guid, SceneObjectPart>();
         using FileStream fs = File.OpenRead(archive);
@@ -70,7 +70,7 @@ public class PhysicsModelTests
     }
 
     /// <summary>The physics mesh of the prim, as the Jolt scene asks for it (shape, size, detail 32, a prim passes false for the mesh flag).</summary>
-    private static (float[] positions, int[] indices) RegionMesh(PrimitiveBaseShape shape, Vector3 size, bool meshFlag)
+    internal static (float[] positions, int[] indices) RegionMesh(PrimitiveBaseShape shape, Vector3 size, bool meshFlag)
     {
         // not cached: the mesher keeps a mesh for the life of the process, and each test wants its own answer
         IMesh mesh = new Meshmerizer().CreateMesh("jolt-prim", shape, size, 32f, meshFlag, false);
@@ -79,7 +79,7 @@ public class PhysicsModelTests
     }
 
     /// <summary>Converts the one part and returns it before and after, with its mesh asset's bytes.</summary>
-    private static (SceneObjectPart before, SceneObjectPart after, byte[] asset, ConvertedPart converted) ConvertOne(KitPart part, Dictionary<string, byte[]> archiveAssets = null)
+    internal static (SceneObjectPart before, SceneObjectPart after, byte[] asset, ConvertedPart converted) ConvertOne(KitPart part, Dictionary<string, byte[]> archiveAssets = null)
     {
         string source = EligibilityKit.WriteArchive(new List<List<KitPart>> { new List<KitPart> { part } }, archiveAssets);
         SceneObjectPart before = LoadParts(source)[part.Id];
