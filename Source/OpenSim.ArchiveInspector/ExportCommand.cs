@@ -29,7 +29,8 @@ The archive is only read. Parts whose creator did not allow export are listed in
   --limit N            write at most N builds
   --self-contained     give each build its own textures and assets folders and put the PNG images inside its .glb, so one
                        build can be moved alone (uses far more disk space when builds share textures)
-  --max-memory-mb N    memory to stay within (default 1024); bodies beyond a share of it wait in the cache folder. An asset
+  --max-memory-mb N    memory to stay within (default 2048, or half of the machine's
+                       memory if that is smaller); bodies beyond a share of it wait in the cache folder. An asset
                        too large to handle within it is reported over-memory-limit and the run ends with exit code 4
   --max-cache-mb N     most megabytes of asset bodies to keep in the cache folder and memory together (default: no limit);
                        an asset beyond it is reported over-size-limit and the run ends with exit code 4.
@@ -127,7 +128,9 @@ Exit codes: 0 done (also when some builds failed), 2 not a region archive or unr
 
         options.Progress = line => Console.Error.WriteLine(Sanitize.Text(line));
         options.ImageCheck = ImageCheck;
-        LimitManagedMemory(options.MaxMemoryMegabytes > 0 ? options.MaxMemoryMegabytes : ArchiveExporter.DefaultMaxMemoryMegabytes);
+        // the default depends on the machine's memory, which the runtime reports differently once the heap is limited
+        options.MaxMemoryMegabytes = ArchiveExporter.MaxMemoryMegabytesFor(options);
+        LimitManagedMemory(options.MaxMemoryMegabytes);
         ExportSummary summary;
         try
         {

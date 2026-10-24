@@ -43,11 +43,14 @@ public sealed class ExportOptions
     /// <summary>Export at most this many builds (after the filter); 0 for all.</summary>
     public int Limit { get; set; }
     /// <summary>
-    /// Memory the export aims to stay within, in megabytes; 0 for the default of 1024. Asset bodies beyond a share of it wait
+    /// Memory the export aims to stay within, in megabytes; 0 for the default: 2048, or half of the machine's memory if that is
+    /// smaller (<see cref="ArchiveExporter.DefaultMaxMemoryMegabytes(long)"/>). Asset bodies beyond a share of it wait
     /// in the cache folder, and the decoded-image and read-back caches are sized from it. An asset that is larger than half
     /// of it cannot be handled: it is reported over-memory-limit and the run ends with exit code 4.
     /// </summary>
     public int MaxMemoryMegabytes { get; set; }
+    /// <summary>The machine's memory in bytes, for choosing the default memory cap; 0 (the default) to ask the runtime. A test seam.</summary>
+    public long PhysicalMemoryBytes { get; set; }
     /// <summary>
     /// Most megabytes of asset bodies the cache folder and memory may hold together; 0 (the default) for no limit. An asset
     /// that would take the total past it is reported over-size-limit and the run ends with exit code 4.

@@ -89,7 +89,7 @@ public static class ArchiveExporter
             CacheDirectory = string.IsNullOrEmpty(options.CacheDirectory) ? Path.Combine(fullOut, ".asset-cache") : Path.GetFullPath(options.CacheDirectory)
         };
         assets.WriteFile = options.WriteCacheFile;
-        assets.MaxMemoryBytes = (options.MaxMemoryMegabytes > 0 ? options.MaxMemoryMegabytes : DefaultMaxMemoryMegabytes) * 1024L * 1024;
+        assets.MaxMemoryBytes = MaxMemoryMegabytesFor(options) * 1024L * 1024;
         if (options.MaxCacheMegabytes > 0)
             assets.MaxBytes = options.MaxCacheMegabytes * 1024L * 1024;
         summary.Layout = options.SelfContained ? "self-contained" : "shared";
@@ -323,8 +323,36 @@ public static class ArchiveExporter
         return summary;
     }
 
-    /// <summary>The memory the export aims to stay within when the caller names none, in megabytes.</summary>
-    public const int DefaultMaxMemoryMegabytes = 1024;
+    /// <summary>The most memory the export aims to stay within when the caller names none, in megabytes.</summary>
+    public const int DefaultMaxMemoryLimitMegabytes = 2048;
+
+    /// <summary>The cap used when the machine's memory size cannot be read: the value earlier releases used for every machine.</summary>
+    public const int UnknownMemoryMaxMegabytes = 1024;
+
+    /// <summary>
+    /// The memory cap used when the caller names none: <see cref="DefaultMaxMemoryLimitMegabytes"/>, or half of the machine's
+    /// memory if that is smaller. <paramref name="physicalMemoryBytes"/> of zero or less means the size is unknown.
+    /// </summary>
+    public static int DefaultMaxMemoryMegabytes(long physicalMemoryBytes)
+    {
+        if (physicalMemoryBytes <= 0)
+            return UnknownMemoryMaxMegabytes;
+        long half = physicalMemoryBytes / 2 / (1024 * 1024);
+        return (int)Math.Max(1, Math.Min(DefaultMaxMemoryLimitMegabytes, half));
+    }
+
+    /// <summary>
+    /// The memory cap for a run, in megabytes: the one named in the options, or the default for this machine
+    /// (<see cref="ExportOptions.PhysicalMemoryBytes"/>, else the memory the runtime reports as available, which is a
+    /// container's limit inside a container). Read it before the managed heap is limited, because after that the runtime
+    /// reports the limit.
+    /// </summary>
+    public static int MaxMemoryMegabytesFor(ExportOptions options)
+    {
+        if (options.MaxMemoryMegabytes > 0)
+            return options.MaxMemoryMegabytes;
+        return DefaultMaxMemoryMegabytes(options.PhysicalMemoryBytes > 0 ? options.PhysicalMemoryBytes : GC.GetGCMemoryInfo().TotalAvailableMemoryBytes);
+    }
 
     /// <summary>The output drive is not written to once its free space is below this: 2 GB.</summary>
     public const long MinFreeBytes = 2L * 1024 * 1024 * 1024;
