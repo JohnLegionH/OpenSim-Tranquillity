@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Same xunit stack as Source/OpenSimNGC.Appearance.Baking.Tests. -->
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <!-- test only: an independent mesh decoder, to check our encoder against -->
+    <PackageReference Include="LibreMetaverse" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../OpenSim.MeshAsset/OpenSim.MeshAsset.csproj" />
+    <ProjectReference Include="../OpenSim.MeshAsset.Gltf/OpenSim.MeshAsset.Gltf.csproj" />
+    <!-- test only: OpenSim's own mesh reader, to check what it makes of our assets -->
+    <ProjectReference Include="../OpenSim.Region.PhysicsModules.Meshing/OpenSim.Region.PhysicsModules.Meshing.csproj" />
+  </ItemGroup>
+
+</Project>
