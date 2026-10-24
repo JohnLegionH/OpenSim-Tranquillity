@@ -1269,6 +1269,13 @@ public class Path
     public float revolutions = 1.0f;
     public int stepsPerRevolution = 24;
 
+    /// <summary>
+    /// Build the circular path the way the Second Life viewer does (LLPath::genNGon, indra/llmath/llvolume.cpp): the Y shear
+    /// moves each path point along y by the shear times the point's z, and leaves the point's angle and the profile's
+    /// rotation alone. Off (physics meshing), the shear turns the path's angle instead.
+    /// </summary>
+    public bool viewerMode = false;
+
     private const float twoPi = 2.0f * (float)Math.PI;
 
     public void Create(PathType pathType, int steps)
@@ -1370,6 +1377,13 @@ public class Path
             float skewStart = this.pathCutBegin * 2.0f * this.skew - this.skew;
             float xOffsetTopShearXFactor = this.topShearX * (0.25f + 0.5f * (0.5f - this.holeSizeY));
             float yShearCompensation = 1.0f + Math.Abs(this.topShearY) * 0.25f;
+            // the angle the Y shear adds to the path; the viewer does not turn the angle (it moves the point, below)
+            float shearAngle = this.topShearY;
+            if (this.viewerMode)
+            {
+                yShearCompensation = 1.0f;
+                shearAngle = 0.0f;
+            }
 
             // It's not quite clear what pushY (Y top shear) does, but subtracting it from the start and end
             // angles appears to approximate it's effects on path cut. Likewise, adding it to the angle used
@@ -1379,8 +1393,8 @@ public class Path
             // the meshes generated with this technique appear nearly identical in shape to the same prims when
             // displayed by the viewer.
 
-            float startAngle = (twoPi * this.pathCutBegin * this.revolutions) - this.topShearY * 0.9f;
-            float endAngle = (twoPi * this.pathCutEnd * this.revolutions) - this.topShearY * 0.9f;
+            float startAngle = (twoPi * this.pathCutBegin * this.revolutions) - shearAngle * 0.9f;
+            float endAngle = (twoPi * this.pathCutEnd * this.revolutions) - shearAngle * 0.9f;
             float stepSize = twoPi / this.stepsPerRevolution;
 
             int step = (int)(startAngle / stepSize);
@@ -1423,14 +1437,18 @@ public class Path
 
                 float yOffset = yShearCompensation * (float)Math.Cos(angle) * (0.5f - yPathScale) * radiusScale;
 
-                float zOffset = (float)Math.Sin(angle + this.topShearY) * (0.5f - yPathScale) * radiusScale;
+                float zOffset = (float)Math.Sin(angle + shearAngle) * (0.5f - yPathScale) * radiusScale;
+
+                // viewer: y = cos(angle) * radius + shearY * z (llvolume.cpp:1296-1299, 1331-1334, 1358-1361)
+                if (this.viewerMode)
+                    yOffset += this.topShearY * zOffset;
 
                 newNode.position = new Coord(xOffset, yOffset, zOffset);
 
                 // now orient the rotation of the profile layer relative to it's position on the path
                 // adding taperY to the angle used to generate the quat appears to approximate the viewer
 
-                newNode.rotation = new Quat(new Coord(1.0f, 0.0f, 0.0f), angle + this.topShearY);
+                newNode.rotation = new Quat(new Coord(1.0f, 0.0f, 0.0f), angle + shearAngle);
 
                 // next apply twist rotation to the profile layer
                 if (twistTotal != 0.0f || twistBegin != 0.0f)
@@ -1655,7 +1673,17 @@ public class PrimMesh
             else if (twistTotal != 0.0f)
                 needEndFaces = true;
             else if (this.radius != 0.0f)
-                needEndFaces = true;
+            {
+                // The viewer closes the path again when the offset moves its two ends apart by 0.001 or less, which a hole
+                // size of 1 always does: the path radius is then zero, so the offset has nothing to move. It builds no end
+                // caps for a closed path (LLPath::genNGon in indra/llmath/llvolume.cpp: radius_start = 0.5 * (1 - hole size Y),
+                // scaled by (1 + offset) or (1 - offset) at one end, and the path is open only when the two radii differ by
+                // more than 0.001). Only the viewer-style mesh follows that; physics meshing keeps its earlier rule.
+                if (!this.viewerMode)
+                    needEndFaces = true;
+                else if (Math.Abs(this.radius) * 0.5f * (1.0f - this.holeSizeY) > 0.001f)
+                    needEndFaces = true;
+            }
         }
         else needEndFaces = true;
 
@@ -1774,6 +1802,7 @@ public class PrimMesh
         path.radius = radius;
         path.revolutions = revolutions;
         path.stepsPerRevolution = stepsPerRevolution;
+        path.viewerMode = viewerMode;
 
         path.Create(pathType, steps);
 

@@ -17,7 +17,7 @@ internal static class ExportCommand
     public const string Usage =
 @"Usage: OpenSim.ArchiveInspector oar-export <archive.oar> --out <folder> [--object <uuid|name>] [--limit N]
        [--self-contained] [--max-memory-mb N] [--max-cache-mb N] [--skip-space-check]
-       [--world] [--force] [--cache-dir <folder>] [--progress-every N]
+       [--world] [--force] [--cache-dir <folder>] [--progress-every N] [--diagnostics <file>] [--diagnostics-every N] [--diagnostics-live]
 
 Writes one folder per build (linkset) under <folder>: <name>_<id>.glb and manifest.json, plus export-summary.json and
 export-summary.txt. Every build's textures are PNG files in one shared <folder>/textures (the original .jp2 and the
@@ -29,7 +29,8 @@ The archive is only read. Parts whose creator did not allow export are listed in
   --limit N            write at most N builds
   --self-contained     give each build its own textures and assets folders and put the PNG images inside its .glb, so one
                        build can be moved alone (uses far more disk space when builds share textures)
-  --max-memory-mb N    memory to stay within (default 1024); bodies beyond a share of it wait in the cache folder. An asset
+  --max-memory-mb N    memory to stay within (default 2048, or half of the machine's
+                       memory if that is smaller); bodies beyond a share of it wait in the cache folder. An asset
                        too large to handle within it is reported over-memory-limit and the run ends with exit code 4
   --max-cache-mb N     most megabytes of asset bodies to keep in the cache folder and memory together (default: no limit);
                        an asset beyond it is reported over-size-limit and the run ends with exit code 4.
@@ -40,17 +41,25 @@ The archive is only read. Parts whose creator did not allow export are listed in
   --force              write every build again; by default a build that an earlier run into the same folder wrote from the
                        same object file with the same tool version is left as it is
   --progress-every N   print progress after every N builds (default 25) and at least every ten seconds, on standard error
+  --diagnostics <file> append a memory log to <file>: one JSON line every N builds (see --diagnostics-every) with the managed
+                       heap, the working set and the size of what is kept across builds (default: no log)
+  --diagnostics-every N  builds (or object files, while the archive is read) between two lines of that log (default 100)
+  --diagnostics-live   collect garbage before each line of that log, so the heap figures show what the run holds (slower)
   --world              put each build at its root part's position and rotation in the region (default: at the origin, the
                        region position and rotation are in the build node's extras)
 
 A build that fails is recorded in export-summary.json with its error and the others go on. A damaged or cut-short
 archive is exported as far as it can be read; the first line of the summary then says ARCHIVE INCOMPLETE.
 
-Exit codes: 0 done (also when some builds failed), 2 not a region archive or unreadable, 3 every build failed,
+Exit codes: 0 done (also when some builds failed), 2 not a region archive or unreadable, or the image library does not
+              work (nothing is written: the program decodes a small built-in image first), 3 every build failed,
             4 the archive was incomplete, or a memory or disk cap was reached (everything else was exported),
             5 stopped between builds because the free space on the output drive fell below 2 GB (run the same line
               again to carry on),
             64 bad command line.";
+
+    /// <summary>Replaces the image library's start-up check; the tests use it. Null runs the real check.</summary>
+    internal static Func<string> ImageCheck;
 
     public static int Run(string[] args)
     {
@@ -106,6 +115,18 @@ Exit codes: 0 done (also when some builds failed), 2 not a region archive or unr
                         return Fail("--progress-every needs a number of at least 1");
                     options.ProgressEvery = every;
                     break;
+                case "--diagnostics":
+                    if (i + 1 >= args.Length) return Fail("--diagnostics needs a file");
+                    options.DiagnosticsPath = args[++i];
+                    break;
+                case "--diagnostics-live":
+                    options.DiagnosticsCollect = true;
+                    break;
+                case "--diagnostics-every":
+                    if (i + 1 >= args.Length || !int.TryParse(args[++i], NumberStyles.Integer, CultureInfo.InvariantCulture, out int dEvery) || dEvery < 1)
+                        return Fail("--diagnostics-every needs a number of at least 1");
+                    options.DiagnosticsEvery = dEvery;
+                    break;
                 case "-h":
                 case "--help":
                     Console.Out.WriteLine(Usage);
@@ -122,7 +143,10 @@ Exit codes: 0 done (also when some builds failed), 2 not a region archive or unr
         if (string.IsNullOrEmpty(options.OutputDirectory)) return Fail("--out is required");
 
         options.Progress = line => Console.Error.WriteLine(Sanitize.Text(line));
-        LimitManagedMemory(options.MaxMemoryMegabytes > 0 ? options.MaxMemoryMegabytes : ArchiveExporter.DefaultMaxMemoryMegabytes);
+        options.ImageCheck = ImageCheck;
+        // the default depends on the machine's memory, which the runtime reports differently once the heap is limited
+        options.MaxMemoryMegabytes = ArchiveExporter.MaxMemoryMegabytesFor(options);
+        LimitManagedMemory(options.MaxMemoryMegabytes);
         ExportSummary summary;
         try
         {

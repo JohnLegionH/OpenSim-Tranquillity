@@ -167,14 +167,14 @@ public class FaceNumberingTests
     }
 
     [Fact]
-    public void TheCapsAsphereGainsFromARadiusOffsetAreNotNumbered()
+    public void ASphereWithARadiusOffsetStaysOneClosedFaceWithNoEndCaps()
     {
         // a sphere's hole size is 1, so the viewer ignores a radius offset and the sphere stays one closed face; the mesher
-        // would add end caps, which belong to no face of the viewer's list
+        // used to add end caps, which belonged to no face of the viewer's list (see RadiusOffsetPathTests)
         List<PrimFace> faces = PrimGeometry.BuildFaces(Make("sphere", "radius-offset"), DetailLevel.High, out int count, out int unnumbered);
         Assert.Equal(1, count);
         Assert.Single(faces);
-        Assert.True(unnumbered > 0);
+        Assert.Equal(0, unnumbered);
     }
 
     [Fact]

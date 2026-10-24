@@ -533,7 +533,7 @@ public sealed class ArchiveInspector
             if (!boxedAsset.HasValue && m_opt.ObjectObserver != null)
             {
                 if (m_opt.HashObjectBodies)
-                    obj.BodyHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(body));
+                    obj.BodyHash = Convert.ToHexString(ManagedSha256.HashData(body));
                 m_opt.ObjectObserver(obj, entry, regionDir);
             }
 

@@ -33,16 +33,24 @@ public sealed class ExportOptions
 {
     /// <summary>Folder the builds are written to; created when missing.</summary>
     public string OutputDirectory { get; set; }
+    /// <summary>
+    /// The start-up check of the image library: returns null when it works, otherwise the reason it does not (the export
+    /// then stops before writing anything). Null runs the built-in check, <see cref="ImageSelfCheck.Problem"/>; tests replace it.
+    /// </summary>
+    public Func<string> ImageCheck { get; set; }
     /// <summary>Only the build whose root part has this id or whose name is this (case-insensitive).</summary>
     public string Object { get; set; }
     /// <summary>Export at most this many builds (after the filter); 0 for all.</summary>
     public int Limit { get; set; }
     /// <summary>
-    /// Memory the export aims to stay within, in megabytes; 0 for the default of 1024. Asset bodies beyond a share of it wait
+    /// Memory the export aims to stay within, in megabytes; 0 for the default: 2048, or half of the machine's memory if that is
+    /// smaller (<see cref="ArchiveExporter.DefaultMaxMemoryMegabytes(long)"/>). Asset bodies beyond a share of it wait
     /// in the cache folder, and the decoded-image and read-back caches are sized from it. An asset that is larger than half
     /// of it cannot be handled: it is reported over-memory-limit and the run ends with exit code 4.
     /// </summary>
     public int MaxMemoryMegabytes { get; set; }
+    /// <summary>The machine's memory in bytes, for choosing the default memory cap; 0 (the default) to ask the runtime. A test seam.</summary>
+    public long PhysicalMemoryBytes { get; set; }
     /// <summary>
     /// Most megabytes of asset bodies the cache folder and memory may hold together; 0 (the default) for no limit. An asset
     /// that would take the total past it is reported over-size-limit and the run ends with exit code 4.
@@ -65,8 +73,20 @@ public sealed class ExportOptions
     public long MinFreeBytes { get; set; }
     /// <summary>Free bytes on the drive that holds a path; null reads the real drive. A test hook.</summary>
     public Func<string, long?> FreeBytes { get; set; }
+    /// <summary>Writes an asset body to the cache folder; null uses File.WriteAllBytes. A test hook.</summary>
+    public Action<string, byte[]> WriteCacheFile { get; set; }
     /// <summary>Write every build again, even one the output folder already holds from this archive by this tool version.</summary>
     public bool Force { get; set; }
+    /// <summary>
+    /// File a memory log is appended to (one JSON line every <see cref="DiagnosticsEvery"/> builds, and while the archive is
+    /// read, every that many object files): managed heap, working set, generation sizes and the size of every structure kept
+    /// across builds. Null (the default) writes nothing.
+    /// </summary>
+    public string DiagnosticsPath { get; set; }
+    /// <summary>Builds (or object files) between two lines of the memory log; 0 for 100.</summary>
+    public int DiagnosticsEvery { get; set; }
+    /// <summary>Collect garbage before each line of the memory log, so it shows what the run holds (slower; for measuring).</summary>
+    public bool DiagnosticsCollect { get; set; }
     /// <summary>Report progress after this many builds (and at least every ten seconds); 0 for 25.</summary>
     public int ProgressEvery { get; set; }
     /// <summary>Receives the progress lines and the notes about a build that failed; null for none.</summary>
@@ -252,6 +272,8 @@ public sealed class ExportSummary
     public string ToolVersion { get; set; }
     /// <summary>Highest working set of the process, in megabytes.</summary>
     public double PeakWorkingSetMegabytes { get; set; }
+    /// <summary>Highest managed heap size seen when a build finished (the memory cap limits this), in megabytes; 0 when no build ran.</summary>
+    public double PeakManagedHeapMegabytes { get; set; }
     /// <summary>Asset bytes written to the cache folder in this run.</summary>
     public long CacheBytesWritten { get; set; }
     /// <summary>Times the archive was read: 1, plus one for each round that went back for assets seen before a build asked for them.</summary>

@@ -155,17 +155,17 @@ internal sealed class GltfDocument
                 w.Write((byte)0);
         }
         w.Flush();
-        return glb.ToArray();
+        // the stream was sized to the file, so its buffer is the file: no second copy
+        return glb.Length == glb.Capacity ? glb.GetBuffer() : glb.ToArray();
     }
 
     private static int AddFloats(MemoryStream bin, List<(int offset, int length, int target)> views,
         List<(int view, int count, string type, float[] min, float[] max)> accessors, float[] data, int components, string type, bool withBounds)
     {
         int offset = (int)bin.Length;
-        byte[] bytes = new byte[data.Length * 4];
-        Buffer.BlockCopy(data, 0, bytes, 0, bytes.Length);
-        bin.Write(bytes, 0, bytes.Length);
-        views.Add((offset, bytes.Length, 34962));
+        int byteCount = data.Length * 4;
+        bin.Write(System.Runtime.InteropServices.MemoryMarshal.AsBytes(data.AsSpan()));
+        views.Add((offset, byteCount, 34962));
 
         float[] min = null, max = null;
         if (withBounds)

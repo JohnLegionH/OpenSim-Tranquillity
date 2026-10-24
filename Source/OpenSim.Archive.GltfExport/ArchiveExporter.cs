@@ -32,6 +32,7 @@ public static class ArchiveExporter
     public static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
     {
         WriteIndented = true,
+        NewLine = "\n",   // the same bytes on Windows and Linux
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
@@ -61,6 +62,10 @@ public static class ArchiveExporter
     {
         if (string.IsNullOrEmpty(options.OutputDirectory))
             throw new ArgumentException("an output folder is needed");
+        // before anything is read or written: a missing image library would otherwise turn every texture into a placeholder
+        string imageProblem = (options.ImageCheck ?? ImageSelfCheck.Problem)();
+        if (imageProblem != null)
+            throw new ImageLibraryException(imageProblem);
         string fullArchive = Path.GetFullPath(archivePath);
         string fullOut = Path.GetFullPath(options.OutputDirectory);
         if (string.Equals(fullArchive, fullOut, StringComparison.OrdinalIgnoreCase))
@@ -83,7 +88,8 @@ public static class ArchiveExporter
         {
             CacheDirectory = string.IsNullOrEmpty(options.CacheDirectory) ? Path.Combine(fullOut, ".asset-cache") : Path.GetFullPath(options.CacheDirectory)
         };
-        assets.MaxMemoryBytes = (options.MaxMemoryMegabytes > 0 ? options.MaxMemoryMegabytes : DefaultMaxMemoryMegabytes) * 1024L * 1024;
+        assets.WriteFile = options.WriteCacheFile;
+        assets.MaxMemoryBytes = MaxMemoryMegabytesFor(options) * 1024L * 1024;
         if (options.MaxCacheMegabytes > 0)
             assets.MaxBytes = options.MaxCacheMegabytes * 1024L * 1024;
         summary.Layout = options.SelfContained ? "self-contained" : "shared";
@@ -107,12 +113,30 @@ public static class ArchiveExporter
         Dictionary<string, int> occurrences = new Dictionary<string, int>();
         int objectsRead = 0;
         long lastNote = clock.ElapsedMilliseconds;
+        List<SummaryBuild> rows = new List<SummaryBuild>();
+        HashSet<string> sharedWritten = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        HeapGovernor governor = null;
+        ExportDiagnostics diagnostics = string.IsNullOrEmpty(options.DiagnosticsPath) ? null : new ExportDiagnostics(Path.GetFullPath(options.DiagnosticsPath), options.DiagnosticsEvery, options.DiagnosticsCollect);
+        Action<string, int> sample = (phase, count) =>
+            diagnostics?.Write(phase, count, new[]
+            {
+                new KeyValuePair<string, long>("buildsHeld", groups.Count),
+                new KeyValuePair<string, long>("partsHeld", groups.Sum(g => (long)g.Group.Parts.Count)),
+                new KeyValuePair<string, long>("occurrenceEntries", occurrences.Count),
+                new KeyValuePair<string, long>("journalEntriesHeld", done.Count),
+                new KeyValuePair<string, long>("summaryRowsHeld", rows.Count),
+                new KeyValuePair<string, long>("usedFolderNames", usedFolders.Count),
+                new KeyValuePair<string, long>("sharedFileNames", sharedWritten.Count),
+                new KeyValuePair<string, long>("governorCollections", governor?.Collections ?? 0)
+            }.Concat(assets.Sizes()));
 
         // The one pass over the archive: objects, and the asset bodies they name.
         InspectorOptions inspect = new InspectorOptions { StandardChecks = false, MaxRetainedRecords = 1, HashObjectBodies = true };
         inspect.ObjectObserver = (obj, entry, regionDir) =>
         {
             objectsRead++;
+            if (diagnostics != null && diagnostics.Due("read", objectsRead))
+                sample("read", objectsRead);
             if (clock.ElapsedMilliseconds - lastNote > 10_000)
             {
                 lastNote = clock.ElapsedMilliseconds;
@@ -192,10 +216,10 @@ public static class ArchiveExporter
         }
 
         // The builds.
-        List<SummaryBuild> rows = new List<SummaryBuild>();
         int memoryFailures = 0;
-        HashSet<string> sharedWritten = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        long peakHeapBytes = 0;
         int total = groups.Count, finished = 0, written = 0;
+        governor = new HeapGovernor(assets.MaxMemoryBytes);
         int every = options.ProgressEvery > 0 ? options.ProgressEvery : 25;
         Stopwatch writing = Stopwatch.StartNew();
         long lastReport = writing.ElapsedMilliseconds;
@@ -206,6 +230,9 @@ public static class ArchiveExporter
         foreach (Pending kept in groups)
             if (kept.Resumed != null)
                 usedFolders.Add(kept.Resumed.Folder);
+
+        // the disk filled up while the archive was being read into the cache folder: nothing can be built from what is missing
+        string diskFullWhere = assets.DiskFullMessage == null ? null : "the asset cache folder " + assets.CacheDirectory + " (" + assets.DiskFullMessage + ")";
 
         foreach (Pending p in groups)
         {
@@ -219,6 +246,11 @@ public static class ArchiveExporter
             {
                 // Stop cleanly between builds when the output drive is nearly full; a rerun carries on from the journal.
                 long? freeNow = freeBytes(fullOut);
+                if (diskFullWhere != null)
+                {
+                    StopForFullDisk(summary, say, groups.Count - finished, written, diskFullWhere);
+                    break;
+                }
                 if (freeNow.HasValue && freeNow.Value < floor)
                 {
                     summary.BuildsNotDone = groups.Count - finished;
@@ -232,6 +264,12 @@ public static class ArchiveExporter
                 {
                     BeforeBuild?.Invoke(p.Group);
                     row = WriteBuild(p.Group, archiveName, p.Entry, fullOut, usedFolders, options.World, assets, shared, sharedWritten);
+                }
+                catch (Exception e) when (DiskFull.Is(e))
+                {
+                    diskFullWhere = "the output folder " + fullOut + " (" + e.Message + ")";
+                    StopForFullDisk(summary, say, groups.Count - finished, written, diskFullWhere);
+                    break;   // not journaled: a rerun writes this build again
                 }
                 catch (Exception e)
                 {
@@ -251,11 +289,24 @@ public static class ArchiveExporter
                 row.ToolVersion = ToolVersion;
                 row.ArchiveEntry = Text.Clean(p.Entry);
                 row.Occurrence = p.Occurrence;
-                File.AppendAllText(journalPath, JsonSerializer.Serialize(row, JournalOptions) + "\n", new UTF8Encoding(false));
+                try
+                {
+                    File.AppendAllText(journalPath, JsonSerializer.Serialize(row, JournalOptions) + "\n", new UTF8Encoding(false));
+                }
+                catch (IOException e) when (DiskFull.Is(e))
+                {
+                    diskFullWhere = "the output folder " + fullOut + " (" + e.Message + ")";
+                    StopForFullDisk(summary, say, groups.Count - finished, written, diskFullWhere);
+                    break;   // the build is on disk but not journaled: a rerun writes it again
+                }
                 written++;
             }
             rows.Add(row);
             finished++;
+            peakHeapBytes = Math.Max(peakHeapBytes, Math.Max(GC.GetTotalMemory(false), GC.GetGCMemoryInfo().HeapSizeBytes));
+            governor.AfterBuild();
+            if (diagnostics != null && (diagnostics.Due("build", finished) || finished == total))
+                sample("build", finished);
 
             if (written > 0 && p.Resumed == null && (finished % every == 0 || writing.ElapsedMilliseconds - lastReport >= 10_000 || finished == total))
             {
@@ -282,16 +333,62 @@ public static class ArchiveExporter
         summary.CacheBytesWritten = assets.CacheBytesWritten;
         using (Process me = Process.GetCurrentProcess())
             summary.PeakWorkingSetMegabytes = Math.Round(me.PeakWorkingSet64 / 1048576.0, 1);
-        File.WriteAllText(Path.Combine(fullOut, "export-summary.json"), JsonSerializer.Serialize(summary, JsonOptions), new UTF8Encoding(false));
-        File.WriteAllText(Path.Combine(fullOut, "export-summary.txt"), SummaryText.Build(summary), new UTF8Encoding(false));
+        summary.PeakManagedHeapMegabytes = Math.Round(peakHeapBytes / 1048576.0, 1);
+        try
+        {
+            File.WriteAllText(Path.Combine(fullOut, "export-summary.json"), JsonSerializer.Serialize(summary, JsonOptions), new UTF8Encoding(false));
+            File.WriteAllText(Path.Combine(fullOut, "export-summary.txt"), SummaryText.Build(summary), new UTF8Encoding(false));
+        }
+        catch (IOException e) when (DiskFull.Is(e))
+        {
+            say("the summary files could not be written because the disk is full; the summary is printed instead");
+        }
         return summary;
     }
 
-    /// <summary>The memory the export aims to stay within when the caller names none, in megabytes.</summary>
-    public const int DefaultMaxMemoryMegabytes = 1024;
+    /// <summary>The most memory the export aims to stay within when the caller names none, in megabytes.</summary>
+    public const int DefaultMaxMemoryLimitMegabytes = 2048;
+
+    /// <summary>The cap used when the machine's memory size cannot be read: the value earlier releases used for every machine.</summary>
+    public const int UnknownMemoryMaxMegabytes = 1024;
+
+    /// <summary>
+    /// The memory cap used when the caller names none: <see cref="DefaultMaxMemoryLimitMegabytes"/>, or half of the machine's
+    /// memory if that is smaller. <paramref name="physicalMemoryBytes"/> of zero or less means the size is unknown.
+    /// </summary>
+    public static int DefaultMaxMemoryMegabytes(long physicalMemoryBytes)
+    {
+        if (physicalMemoryBytes <= 0)
+            return UnknownMemoryMaxMegabytes;
+        long half = physicalMemoryBytes / 2 / (1024 * 1024);
+        return (int)Math.Max(1, Math.Min(DefaultMaxMemoryLimitMegabytes, half));
+    }
+
+    /// <summary>
+    /// The memory cap for a run, in megabytes: the one named in the options, or the default for this machine
+    /// (<see cref="ExportOptions.PhysicalMemoryBytes"/>, else the memory the runtime reports as available, which is a
+    /// container's limit inside a container). Read it before the managed heap is limited, because after that the runtime
+    /// reports the limit.
+    /// </summary>
+    public static int MaxMemoryMegabytesFor(ExportOptions options)
+    {
+        if (options.MaxMemoryMegabytes > 0)
+            return options.MaxMemoryMegabytes;
+        return DefaultMaxMemoryMegabytes(options.PhysicalMemoryBytes > 0 ? options.PhysicalMemoryBytes : GC.GetGCMemoryInfo().TotalAvailableMemoryBytes);
+    }
 
     /// <summary>The output drive is not written to once its free space is below this: 2 GB.</summary>
     public const long MinFreeBytes = 2L * 1024 * 1024 * 1024;
+
+    /// <summary>Records the clean stop for a full disk: the summary then leads with STOPPED: LOW DISK SPACE and the exit code is 5.</summary>
+    private static void StopForFullDisk(ExportSummary summary, Action<string> say, int notDone, int written, string where)
+    {
+        summary.BuildsNotDone = notDone;
+        summary.DiskSpaceStop = string.Format(CultureInfo.InvariantCulture,
+            "STOPPED: LOW DISK SPACE. The disk is full: writing to {0} failed. {1} builds were written in this run and {2} are not done. Free some space and run the same line again: it carries on where it stopped.",
+            where, written, notDone);
+        say(summary.DiskSpaceStop);
+    }
 
     private static void Warn(ExportSummary summary, Action<string> say, string text)
     {

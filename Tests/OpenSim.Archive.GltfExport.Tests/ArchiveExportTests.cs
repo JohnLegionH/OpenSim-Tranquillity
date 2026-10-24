@@ -136,6 +136,27 @@ public class ArchiveExportTests
     }
 
     [Fact]
+    public void ABrokenImageLibraryStopsTheCommandWithExitCode2AndWritesNothing()
+    {
+        (string archive, string outDir, _, _) = MakeArchive();
+        string cacheDir = Path.Combine(Path.GetDirectoryName(archive), "cache");
+        int exit = RunCliWithImageCheck(() => "the native image library was not found", out string error, "oar-export", archive, "--out", outDir, "--cache-dir", cacheDir);
+        Assert.Equal(2, exit);
+        Assert.Contains("the native image library was not found", error);
+        Assert.Contains("nothing was written", error);
+        Assert.False(Directory.Exists(outDir));
+        Assert.False(Directory.Exists(cacheDir));
+    }
+
+    [Fact]
+    public void AWorkingImageLibraryLetsTheCommandRunAsBefore()
+    {
+        (string archive, string outDir, _, _) = MakeArchive();
+        Assert.Equal(0, RunCliWithImageCheck(() => null, out _, "oar-export", archive, "--out", outDir, "--limit", "1"));
+        Assert.Single(Directory.GetDirectories(outDir));
+    }
+
+    [Fact]
     public void TheCommandLineWritesTheSameAndSetsExitCodes()
     {
         (string archive, string outDir, _, _) = MakeArchive();
@@ -201,6 +222,29 @@ public class ArchiveExportTests
             {
                 Console.SetOut(o);
                 Console.SetError(e);
+            }
+        }
+    }
+
+    private static int RunCliWithImageCheck(Func<string> imageCheck, out string error, params string[] args)
+    {
+        lock (ConsoleLock)
+        {
+            TextWriter o = Console.Out, e = Console.Error;
+            StringWriter err = new StringWriter();
+            try
+            {
+                Console.SetOut(new StringWriter());
+                Console.SetError(err);
+                OpenSim.ArchiveInspector.ExportCommand.ImageCheck = imageCheck;
+                return OpenSim.ArchiveInspector.Program.Main(args);
+            }
+            finally
+            {
+                OpenSim.ArchiveInspector.ExportCommand.ImageCheck = null;
+                Console.SetOut(o);
+                Console.SetError(e);
+                error = err.ToString();
             }
         }
     }
