@@ -32,6 +32,7 @@ public static class ArchiveExporter
     public static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
     {
         WriteIndented = true,
+        NewLine = "\n",   // the same bytes on Windows and Linux
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
@@ -83,6 +84,7 @@ public static class ArchiveExporter
         {
             CacheDirectory = string.IsNullOrEmpty(options.CacheDirectory) ? Path.Combine(fullOut, ".asset-cache") : Path.GetFullPath(options.CacheDirectory)
         };
+        assets.WriteFile = options.WriteCacheFile;
         assets.MaxMemoryBytes = (options.MaxMemoryMegabytes > 0 ? options.MaxMemoryMegabytes : DefaultMaxMemoryMegabytes) * 1024L * 1024;
         if (options.MaxCacheMegabytes > 0)
             assets.MaxBytes = options.MaxCacheMegabytes * 1024L * 1024;
@@ -207,6 +209,9 @@ public static class ArchiveExporter
             if (kept.Resumed != null)
                 usedFolders.Add(kept.Resumed.Folder);
 
+        // the disk filled up while the archive was being read into the cache folder: nothing can be built from what is missing
+        string diskFullWhere = assets.DiskFullMessage == null ? null : "the asset cache folder " + assets.CacheDirectory + " (" + assets.DiskFullMessage + ")";
+
         foreach (Pending p in groups)
         {
             SummaryBuild row;
@@ -219,6 +224,11 @@ public static class ArchiveExporter
             {
                 // Stop cleanly between builds when the output drive is nearly full; a rerun carries on from the journal.
                 long? freeNow = freeBytes(fullOut);
+                if (diskFullWhere != null)
+                {
+                    StopForFullDisk(summary, say, groups.Count - finished, written, diskFullWhere);
+                    break;
+                }
                 if (freeNow.HasValue && freeNow.Value < floor)
                 {
                     summary.BuildsNotDone = groups.Count - finished;
@@ -232,6 +242,12 @@ public static class ArchiveExporter
                 {
                     BeforeBuild?.Invoke(p.Group);
                     row = WriteBuild(p.Group, archiveName, p.Entry, fullOut, usedFolders, options.World, assets, shared, sharedWritten);
+                }
+                catch (Exception e) when (DiskFull.Is(e))
+                {
+                    diskFullWhere = "the output folder " + fullOut + " (" + e.Message + ")";
+                    StopForFullDisk(summary, say, groups.Count - finished, written, diskFullWhere);
+                    break;   // not journaled: a rerun writes this build again
                 }
                 catch (Exception e)
                 {
@@ -251,7 +267,16 @@ public static class ArchiveExporter
                 row.ToolVersion = ToolVersion;
                 row.ArchiveEntry = Text.Clean(p.Entry);
                 row.Occurrence = p.Occurrence;
-                File.AppendAllText(journalPath, JsonSerializer.Serialize(row, JournalOptions) + "\n", new UTF8Encoding(false));
+                try
+                {
+                    File.AppendAllText(journalPath, JsonSerializer.Serialize(row, JournalOptions) + "\n", new UTF8Encoding(false));
+                }
+                catch (IOException e) when (DiskFull.Is(e))
+                {
+                    diskFullWhere = "the output folder " + fullOut + " (" + e.Message + ")";
+                    StopForFullDisk(summary, say, groups.Count - finished, written, diskFullWhere);
+                    break;   // the build is on disk but not journaled: a rerun writes it again
+                }
                 written++;
             }
             rows.Add(row);
@@ -282,8 +307,15 @@ public static class ArchiveExporter
         summary.CacheBytesWritten = assets.CacheBytesWritten;
         using (Process me = Process.GetCurrentProcess())
             summary.PeakWorkingSetMegabytes = Math.Round(me.PeakWorkingSet64 / 1048576.0, 1);
-        File.WriteAllText(Path.Combine(fullOut, "export-summary.json"), JsonSerializer.Serialize(summary, JsonOptions), new UTF8Encoding(false));
-        File.WriteAllText(Path.Combine(fullOut, "export-summary.txt"), SummaryText.Build(summary), new UTF8Encoding(false));
+        try
+        {
+            File.WriteAllText(Path.Combine(fullOut, "export-summary.json"), JsonSerializer.Serialize(summary, JsonOptions), new UTF8Encoding(false));
+            File.WriteAllText(Path.Combine(fullOut, "export-summary.txt"), SummaryText.Build(summary), new UTF8Encoding(false));
+        }
+        catch (IOException e) when (DiskFull.Is(e))
+        {
+            say("the summary files could not be written because the disk is full; the summary is printed instead");
+        }
         return summary;
     }
 
@@ -292,6 +324,16 @@ public static class ArchiveExporter
 
     /// <summary>The output drive is not written to once its free space is below this: 2 GB.</summary>
     public const long MinFreeBytes = 2L * 1024 * 1024 * 1024;
+
+    /// <summary>Records the clean stop for a full disk: the summary then leads with STOPPED: LOW DISK SPACE and the exit code is 5.</summary>
+    private static void StopForFullDisk(ExportSummary summary, Action<string> say, int notDone, int written, string where)
+    {
+        summary.BuildsNotDone = notDone;
+        summary.DiskSpaceStop = string.Format(CultureInfo.InvariantCulture,
+            "STOPPED: LOW DISK SPACE. The disk is full: writing to {0} failed. {1} builds were written in this run and {2} are not done. Free some space and run the same line again: it carries on where it stopped.",
+            where, written, notDone);
+        say(summary.DiskSpaceStop);
+    }
 
     private static void Warn(ExportSummary summary, Action<string> say, string text)
     {

@@ -65,6 +65,8 @@ public sealed class ExportOptions
     public long MinFreeBytes { get; set; }
     /// <summary>Free bytes on the drive that holds a path; null reads the real drive. A test hook.</summary>
     public Func<string, long?> FreeBytes { get; set; }
+    /// <summary>Writes an asset body to the cache folder; null uses File.WriteAllBytes. A test hook.</summary>
+    public Action<string, byte[]> WriteCacheFile { get; set; }
     /// <summary>Write every build again, even one the output folder already holds from this archive by this tool version.</summary>
     public bool Force { get; set; }
     /// <summary>Report progress after this many builds (and at least every ten seconds); 0 for 25.</summary>

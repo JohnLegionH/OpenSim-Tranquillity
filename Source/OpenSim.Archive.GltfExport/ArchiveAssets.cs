@@ -196,7 +196,7 @@ internal sealed class ArchiveAssets
     public bool Wants(UUID id, int type, long size)
     {
         Seen.Add(id);
-        if (!Wanted.Contains(id) || m_blobs.ContainsKey(id) || OverLimit.ContainsKey(id))
+        if (DiskFullMessage != null || !Wanted.Contains(id) || m_blobs.ContainsKey(id) || OverLimit.ContainsKey(id))
             return false;
         _ = type;
         // a body that alone is more than half the memory cap cannot be held, read back and decoded within it
@@ -207,6 +207,12 @@ internal sealed class ArchiveAssets
         }
         return true;
     }
+
+    /// <summary>Set when the cache folder's drive filled up while a body was being written; no body is wanted after that.</summary>
+    public string DiskFullMessage { get; private set; }
+
+    /// <summary>Writes a body to the cache folder; null uses File.WriteAllBytes. A test hook.</summary>
+    public Action<string, byte[]> WriteFile { get; set; }
 
     public void Add(UUID id, int type, string entry, byte[] bytes)
     {
@@ -226,7 +232,16 @@ internal sealed class ArchiveAssets
         {
             Directory.CreateDirectory(CacheDirectory);
             stored.Path = Path.Combine(CacheDirectory, id.ToString() + ".bin");
-            File.WriteAllBytes(stored.Path, bytes);
+            try
+            {
+                (WriteFile ?? File.WriteAllBytes)(stored.Path, bytes);
+            }
+            catch (IOException e) when (DiskFull.Is(e))
+            {
+                DiskFullMessage = e.Message;   // the run stops after the read; nothing more is cached
+                m_bytes -= bytes.Length;
+                return;
+            }
             CacheBytesWritten += bytes.Length;
             stored.Bytes = null;
         }

@@ -479,4 +479,83 @@ public class SharedLayoutTests
         Assert.Equal(2 * 200 * 1024 + perTexture, shared);
         Assert.Equal(2 * 200 * 1024 + 2 * perTexture, self);
     }
+
+    // ------------------------------------------------------------ a disk that fills up
+
+    // The error a full disk raises on this system: ERROR_DISK_FULL as an HRESULT on Windows, ENOSPC on Linux and macOS.
+    private static IOException FullDiskError() => new IOException("There is not enough space on the disk.", OperatingSystem.IsWindows() ? unchecked((int)0x80070070) : 28);
+
+    [Fact]
+    public void TheFullDiskCodesAreRecognised()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.True(DiskFull.IsCode(unchecked((int)0x80070070)), "ERROR_DISK_FULL");
+            Assert.True(DiskFull.IsCode(unchecked((int)0x80070027)), "ERROR_HANDLE_DISK_FULL");
+            Assert.False(DiskFull.IsCode(unchecked((int)0x80070020)), "a sharing violation is not a full disk");
+            Assert.False(DiskFull.IsCode(28), "ENOSPC is a Linux number");
+        }
+        else
+        {
+            Assert.True(DiskFull.IsCode(28), "ENOSPC");
+            Assert.False(DiskFull.IsCode(13), "EACCES is not a full disk");
+            Assert.False(DiskFull.IsCode(unchecked((int)0x80070070)), "a Windows code is not a Linux error");
+        }
+        Assert.True(DiskFull.Is(new InvalidOperationException("wrapped", FullDiskError())), "found inside another exception");
+        Assert.False(DiskFull.Is(new IOException("some other failure")));
+    }
+
+    [Fact]
+    public void AFullDiskInsideABuildStopsCleanlyWithExitFiveAndARerunFinishesTheArchive()
+    {
+        Case c = MakeArchive();
+        int calls = 0;
+        ArchiveExporter.BeforeBuild = g => { if (++calls == 3) throw FullDiskError(); };
+        ExportSummary s;
+        try { s = Run(c); }
+        finally { ArchiveExporter.BeforeBuild = null; }
+
+        Assert.Equal(ExitCodes.LowDiskSpace, s.ExitCode);
+        Assert.StartsWith("STOPPED: LOW DISK SPACE", s.DiskSpaceStop);
+        Assert.Equal(2, s.BuildsWithAFile);
+        Assert.Equal(0, s.BuildsFailed);
+        Assert.Equal(2, s.BuildsNotDone);
+        string text = File.ReadAllText(Path.Combine(c.Out, "export-summary.txt"));
+        Assert.StartsWith("STOPPED: LOW DISK SPACE", text);
+        Assert.EndsWith("exit code 5" + Environment.NewLine, text);
+
+        ExportSummary again = Run(c);
+        Assert.Equal(0, again.ExitCode);
+        Assert.Equal(4, again.BuildsWithAFile);
+        Assert.Equal(2, again.BuildsResumed);
+        Assert.Equal(0, again.BuildsFailed);
+    }
+
+    [Fact]
+    public void AFullDiskWhileTheArchiveIsReadIntoTheCacheStopsCleanlyWithExitFiveAndARerunFinishesTheArchive()
+    {
+        Case c = MakeArchive(new[] { Noise(1_500_000) }, new[] { TexBig }, Textured("Big", TexBig));
+        ExportSummary s = Run(c, o => o.WriteCacheFile = (path, bytes) => throw FullDiskError());
+
+        Assert.Equal(ExitCodes.LowDiskSpace, s.ExitCode);
+        Assert.StartsWith("STOPPED: LOW DISK SPACE", s.DiskSpaceStop);
+        Assert.Contains("asset cache folder", s.DiskSpaceStop);
+        Assert.Equal(0, s.BuildsFailed);
+        Assert.Equal(0, s.BuildsWithAFile);
+        Assert.False(s.ArchiveIncomplete, "the archive itself was read to the end");
+        Assert.StartsWith("STOPPED: LOW DISK SPACE", File.ReadAllText(Path.Combine(c.Out, "export-summary.txt")));
+
+        ExportSummary again = Run(c);
+        Assert.Equal(0, again.ExitCode);
+        Assert.Equal(5, again.BuildsWithAFile);
+    }
+
+    [Fact]
+    public void ManifestsUseLineFeedsOnEverySystemSoTheSameArchiveGivesTheSameBytes()
+    {
+        Case c = MakeArchive();
+        ExportSummary s = Run(c);
+        foreach (SummaryBuild b in s.BuildList.Where(x => x.File != null))
+            Assert.DoesNotContain((char)13, File.ReadAllText(Path.Combine(c.Out, b.Folder, "manifest.json")));
+    }
 }

@@ -9,12 +9,14 @@
     <AssemblyName>oar-export</AssemblyName>
     <AssemblyTitle>oar-export</AssemblyTitle>
     <DefineConstants>$(DefineConstants);OAR_EXPORT_ONLY</DefineConstants>
+    <!-- no ICU library is needed on Linux; the exporter formats and compares text culture-independently -->
+    <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
 
-  <!-- the single-file build carries the image library's native code for both platforms it is published for -->
+  <!-- the single-file build carries the image library's native code for both platforms it is published for; the Linux package is the variant that does not need fontconfig -->
   <ItemGroup Condition="'$(OarExportExe)' == 'true'">
     <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="4.151.1" />
-    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.151.1" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.151.1" />
   </ItemGroup>
 
   <ItemGroup>
