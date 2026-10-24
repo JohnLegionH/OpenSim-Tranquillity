@@ -26,6 +26,7 @@ using OpenSimNGC.Appearance.Baking;
 //   --description <file>   the character description to assemble and publish
 //   --creator <uuid>    the CreatorAccount the endpoint is configured with
 //   --report <file>     where the Markdown record goes
+//   --folder-number <n> with --publish-only: the number of the outfit folder (default 1); an outfit that changed needs a new one
 //   --publish-only      publish the bundle to one account (--name1, --pw1-file) and nothing else: no worn look is added, no other
 //                       account is needed, and the report lists the account's Current Outfit and the rows the publish added
 //   --seed-clothed      give one account (--name1, --private, --report) an ordinary clothed look with real wearables: a red shirt, blue
@@ -399,7 +400,8 @@ static class WireProof
         Check("the Current Outfit before the publish", true, $"{cofLinks.Count} links to: {string.Join(", ", targets)}");
         var before = Snapshot(inv, me);
 
-        var made = OutfitAssembler.AssembleFromFile(Arg(a, "--description"), new PublishContext(me, creator, 1, 1_790_000_000));
+        var folderNumber = Array.IndexOf(a, "--folder-number") is var fn && fn >= 0 && fn + 1 < a.Length ? int.Parse(a[fn + 1]) : 1;
+        var made = OutfitAssembler.AssembleFromFile(Arg(a, "--description"), new PublishContext(me, creator, folderNumber, 1_790_000_000));
         Check("the bundle assembles and validates", made.Validation.Ok, $"{made.Bundle.Items.Count} items, {made.Bundle.Assets.Count} assets, {made.Content.Values.Sum(c => c.Length)} bytes");
         if (!made.Validation.Ok) return Finish(started, a);
         var zip = Zip(made.Bundle, made.Content);
