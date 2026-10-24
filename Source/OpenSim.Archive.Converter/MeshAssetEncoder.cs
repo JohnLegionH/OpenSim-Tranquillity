@@ -14,13 +14,14 @@ namespace OpenSim.Archive.Converter;
 /// Writes a faces list as a Linden Lab mesh asset with <see cref="MeshCodec"/>. The faces become the high level of detail, one
 /// model face for each face of the list in the same order (positions, normals, texture coordinates, no weights, so no skin);
 /// the medium, low and lowest levels are made with the viewer profile (1/3, 1/9 and 1/27 of the high level's triangles,
-/// <see cref="LodGenerator"/>); and the physics block is the bounding hull the viewer writes for an object uploaded with no
-/// physics model (<see cref="PhysicsBlock.AddBoundingHull"/>). A face with no triangles stays an empty slot (NoGeometry), so
+/// <see cref="LodGenerator"/>); the physics_convex block is the bounding hull the viewer writes for an object uploaded with no
+/// physics model (<see cref="PhysicsBlock.AddBoundingHull"/>); and the physics_mesh block, when the options carry a collision
+/// shape, is that shape's triangles (<see cref="PhysicsMeshBlock"/>), which a region reads before any display level. A face with no triangles stays an empty slot (NoGeometry), so
 /// face numbers do not move. The same faces always give the same bytes.
 /// </summary>
 public sealed class MeshAssetEncoder : IMeshEncoder
 {
-    public string Name => "OpenSim.MeshAsset (viewer profile levels of detail, bounding-hull physics)";
+    public string Name => "OpenSim.MeshAsset (viewer profile levels of detail, bounding hull, prim physics mesh)";
     public bool ProducesValidMesh => true;
 
     public byte[] Encode(IReadOnlyList<EncoderFace> faces, EncodeOptions options)
@@ -31,6 +32,8 @@ public sealed class MeshAssetEncoder : IMeshEncoder
 
         LodGenerator.GenerateAll(model, LodGenerator.Decimation, LodGenerator.Profile.Viewer);
         PhysicsBlock.AddBoundingHull(model);
+        if (options?.Physics != null)
+            model.PhysicsMesh = PhysicsMeshBlock.Make(options.Physics);
         return MeshCodec.Encode(model);
     }
 

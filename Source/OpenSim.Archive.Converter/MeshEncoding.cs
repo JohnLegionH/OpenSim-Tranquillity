@@ -33,6 +33,11 @@ public sealed class EncoderFace
 
 public sealed class EncodeOptions
 {
+    /// <summary>
+    /// The collision shape to write into the asset's physics_mesh block, in the unit-size space of the faces; null writes none
+    /// (the region then collides with a medium level of detail of the display mesh).
+    /// </summary>
+    public PhysicsGeometry Physics { get; set; }
 }
 
 /// <summary>

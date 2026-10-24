@@ -29,7 +29,8 @@ Then the new archive is checked against the source with a plan that states exact
   --assume-safe-unscanned    treat a script with no readable source as harmless (see oar-eligibility)
 
 The mesh assets are written with OpenSim.MeshAsset: the faces as the high level of detail, the lower levels made with the
-viewer's profile, and a bounding-hull physics block. Every mesh is decoded and read back (OpenSim.MeshAsset and OpenSim's
+viewer's profile, a bounding-hull physics block, and a physics_mesh block holding the collision shape the region's own prim
+mesher makes for the part, so the converted part collides as the prim did. Every mesh is decoded and read back (OpenSim.MeshAsset and OpenSim's
 physics mesher) before anything is written; if one fails, the report lists the parts and no archive is written.
 Exit codes: 0 the check passed, 1 the parity check failed or a mesh failed its validity check (nothing written), 2 the tool could not run (unreadable archive, bad command line, output exists).";
 

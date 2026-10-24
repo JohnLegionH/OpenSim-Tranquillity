@@ -252,7 +252,9 @@ public class ConverterTests
         ConvertedPart c = r.Converted.Single();
         Assert.False(StandInIds.Is(c.MeshId));
         List<EncoderFace> faces = FaceBuilder.FromPrim(part.Shape, out _);
-        Assert.Equal(c.MeshId, MeshId.FromBytes(new MeshAssetEncoder().Encode(faces, new EncodeOptions())));
+        // the bytes include the physics_mesh block the converter makes for the part
+        PhysicsGeometry physics = PrimPhysics.Build(part.Shape, null, null, out _);
+        Assert.Equal(c.MeshId, MeshId.FromBytes(new MeshAssetEncoder().Encode(faces, new EncodeOptions { Physics = physics })));
         Assert.DoesNotContain(StandInIds.Prefix, r.PlanJson);
         Assert.All(Entries(output), e => Assert.DoesNotContain(StandInIds.Prefix, e));
     }

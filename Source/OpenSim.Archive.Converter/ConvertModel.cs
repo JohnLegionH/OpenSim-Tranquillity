@@ -36,6 +36,13 @@ public interface ISculptMapSource
     SculptMap Get(Guid textureId, out string problem);
 }
 
+/// <summary>A sculpt map source that also holds the map as stored (JPEG 2000), so the region's own sculpt mesher can read it for the physics model.</summary>
+public interface ISculptMapBytes
+{
+    /// <summary>The stored bytes of the map, or null when they are not at hand.</summary>
+    byte[] GetBytes(Guid textureId);
+}
+
 public sealed class ConvertedPart
 {
     public Guid PartId { get; set; }
@@ -48,6 +55,12 @@ public sealed class ConvertedPart
     public int Triangles { get; set; }
     /// <summary>Triangles the mesher built that belong to no viewer face; left out of the mesh.</summary>
     public int UnnumberedTriangles { get; set; }
+    /// <summary>Vertices and triangles of the physics_mesh block written for the part (the region's physics mesher at unit size).</summary>
+    public int PhysicsVertices { get; set; }
+    public int PhysicsTriangles { get; set; }
+    /// <summary>The part's PhysicsShapeType in the source (0 prim, 1 none, 2 convex; -1 when the part had no such element) and as converted.</summary>
+    public int PhysicsShapeTypeBefore { get; set; } = -1;
+    public int PhysicsShapeTypeAfter { get; set; } = -1;
     public Guid MeshId { get; set; }
     public int ServerFacesBefore { get; set; }
     public List<string> Warnings { get; set; } = new List<string>();
@@ -195,7 +208,7 @@ public sealed class ConvertResult
             outputBytes = OutputBytes,
             invalidMeshParts = Invalid.Select(p => new { part = p.PartId, build = p.Build, link = p.LinkNum, name = p.Name, mesh = p.MeshId, problems = p.Problems }),
             seconds = Math.Round(Seconds, 1),
-            convertedParts = Converted.Select(c => new { part = c.PartId, build = c.Build, link = c.LinkNum, name = c.Name, kind = c.Kind, faces = c.Faces, emptyFaces = c.EmptyFaces, triangles = c.Triangles, unnumberedTriangles = c.UnnumberedTriangles, mesh = c.MeshId, serverFacesBefore = c.ServerFacesBefore, warnings = c.Warnings }),
+            convertedParts = Converted.Select(c => new { part = c.PartId, build = c.Build, link = c.LinkNum, name = c.Name, kind = c.Kind, faces = c.Faces, emptyFaces = c.EmptyFaces, triangles = c.Triangles, unnumberedTriangles = c.UnnumberedTriangles, physicsVertices = c.PhysicsVertices, physicsTriangles = c.PhysicsTriangles, physicsShapeTypeBefore = c.PhysicsShapeTypeBefore, physicsShapeTypeAfter = c.PhysicsShapeTypeAfter, mesh = c.MeshId, serverFacesBefore = c.ServerFacesBefore, warnings = c.Warnings }),
             keptParts = Kept.Select(k => new { part = k.PartId, build = k.Build, link = k.LinkNum, name = k.Name, code = k.Code, detail = k.Detail, byConverter = k.ByConverter })
         };
         return JsonSerializer.Serialize(doc, new JsonSerializerOptions { WriteIndented = true });

@@ -31,6 +31,8 @@ internal sealed class KitPart
     public string Owner = "a11ce000-0000-4000-8000-000000000001";
     public string Flags = "None";
     public bool Vehicle;
+    /// <summary>The PhysicsShapeType element (0 prim, 1 none, 2 convex); -1 leaves the element out.</summary>
+    public int PhysicsShapeType = -1;
     /// <summary>The LightEntry element, which the loader reads after ExtraParams and which wins over it.</summary>
     public bool Light;
     public int PCode = 9;
@@ -88,6 +90,8 @@ internal static class EligibilityKit
         sb.Append("<RotationOffset><X>0</X><Y>0</Y><Z>0</Z><W>1</W></RotationOffset>");
         sb.Append("<Description></Description><LinkNum>").Append(p.LinkNum).Append("</LinkNum>");
         sb.Append("<Flags>").Append(p.Flags).Append("</Flags>");
+        if (p.PhysicsShapeType >= 0)
+            sb.Append("<PhysicsShapeType>").Append(p.PhysicsShapeType).Append("</PhysicsShapeType>");
         if (p.Vehicle)
             sb.Append("<Vehicle><TYPE>1</TYPE><FLAGS>0</FLAGS></Vehicle>");
         sb.Append("<Shape>");

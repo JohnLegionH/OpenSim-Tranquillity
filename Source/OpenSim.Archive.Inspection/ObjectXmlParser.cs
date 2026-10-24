@@ -70,6 +70,8 @@ public sealed class ParsedPart
     public byte[] TextureAnimation = Array.Empty<byte>();
     /// <summary>True when the part's Flags include Physics (the part is a physical object).</summary>
     public bool PhysicsFlag;
+    /// <summary>The part's PhysicsShapeType element (0 prim, 1 none, 2 convex), -1 when the element is absent, -2 when it is not a number.</summary>
+    public int PhysicsShapeType = -1;
     /// <summary>True when the part carries a Vehicle element (parameters set by llSetVehicle* calls).</summary>
     public bool HasVehicleParams;
     /// <summary>The vehicle type stored in the Vehicle element (0 when none or unreadable).</summary>
@@ -360,6 +362,7 @@ internal static class ObjectXmlParser
                 case "ParticleSystem": ReadParticle(XmlRead.Text(r), pp); break;
                 case "SOPAnims": ReadAnims(XmlRead.Text(r), pp); break;
                 case "Flags": pp.PhysicsFlag = HasPhysicsFlag(XmlRead.Text(r)); break;
+                case "PhysicsShapeType": pp.PhysicsShapeType = int.TryParse(XmlRead.Text(r)?.Trim(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int pst) ? pst : -2; break;
                 case "Vehicle": ReadVehicle(r, pp); break;
                 case "TextureAnimation": pp.TextureAnimation = TryBase64(XmlRead.Text(r)) ?? Array.Empty<byte>(); break;
                 case "DynAttrs": pp.HasDynAttrs = true; r.Skip(); break;

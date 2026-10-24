@@ -27,6 +27,8 @@ namespace OpenSim.Archive.Converter;
 /// </summary>
 public sealed class ArchiveConverter
 {
+    private const int PhysShapePrim = 0, PhysShapeNone = 1;
+
     private readonly ConvertOptions m_options;
 
     public ArchiveConverter(ConvertOptions options = null)
@@ -83,6 +85,7 @@ public sealed class ArchiveConverter
             }
 
             List<EncoderFace> faces;
+            PhysicsGeometry physics;
             int unnumbered = 0;
             try
             {
@@ -102,9 +105,23 @@ public sealed class ArchiveConverter
                         continue;
                     }
                     faces = FaceBuilder.Slots(sr.Faces, sr.ViewerFaceCount);
+                    physics = PrimPhysics.Build(pp.Shape, (sculptMaps as ISculptMapBytes)?.GetBytes(pp.Shape.SculptTexture.Guid), map, out string physicsProblem);
+                    if (physics == null)
+                    {
+                        Keep(result, row, "PHYSICS_UNAVAILABLE", physicsProblem);
+                        continue;
+                    }
                 }
                 else
+                {
                     faces = FaceBuilder.FromPrim(pp.Shape, out unnumbered);
+                    physics = PrimPhysics.Build(pp.Shape, null, null, out string physicsProblem);
+                    if (physics == null)
+                    {
+                        Keep(result, row, "PHYSICS_UNAVAILABLE", physicsProblem);
+                        continue;
+                    }
+                }
             }
             catch (Exception e) when (e is InvalidOperationException || e is ArgumentException || e is IndexOutOfRangeException || e is NullReferenceException)
             {
@@ -126,9 +143,9 @@ public sealed class ArchiveConverter
             byte[] bytes;
             try
             {
-                bytes = encoder.Encode(faces, new EncodeOptions());
+                bytes = encoder.Encode(faces, new EncodeOptions { Physics = physics });
             }
-            catch (Exception e) when (e is InvalidOperationException || e is ArgumentException || e is OverflowException || e is IndexOutOfRangeException)
+            catch (Exception e) when (e is InvalidOperationException || e is ArgumentException || e is OverflowException || e is IndexOutOfRangeException || e is MeshAsset.MeshFormatException)
             {
                 Keep(result, row, "ENCODE_FAILED", e.GetType().Name + ": " + e.Message);
                 continue;
@@ -139,7 +156,7 @@ public sealed class ArchiveConverter
             if (StandInIds.Is(id))
                 throw new ConvertException("a stand-in mesh id remains for part " + row.PartId);
             if (meshes.TryAdd(id, bytes) && encoder.ProducesValidMesh)
-                verdicts[id] = MeshValidator.Check(bytes, faces, out _);
+                verdicts[id] = MeshValidator.Check(bytes, faces, out _, physics);
             if (verdicts.TryGetValue(id, out List<string> problems) && problems.Count > 0)
             {
                 result.Invalid.Add(new InvalidMeshPart { PartId = row.PartId, Build = row.Build, LinkNum = row.LinkNum, Name = row.Name, MeshId = id, Problems = problems });
@@ -148,13 +165,28 @@ public sealed class ArchiveConverter
 
             int faceCount = faces.Count;
             byte[] extra = pp.ExtraParams;
-            rewriter.AddPatch(new PartPatch(row.PartId, present => MeshShape.Edits(faceCount, id, extra, present)));
+            // A mesh part with no PhysicsShapeType of its own would collide as a convex hull (SceneObjectPart.DefaultPhysicsShapeType),
+            // which fills a room and seals a doorway. The prim's shape type is kept as it is, with one exception: the region
+            // gives a root part with type None its default type when it applies physics (SceneObjectPart.ApplyPhysics), which for
+            // the prim is Prim and for a mesh is convex, so the converted root is set to Prim, what the prim ended up with.
+            int shapeTypeBefore = pp.PhysicsShapeType;
+            bool rootNone = shapeTypeBefore == PhysShapeNone && pp.Part.IsRoot;
+            int shapeTypeAfter = rootNone ? PhysShapePrim : shapeTypeBefore;
+            rewriter.AddPatch(new PartPatch(row.PartId, present =>
+            {
+                List<ElementEdit> edits = new List<ElementEdit>(MeshShape.Edits(faceCount, id, extra, present));
+                if (rootNone && present.Contains("PhysicsShapeType"))
+                    edits.Add(ElementEdit.SetText("PhysicsShapeType", PhysShapePrim.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+                return edits;
+            }));
 
             ConvertedPart cp = new ConvertedPart
             {
                 PartId = row.PartId, Build = row.Build, LinkNum = row.LinkNum, Name = row.Name, Kind = row.Kind,
                 Faces = faceCount, EmptyFaces = faces.Count(f => f.IsEmpty), Triangles = faces.Sum(f => f.TriangleCount),
-                UnnumberedTriangles = unnumbered, MeshId = id, ServerFacesBefore = row.ServerFaces
+                UnnumberedTriangles = unnumbered, MeshId = id, ServerFacesBefore = row.ServerFaces,
+                PhysicsVertices = physics.VertexCount, PhysicsTriangles = physics.TriangleCount,
+                PhysicsShapeTypeBefore = shapeTypeBefore, PhysicsShapeTypeAfter = shapeTypeAfter
             };
             foreach (EligibilityReason w in row.Warnings)
                 cp.Warnings.Add(w.Code + ": " + w.Detail);
@@ -226,7 +258,7 @@ public sealed class ArchiveConverter
 }
 
 /// <summary>Reads the sculpt maps the converted sculpts name from the source archive, in one pass over it.</summary>
-public sealed class ArchiveSculptMapSource : ISculptMapSource
+public sealed class ArchiveSculptMapSource : ISculptMapSource, ISculptMapBytes
 {
     private readonly Dictionary<Guid, byte[]> m_bytes = new Dictionary<Guid, byte[]>();
     private readonly Dictionary<Guid, (SculptMap map, string problem)> m_decoded = new Dictionary<Guid, (SculptMap, string)>();
@@ -252,6 +284,8 @@ public sealed class ArchiveSculptMapSource : ISculptMapSource
                 m_bytes[id] = tar.ReadBody();
         }
     }
+
+    public byte[] GetBytes(Guid textureId) => m_bytes.TryGetValue(textureId, out byte[] data) ? data : null;
 
     public SculptMap Get(Guid textureId, out string problem)
     {
