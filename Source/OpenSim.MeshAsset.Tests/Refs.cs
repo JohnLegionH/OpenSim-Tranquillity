@@ -38,3 +38,26 @@ sealed class CorpusTheoryAttribute : TheoryAttribute
 {
     public CorpusTheoryAttribute() { Skip = Refs.SkipIfNoCorpus; }
 }
+
+/// <summary>
+/// The viewer's avatar_skeleton.xml (SL_SKELETON) and a mesh asset made from a glTF export (MAX_ASSET), for the skinning
+/// check. Tests that need them are skipped when the variable is unset or the file is absent.
+/// </summary>
+static class SkinRefs
+{
+    public static string Skeleton => Environment.GetEnvironmentVariable("SL_SKELETON") ?? "";
+    /// <summary>avatar_lad.xml, found beside the skeleton file, gives the default shape.</summary>
+    public static string AvatarDefinition => Path.Combine(Path.GetDirectoryName(Skeleton) ?? "", "avatar_lad.xml");
+    public static RestSkeleton LoadSkeleton() => RestSkeleton.Load(Skeleton).WithDefaultShape(AvatarDefinition);
+    public static string GltfModel => Environment.GetEnvironmentVariable("MAX_GLB") ?? "";
+    public static string GltfAsset => Environment.GetEnvironmentVariable("MAX_ASSET") ?? "";
+    public static string ReportDir => Environment.GetEnvironmentVariable("SKINNING_REPORT_DIR") ?? "";
+
+    public static string? SkipIfNoSkeleton => File.Exists(Skeleton) ? null : "no skeleton (set SL_SKELETON to the viewer's avatar_skeleton.xml)";
+    public static string? SkipIfNoGltfAsset => SkipIfNoSkeleton ?? (File.Exists(GltfAsset) ? null : "no asset (set MAX_ASSET)");
+}
+
+sealed class SkeletonFactAttribute : FactAttribute
+{
+    public SkeletonFactAttribute() { Skip = Refs.SkipIfNoCorpus ?? SkinRefs.SkipIfNoSkeleton; }
+}
