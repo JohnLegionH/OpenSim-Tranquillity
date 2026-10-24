@@ -368,12 +368,12 @@ public class ConverterTests
     [InlineData("torus")]
     [InlineData("tube")]
     [InlineData("ring")]
-    public void AClosedHoleRadiusOffsetIsKeptBecauseTheMesherDrawsItOpen(string shape)
+    public void AClosedHoleRadiusOffsetConvertsWithTheViewersCountAndAWarning(string shape)
     {
         KitPart part = Fixture(shape, "hole-size-one+radius-offset", "Offset");
         EligibilityRow row = Row(EligibilityKit.WriteArchive(part), part);
-        Assert.Equal(PartAction.KeepPrim, row.Action);
-        Assert.Equal(ReasonCodes.FaceRuleUnverified, row.Code);
+        Assert.Equal(PartAction.Convert, row.Action);
+        Assert.Contains(row.Warnings, w => w.Code == ReasonCodes.SideCountChanges);
     }
 
     [Fact]

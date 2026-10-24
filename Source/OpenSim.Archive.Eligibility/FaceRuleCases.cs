@@ -21,9 +21,9 @@ namespace OpenSim.Archive.Eligibility;
 /// <item>A circular path with more than one revolution: revolutions are not in the path's open test, so the path stays closed; the server adds two cut faces whenever revolutions are set.</item>
 /// <item>A circular path with a radius offset and a hole size of 1: the radius change is scaled by one minus the hole size, so it is zero and the path stays closed; the server adds two cut faces for any radius offset.</item>
 /// </list>
-/// The viewer's count is right in all three. The third case is still not converted: the exporter's mesher draws that path
-/// open and builds end-cap triangles the viewer has no face for, so the mesh would not be the viewer's geometry. A part whose
-/// counts differ for any other reason is not converted either (FACERULE_UNVERIFIED).
+/// The viewer's count is right in all three, and the mesher in viewer mode builds the viewer's faces in all three (the third case
+/// needed the mesher to close the path when the radius change is within 0.001, as the viewer does). A part whose counts differ
+/// for any other reason is not converted (FACERULE_UNVERIFIED).
 /// </summary>
 public static class FaceRuleCases
 {
@@ -34,11 +34,7 @@ public static class FaceRuleCases
     /// <summary>
     /// The settled reason the counts differ for this shape and the converter can build the viewer's geometry for it, or null.
     /// </summary>
-    public static string Explain(ShapeData shape)
-    {
-        string cause = Cause(shape);
-        return cause == ClosedHoleRadiusOffset ? null : cause;
-    }
+    public static string Explain(ShapeData shape) => Cause(shape);
 
     /// <summary>
     /// The settled reason the counts differ for this shape, or null when the difference is not one of the three cases. A case

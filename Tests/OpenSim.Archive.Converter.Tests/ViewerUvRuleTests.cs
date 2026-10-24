@@ -136,29 +136,16 @@ public class ViewerUvRuleTests
                 yield return new object[] { shape, modifier };
     }
 
-    /// <summary>
-    /// The one place the mesher's coordinates differ from the viewer's: a circular path with a y shear. The mesher turns the
-    /// path's angle by the shear (PrimMesher.cs:1382-1383, 1426, 1433) where the viewer shears the path point (llvolume.cpp:1306-1311),
-    /// so v is offset by the shear. The mesher is shared with the exporter and is not changed here; eligibility keeps these
-    /// shapes as prims (<see cref="UvRules.Unverified"/>).
-    /// </summary>
-    private static bool KnownMismatch(PrimParams p) => p.PathCurve != 16 && p.PathCurve != 128 && p.PathShearY != 0;
-
+    // A circular path with a y shear was the one place the mesher's coordinates differed from the viewer's: the mesher turned
+    // the path's angle by the shear where the viewer shears the path point (llvolume.cpp:1296-1299, 1331-1334, 1358-1361),
+    // so v was offset by the shear. In viewer mode the mesher now shears the point and keeps the angle, so every shape in
+    // the matrix is the viewer's rule and none is kept (<see cref="UvRules.Unverified"/> is empty).
     [Theory]
     [MemberData(nameof(Matrix))]
-    public void TheMeshersCoordinatesAreTheViewersRuleUnlessTheShapeIsKept(string shape, string modifier)
+    public void TheMeshersCoordinatesAreTheViewersRuleForEveryShape(string shape, string modifier)
     {
         PrimParams p = FaceMatrix.Make(shape, modifier);
-        List<string> bad = Violations(p);
-        if (KnownMismatch(p))
-        {
-            Assert.NotEmpty(bad);
-            Assert.True(UvRules.Unverified(FaceMatrix.Stored(p)) != null, "a shape with a known mismatch is not kept");
-        }
-        else
-        {
-            Assert.Empty(bad);
-            Assert.Null(UvRules.Unverified(FaceMatrix.Stored(p)));
-        }
+        Assert.Empty(Violations(p));
+        Assert.Null(UvRules.Unverified(FaceMatrix.Stored(p)));
     }
 }

@@ -33,24 +33,26 @@ public class SourceRuleTests
     }
 
     // The third kind of disagreement: a radius offset with a hole size of 1. The viewer's count is right (the path is closed,
-    // LLPath::genNGon 1253 and 1273-1277), but the exporter's mesher draws the path open and builds end-cap triangles the
-    // viewer has no face for, so its geometry is not the viewer's. These parts stay prims (FACERULE_UNVERIFIED).
+    // LLPath::genNGon 1253 and 1273-1277). The exporter's mesher used to draw the path open and build end-cap triangles the
+    // viewer has no face for; in viewer mode it now closes the path as the viewer does, so these parts convert.
     [Theory]
     [InlineData("torus", 3, 1)]
     [InlineData("tube", 6, 4)]
     [InlineData("ring", 5, 3)]
-    public void AClosedHoleRadiusOffsetHasTheViewersCountButTheMesherBuildsExtraTriangles(string shape, int server, int viewer)
+    public void AClosedHoleRadiusOffsetHasTheViewersCountAndTheMesherBuildsNoExtraTriangles(string shape, int server, int viewer)
     {
         ShapeData s = FaceMatrix.Shape(shape, "hole-size-one+radius-offset");
         FaceCounts c = FaceAgreement.Measure(s);
         Assert.Equal(server, c.Server);
         Assert.Equal(viewer, c.Viewer);
         Assert.Equal(FaceRuleCases.ClosedHoleRadiusOffset, FaceRuleCases.Cause(s));
-        Assert.Null(FaceRuleCases.Explain(s));
+        Assert.Equal(FaceRuleCases.ClosedHoleRadiusOffset, FaceRuleCases.Explain(s));
 
-        PrimGeometry.BuildFaces(PrimParams.FromShape(s), DetailLevel.High, out int count, out int unnumbered);
+        List<PrimFace> faces = PrimGeometry.BuildFaces(PrimParams.FromShape(s), DetailLevel.High, out int count, out int unnumbered);
         Assert.Equal(viewer, count);
-        Assert.True(unnumbered > 0);
+        Assert.Equal(0, unnumbered);
+        List<PrimFaceKind> kinds = ViewerFaceRule.Faces(PrimParams.FromShape(s));
+        Assert.All(faces, f => Assert.Equal(kinds[f.Number], f.Kind));
     }
 
     [Theory]
@@ -90,7 +92,7 @@ public class SourceRuleTests
     }
 
     [Fact]
-    public void EveryDisagreementInTheProbeMatricesIsASettledCaseOrTheClosedHoleOffset()
+    public void EveryDisagreementInTheProbeMatricesIsASettledCase()
     {
         int checkedShapes = 0;
         foreach (string shape in new[] { "box", "cylinder", "prism", "sphere", "torus", "tube", "ring" })
@@ -100,7 +102,7 @@ public class SourceRuleTests
                 FaceCounts c = FaceAgreement.Measure(s);
                 checkedShapes++;
                 if (!c.Agree)
-                    Assert.True(FaceRuleCases.Explain(s) != null || modifier == "hole-size-one+radius-offset",
+                    Assert.True(FaceRuleCases.Explain(s) != null,
                         shape + " / " + modifier + " differs (" + c.Server + " against " + c.Viewer + ") and is not a settled case");
             }
         Assert.True(checkedShapes >= 196);
