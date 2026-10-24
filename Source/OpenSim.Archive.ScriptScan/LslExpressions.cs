@@ -28,6 +28,13 @@ public sealed class LslValue
     public IReadOnlyList<LslValue> Items { get; }
     /// <summary>The constant's name when the value came straight from a named constant (PRIM_TYPE, LINK_SET, ...).</summary>
     public string ConstName { get; }
+    /// <summary>For an Unknown that came from a list variable the scanner could not follow: where the list comes from.</summary>
+    public string Reason { get; private set; }
+    /// <summary>
+    /// For a list that came from a list variable the scanner followed: the separately built pieces of it, in script order.
+    /// <see cref="Items"/> holds them joined. Null for a list written out in place.
+    /// </summary>
+    public IReadOnlyList<IReadOnlyList<LslValue>> Segments { get; private set; }
 
     private LslValue(LslValueKind kind, long i = 0, double f = 0, string s = null, IReadOnlyList<LslValue> items = null, string constName = null)
     {
@@ -45,6 +52,20 @@ public sealed class LslValue
     public static LslValue OfVector() => new LslValue(LslValueKind.Vector);
     public static LslValue OfRotation() => new LslValue(LslValueKind.Rotation);
     public static LslValue OfList(IReadOnlyList<LslValue> items) => new LslValue(LslValueKind.List, items: items);
+
+    public static LslValue UnknownBecause(string reason)
+    {
+        LslValue v = new LslValue(LslValueKind.Unknown);
+        v.Reason = reason;
+        return v;
+    }
+
+    public static LslValue OfSegments(IReadOnlyList<IReadOnlyList<LslValue>> segments)
+    {
+        LslValue v = new LslValue(LslValueKind.List, items: segments.SelectMany(x => x).ToList());
+        v.Segments = segments;
+        return v;
+    }
 
     public bool IsUnknown => Kind == LslValueKind.Unknown;
     public bool IsInt => Kind == LslValueKind.Integer;
@@ -112,12 +133,14 @@ public static class LslConstants
 public sealed class LslExpressionParser
 {
     private readonly IReadOnlyList<LslToken> m_t;
+    private readonly LslListTracker m_lists;
     private int m_pos;
 
-    public LslExpressionParser(IReadOnlyList<LslToken> tokens, int start)
+    public LslExpressionParser(IReadOnlyList<LslToken> tokens, int start, LslListTracker lists = null)
     {
         m_t = tokens;
         m_pos = start;
+        m_lists = lists;
     }
 
     public int Position => m_pos;
@@ -212,16 +235,21 @@ public sealed class LslExpressionParser
     private static LslValue Apply(string op, LslValue a, LslValue b)
     {
         if (a.IsUnknown || b.IsUnknown)
-            return LslValue.Unknown;
+            return a.Reason != null ? a : b.Reason != null ? b : LslValue.Unknown;
 
         if (op == "+")
         {
             if (a.Kind == LslValueKind.List && b.Kind == LslValueKind.List)
+            {
+                // Pieces of a followed list stay separate, so each is checked to end on a rule boundary.
+                if (a.Segments != null || b.Segments != null)
+                    return LslValue.OfSegments((a.Segments ?? new[] { a.Items }).Concat(b.Segments ?? new[] { b.Items }).ToList());
                 return LslValue.OfList(a.Items.Concat(b.Items).ToList());
+            }
             if (a.Kind == LslValueKind.List)
-                return LslValue.OfList(a.Items.Append(b).ToList());
+                return a.Segments != null ? LslValue.OfSegments(a.Segments.Append(new[] { b }).ToList()) : LslValue.OfList(a.Items.Append(b).ToList());
             if (b.Kind == LslValueKind.List)
-                return LslValue.OfList(b.Items.Prepend(a).ToList());
+                return b.Segments != null ? LslValue.OfSegments(b.Segments.Prepend(new[] { a }).ToList()) : LslValue.OfList(b.Items.Prepend(a).ToList());
             if (a.Kind == LslValueKind.String && b.Kind == LslValueKind.String)
                 return LslValue.Of(a.Str + b.Str);
         }
@@ -360,6 +388,12 @@ public sealed class LslExpressionParser
                 return LslValue.Unknown;
             }
             LslValue result = LslConstants.TryGet(t.Text, out LslValue c) ? c : LslValue.Unknown;
+            if (result.IsUnknown && m_lists != null && !PeekPunct("."))
+            {
+                LslValue followed = m_lists.Resolve(t.Text, m_pos - 1);
+                if (followed != null)
+                    result = followed;
+            }
             // Member access (v.x) and postfix ++/-- on a variable.
             while (PeekPunct(".") && m_pos + 1 < m_t.Count && m_t[m_pos + 1].Kind == LslTokenKind.Identifier) { m_pos += 2; result = LslValue.Unknown; }
             if (PeekPunct("++") || PeekPunct("--")) { m_pos++; result = LslValue.Unknown; }

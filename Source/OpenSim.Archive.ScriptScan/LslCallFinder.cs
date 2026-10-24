@@ -21,7 +21,7 @@ public sealed class LslCall
 /// <summary>Finds every call of a set of functions in a token list and evaluates its arguments where it can.</summary>
 public static class LslCallFinder
 {
-    public static List<LslCall> Find(IReadOnlyList<LslToken> tokens, ISet<string> watched)
+    public static List<LslCall> Find(IReadOnlyList<LslToken> tokens, ISet<string> watched, LslListTracker lists = null)
     {
         List<LslCall> calls = new List<LslCall>();
         Stack<string> contexts = new Stack<string>();
@@ -55,7 +55,7 @@ public static class LslCallFinder
 
             if (t.Kind == LslTokenKind.Identifier && i + 1 < tokens.Count && tokens[i + 1].Is("(") && watched.Contains(t.Text))
             {
-                LslExpressionParser p = new LslExpressionParser(tokens, i + 2);
+                LslExpressionParser p = new LslExpressionParser(tokens, i + 2, lists);
                 List<LslValue> args = p.ParseArguments();
                 calls.Add(new LslCall { Function = t.Text, Line = t.Line, Args = args, Context = contexts.Count > 0 ? contexts.Peek() : null });
                 // Carry on from the next token so a watched call inside an argument is found too.

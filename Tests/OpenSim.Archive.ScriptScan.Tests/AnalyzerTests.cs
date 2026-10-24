@@ -312,4 +312,155 @@ public class AnalyzerTests
         ScriptHit h = Assert.Single(a.Hits, x => x.Code == LslScriptAnalyzer.FaceGt7);
         Assert.Equal(3, h.Count);
     }
+
+    // ---------------------------------------------------------------- list variables
+
+    private static ScriptAnalysis Script(string text) => LslScriptAnalyzer.Analyze(text);
+
+    private static List<string> Serious(ScriptAnalysis a) => a.Hits.Where(h => h.Level >= HitLevel.Warn).Select(h => h.Code).ToList();
+
+    private const string LightBoard = @"
+vector ON_COLOUR = <1.0, 0.9, 0.4>;
+vector OFF_COLOUR = <0.25, 0.2, 0.1>;
+float GLOW = 0.3;
+integer LAMPS = 4;
+show(integer mask)
+{
+    list params = [];
+    integer lamp;
+    for (lamp = 0; lamp < LAMPS; ++lamp)
+    {
+        integer lit = (mask >> lamp) & 1;
+        vector colour = OFF_COLOUR;
+        float glow = 0.0;
+        if (lit) { colour = ON_COLOUR; glow = GLOW; }
+        params += [PRIM_LINK_TARGET, lamp + 2,
+                   PRIM_COLOR, ALL_SIDES, colour, 1.0,
+                   PRIM_FULLBRIGHT, ALL_SIDES, lit,
+                   PRIM_GLOW, ALL_SIDES, glow];
+    }
+    llSetLinkPrimitiveParamsFast(LINK_THIS, params);
+}
+default { state_entry() { show(0); } }";
+
+    [Fact]
+    public void ListVariable_LightBoardPattern_IsReadLikeALiteral()
+    {
+        ScriptAnalysis a = Script(LightBoard);
+        Assert.DoesNotContain(a.Hits, h => h.Code == LslScriptAnalyzer.ParamsUnknown);
+        Assert.Empty(Serious(a));
+        Assert.Contains(a.Hits, h => h.Code == LslScriptAnalyzer.FaceIndexed);
+    }
+
+    [Fact]
+    public void ListVariable_PrimTypeThroughVariable_IsUnsafe()
+    {
+        ScriptAnalysis a = Run("list p = [PRIM_TYPE, PRIM_TYPE_BOX, 0, <0,1,0>, 0.0, <0,0,0>, <1,1,0>, <0,0,0>]; llSetPrimitiveParams(p);");
+        ScriptHit h = Assert.Single(a.Hits, x => x.Code == LslScriptAnalyzer.ShapeSet);
+        Assert.Equal(HitLevel.Unsafe, h.Level);
+        Assert.Equal(LinkKind.Self, h.Target.Kind);
+        Assert.DoesNotContain(a.Hits, x => x.Code == LslScriptAnalyzer.ParamsUnknown);
+    }
+
+    [Fact]
+    public void ListVariable_FromListReplaceList_StaysUncertainAndNamesTheSource()
+    {
+        ScriptAnalysis a = Run("list p = [PRIM_COLOR, 0, <1,0,0>, 1.0]; p = llListReplaceList(p, [<0,1,0>], 2, 2); llSetPrimitiveParams(p);");
+        ScriptHit h = Assert.Single(a.Hits, x => x.Code == LslScriptAnalyzer.ParamsUnknown);
+        Assert.Equal(HitLevel.Uncertain, h.Level);
+        Assert.Contains("llListReplaceList", h.Detail);
+    }
+
+    [Fact]
+    public void ListVariable_FromParameter_StaysUncertainAndSaysSo()
+    {
+        ScriptAnalysis a = Script("go(list p) { llSetPrimitiveParams(p); }\ndefault { state_entry() { go([PRIM_SLICE, <0,1,0>]); } }");
+        ScriptHit h = Assert.Single(a.Hits, x => x.Code == LslScriptAnalyzer.ParamsUnknown);
+        Assert.Contains("parameter", h.Detail);
+    }
+
+    [Fact]
+    public void ListVariable_BuiltInBranches_IsUncertainUnlessEveryBranchIsFollowed()
+    {
+        ScriptAnalysis unknown = Run("list p; if (n > 1) p = [PRIM_COLOR, 0, <1,0,0>, 1.0]; else p = llList2List(extra, 0, 3); llSetPrimitiveParams(p);");
+        Assert.Contains(unknown.Hits, h => h.Code == LslScriptAnalyzer.ParamsUnknown && h.Level == HitLevel.Uncertain);
+
+        ScriptAnalysis followed = Run("list p; if (n > 1) p = [PRIM_COLOR, 0, <1,0,0>, 1.0]; else p = [PRIM_SLICE, <0,1,0>]; llSetPrimitiveParams(p);");
+        Assert.DoesNotContain(followed.Hits, h => h.Code == LslScriptAnalyzer.ParamsUnknown);
+        Assert.Contains(followed.Hits, h => h.Code == LslScriptAnalyzer.SliceSet && h.Level == HitLevel.Unsafe);
+    }
+
+    [Fact]
+    public void ListVariable_ConcatenatedAcrossStatements_FindsTheRuleInTheLastPiece()
+    {
+        ScriptAnalysis a = Run(
+            "list p = [PRIM_COLOR, 0, <1,0,0>, 1.0]; p += [PRIM_FULLBRIGHT, 0, TRUE]; list q = p + [PRIM_FLEXIBLE, TRUE, 1, 0.5, 0.5, 0.5, 0.5, <0,0,0>]; q = q + p; llSetPrimitiveParams(q);");
+        Assert.DoesNotContain(a.Hits, h => h.Code == LslScriptAnalyzer.ParamsUnknown);
+        Assert.Contains(a.Hits, h => h.Code == LslScriptAnalyzer.FlexiSet && h.Level == HitLevel.Unsafe);
+    }
+
+    [Fact]
+    public void ListVariable_GlobalAssignedInStateEntry_IsFollowed()
+    {
+        ScriptAnalysis a = Script("list rules;\ndefault { state_entry() { rules = [PRIM_SLICE, <0,0.5,0>]; } touch_start(integer n) { llSetPrimitiveParams(rules); } }");
+        Assert.DoesNotContain(a.Hits, h => h.Code == LslScriptAnalyzer.ParamsUnknown);
+        Assert.Contains(a.Hits, h => h.Code == LslScriptAnalyzer.SliceSet && h.Level == HitLevel.Unsafe);
+    }
+
+    [Fact]
+    public void ListVariable_GlobalAlsoSetFromAnUnknownSource_IsUncertain()
+    {
+        ScriptAnalysis a = Script("list rules = [PRIM_COLOR, 0, <1,0,0>, 1.0];\ndefault { link_message(integer s, integer n, string m, key id) { rules = llParseString2List(m, [X], []); } touch_start(integer n) { llSetPrimitiveParams(rules); } }");
+        ScriptHit h = Assert.Single(a.Hits, x => x.Code == LslScriptAnalyzer.ParamsUnknown);
+        Assert.Contains("llParseString2List", h.Detail);
+    }
+
+    [Fact]
+    public void ListVariable_LocalHidesAGlobalOfTheSameName()
+    {
+        ScriptAnalysis a = Script("list p = [PRIM_SLICE, <0,1,0>];\nsafe() { list p = [PRIM_COLOR, 0, <1,0,0>, 1.0]; llSetPrimitiveParams(p); }\ndefault { state_entry() { safe(); } }");
+        Assert.Empty(Serious(a));
+    }
+
+    [Fact]
+    public void ListVariable_SetInsideAnExpression_IsUncertain()
+    {
+        ScriptAnalysis a = Run("list p = [PRIM_COLOR, 0, <1,0,0>, 1.0]; integer k = llGetListLength(p = [PRIM_SLICE, <0,1,0>]); llSetPrimitiveParams(p);");
+        Assert.Contains(a.Hits, h => h.Code == LslScriptAnalyzer.ParamsUnknown && h.Level == HitLevel.Uncertain);
+    }
+
+    [Fact]
+    public void ListVariable_PieceThatEndsInsideARule_IsUncertain()
+    {
+        ScriptAnalysis a = Run("list p = [PRIM_COLOR]; p += [0, <1,0,0>, 1.0]; llSetPrimitiveParams(p);");
+        Assert.Contains(a.Hits, h => h.Code == LslScriptAnalyzer.ParamsUnknown && h.Detail.Contains("inside a rule"));
+    }
+
+    [Fact]
+    public void ListVariable_RuleCodeThatIsAVariable_IsUncertain()
+    {
+        ScriptAnalysis a = Run("integer code = PRIM_TYPE; list p = [code, PRIM_TYPE_BOX]; llSetPrimitiveParams(p);");
+        Assert.Contains(a.Hits, h => h.Code == LslScriptAnalyzer.ParamsUnknown && h.Level == HitLevel.Uncertain);
+    }
+
+    [Fact]
+    public void ListVariable_LinkTargetSetInAnEarlierPiece_ReachesTheLaterRule()
+    {
+        ScriptAnalysis a = Run("list p = [PRIM_LINK_TARGET, 2]; p += [PRIM_SLICE, <0,1,0>]; llSetLinkPrimitiveParamsFast(LINK_THIS, p);");
+        Assert.Contains(a.Hits, h => h.Code == LslScriptAnalyzer.SliceSet && h.Target.Equals(new LinkTarget(LinkKind.Literal, 2)));
+    }
+
+    [Fact]
+    public void ListVariable_SelfReferencingConcatenation_Terminates()
+    {
+        ScriptAnalysis a = Run("list p = [PRIM_COLOR, 0, <1,0,0>, 1.0]; list q = p; p = p + q; q = p + q; llSetPrimitiveParams(q);");
+        Assert.Empty(Serious(a));
+    }
+
+    [Fact]
+    public void ListVariable_ReadBackList_IsReadLikeALiteral()
+    {
+        ScriptAnalysis a = Run("list want = [PRIM_TYPE]; list got = llGetPrimitiveParams(want);");
+        Assert.Contains(a.Hits, h => h.Code == LslScriptAnalyzer.Readback && h.Level == HitLevel.Warn);
+    }
 }

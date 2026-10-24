@@ -257,7 +257,9 @@ public static class LslScriptAnalyzer
         ScriptAnalysis result = new ScriptAnalysis { Lines = tokens.Count == 0 ? 0 : tokens[tokens.Count - 1].Line };
         Collector collector = new Collector(result);
 
-        foreach (LslCall call in LslCallFinder.Find(tokens, s_watched))
+        LslListTracker lists = new LslListTracker(tokens);
+
+        foreach (LslCall call in LslCallFinder.Find(tokens, s_watched, lists))
         {
             result.CallsSeen++;
             Evaluate(call, collector);
@@ -270,6 +272,9 @@ public static class LslScriptAnalyzer
         private readonly ScriptAnalysis m_a;
         private readonly Dictionary<string, ScriptHit> m_index = new Dictionary<string, ScriptHit>(StringComparer.Ordinal);
 
+        /// <summary>When set, a finding that is already recorded is not counted again (the same piece read under another link target).</summary>
+        public bool Repeat { get; set; }
+
         public Collector(ScriptAnalysis a) { m_a = a; }
 
         public void Add(string code, HitLevel level, LslCall call, LinkTarget target, string detail)
@@ -277,7 +282,8 @@ public static class LslScriptAnalyzer
             string key = code + "|" + call.Function + "|" + (int)target.Kind + "|" + target.Number + "|" + detail;
             if (m_index.TryGetValue(key, out ScriptHit h))
             {
-                h.Count++;
+                if (!Repeat)
+                    h.Count++;
                 return;
             }
             if (m_a.Hits.Count >= MaxHitsPerScript)
@@ -366,19 +372,62 @@ public static class LslScriptAnalyzer
     {
         if (rules.Kind != LslValueKind.List)
         {
-            c.Add(ParamsUnknown, HitLevel.Uncertain, call, target, call.Context == "link_message" ? "in link_message" : null);
+            string why = call.Context == "link_message" ? "in link_message" : null;
+            if (rules.Reason != null)
+                why = why == null ? rules.Reason : why + "; " + rules.Reason;
+            c.Add(ParamsUnknown, HitLevel.Uncertain, call, target, why);
             return;
         }
 
-        IReadOnlyList<LslValue> r = rules.Items;
+        if (rules.Segments == null)
+        {
+            ReadRules(call, c, target, rules.Items, false, out _);
+            return;
+        }
+
+        // A list kept in a variable: each piece the script adds to it is read on its own and must end between rules. Any piece
+        // may follow any other (branches, loops), so each is read under every link target the call or a piece can leave in force.
+        HashSet<LinkTarget> targets = new HashSet<LinkTarget> { target };
+        Collector scratch = new Collector(new ScriptAnalysis());
+        bool grew = true;
+        while (grew)
+        {
+            grew = false;
+            foreach (IReadOnlyList<LslValue> piece in rules.Segments)
+                foreach (LinkTarget t in targets.ToList())
+                    if (ReadRules(call, scratch, t, piece, true, out LinkTarget end) && targets.Add(end))
+                        grew = true;
+        }
+
+        foreach (IReadOnlyList<LslValue> piece in rules.Segments)
+        {
+            c.Repeat = false;
+            foreach (LinkTarget t in targets)
+            {
+                if (!ReadRules(call, c, t, piece, true, out _))
+                    break;
+                c.Repeat = true;
+            }
+        }
+        c.Repeat = false;
+    }
+
+    /// <summary>
+    /// Reads one run of rules. Returns false when it stops at a finding it cannot classify. With <paramref name="whole"/>,
+    /// a run whose last rule is cut short is also refused (a followed list is built in pieces, each of which must be complete).
+    /// </summary>
+    private static bool ReadRules(LslCall call, Collector c, LinkTarget target, IReadOnlyList<LslValue> r, bool whole, out LinkTarget end)
+    {
         int i = 0;
+        end = target;
         while (i < r.Count)
         {
             LslValue codeValue = r[i];
             if (!codeValue.IsInt)
             {
                 c.Add(ParamsUnknown, HitLevel.Uncertain, call, target, "rule code at position " + i);
-                return;
+                end = new LinkTarget(LinkKind.Unknown);
+                return false;
             }
             int code = (int)codeValue.Int;
             i++;
@@ -394,16 +443,20 @@ public static class LslScriptAnalyzer
                 if (arity < 0)
                 {
                     c.Add(ParamsUnknown, HitLevel.Uncertain, call, target, "shape type not a known constant");
-                    return;
+                    end = new LinkTarget(LinkKind.Unknown);
+                    return false;
                 }
                 i += 1 + arity;
+                if (whole && i > r.Count)
+                    return CutShort(call, c, target, out end);
                 continue;
             }
 
             if (!s_ruleArity.TryGetValue(code, out int n))
             {
                 c.Add(ParamsUnknown, HitLevel.Uncertain, call, target, "rule " + code + " not in the table");
-                return;
+                end = new LinkTarget(LinkKind.Unknown);
+                return false;
             }
 
             if (code == ScriptBaseClass.PRIM_SLICE)
@@ -418,7 +471,18 @@ public static class LslScriptAnalyzer
                 target = i < r.Count ? LinkTarget.FromValue(r[i]) : new LinkTarget(LinkKind.Unknown);
 
             i += n;
+            if (whole && i > r.Count)
+                return CutShort(call, c, target, out end);
         }
+        end = target;
+        return true;
+    }
+
+    private static bool CutShort(LslCall call, Collector c, LinkTarget target, out LinkTarget end)
+    {
+        c.Add(ParamsUnknown, HitLevel.Uncertain, call, target, "a piece of a list variable ends inside a rule");
+        end = new LinkTarget(LinkKind.Unknown);
+        return false;
     }
 
     private static void GetParams(LslCall call, Collector c, LinkTarget target, LslValue rules)
