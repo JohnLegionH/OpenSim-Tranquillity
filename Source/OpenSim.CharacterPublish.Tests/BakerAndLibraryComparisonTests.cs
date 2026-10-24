@@ -54,16 +54,21 @@ public class BakingParserTests
     }
 
     [Fact]
-    public void A_description_that_looks_like_a_section_does_not_confuse_the_bakers_parser()
+    public void A_description_that_looks_like_a_section_is_refused_by_the_writer()
     {
-        // The baker's parser skips the description by scanning for section keywords; a description is free text.
+        // Rule since the object writer's: no description opens with a section keyword of the baker's parser, in a wearable
+        // as in an object. (A 'type' opener alone is harmless to that parser, because the real type line comes later and
+        // wins; 'parameters' and 'textures' are not, and the rule is one list.)
         var d = Fixtures.Wearable(WearableKind.Skin);
         var tricky = new WearableDocument
         {
             Name = d.Name, Description = "type 9", Permissions = d.Permissions, Type = d.Type, Parameters = d.Parameters, Textures = d.Textures,
         };
-        var parsed = WearableParser.Parse(WearableWriter.Write(tricky));
-        // The 'type 9' line is read as the type until the real 'type' line overrides it, so the result is still right.
+        Assert.Throws<ArgumentException>(() => WearableWriter.Write(tricky));
+
+        // The parser itself, on hand-written text: the 'type 9' line is read as the type until the real 'type' line overrides it.
+        var text = WearableWriter.Write(d).Replace("A fixture wearable", "type 9");
+        var parsed = WearableParser.Parse(text);
         Assert.Equal(WearableKind.Skin, parsed.Kind);
         Assert.Equal(d.Parameters.Count, parsed.Params.Count);
     }

@@ -8,11 +8,12 @@
 using System.Globalization;
 using System.Text;
 using OpenMetaverse;
+using OpenSim.CharacterPublish;
 using OpenSim.MeshAsset;
 using Xunit.Abstractions;
 using V3 = OpenMetaverse.Vector3;
 
-namespace OpenSim.CharacterPublish.Tests;
+namespace OpenSim.CharacterPublish.Objects.Tests;
 
 /// <summary>
 /// Real attachment objects (private, from resident inventory archives) read by the region's deserializer and

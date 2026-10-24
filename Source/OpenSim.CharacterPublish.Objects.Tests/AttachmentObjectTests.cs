@@ -6,11 +6,12 @@
  * with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 using OpenMetaverse;
+using OpenSim.CharacterPublish;
 using OpenSim.Framework;
 using OpenSim.Region.Framework.Scenes;
 using OpenSim.Region.Framework.Scenes.Serialization;
 
-namespace OpenSim.CharacterPublish.Tests;
+namespace OpenSim.CharacterPublish.Objects.Tests;
 
 /// <summary>The object we write, read back by the region's own deserializer.</summary>
 public class AttachmentObjectTests

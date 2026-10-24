@@ -11,8 +11,9 @@ using OpenMetaverse;
 using OpenSim.Framework;
 using OpenSim.Region.Framework.Scenes;
 using OpenSim.Region.Framework.Scenes.Serialization;
+using OpenSim.CharacterPublish;
 
-namespace OpenSim.CharacterPublish;
+namespace OpenSim.CharacterPublish.Objects;
 
 /// <summary>Everything the object of one worn mesh part is made from.</summary>
 /// <param name="MeshAssetId">The mesh asset the part shows.</param>

@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    OpenSim.CharacterPublish.Objects: the heavy half of the publish code. It builds the asset of a worn mesh part with
+    the region's own scene object serializer, and assembles a character description into a complete publish bundle.
+    The grid's inventory server does not need it: it validates bundles with OpenSim.CharacterPublish, which has no
+    reference to the region code.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>OpenSim.CharacterPublish.Objects</RootNamespace>
+    <AssemblyName>OpenSim.CharacterPublish.Objects</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsPackable>false</IsPackable>
+    <!-- CS1591: the public members are documented where their meaning is not obvious from the name. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Remove="UtopiaSkye.OpenMetaverse" />
+    <PackageReference Remove="UtopiaSkye.OpenMetaverse.StructuredData" />
+    <PackageReference Remove="UtopiaSkye.OpenMetaverse.Rendering.Meshmerizer" />
+    <PackageReference Remove="UtopiaSkye.OpenMetaverse.Rendering.Simple" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../OpenSim.CharacterPublish/OpenSim.CharacterPublish.csproj" />
+    <!-- mesh decode and level-of-detail generation -->
+    <ProjectReference Include="../OpenSim.MeshAsset/OpenSim.MeshAsset.csproj" />
+    <!-- the scene object serializer and PrimitiveBaseShape -->
+    <ProjectReference Include="../OpenSim.Region.Framework/OpenSim.Region.Framework.csproj" />
+  </ItemGroup>
+
+</Project>

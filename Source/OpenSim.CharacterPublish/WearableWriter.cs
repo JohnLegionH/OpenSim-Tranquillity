@@ -78,6 +78,10 @@ public static class WearableWriter
     {
         CheckLine(d.Name, "name");
         CheckLine(d.Description, "description");
+        // The server-side baker's parser scans the description line as a section, so a description that opens with one of
+        // its keywords would be mis-read there.
+        if (!SafeDescription.IsSafe(d.Description))
+            throw new ArgumentException("description starts with a wearable section keyword (type, parameters, textures)");
         if (d.DefinitionVersion < 0) throw new ArgumentException("definition version must not be negative");
         if (!Enum.IsDefined(d.Type) || d.Type == WearableKind.Invalid)
             throw new ArgumentException($"wearable type {(int)d.Type} is not one of the viewer's types 0-16");
