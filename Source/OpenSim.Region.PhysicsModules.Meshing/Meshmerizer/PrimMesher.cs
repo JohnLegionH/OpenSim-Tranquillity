@@ -1655,7 +1655,17 @@ public class PrimMesh
             else if (twistTotal != 0.0f)
                 needEndFaces = true;
             else if (this.radius != 0.0f)
-                needEndFaces = true;
+            {
+                // The viewer closes the path again when the offset moves its two ends apart by 0.001 or less, which a hole
+                // size of 1 always does: the path radius is then zero, so the offset has nothing to move. It builds no end
+                // caps for a closed path (LLPath::genNGon in indra/llmath/llvolume.cpp: radius_start = 0.5 * (1 - hole size Y),
+                // scaled by (1 + offset) or (1 - offset) at one end, and the path is open only when the two radii differ by
+                // more than 0.001). Only the viewer-style mesh follows that; physics meshing keeps its earlier rule.
+                if (!this.viewerMode)
+                    needEndFaces = true;
+                else if (Math.Abs(this.radius) * 0.5f * (1.0f - this.holeSizeY) > 0.001f)
+                    needEndFaces = true;
+            }
         }
         else needEndFaces = true;
 
