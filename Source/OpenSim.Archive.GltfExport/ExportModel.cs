@@ -262,6 +262,8 @@ public sealed class ExportSummary
     public string ToolVersion { get; set; }
     /// <summary>Highest working set of the process, in megabytes.</summary>
     public double PeakWorkingSetMegabytes { get; set; }
+    /// <summary>Highest managed heap size seen when a build finished (the memory cap limits this), in megabytes; 0 when no build ran.</summary>
+    public double PeakManagedHeapMegabytes { get; set; }
     /// <summary>Asset bytes written to the cache folder in this run.</summary>
     public long CacheBytesWritten { get; set; }
     /// <summary>Times the archive was read: 1, plus one for each round that went back for assets seen before a build asked for them.</summary>

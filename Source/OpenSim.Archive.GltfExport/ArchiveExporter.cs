@@ -200,6 +200,7 @@ public static class ArchiveExporter
         // The builds.
         List<SummaryBuild> rows = new List<SummaryBuild>();
         int memoryFailures = 0;
+        long peakHeapBytes = 0;
         HashSet<string> sharedWritten = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         int total = groups.Count, finished = 0, written = 0;
         int every = options.ProgressEvery > 0 ? options.ProgressEvery : 25;
@@ -285,6 +286,7 @@ public static class ArchiveExporter
             }
             rows.Add(row);
             finished++;
+            peakHeapBytes = Math.Max(peakHeapBytes, Math.Max(GC.GetTotalMemory(false), GC.GetGCMemoryInfo().HeapSizeBytes));
 
             if (written > 0 && p.Resumed == null && (finished % every == 0 || writing.ElapsedMilliseconds - lastReport >= 10_000 || finished == total))
             {
@@ -311,6 +313,7 @@ public static class ArchiveExporter
         summary.CacheBytesWritten = assets.CacheBytesWritten;
         using (Process me = Process.GetCurrentProcess())
             summary.PeakWorkingSetMegabytes = Math.Round(me.PeakWorkingSet64 / 1048576.0, 1);
+        summary.PeakManagedHeapMegabytes = Math.Round(peakHeapBytes / 1048576.0, 1);
         try
         {
             File.WriteAllText(Path.Combine(fullOut, "export-summary.json"), JsonSerializer.Serialize(summary, JsonOptions), new UTF8Encoding(false));
