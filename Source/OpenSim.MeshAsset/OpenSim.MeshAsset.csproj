@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    OpenSim.MeshAsset: reads and writes the Linden Lab mesh asset (binary LLSD header, zlib blocks), generates the
+    lower levels of detail the way the viewer does, and builds physics hulls.
+
+    Rules for this project:
+      * No ProjectReference to any OpenSim project; its only dependency is the meshoptimizer binding.
+      * Directory.Build.props injects the OpenMetaverse packages and nini-core tree-wide; none of them is
+        needed here, so they are removed below to keep the dependency graph honest.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>OpenSim.MeshAsset</RootNamespace>
+    <AssemblyName>OpenSim.MeshAsset</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Remove="nini-core" />
+    <PackageReference Remove="UtopiaSkye.OpenMetaverse" />
+    <PackageReference Remove="UtopiaSkye.OpenMetaverse.Types" />
+    <PackageReference Remove="UtopiaSkye.OpenMetaverse.StructuredData" />
+    <PackageReference Remove="UtopiaSkye.OpenMetaverse.Rendering.Meshmerizer" />
+    <PackageReference Remove="UtopiaSkye.OpenMetaverse.Rendering.Simple" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- meshoptimizer (MIT) with its native library for win-x64, linux-x64 and arm64; the simplifier the viewer uses. See ThirdPartyLicenses. -->
+    <PackageReference Include="Alimer.Bindings.MeshOptimizer" Version="1.2.1" />
+  </ItemGroup>
+
+</Project>
