@@ -25,9 +25,11 @@ using OpenSim.Services.Interfaces;
 //   --description <file>   the character description to assemble and publish
 //   --creator <uuid>    the CreatorAccount the endpoint is configured with
 //   --report <file>     where the Markdown record goes
+//   --publish-only      publish the bundle to one account (--name1, --pw1-file) and nothing else: no worn look is added, no other
+//                       account is needed, and the report lists the account's Current Outfit and the rows the publish added
 // The two accounts must exist, with their default inventories. Both are given a worn look, the first is published to, and the
 // second must be unchanged at the end.
-return await WireProof.Run(args);
+return args.Contains("--publish-only") ? await WireProof.PublishOnly(args) : await WireProof.Run(args);
 
 static class WireProof
 {
@@ -312,6 +314,61 @@ static class WireProof
 
         var snap2 = Snapshot(inv, u2.PrincipalID);
         Check("C6 account 2's inventory is unchanged (every folder and item row, including folder versions)", snap2.Count == before2.Count && Differences(before2, snap2).Count == 0, $"{snap2.Count} rows identical");
+        return Finish(started, a);
+    }
+
+    /// <summary>Publishes the bundle to one account as it stands and reads back what the publish added. The account's own
+    /// look is not touched, so a resident with an ordinary clothed look can be published to before a viewer logs in.</summary>
+    public static async Task<int> PublishOnly(string[] a)
+    {
+        var started = DateTime.UtcNow;
+        var key = File.ReadAllText(Arg(a, "--key-file")).Trim();
+        var pw1 = File.ReadAllText(Arg(a, "--pw1-file")).Trim();
+        var n1 = Arg(a, "--name1").Split(' ');
+        var creator = UUID.Parse(Arg(a, "--creator"));
+        var priv = Arg(a, "--private");
+        var ep = new Endpoint(Arg(a, "--public"), key);
+        var accounts = new UserAccountServicesConnector(priv);
+        var inv = new XInventoryServicesConnector(priv);
+
+        Part = "P";
+        var u1 = accounts.GetUserAccount(UUID.Zero, n1[0], n1[1]);
+        Check("the account exists", u1 != null, $"{n1[0]} {n1[1]} = {u1?.PrincipalID}");
+        if (u1 == null) return Finish(started, a);
+        var me = u1.PrincipalID;
+        var cof = inv.GetFolderForType(me, FolderType.CurrentOutfit);
+        var cofLinks = inv.GetFolderContent(me, cof.ID).Items;
+        var targets = cofLinks.Select(l => inv.GetItem(me, l.AssetID)).Where(t => t != null).Select(t => t!.Name).Order().ToList();
+        Check("the Current Outfit before the publish", true, $"{cofLinks.Count} links to: {string.Join(", ", targets)}");
+        var before = Snapshot(inv, me);
+
+        var made = OutfitAssembler.AssembleFromFile(Arg(a, "--description"), new PublishContext(me, creator, 1, 1_790_000_000));
+        Check("the bundle assembles and validates", made.Validation.Ok, $"{made.Bundle.Items.Count} items, {made.Bundle.Assets.Count} assets, {made.Content.Values.Sum(c => c.Length)} bytes");
+        if (!made.Validation.Ok) return Finish(started, a);
+        var zip = Zip(made.Bundle, made.Content);
+
+        var login = await ep.Login(n1[0], n1[1], pw1);
+        var token = login.Status == 200 ? login.Json.GetProperty("token").GetString()! : "";
+        Check("login", login.Status == 200 && Guid.TryParse(token, out _), login.Status == 200 ? "HTTP 200" : login.ToString());
+        if (login.Status != 200) return Finish(started, a);
+        var res = me.ToString();
+        var pub = await ep.Call("POST", "publish", zip, resident: res, token: token);
+        var ok = pub.Status == 200 && !pub.Json.GetProperty("alreadyPublished").GetBoolean();
+        Check("publish", ok, pub.Status == 200
+            ? $"HTTP 200, {pub.Json.GetProperty("itemIds").GetArrayLength()} items, warnings={pub.Json.GetProperty("warnings").GetArrayLength()}, outfit folder {pub.Json.GetProperty("outfitFolderId")}, previous-look folder {pub.Json.GetProperty("previousLookFolderId")}"
+            : pub + " " + pub.Raw);
+        var after = Snapshot(inv, me);
+        var changed = Differences(before, after, cof.ID, inv.GetRootFolder(me).ID);
+        var mo = inv.GetFolderForType(me, (FolderType)BundleTypes.FolderMyOutfits);
+        if (mo != null) changed = changed.Where(c => c != "F:" + mo.ID + " changed").ToList();
+        Check("no row that was there before changed", changed.Count == 0, changed.Count == 0 ? $"{before.Count} old rows identical, {after.Keys.Count(k => !before.ContainsKey(k))} rows added" : string.Join("; ", changed));
+        var outfit = inv.GetFolderContent(me, made.Bundle.OutfitFolder.Id);
+        Check("the outfit folder holds the bundle's items", made.Bundle.Items.Select(i => i.Id).Order().SequenceEqual(outfit.Items.Select(i => i.ID).Order()), $"{outfit.Items.Count} items: {string.Join(", ", outfit.Items.Select(i => i.Name))}");
+        var look = made.Bundle.CurrentLook;
+        var lookItems = look == null ? new List<InventoryItemBase>() : inv.GetFolderContent(me, look.FolderId).Items;
+        Check("the previous-look folder holds one link per Current Outfit entry", look != null && lookItems.Count == cofLinks.Count && lookItems.All(l => l.AssetType == BundleTypes.AssetLink), $"{lookItems.Count} links in '{look?.FolderName}'");
+        var logout = await ep.Call("POST", "logout", resident: res, token: token);
+        Check("logout", logout.Status == 200, logout.ToString());
         return Finish(started, a);
     }
 
