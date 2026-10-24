@@ -16,6 +16,7 @@ using OpenSim.CharacterPublish.Objects;
 using OpenSim.Framework;
 using OpenSim.Services.Connectors;
 using OpenSim.Services.Interfaces;
+using OpenSimNGC.Appearance.Baking;
 
 // Checks a running Robust that has the character publish endpoint loaded.
 //   --public <url>      the endpoint's base address (no trailing slash), for example http://host:port
@@ -27,8 +28,11 @@ using OpenSim.Services.Interfaces;
 //   --report <file>     where the Markdown record goes
 //   --publish-only      publish the bundle to one account (--name1, --pw1-file) and nothing else: no worn look is added, no other
 //                       account is needed, and the report lists the account's Current Outfit and the rows the publish added
+//   --seed-clothed      give one account (--name1, --private, --report) an ordinary clothed look with real wearables: a red shirt, blue
+//                       pants and red hair replace the default shirt, pants and hair items its Current Outfit links to; nothing is deleted
 // The two accounts must exist, with their default inventories. Both are given a worn look, the first is published to, and the
 // second must be unchanged at the end.
+if (args.Contains("--seed-clothed")) return WireProof.SeedClothed(args);
 return args.Contains("--publish-only") ? await WireProof.PublishOnly(args) : await WireProof.Run(args);
 
 static class WireProof
@@ -314,6 +318,59 @@ static class WireProof
 
         var snap2 = Snapshot(inv, u2.PrincipalID);
         Check("C6 account 2's inventory is unchanged (every folder and item row, including folder versions)", snap2.Count == before2.Count && Differences(before2, snap2).Count == 0, $"{snap2.Count} rows identical");
+        return Finish(started, a);
+    }
+
+    /// <summary>Gives an account a look that is clearly not the default: a red shirt, blue pants and red hair (each on the plain
+    /// white texture, tinted by the wearable's colour parameters). The default shirt, pants and hair items behind the
+    /// Current Outfit links are given the new assets and names, so the account's worn set is the new look; nothing is deleted.</summary>
+    public static int SeedClothed(string[] a)
+    {
+        var started = DateTime.UtcNow;
+        var n1 = Arg(a, "--name1").Split(' ');
+        var priv = Arg(a, "--private");
+        var accounts = new UserAccountServicesConnector(priv);
+        var inv = new XInventoryServicesConnector(priv);
+        var assets = new AssetServicesConnector(priv);
+        var white = new UUID("5748decc-f629-461c-9a36-a35a221fe21f");
+
+        Part = "S";
+        var u = accounts.GetUserAccount(UUID.Zero, n1[0], n1[1]);
+        Check("the account exists", u != null, $"{n1[0]} {n1[1]} = {u?.PrincipalID}");
+        if (u == null) return Finish(started, a);
+        var me = u.PrincipalID;
+        var perms = PermissionBlock.ForOwner(me, me, PermissionMasks.CopyModifyTransfer);
+        var cof = inv.GetFolderForType(me, FolderType.CurrentOutfit);
+
+        WearableDocument Tinted(WearableKind kind, string name, TextureSlot slot, float r, float g, float b, int pr, int pg, int pb)
+        {
+            var doc = WearableFactory.CreateDefault(kind, name, "ordinary look", perms, new[] { new KeyValuePair<TextureSlot, UUID>(slot, white) });
+            doc.Parameters[pr] = r; doc.Parameters[pg] = g; doc.Parameters[pb] = b;
+            return doc;
+        }
+        // shirt colour parameters 803-805, pants 806-808, hair: Red Hair 113 (Blonde Hair 114 and White Hair 115 left at 0)
+        var shirt = Tinted(WearableKind.Shirt, "Red Shirt", TextureSlot.UpperShirt, 1f, 0f, 0f, 803, 804, 805);
+        var pants = Tinted(WearableKind.Pants, "Blue Pants", TextureSlot.LowerPants, 0f, 0f, 1f, 806, 807, 808);
+        var hair = WearableFactory.Hair("Red Hair", "ordinary look", perms, white);
+        hair.Parameters[113] = 1f; hair.Parameters[114] = 0f; hair.Parameters[115] = 0f;
+
+        // The Current Outfit links are left alone (the inventory service does not update a link row when deletes are off); the
+        // default hair, shirt and pants items they point at get the new asset and name instead.
+        var docs = new Dictionary<int, WearableDocument> { [(int)shirt.Type] = shirt, [(int)pants.Type] = pants, [(int)hair.Type] = hair };
+        var links = inv.GetFolderContent(me, cof.ID).Items;
+        foreach (var link in links)
+        {
+            var target = inv.GetItem(me, link.AssetID);
+            if (target == null || target.InvType != (int)InventoryType.Wearable || !docs.TryGetValue((int)target.Flags, out var doc)) continue;
+            var asset = new AssetBase(UUID.Random(), doc.Name, (sbyte)BundleTypes.AssetTypeOfWearable((int)doc.Type), me.ToString()) { Data = WearableWriter.WriteBytes(doc), Description = doc.Description };
+            var stored = assets.Store(asset);
+            var was = target.Name;
+            target.AssetID = asset.FullID; target.Name = doc.Name; target.Description = doc.Description;
+            Check($"'{was}' (worn through its Current Outfit link) is now '{doc.Name}'", !string.IsNullOrEmpty(stored) && inv.UpdateItem(target), $"item {target.ID}, asset {asset.FullID}");
+        }
+        var after = inv.GetFolderContent(me, cof.ID).Items;
+        var names = after.Select(l => inv.GetItem(me, l.AssetID)?.Name ?? "?").Order().ToList();
+        Check("the Current Outfit links resolve to the new look", names.Contains("Red Shirt") && names.Contains("Blue Pants") && names.Contains("Red Hair"), $"{after.Count} links to: {string.Join(", ", names)}");
         return Finish(started, a);
     }
 
