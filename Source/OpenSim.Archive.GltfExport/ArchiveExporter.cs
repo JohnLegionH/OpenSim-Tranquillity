@@ -113,12 +113,30 @@ public static class ArchiveExporter
         Dictionary<string, int> occurrences = new Dictionary<string, int>();
         int objectsRead = 0;
         long lastNote = clock.ElapsedMilliseconds;
+        List<SummaryBuild> rows = new List<SummaryBuild>();
+        HashSet<string> sharedWritten = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        HeapGovernor governor = null;
+        ExportDiagnostics diagnostics = string.IsNullOrEmpty(options.DiagnosticsPath) ? null : new ExportDiagnostics(Path.GetFullPath(options.DiagnosticsPath), options.DiagnosticsEvery, options.DiagnosticsCollect);
+        Action<string, int> sample = (phase, count) =>
+            diagnostics?.Write(phase, count, new[]
+            {
+                new KeyValuePair<string, long>("buildsHeld", groups.Count),
+                new KeyValuePair<string, long>("partsHeld", groups.Sum(g => (long)g.Group.Parts.Count)),
+                new KeyValuePair<string, long>("occurrenceEntries", occurrences.Count),
+                new KeyValuePair<string, long>("journalEntriesHeld", done.Count),
+                new KeyValuePair<string, long>("summaryRowsHeld", rows.Count),
+                new KeyValuePair<string, long>("usedFolderNames", usedFolders.Count),
+                new KeyValuePair<string, long>("sharedFileNames", sharedWritten.Count),
+                new KeyValuePair<string, long>("governorCollections", governor?.Collections ?? 0)
+            }.Concat(assets.Sizes()));
 
         // The one pass over the archive: objects, and the asset bodies they name.
         InspectorOptions inspect = new InspectorOptions { StandardChecks = false, MaxRetainedRecords = 1, HashObjectBodies = true };
         inspect.ObjectObserver = (obj, entry, regionDir) =>
         {
             objectsRead++;
+            if (diagnostics != null && diagnostics.Due("read", objectsRead))
+                sample("read", objectsRead);
             if (clock.ElapsedMilliseconds - lastNote > 10_000)
             {
                 lastNote = clock.ElapsedMilliseconds;
@@ -198,11 +216,10 @@ public static class ArchiveExporter
         }
 
         // The builds.
-        List<SummaryBuild> rows = new List<SummaryBuild>();
         int memoryFailures = 0;
         long peakHeapBytes = 0;
-        HashSet<string> sharedWritten = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         int total = groups.Count, finished = 0, written = 0;
+        governor = new HeapGovernor(assets.MaxMemoryBytes);
         int every = options.ProgressEvery > 0 ? options.ProgressEvery : 25;
         Stopwatch writing = Stopwatch.StartNew();
         long lastReport = writing.ElapsedMilliseconds;
@@ -287,6 +304,9 @@ public static class ArchiveExporter
             rows.Add(row);
             finished++;
             peakHeapBytes = Math.Max(peakHeapBytes, Math.Max(GC.GetTotalMemory(false), GC.GetGCMemoryInfo().HeapSizeBytes));
+            governor.AfterBuild();
+            if (diagnostics != null && (diagnostics.Due("build", finished) || finished == total))
+                sample("build", finished);
 
             if (written > 0 && p.Resumed == null && (finished % every == 0 || writing.ElapsedMilliseconds - lastReport >= 10_000 || finished == total))
             {

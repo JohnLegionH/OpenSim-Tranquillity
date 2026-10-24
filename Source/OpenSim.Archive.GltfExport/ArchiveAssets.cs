@@ -172,6 +172,24 @@ internal sealed class ArchiveAssets
 
     public bool Has(UUID id) => m_blobs.ContainsKey(id);
 
+    /// <summary>The size of each structure the asset stores keep across builds, for the memory log.</summary>
+    public IEnumerable<KeyValuePair<string, long>> Sizes()
+    {
+        yield return new KeyValuePair<string, long>("assetIndexEntries", m_blobs.Count);
+        yield return new KeyValuePair<string, long>("assetResidentBytes", m_residentBytes);
+        yield return new KeyValuePair<string, long>("assetStoredBytes", m_bytes);
+        yield return new KeyValuePair<string, long>("assetLoadedEntries", m_loaded.Count);
+        yield return new KeyValuePair<string, long>("assetLoadedBytes", m_loadedBytes);
+        yield return new KeyValuePair<string, long>("decodedImageEntries", m_decoded.Count);
+        yield return new KeyValuePair<string, long>("decodedImageBytes", m_decodedBytes);
+        yield return new KeyValuePair<string, long>("decodeFailureEntries", m_decodeFailures.Count);
+        yield return new KeyValuePair<string, long>("sculptMapEntries", m_sculptMaps.Count);
+        yield return new KeyValuePair<string, long>("sculptMapBytes", m_sculptMaps.Values.Sum(v => v.map?.Rgb?.LongLength ?? 0));
+        yield return new KeyValuePair<string, long>("wantedIds", Wanted.Count);
+        yield return new KeyValuePair<string, long>("seenIds", Seen.Count);
+        yield return new KeyValuePair<string, long>("overLimitIds", OverLimit.Count);
+    }
+
     private readonly Dictionary<UUID, (SculptMap map, string problem)> m_sculptMaps = new Dictionary<UUID, (SculptMap, string)>();
 
     /// <summary>A sculpt map's pixels as the archive's texture holds them, or null with the reason.</summary>

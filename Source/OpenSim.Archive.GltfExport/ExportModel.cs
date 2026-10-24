@@ -77,6 +77,16 @@ public sealed class ExportOptions
     public Action<string, byte[]> WriteCacheFile { get; set; }
     /// <summary>Write every build again, even one the output folder already holds from this archive by this tool version.</summary>
     public bool Force { get; set; }
+    /// <summary>
+    /// File a memory log is appended to (one JSON line every <see cref="DiagnosticsEvery"/> builds, and while the archive is
+    /// read, every that many object files): managed heap, working set, generation sizes and the size of every structure kept
+    /// across builds. Null (the default) writes nothing.
+    /// </summary>
+    public string DiagnosticsPath { get; set; }
+    /// <summary>Builds (or object files) between two lines of the memory log; 0 for 100.</summary>
+    public int DiagnosticsEvery { get; set; }
+    /// <summary>Collect garbage before each line of the memory log, so it shows what the run holds (slower; for measuring).</summary>
+    public bool DiagnosticsCollect { get; set; }
     /// <summary>Report progress after this many builds (and at least every ten seconds); 0 for 25.</summary>
     public int ProgressEvery { get; set; }
     /// <summary>Receives the progress lines and the notes about a build that failed; null for none.</summary>

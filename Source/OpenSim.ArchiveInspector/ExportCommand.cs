@@ -17,7 +17,7 @@ internal static class ExportCommand
     public const string Usage =
 @"Usage: OpenSim.ArchiveInspector oar-export <archive.oar> --out <folder> [--object <uuid|name>] [--limit N]
        [--self-contained] [--max-memory-mb N] [--max-cache-mb N] [--skip-space-check]
-       [--world] [--force] [--cache-dir <folder>] [--progress-every N]
+       [--world] [--force] [--cache-dir <folder>] [--progress-every N] [--diagnostics <file>] [--diagnostics-every N] [--diagnostics-live]
 
 Writes one folder per build (linkset) under <folder>: <name>_<id>.glb and manifest.json, plus export-summary.json and
 export-summary.txt. Every build's textures are PNG files in one shared <folder>/textures (the original .jp2 and the
@@ -41,6 +41,10 @@ The archive is only read. Parts whose creator did not allow export are listed in
   --force              write every build again; by default a build that an earlier run into the same folder wrote from the
                        same object file with the same tool version is left as it is
   --progress-every N   print progress after every N builds (default 25) and at least every ten seconds, on standard error
+  --diagnostics <file> append a memory log to <file>: one JSON line every N builds (see --diagnostics-every) with the managed
+                       heap, the working set and the size of what is kept across builds (default: no log)
+  --diagnostics-every N  builds (or object files, while the archive is read) between two lines of that log (default 100)
+  --diagnostics-live   collect garbage before each line of that log, so the heap figures show what the run holds (slower)
   --world              put each build at its root part's position and rotation in the region (default: at the origin, the
                        region position and rotation are in the build node's extras)
 
@@ -110,6 +114,18 @@ Exit codes: 0 done (also when some builds failed), 2 not a region archive or unr
                     if (i + 1 >= args.Length || !int.TryParse(args[++i], NumberStyles.Integer, CultureInfo.InvariantCulture, out int every) || every < 1)
                         return Fail("--progress-every needs a number of at least 1");
                     options.ProgressEvery = every;
+                    break;
+                case "--diagnostics":
+                    if (i + 1 >= args.Length) return Fail("--diagnostics needs a file");
+                    options.DiagnosticsPath = args[++i];
+                    break;
+                case "--diagnostics-live":
+                    options.DiagnosticsCollect = true;
+                    break;
+                case "--diagnostics-every":
+                    if (i + 1 >= args.Length || !int.TryParse(args[++i], NumberStyles.Integer, CultureInfo.InvariantCulture, out int dEvery) || dEvery < 1)
+                        return Fail("--diagnostics-every needs a number of at least 1");
+                    options.DiagnosticsEvery = dEvery;
                     break;
                 case "-h":
                 case "--help":
