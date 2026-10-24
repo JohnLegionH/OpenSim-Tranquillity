@@ -25,6 +25,8 @@
 
   <ItemGroup>
     <ProjectReference Include="../OpenSim.CharacterPublish/OpenSim.CharacterPublish.csproj" />
+    <!-- test only: mesh assets, to read the extent that sets an object's size -->
+    <ProjectReference Include="../OpenSim.MeshAsset/OpenSim.MeshAsset.csproj" />
     <!-- test only: the server-side baker's own wearable parser -->
     <ProjectReference Include="../OpenSimNGC.Appearance.Baking/OpenSimNGC.Appearance.Baking.csproj" />
   </ItemGroup>

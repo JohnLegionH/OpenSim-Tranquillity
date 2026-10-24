@@ -4,8 +4,9 @@
     OpenSim.CharacterPublish: writers for the asset texts a published character puts in a resident's inventory
     (wearables, notecards), in the exact text formats the Second Life viewer writes and reads.
 
-    No ProjectReference to any OpenSim.Region.* project or to OpenSim.Framework, so Robust and tools can use it.
-    The only OpenMetaverse dependency is OpenMetaverse.Types (OpenMetaverse.UUID), as in OpenSimNGC.Appearance.Baking.
+    The wearable and notecard writers use only OpenMetaverse.Types (OpenMetaverse.UUID), as in OpenSimNGC.Appearance.Baking.
+    The attachment object writer (AttachmentObject.cs) uses the region's own scene object serializer, so this project
+    references OpenSim.Region.Framework.
   -->
 
   <PropertyGroup>
@@ -30,6 +31,8 @@
   <ItemGroup>
     <!-- avatar_lad.xml (default parameter values) and the wearable kinds -->
     <ProjectReference Include="../OpenSimNGC.Appearance.Baking/OpenSimNGC.Appearance.Baking.csproj" />
+    <!-- the scene object serializer and PrimitiveBaseShape -->
+    <ProjectReference Include="../OpenSim.Region.Framework/OpenSim.Region.Framework.csproj" />
   </ItemGroup>
 
 </Project>
