@@ -224,8 +224,13 @@ public static class GltfToMesh
             model.Skin.BindShape = ToArray(Matrix4x4.CreateScale(size) * Matrix4x4.CreateTranslation(centre));
         else
             report.Notes.Add($"unskinned: vertices are normalised to a unit box; the object needs scale {size.X:0.####}, {size.Y:0.####}, {size.Z:0.####} and centre {centre.X:0.####}, {centre.Y:0.####}, {centre.Z:0.####} when it is rezzed");
-        report.Notes.Add("alt_inverse_bind_matrix and pelvis_offset are not written: no joint position override is derived from the file (the viewer derives it from the SL skeleton)");
-        report.Notes.Add("the viewer's X/Y axis swap heuristic (checkForXYrotation) is not applied");
+        if (binding == null)
+        {
+            report.Notes.Add("alt_inverse_bind_matrix and pelvis_offset are not written: no joint position override is derived from the file (the viewer derives it from the SL skeleton)");
+            report.Notes.Add("the viewer's X/Y axis swap heuristic (checkForXYrotation) is not applied");
+        }
+        else if (!binding.IncludeJointPositions)
+            report.Notes.Add("alt_inverse_bind_matrix and pelvis_offset are not written: the joints stay where the avatar puts them, so they follow the shape sliders");
         return (model, report);
     }
 
