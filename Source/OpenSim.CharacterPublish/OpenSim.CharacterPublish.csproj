@@ -5,8 +5,9 @@
     (wearables, notecards), in the exact text formats the Second Life viewer writes and reads.
 
     This is the light half of the publish code, the part the grid's inventory server needs: the writers, the bundle model
-    and the validation of a bundle. It uses only OpenMetaverse.Types (OpenMetaverse.UUID), as in OpenSimNGC.Appearance.Baking,
-    and the mesh asset reader. It has NO reference to OpenSim.Region.* (a test checks the whole dependency closure).
+    and the validation of a bundle, and the publish service that writes a validated bundle through the grid's asset and
+    inventory service interfaces. It uses OpenMetaverse.Types (OpenMetaverse.UUID), the mesh asset reader and
+    OpenSim.Services.Interfaces. It has NO reference to OpenSim.Region.* (a test checks the whole dependency closure).
     The attachment object writer and the outfit assembler are in OpenSim.CharacterPublish.Objects, which references the
     region code.
   -->
@@ -35,6 +36,8 @@
     <ProjectReference Include="../OpenSimNGC.Appearance.Baking/OpenSimNGC.Appearance.Baking.csproj" />
     <!-- decodes mesh assets, so a bundle's meshes can be checked -->
     <ProjectReference Include="../OpenSim.MeshAsset/OpenSim.MeshAsset.csproj" />
+    <!-- IAssetService and IInventoryService, which the publish service writes through (Robust already loads these) -->
+    <ProjectReference Include="../OpenSim.Services.Interfaces/OpenSim.Services.Interfaces.csproj" />
   </ItemGroup>
 
 </Project>
