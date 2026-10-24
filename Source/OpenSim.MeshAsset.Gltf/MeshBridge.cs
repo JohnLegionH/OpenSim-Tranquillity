@@ -34,6 +34,8 @@ public sealed class BridgeReport
     public float JointFitError { get; set; }
     public int JointsWritten { get; set; }
     public int JointsDropped { get; set; }
+    /// <summary>Joints listed without weight so that their children turn about the file's joint positions (joint positions form only).</summary>
+    public int PivotJointsAdded { get; set; }
     public Vector3 NormalizedSize { get; set; }
     public Vector3 NormalizedCentre { get; set; }
 }
@@ -146,6 +148,8 @@ public static class GltfToMesh
                 foreach (var v in rf.Influences)
                     foreach (var (j, w) in v)
                         if (w > 0 && j < legal.Length && legal[j]) used[j] = true;
+            if (binding is { IncludeJointPositions: true })
+                report.PivotJointsAdded = AddPivotJoints(skin, used, legal, binding, yaw, report);
             jointMap = Enumerable.Repeat(-1, skin.JointsCount).ToList();
             var names = new List<string>();
             var ibms = new List<double[]>();
@@ -260,6 +264,84 @@ public static class GltfToMesh
         return best;
     }
 
+    /// <summary>
+    /// The position override each listed joint needs so that it sits where the file puts it. Positions are local offsets
+    /// from the avatar parent, so the parents are placed first; a joint the asset does not list keeps its default offset
+    /// (the viewer takes an override only for a joint in the asset's joint list).
+    /// </summary>
+    static Dictionary<string, Vector3> ComputeOverrides(Skin skin, IEnumerable<int> listed, RestSkeleton sk, Matrix4x4 yaw, Dictionary<string, Vector3> local, out int filePosCount)
+    {
+        var filePos = new Dictionary<string, Vector3>(StringComparer.Ordinal);
+        foreach (int g in listed)
+        {
+            var (joint, ibm) = skin.GetJoint(g);
+            var j = sk.Find(joint.Name ?? "");
+            if (j == null || !Matrix4x4.Invert(ibm, out var world)) continue;
+            filePos[j.Name] = Vector3.Transform(new Vector3(world.M41, world.M42, world.M43), Rotation * yaw);
+        }
+        var overrides = new Dictionary<string, Vector3>(StringComparer.Ordinal);
+        int Depth(RestSkeleton.Joint j) { int d = 0; for (var c = j; c.Parent != null; c = sk.Find(c.Parent)!) d++; return d; }
+        foreach (var name in filePos.Keys.OrderBy(k => Depth(sk.Find(k)!)).ThenBy(k => k, StringComparer.Ordinal))
+        {
+            var j = sk.Find(name)!;
+            Vector3 pos;
+            if (j.Parent != null)
+            {
+                var parent = sk.Find(j.Parent)!;
+                var pw = sk.World(parent.Name, overrides);
+                var parentPos = new Vector3(pw.M41, pw.M42, pw.M43);
+                // inverse of: world = parentPos + (local * parentScale) rotated by the parent's rotation
+                Matrix4x4.Invert(new Matrix4x4(pw.M11 / parent.Scale.X, pw.M12 / parent.Scale.X, pw.M13 / parent.Scale.X, 0,
+                                               pw.M21 / parent.Scale.Y, pw.M22 / parent.Scale.Y, pw.M23 / parent.Scale.Y, 0,
+                                               pw.M31 / parent.Scale.Z, pw.M32 / parent.Scale.Z, pw.M33 / parent.Scale.Z, 0,
+                                               0, 0, 0, 1), out var rotOnly);
+                pos = Vector3.Transform(filePos[name] - parentPos, rotOnly) / parent.Scale;
+            }
+            else pos = filePos[name];
+            local[name] = pos;
+            if ((pos - j.Position).Length() > SkinningCheck.JointPositionThreshold) overrides[name] = pos;
+        }
+        filePosCount = filePos.Count;
+        return overrides;
+    }
+
+    /// <summary>
+    /// A weighted joint turns about its parent's position, not its own, so a limb moves as the file's rig moves only if
+    /// the parents that carry the animation (collar, shoulder, elbow, ...) also sit where the file puts them. The viewer
+    /// applies a position override only to a joint the asset lists, so an ancestor of a weighted joint that the file
+    /// places away from the avatar's joint is listed too, with no weight on it.
+    /// </summary>
+    static Vector3 InverseTranslation(Matrix4x4 ibm) => Matrix4x4.Invert(ibm, out var w) ? w.Translation : Vector3.Zero;
+
+    static int AddPivotJoints(Skin skin, bool[] used, bool[] legal, JointBinding binding, Matrix4x4 yaw, BridgeReport report)
+    {
+        var sk = binding.Skeleton;
+        var ancestors = new HashSet<string>(StringComparer.Ordinal);
+        for (int i = 0; i < used.Length; i++)
+        {
+            if (!used[i]) continue;
+            for (var j = sk.Find(skin.GetJoint(i).Joint.Name ?? ""); j?.Parent != null; j = sk.Find(j.Parent))
+                ancestors.Add(j.Parent);
+        }
+        var candidates = new List<int>();
+        for (int i = 0; i < used.Length; i++)
+            if (!used[i] && legal[i] && sk.Find(skin.GetJoint(i).Joint.Name ?? "") is { } j && ancestors.Contains(j.Name)) candidates.Add(i);
+        var overrides = ComputeOverrides(skin, Enumerable.Range(0, used.Length).Where(i => used[i]).Concat(candidates), sk, yaw, new Dictionary<string, Vector3>(StringComparer.Ordinal), out _);
+        // The joint list holds at most MaxJoints; when it is full the joints the file moves furthest go first.
+        int room = Math.Max(0, MaxJoints - used.Count(u => u));
+        var wanted = candidates
+            .Select(i => (Index: i, Joint: sk.Find(skin.GetJoint(i).Joint.Name ?? "")!))
+            .Where(c => overrides.ContainsKey(c.Joint.Name))
+            .OrderByDescending(c => (Vector3.Transform(InverseTranslation(skin.GetJoint(c.Index).InverseBindMatrix), Rotation * yaw) - sk.World(c.Joint.Name).Translation).Length())
+            .ToList();
+        int added = 0;
+        foreach (var c in wanted.Take(room)) { used[c.Index] = true; added++; }
+        if (added > 0) report.Notes.Add($"{added} joints without weight are listed so that the joints they carry turn about the file's positions");
+        if (wanted.Count > room)
+            report.Notes.Add($"the joint list is full ({MaxJoints}): {wanted.Count - room} more joints the file moves were left out ({string.Join(", ", wanted.Skip(room).Select(c => c.Joint.Name))})");
+        return added;
+    }
+
     /// <summary>Replaces the exporter's inverse bind matrices with the avatar skeleton's, joint by joint (see <see cref="JointBinding"/>).</summary>
     static void BindToSkeleton(MeshSkin outSkin, Skin skin, List<int> jointMap, JointBinding binding, Matrix4x4 yaw, BridgeReport report)
     {
@@ -269,40 +351,9 @@ public static class GltfToMesh
         var local = new Dictionary<string, Vector3>(StringComparer.Ordinal);
         if (binding.IncludeJointPositions)
         {
-            // The file's joint positions, as offsets from the skeleton parent: the parents are placed first.
-            var filePos = new Dictionary<string, Vector3>(StringComparer.Ordinal);
-            for (int g = 0; g < jointMap.Count; g++)
-            {
-                if (jointMap[g] < 0) continue;
-                var (joint, ibm) = skin.GetJoint(g);
-                var j = sk.Find(joint.Name ?? "");
-                if (j == null || !Matrix4x4.Invert(ibm, out var world)) continue;
-                filePos[j.Name] = Vector3.Transform(new Vector3(world.M41, world.M42, world.M43), Rotation * yaw);
-            }
-            overrides = new Dictionary<string, Vector3>(StringComparer.Ordinal);
-            int Depth(RestSkeleton.Joint j) { int d = 0; for (var c = j; c.Parent != null; c = sk.Find(c.Parent)!) d++; return d; }
-            foreach (var name in filePos.Keys.OrderBy(k => Depth(sk.Find(k)!)).ThenBy(k => k, StringComparer.Ordinal))
-            {
-                var j = sk.Find(name)!;
-                Vector3 pos = j.Position;
-                if (j.Parent != null)
-                {
-                    var parent = sk.Find(j.Parent)!;
-                    var pw = sk.World(parent.Name, overrides);
-                    var parentPos = new Vector3(pw.M41, pw.M42, pw.M43);
-                    // inverse of: world = parentPos + (local * parentScale) rotated by the parent's rotation
-                    Matrix4x4.Invert(new Matrix4x4(pw.M11 / parent.Scale.X, pw.M12 / parent.Scale.X, pw.M13 / parent.Scale.X, 0,
-                                                   pw.M21 / parent.Scale.Y, pw.M22 / parent.Scale.Y, pw.M23 / parent.Scale.Y, 0,
-                                                   pw.M31 / parent.Scale.Z, pw.M32 / parent.Scale.Z, pw.M33 / parent.Scale.Z, 0,
-                                                   0, 0, 0, 1), out var rotOnly);
-                    var rel = Vector3.Transform(filePos[name] - parentPos, rotOnly);
-                    pos = rel / parent.Scale;
-                }
-                else pos = filePos[name];
-                local[name] = pos;
-                if ((pos - j.Position).Length() > SkinningCheck.JointPositionThreshold) overrides[name] = pos;
-            }
-            report.Notes.Add($"joint positions written for {overrides.Count} of {filePos.Count} joints (the others lie within 0.1 mm of the avatar's)");
+            var listed = Enumerable.Range(0, jointMap.Count).Where(g => jointMap[g] >= 0);
+            overrides = ComputeOverrides(skin, listed, sk, yaw, local, out int filePosCount);
+            report.Notes.Add($"joint positions written for {overrides.Count} of {filePosCount} joints (the others lie within 0.1 mm of the avatar's)");
         }
 
         int replaced = 0;

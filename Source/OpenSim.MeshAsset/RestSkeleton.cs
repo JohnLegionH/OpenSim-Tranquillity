@@ -89,7 +89,13 @@ public sealed class RestSkeleton
     /// times the parameter's per-bone scale and offset. A few defaults are not zero (for example the arm length), so the
     /// default avatar is not the bare skeleton file.
     /// </summary>
-    public RestSkeleton WithDefaultShape(string avatarDefinitionPath)
+    public RestSkeleton WithDefaultShape(string avatarDefinitionPath) => WithShape(avatarDefinitionPath, null);
+
+    /// <summary>
+    /// <see cref="WithDefaultShape"/> with some skeletal shape parameters set to other values than their defaults, by the
+    /// parameter's name in avatar_lad.xml (for example "Male_Skeleton" = 1 is the Male switch's effect on the bones).
+    /// </summary>
+    public RestSkeleton WithShape(string avatarDefinitionPath, IReadOnlyDictionary<string, float>? values)
     {
         var pos = new Dictionary<string, Vector3>(StringComparer.Ordinal);
         var scale = new Dictionary<string, Vector3>(StringComparer.Ordinal);
@@ -98,7 +104,8 @@ public sealed class RestSkeleton
         {
             var sk = param.Element("param_skeleton");
             if (sk == null) continue;
-            float w = F((string?)param.Attribute("value_default") ?? "0");
+            var paramName = (string?)param.Attribute("name") ?? "";
+            float w = values != null && values.TryGetValue(paramName, out var given) ? given : F((string?)param.Attribute("value_default") ?? "0");
             if (w == 0) continue;
             foreach (var b in sk.Elements("bone"))
             {
