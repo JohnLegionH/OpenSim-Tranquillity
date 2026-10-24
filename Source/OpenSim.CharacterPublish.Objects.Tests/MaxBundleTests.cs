@@ -6,7 +6,9 @@
  * with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 using OpenMetaverse;
+using System.Text;
 using OpenSim.CharacterPublish;
+using OpenSimNGC.Appearance.Baking;
 using Xunit.Abstractions;
 
 namespace OpenSim.CharacterPublish.Objects.Tests;
@@ -61,5 +63,27 @@ public class MaxBundleTests
 
         var again = BundleFiles.ValidateFolder(outDir);
         Assert.True(again.Ok, again.ToString());
+    }
+
+    /// <summary>
+    /// The viewer hides a system part only when an attachment face shows that part's bake, and this body has no hair face, so
+    /// the resident's own hair would show under it. The bundle therefore carries a hair wearable (the worn hair is replaced,
+    /// one per type) whose hair texture is the grid's fully transparent texture: a bald hair.
+    /// </summary>
+    [BundleFact]
+    public void TheCharacterCarriesABaldHairSoTheResidentsOwnNeverShowsUnderTheBody()
+    {
+        var description = Environment.GetEnvironmentVariable("PUB_BUNDLE_DESCRIPTION")!;
+        var a = OutfitAssembler.AssembleFromFile(description,
+            new PublishContext(new UUID("66666666-7777-4888-8999-aaaaaaaaaaaa"), new UUID("11111111-2222-4333-8444-555555555555"), 1, 1_790_000_000));
+        Assert.True(a.Validation.Ok, a.Validation.ToString());
+        Assert.Equal(new[] { "shape", "skin", "eyes", "hair", "attachment-1", "notecard" }, a.Bundle.Items.Select(i => i.Role));
+
+        var item = a.Bundle.Items.Single(i => i.Role == "hair");
+        Assert.Equal((uint)WearableKind.Hair, item.Flags);
+        var hair = WearableReader.Read(Encoding.UTF8.GetString(a.Content[item.AssetId]));
+        Assert.Equal(WearableKind.Hair, hair.Type);
+        Assert.Equal(BakeConstants.InvisibleTexture, hair.Textures[(int)TextureSlot.Hair]);
+        Assert.Contains(BakeConstants.InvisibleTexture, a.Bundle.ExternalAssets);
     }
 }
