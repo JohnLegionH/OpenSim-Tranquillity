@@ -1,0 +1,61 @@
+;; Character publish endpoint: lets the grid operator's own character service write a finished
+;; character into a resident's inventory as a new outfit folder. It is OFF unless you add the line
+;; below to [ServiceList]; copy the section into your Robust configuration and fill in the required
+;; settings. Without a service key or the service modules it refuses to start and says what is missing.
+;;
+;; [ServiceList]
+;;     CharacterPublishConnector = "${Const|PublicPort}/OpenSim.Server.Handlers.dll:CharacterPublishServerConnector"
+;;
+;; Put the endpoint behind HTTPS. It refuses plain HTTP requests (see AllowInsecureHttp and TrustedProxies).
+;; Requests: POST /characterpublish/login, POST /characterpublish/publish, GET /characterpublish/status,
+;; POST /characterpublish/logout. Every request carries the service key in the X-Publish-Key header.
+
+[CharacterPublish]
+    ;; Required. At least 16 characters. The publishing service sends it in X-Publish-Key.
+    ServiceKey = ""
+
+    ;; Required. The grid account named as creator on every published item. A bundle made by anyone else is refused.
+    CreatorAccount = ""
+
+    ;; Required. The services the endpoint uses, loaded like the other Robust connectors load theirs.
+    AuthenticationServiceModule = "OpenSim.Services.AuthenticationService.dll:PasswordAuthenticationService"
+    UserAccountServiceModule = "OpenSim.Services.UserAccountService.dll:UserAccountService"
+    AssetServiceModule = "OpenSim.Services.AssetService.dll:AssetService"
+    InventoryServiceModule = "OpenSim.Services.InventoryService.dll:XInventoryService"
+
+    ;; Everything below is optional; the values shown are the defaults.
+
+    ;; Setting this to false lets any caller that can reach the port use the endpoint (a resident's login is still
+    ;; needed). A warning is logged at startup.
+    ; RequireServiceKey = true
+
+    ;; Setting this to true allows plain HTTP, so passwords and tokens can cross the network unencrypted. A warning is
+    ;; logged at startup. For a closed test network only.
+    ; AllowInsecureHttp = false
+
+    ;; Reverse proxies that end TLS in front of Robust: addresses or CIDR ranges, comma separated. Only a connection from
+    ;; one of these is believed when it says X-Forwarded-Proto: https or sends X-Forwarded-For.
+    ; TrustedProxies = ""
+
+    ;; Minutes a login token lives. Each use extends it by this much.
+    ; TokenMinutes = 30
+
+    ;; Size limits: the whole upload, one file, and the number of files in the zip (bundle.json counts).
+    ; MaxBundleBytes = 67108864
+    ; MaxAssetBytes = 16777216
+    ; MaxFiles = 65
+
+    ;; Published outfits a resident may hold in My Outfits.
+    ; MaxOutfitsPerResident = 20
+
+    ;; Also save the resident's current look as a folder of links before the new outfit is added.
+    ; SaveCurrentLook = true
+
+    ;; A texture the outfit names that is not on this grid refuses the publish. true publishes with a warning instead.
+    ; MissingTextureIsWarning = false
+
+    ;; Rate limits. Counted in memory, per Robust process. A request past a limit gets HTTP 429 with Retry-After.
+    ; RequestsPerAddressPerMinute = 120
+    ; LoginAttemptsPerAddressPerMinute = 10
+    ; LoginAttemptsPerNamePerMinute = 5
+    ; PublishesPerResidentPerHour = 10

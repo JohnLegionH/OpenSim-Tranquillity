@@ -37,6 +37,10 @@
     <ProjectReference Include="../OpenSim.Services.InventoryService/OpenSim.Services.InventoryService.csproj" />
     <ProjectReference Include="../OpenSim.Services.AssetService/OpenSim.Services.AssetService.csproj" />
     <ProjectReference Include="../OpenSim.Data.SQLite/OpenSim.Data.SQLite.csproj" />
+    <!-- the publish endpoint (Robust connector and handler) and the grid's real login services it uses -->
+    <ProjectReference Include="../OpenSim.Server.Handlers/OpenSim.Server.Handlers.csproj" />
+    <ProjectReference Include="../OpenSim.Services.AuthenticationService/OpenSim.Services.AuthenticationService.csproj" />
+    <ProjectReference Include="../OpenSim.Services.UserAccountService/OpenSim.Services.UserAccountService.csproj" />
   </ItemGroup>
 
 </Project>

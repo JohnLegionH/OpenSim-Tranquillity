@@ -377,10 +377,11 @@ public sealed class PublishService
 
     // ------------------------------------------------------------------------------------------------------------------
     /// <summary>Published outfits the resident holds: Outfit-type folders under My Outfits named "&lt;character&gt; #&lt;n&gt;" that hold an item made by the publisher's account.</summary>
-    int CountPublishedOutfits(UUID resident, List<InventoryFolderBase> myOutfits, UUID creator)
+    int CountPublishedOutfits(UUID resident, List<InventoryFolderBase> myOutfits, UUID creator) => PublishedOutfitFolders(resident, myOutfits, creator).Count();
+
+    IEnumerable<InventoryFolderBase> PublishedOutfitFolders(UUID resident, List<InventoryFolderBase> myOutfits, UUID creator)
     {
         var mark = creator.ToString();
-        var count = 0;
         foreach (var mo in myOutfits)
         {
             var content = _inventory.GetFolderContent(resident, mo.ID);
@@ -388,10 +389,25 @@ public sealed class PublishService
             foreach (var f in content.Folders.Where(f => f.Type == BundleTypes.FolderOutfit && PublishedFolderName.IsMatch(f.Name ?? "")))
             {
                 var items = _inventory.GetFolderContent(resident, f.ID)?.Items;
-                if (items != null && items.Any(i => i.AssetType != AssetLink && string.Equals(i.CreatorId, mark, StringComparison.OrdinalIgnoreCase))) count++;
+                if (items != null && items.Any(i => i.AssetType != AssetLink && string.Equals(i.CreatorId, mark, StringComparison.OrdinalIgnoreCase))) yield return f;
             }
         }
-        return count;
+    }
+
+    /// <summary>One published outfit folder in a resident's My Outfits.</summary>
+    public sealed record PublishedOutfit(UUID FolderId, string Name);
+
+    /// <summary>
+    /// The outfits <paramref name="creator"/> has published for the resident, counted exactly as the outfit limit counts them. Reads only.
+    /// A resident with no inventory or no My Outfits has none.
+    /// </summary>
+    public List<PublishedOutfit> ListPublishedOutfits(UUID residentId, UUID creator)
+    {
+        var root = _inventory.GetRootFolder(residentId);
+        if (root == null) return new();
+        var children = _inventory.GetFolderContent(residentId, root.ID)?.Folders ?? new List<InventoryFolderBase>();
+        var mine = children.Where(f => f.Type == BundleTypes.FolderMyOutfits && f.Owner == residentId).OrderBy(f => f.ID.ToString(), StringComparer.Ordinal).ToList();
+        return PublishedOutfitFolders(residentId, mine, creator).Select(f => new PublishedOutfit(f.ID, f.Name ?? "")).ToList();
     }
 
     /// <summary>

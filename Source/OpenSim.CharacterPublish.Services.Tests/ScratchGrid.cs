@@ -5,10 +5,14 @@
  * Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed
  * with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
+using Microsoft.Extensions.Logging;
 using Nini.Config;
 using OpenMetaverse;
 using OpenSim.Framework;
 using OpenSim.Services.AssetService;
+using OpenSim.Services.AuthenticationService;
+using OpenSim.Services.Interfaces;
+using OpenSim.Services.UserAccountService;
 using OpenSim.Services.InventoryService;
 
 namespace OpenSim.CharacterPublish.Services.Tests;
@@ -33,6 +37,15 @@ public sealed class ScratchGrid
     /// <summary>Unwrapped services for seeding a resident and for reading back; they record nothing.</summary>
     public XInventoryService Plain { get; }
     public AssetService PlainAssets { get; }
+    public UserAccountService Accounts { get; }
+    public PasswordAuthenticationService Auth { get; }
+
+    /// <summary>An account with a password, as the grid stores them (the password is hashed and salted by the authentication service).</summary>
+    public void AddAccount(UUID id, string first, string last, string password, int userLevel = 0, int userFlags = 0)
+    {
+        Assert.True(Accounts.StoreUserAccount(new UserAccount(UUID.Zero, id, first, last, "test@example.org") { UserLevel = userLevel, UserFlags = userFlags }));
+        Assert.True(Auth.SetPassword(id, password));
+    }
 
     public ScratchGrid()
     {
@@ -50,10 +63,32 @@ public sealed class ScratchGrid
         var ast = ini.AddConfig("AssetService");
         ast.Set("StorageProvider", "OpenSim.Data.SQLite.dll");
         ast.Set("ConnectionString", "Data Source=" + Path.Combine(Folder, "assets.db").Replace('\\', '/') + Fast);
+        // the grid's own authentication and account services, for the publish endpoint's login
+        var authc = ini.AddConfig("AuthenticationService");
+        authc.Set("StorageProvider", "OpenSim.Data.SQLite.dll");
+        authc.Set("ConnectionString", "Data Source=" + Path.Combine(Folder, "auth.db").Replace('\\', '/') + Fast);
+        var userc = ini.AddConfig("UserAccountService");
+        userc.Set("StorageProvider", "OpenSim.Data.SQLite.dll");
+        userc.Set("ConnectionString", "Data Source=" + Path.Combine(Folder, "useraccounts.db").Replace('\\', '/') + Fast);
         Config = ini;
+        LoggerProvider.LoggerFactory = LogCapture.Factory; // every log line of every service in this process is kept, so a test can look for a secret in them
 
         Plain = new XInventoryService(Config);
         PlainAssets = new AssetService(Config);
+        Accounts = new UserAccountService(Config);
+        // The SQLite plugin's UserAccounts migrations stop before the DisplayName and NameChanged columns the account service reads and
+        // writes (the MySQL ones have them), so the service cannot store an account in a fresh SQLite database. The scratch database gets
+        // the two columns the MySQL migration adds; nothing but this scratch file is touched.
+        using (var db = new System.Data.SQLite.SQLiteConnection("Data Source=" + Path.Combine(Folder, "useraccounts.db")))
+        {
+            db.Open();
+            foreach (var sql in new[] { "ALTER TABLE UserAccounts ADD COLUMN DisplayName VARCHAR(31) NULL", "ALTER TABLE UserAccounts ADD COLUMN NameChanged INT NULL DEFAULT 0" })
+            {
+                using var cmd = new System.Data.SQLite.SQLiteCommand(sql, db);
+                cmd.ExecuteNonQuery();
+            }
+        }
+        Auth = new PasswordAuthenticationService(Config, Accounts);
 
         // The textures the fixture wearables name are on a real grid, and a missing texture is a refusal, so the scratch grid holds them.
         // 5748decc-... is the grid's blank texture, which the Max bundle names in every slot
@@ -250,4 +285,28 @@ public sealed class RecordingAssets : AssetService
     }
 
     public override bool Delete(string id) { Forbidden.Add("Delete " + id); return false; }
+}
+
+/// <summary>Keeps every line any logger writes, formatted, so tests can prove what never reaches a log.</summary>
+public static class LogCapture
+{
+    public static readonly System.Collections.Concurrent.ConcurrentQueue<string> Lines = new();
+    public static readonly ILoggerFactory Factory = new CaptureFactory();
+
+    sealed class CaptureFactory : ILoggerFactory
+    {
+        public ILogger CreateLogger(string categoryName) => new CaptureLogger(categoryName);
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+    }
+
+    public sealed class CaptureLogger : ILogger
+    {
+        readonly string _category;
+        public CaptureLogger(string category) => _category = category;
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+            Lines.Enqueue($"{logLevel} {_category}: {formatter(state, exception)}{(exception == null ? "" : " | " + exception)}");
+    }
 }

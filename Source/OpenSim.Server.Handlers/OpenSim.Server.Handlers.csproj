@@ -19,6 +19,8 @@
     <ProjectReference Include="../../Source/OpenSim.Services.Base/OpenSim.Services.Base.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Services.Interfaces/OpenSim.Services.Interfaces.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Services.UserAccountService/OpenSim.Services.UserAccountService.csproj" />
+    <!-- the character publish endpoint validates and stores bundles with the light publish library (no region code) -->
+    <ProjectReference Include="../../Source/OpenSim.CharacterPublish/OpenSim.CharacterPublish.csproj" />
   </ItemGroup>
 
   <ItemGroup>
