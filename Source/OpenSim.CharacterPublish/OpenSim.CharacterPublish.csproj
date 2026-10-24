@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    OpenSim.CharacterPublish: writers for the asset texts a published character puts in a resident's inventory
+    (wearables, notecards), in the exact text formats the Second Life viewer writes and reads.
+
+    No ProjectReference to any OpenSim.Region.* project or to OpenSim.Framework, so Robust and tools can use it.
+    The only OpenMetaverse dependency is OpenMetaverse.Types (OpenMetaverse.UUID), as in OpenSimNGC.Appearance.Baking.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>OpenSim.CharacterPublish</RootNamespace>
+    <AssemblyName>OpenSim.CharacterPublish</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsPackable>false</IsPackable>
+    <!-- CS1591: the public members are documented where their meaning is not obvious from the name. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Remove="UtopiaSkye.OpenMetaverse" />
+    <PackageReference Remove="UtopiaSkye.OpenMetaverse.StructuredData" />
+    <PackageReference Remove="UtopiaSkye.OpenMetaverse.Rendering.Meshmerizer" />
+    <PackageReference Remove="UtopiaSkye.OpenMetaverse.Rendering.Simple" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- avatar_lad.xml (default parameter values) and the wearable kinds -->
+    <ProjectReference Include="../OpenSimNGC.Appearance.Baking/OpenSimNGC.Appearance.Baking.csproj" />
+  </ItemGroup>
+
+</Project>
