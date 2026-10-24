@@ -149,9 +149,9 @@ public class PhysicsModelTests
     {
         yield return new object[] { "hollow box", "box", "hollow", "0.15,0.15,0.15" };
         yield return new object[] { "cut torus", "torus", "profile-cut-quarter", "0.1,0.12,0.1" };
-        yield return new object[] { "cylinder", "cylinder", "plain", "0.19,0.19,0.19" };
+        yield return new object[] { "hollow cylinder", "cylinder", "hollow", "0.19,0.19,0.19" };
         yield return new object[] { "tapered box", "box", "taper", "0.05,0.1,0.18" };
-        yield return new object[] { "sphere", "sphere", "plain", "0.03,0.03,0.03" };
+        yield return new object[] { "lopsided sphere", "sphere", "plain", "0.03,0.03,0.05" };
     }
 
     [Theory]
@@ -189,13 +189,31 @@ public class PhysicsModelTests
     }
 
     [Theory]
-    [InlineData(0.199f, 0.199f, 0.199f, true)]
-    [InlineData(0.2f, 0.1f, 0.1f, false)]
-    [InlineData(0.1f, 0.1f, 0.2f, false)]
-    [InlineData(0.01f, 0.01f, 0.01f, true)]
-    public void TheRegionsBoxRuleIsAllThreeSidesUnderTwoDecimetres(float x, float y, float z, bool boxed)
+    [InlineData("box", "hollow", 0.199f, 0.199f, 0.199f, true)]
+    [InlineData("box", "hollow", 0.2f, 0.1f, 0.1f, false)]
+    [InlineData("box", "hollow", 0.1f, 0.1f, 0.2f, false)]
+    [InlineData("box", "hollow", 0.01f, 0.01f, 0.01f, true)]
+    [InlineData("box", "taper", 0.1f, 0.1f, 0.1f, true)]
+    [InlineData("box", "plain", 0.1f, 0.1f, 0.1f, false)]
+    [InlineData("cylinder", "plain", 0.1f, 0.1f, 0.15f, false)]
+    [InlineData("cylinder", "plain", 0.1f, 0.12f, 0.15f, true)]
+    [InlineData("sphere", "plain", 0.1f, 0.1f, 0.1f, false)]
+    [InlineData("sphere", "plain", 0.1f, 0.1f, 0.15f, true)]
+    [InlineData("prism", "plain", 0.1f, 0.1f, 0.1f, true)]
+    [InlineData("torus", "plain", 0.1f, 0.1f, 0.1f, true)]
+    public void TheRegionsBoxRuleIsAllThreeSidesUnderTwoDecimetresForAPrimItMeshes(string shape, string modifier, float x, float y, float z, bool boxed)
     {
-        Assert.Equal(boxed, PrimPhysics.RegionBoxesIt(new Vector3(x, y, z)));
+        Assert.Equal(boxed, PrimPhysics.RegionBoxesIt(FaceMatrix.Shape(shape, modifier), new Vector3(x, y, z)));
+    }
+
+    [Theory]
+    [InlineData("cylinder", "plain", "0.1,0.1,0.15")]
+    [InlineData("sphere", "plain", "0.1,0.1,0.1")]
+    public void AnUncutNativeShapeIsNotBoxedSoItKeepsItsRealTriangles(string shape, string modifier, string scale)
+    {
+        KitPart part = Fixture(shape, modifier, "Fixture", scale);
+        (_, _, _, ConvertedPart converted) = ConvertOne(part);
+        Assert.True(converted.PhysicsTriangles > 12);
     }
 
     [Fact]

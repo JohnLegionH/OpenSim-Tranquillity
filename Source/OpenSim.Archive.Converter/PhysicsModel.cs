@@ -60,22 +60,46 @@ public static class PrimPhysics
     public const float BoundingBoxBelow = 0.2f;
 
     /// <summary>
-    /// True when the region gives a prim or sculpt of this size a box for its physics shape: the Jolt scene asks the mesher for a
-    /// non-physical mesh (<c>Meshmerizer.MakeMesh</c>, <c>boundingBoxOnly</c>), and the mesher answers with the 8-corner bounding box
-    /// of the real mesh when all three sides are under <see cref="BoundingBoxBelow"/>. The test is on the part's own scale.
+    /// True when the region gives this prim or sculpt a box for its physics shape because of its size: the Jolt scene asks the
+    /// mesher for a non-physical mesh (<c>Meshmerizer.MakeMesh</c>, <c>boundingBoxOnly</c>), and the mesher answers with the
+    /// 8-corner bounding box of the real mesh when all three sides of the part's scale are under <see cref="BoundingBoxBelow"/>.
+    /// An un-cut box, uniform sphere or circular cylinder never reaches the mesher (the scene gives it a native shape,
+    /// <c>JoltScene.CookPrimShape</c>), so none of those is boxed here.
     /// </summary>
-    public static bool RegionBoxesIt(OpenMetaverse.Vector3 size) =>
-        size.X < BoundingBoxBelow && size.Y < BoundingBoxBelow && size.Z < BoundingBoxBelow;
+    public static bool RegionBoxesIt(ShapeData shape, OpenMetaverse.Vector3 size)
+    {
+        if (!(size.X < BoundingBoxBelow && size.Y < BoundingBoxBelow && size.Z < BoundingBoxBelow))
+            return false;
+        if (shape.SculptEntry)
+            return true;
+
+        // the scene's own test for an un-cut basic shape (JoltScene.PrimHasNoCuts, BulletSim's cut test)
+        PrimitiveBaseShape p = FaceAgreement.ToServerShape(shape);
+        bool noCuts = p.ProfileBegin == 0 && p.ProfileEnd == 0 && p.ProfileHollow == 0 &&
+                      p.PathTwist == 0 && p.PathTwistBegin == 0 && p.PathBegin == 0 && p.PathEnd == 0 &&
+                      p.PathTaperX == 0 && p.PathTaperY == 0 && p.PathScaleX == 100 && p.PathScaleY == 100 &&
+                      p.PathShearX == 0 && p.PathShearY == 0;
+        if (!noCuts)
+            return true;
+        bool same(float a, float b) => Math.Abs(a - b) <= 1e-4f * Math.Max(1f, Math.Max(Math.Abs(a), Math.Abs(b)));
+        if (p.ProfileShape == ProfileShape.Square && p.PathCurve == (byte)Extrusion.Straight)
+            return false;
+        if (p.ProfileShape == ProfileShape.HalfCircle && p.PathCurve == (byte)Extrusion.Curve1 && same(size.X, size.Y) && same(size.Y, size.Z))
+            return false;
+        if (p.ProfileShape == ProfileShape.Circle && p.PathCurve == (byte)Extrusion.Straight && same(size.X, size.Y))
+            return false;
+        return true;
+    }
 
     /// <summary>
-    /// As <see cref="Build(ShapeData, byte[], SculptMap, out string)"/> for a part of the given size: when the region would box a prim
-    /// of that size (<see cref="RegionBoxesIt"/>) the geometry is the bounding box of the shape's unit-size mesh, 8 corners and
-    /// 12 triangles, so the converted part collides exactly as the prim did. The box scales with the part like any other geometry.
+    /// As <see cref="Build(ShapeData, byte[], SculptMap, out string)"/> for a part of the given size: when the region would box the
+    /// prim (<see cref="RegionBoxesIt"/>) the geometry is the bounding box of the shape's unit-size mesh, 8 corners and 12
+    /// triangles, so the converted part collides exactly as the prim did. The box scales with the part like any other geometry.
     /// </summary>
     public static PhysicsGeometry Build(ShapeData shape, byte[] sculptJp2, SculptMap sculptMap, OpenMetaverse.Vector3 size, out string problem)
     {
         PhysicsGeometry g = BuildGeometry(shape, sculptJp2, sculptMap, out problem);
-        return g != null && RegionBoxesIt(size) ? BoundingBox(g) : g;
+        return g != null && RegionBoxesIt(shape, size) ? BoundingBox(g) : g;
     }
 
     private static PhysicsGeometry BoundingBox(PhysicsGeometry g)
