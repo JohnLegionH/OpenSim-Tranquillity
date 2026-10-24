@@ -244,6 +244,9 @@ public sealed class ArchiveEligibility
         if (isPrimCode && !isSculpt && er.ServerFaces != er.ViewerFaces && FaceRuleCases.Explain(shape) == null)
             Add(PartAction.KeepPrim, ReasonCodes.FaceRuleUnverified, "the server counts " + er.ServerFaces + " sides and the viewer " + er.ViewerFaces + ", and the difference is not one the viewer source has been checked for");
 
+        if (isPrimCode && !isSculpt && UvRules.Unverified(shape) is string uvReason)
+            Add(PartAction.KeepPrim, ReasonCodes.UvUnverified, uvReason);
+
         if (isPrimCode && !isSculpt && er.ServerFaces != er.ViewerFaces)
         {
             string detail = "the server counts " + er.ServerFaces + " sides and the viewer " + er.ViewerFaces;

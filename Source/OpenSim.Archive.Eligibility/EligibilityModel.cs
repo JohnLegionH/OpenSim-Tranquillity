@@ -38,6 +38,8 @@ public static class ReasonCodes
     public const string PhysicalScript = "PHYSICAL_SCRIPT";
     /// <summary>The server and viewer face counts differ for a reason that is not one of the settled cases (see FaceRuleCases).</summary>
     public const string FaceRuleUnverified = "FACERULE_UNVERIFIED";
+    /// <summary>The shape's texture coordinates, as the mesher builds them, are not the viewer's (see UvRules).</summary>
+    public const string UvUnverified = "UV_UNVERIFIED";
     /// <summary>A warning, not a reason to keep: the side count changes and no script was seen to depend on it.</summary>
     public const string SideCountChanges = "SIDE_COUNT_CHANGES";
 }
