@@ -18,7 +18,7 @@ internal static class CompareCommand
 
 Compares two region archives without loading them. Parts are matched by part UUID. Every entry that is not an object
 file must have the same bytes. For each part it compares link number, name, description, position, rotation, scale, shape,
-face count, texture entry, contents (item name, type, asset, permissions), creator, owner and permission masks.
+face count, texture entry, contents (item name, type, asset, permissions), creator, owner, permission masks and physics shape type.
 The archives are only read.
   --plan <plan.json>   the changes the rewrite was meant to make; a difference the plan names passes, any other fails,
                        and a planned change that is not found fails

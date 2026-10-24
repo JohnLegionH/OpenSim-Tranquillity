@@ -138,7 +138,7 @@ public sealed class ArchiveComparer
     private static readonly string[] CompareOrder =
     {
         "name", "description", "linkNum", "position", "groupPosition", "rotation", "scale", "shape", "textureEntry", "faces",
-        "creator", "owner", "permissions", "scriptStates"
+        "creator", "owner", "permissions", "physics", "scriptStates"
     };
 
     public CompareResult Compare(string originalPath, string rewrittenPath, ComparePlan plan = null)

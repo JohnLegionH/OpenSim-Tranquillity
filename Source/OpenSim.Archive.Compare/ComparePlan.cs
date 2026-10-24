@@ -41,7 +41,7 @@ public sealed class ComparePlan
     public static readonly string[] PartFields =
     {
         "name", "description", "linkNum", "position", "groupPosition", "rotation", "scale", "shape", "textureEntry",
-        "faces", "creator", "owner", "permissions", "contents", "scriptStates"
+        "faces", "creator", "owner", "permissions", "physics", "contents", "scriptStates"
     };
 
     /// <summary>Fields that hold one value, for which "to" can state it.</summary>

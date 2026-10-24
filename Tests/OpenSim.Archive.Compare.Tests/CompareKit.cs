@@ -27,6 +27,8 @@ internal sealed class FixturePart
     public string ProfileCurve = "1";
     public string ProfileHollow = "0";
     public bool Mesh;
+    /// <summary>The PhysicsShapeType element (0 prim, 1 none, 2 convex); null leaves it out.</summary>
+    public string PhysicsShapeType;
     /// <summary>Saved script state of the whole build, written once with the root part.</summary>
     public string ScriptState;
     public List<FixtureItem> Items = new List<FixtureItem>();
@@ -109,6 +111,8 @@ internal static class CompareKit
         sb.Append("<RotationOffset><X>0</X><Y>0</Y><Z>0</Z><W>1</W></RotationOffset>");
         sb.Append("<Description>").Append(p.Description).Append("</Description>");
         sb.Append("<LinkNum>").Append(p.LinkNum).Append("</LinkNum>");
+        if (p.PhysicsShapeType != null)
+            sb.Append("<PhysicsShapeType>").Append(p.PhysicsShapeType).Append("</PhysicsShapeType>");
         sb.Append("<Shape>");
         sb.Append("<ProfileCurve>").Append(p.Mesh ? "49" : p.ProfileCurve).Append("</ProfileCurve>");
         sb.Append("<TextureEntry>").Append(p.Texture).Append("</TextureEntry>");

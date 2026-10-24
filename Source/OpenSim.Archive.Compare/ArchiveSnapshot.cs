@@ -325,6 +325,7 @@ public sealed class ArchiveSnapshot
         p.Groups["creator"] = Pick(part, "CreatorID", "CreatorData");
         p.Groups["owner"] = Pick(part, "OwnerID", "LastOwnerID", "GroupID");
         p.Groups["permissions"] = Pick(part, "BaseMask", "OwnerMask", "GroupMask", "EveryoneMask", "NextOwnerMask");
+        p.Groups["physics"] = Pick(part, "PhysicsShapeType");
 
         XElement inventory = part.Element("TaskInventory");
         if (inventory != null)

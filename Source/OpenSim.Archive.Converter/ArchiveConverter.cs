@@ -245,6 +245,13 @@ public sealed class ArchiveConverter
                 w.WriteString("to", "mesh");
                 w.WriteNumber("faces", c.Faces);
                 w.WriteEndObject();
+                if (c.PhysicsShapeTypeAfter != c.PhysicsShapeTypeBefore)
+                {
+                    w.WriteStartObject();
+                    w.WriteString("part", c.PartId.ToString());
+                    w.WriteString("field", "physics");
+                    w.WriteEndObject();
+                }
             }
             w.WriteEndArray();
             w.WriteStartArray("addedEntries");

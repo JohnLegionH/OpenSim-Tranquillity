@@ -126,6 +126,26 @@ public class CompareTests
     }
 
     [Fact]
+    public void ChangedPhysicsShapeType_NeedsThePlan()
+    {
+        List<List<FixturePart>> builds = SampleBuilds();
+        FixturePart root = builds[0][0];
+        root.PhysicsShapeType = "1";
+        string a = WriteArchive(builds, SampleAssets());
+        root.PhysicsShapeType = "0";
+        string b = WriteArchive(builds, SampleAssets());
+
+        CompareResult without = Run(a, b);
+        Assert.False(without.Pass);
+        Assert.Contains(without.Unplanned, d => d.Field == "physics");
+
+        string plan = "{\"version\":1,\"partChanges\":[{\"part\":\"" + root.Id + "\",\"field\":\"physics\"}]}";
+        Assert.True(Run(a, b, plan).Pass);
+        // an unchanged type needs no plan
+        Assert.True(Run(b, WriteArchive(builds, SampleAssets())).Pass);
+    }
+
+    [Fact]
     public void ExtraAsset_NotInThePlan_Fails_AndPassesWhenPlanned()
     {
         Guid extra = Guid.NewGuid();
