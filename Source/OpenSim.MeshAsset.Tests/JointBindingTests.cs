@@ -97,6 +97,54 @@ public class JointBindingTests
         Assert.True(SkinningCheck.Pose(model, Skeleton(), 3, useJointPositions: false).MaxError > 0.015f);
     }
 
+    const string ArmSkeletonXml = @"<linden_skeleton>
+  <bone name=""mRoot"" pos=""0 0 1"" rot=""0 0 0"" scale=""1 1 1"">
+    <bone name=""mArm"" pos=""0 0.1 0"" rot=""0 0 0"" scale=""1 1 1"">
+      <collision_volume name=""ARM_VOLUME"" pos=""0 0.1 0"" rot=""0 0 0"" scale=""0.1 0.1 0.1""/>
+    </bone>
+  </bone>
+</linden_skeleton>";
+
+    /// <summary>A mesh weighted to the root bone and to a volume under an arm bone that carries no weight, with the file's arm bone 2 cm out from the skeleton's.</summary>
+    static SharpGLTF.Schema2.ModelRoot ArmRig()
+    {
+        var mesh = new MeshBuilder<VertexPositionNormal, VertexTexture1, VertexJoints4>("body");
+        VertexBuilder<VertexPositionNormal, VertexTexture1, VertexJoints4> V(Vector3 p, int joint) =>
+            new(new VertexPositionNormal(p, Vector3.UnitZ), new VertexTexture1(Vector2.Zero), new VertexJoints4(new[] { (joint, 1f) }));
+        var prim = mesh.UsePrimitive(new MaterialBuilder("m"));
+        // SL (x, y, z) is glTF (x, z, -y)
+        prim.AddTriangle(V(new Vector3(0.05f, 1.0f, 0.0f), 0), V(new Vector3(0f, 1.05f, 0f), 0), V(new Vector3(0f, 1.0f, 0.05f), 0));
+        prim.AddTriangle(V(new Vector3(0.05f, 1.0f, -0.2f), 1), V(new Vector3(0f, 1.05f, -0.2f), 1), V(new Vector3(0f, 1.0f, -0.25f), 1));
+        var armature = new NodeBuilder("armature");
+        var root = armature.CreateNode("mRoot"); root.LocalMatrix = Matrix4x4.CreateTranslation(0, 1, 0);
+        var arm = armature.CreateNode("mArm"); arm.LocalMatrix = Matrix4x4.CreateTranslation(0, 1, -0.12f);
+        var volume = armature.CreateNode("ARM_VOLUME"); volume.LocalMatrix = Matrix4x4.CreateTranslation(0, 1, -0.2f);
+        var scene = new SceneBuilder();
+        scene.AddSkinnedMesh(mesh, Matrix4x4.Identity, new[] { root, volume, arm });
+        return scene.ToGltf2();
+    }
+
+    [Fact]
+    public void AnUnweightedParentTheFileMovesIsListedSoTheLimbTurnsAboutTheFilesJoint()
+    {
+        var sk = RestSkeleton.Parse(XDocument.Parse(ArmSkeletonXml));
+        var root = ArmRig();
+        // the arm bone carries no weight; the file puts it 2 cm further out than the skeleton does
+        var (off, _) = GltfToMesh.Convert(root, binding: new GltfToMesh.JointBinding(sk, false));
+        var (on, report) = GltfToMesh.Convert(root, binding: new GltfToMesh.JointBinding(sk, true));
+        Assert.DoesNotContain("mArm", off.Skin!.JointNames);
+        Assert.Contains("mArm", on.Skin!.JointNames);
+        Assert.Equal(1, report.PivotJointsAdded);
+
+        var source = MotionEquivalenceTests.ReadSource(root, sk, 0);
+        var pose = new MotionEquivalenceTests.PoseSpec("arm", new[] { ("mArm", new Vector3(45, 0, 0)) });
+        var expected = MotionEquivalenceTests.PoseSource(source, sk, pose);
+        var posedOn = MotionEquivalenceTests.PoseAsset(on, sk, true, pose, out _);
+        var posedOff = MotionEquivalenceTests.PoseAsset(off, sk, false, pose, out _);
+        Assert.True(MotionEquivalenceTests.Compare(posedOn, expected).Max < 0.0005f, "joint positions on: the limb moves as the file's rig does");
+        Assert.True(MotionEquivalenceTests.Compare(posedOff, expected).Max > 0.01f, "joint positions off: the limb turns about the avatar's joint, 2 cm away");
+    }
+
     [Fact]
     public void AnAssetWithoutASkinIsNotTouchedByTheBinding()
     {
