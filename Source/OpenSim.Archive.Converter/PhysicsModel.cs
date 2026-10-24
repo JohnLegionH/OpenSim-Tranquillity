@@ -53,6 +53,51 @@ public static class PrimPhysics
     /// </summary>
     public static PhysicsGeometry Build(ShapeData shape, byte[] sculptJp2, SculptMap sculptMap, out string problem)
     {
+        return BuildGeometry(shape, sculptJp2, sculptMap, out problem);
+    }
+
+    /// <summary>The smallest side, in metres, from which the region's mesher stops answering a static prim with its bounding box (<c>Meshmerizer.minSizeForComplexMesh</c>).</summary>
+    public const float BoundingBoxBelow = 0.2f;
+
+    /// <summary>
+    /// True when the region gives a prim or sculpt of this size a box for its physics shape: the Jolt scene asks the mesher for a
+    /// non-physical mesh (<c>Meshmerizer.MakeMesh</c>, <c>boundingBoxOnly</c>), and the mesher answers with the 8-corner bounding box
+    /// of the real mesh when all three sides are under <see cref="BoundingBoxBelow"/>. The test is on the part's own scale.
+    /// </summary>
+    public static bool RegionBoxesIt(OpenMetaverse.Vector3 size) =>
+        size.X < BoundingBoxBelow && size.Y < BoundingBoxBelow && size.Z < BoundingBoxBelow;
+
+    /// <summary>
+    /// As <see cref="Build(ShapeData, byte[], SculptMap, out string)"/> for a part of the given size: when the region would box a prim
+    /// of that size (<see cref="RegionBoxesIt"/>) the geometry is the bounding box of the shape's unit-size mesh, 8 corners and
+    /// 12 triangles, so the converted part collides exactly as the prim did. The box scales with the part like any other geometry.
+    /// </summary>
+    public static PhysicsGeometry Build(ShapeData shape, byte[] sculptJp2, SculptMap sculptMap, OpenMetaverse.Vector3 size, out string problem)
+    {
+        PhysicsGeometry g = BuildGeometry(shape, sculptJp2, sculptMap, out problem);
+        return g != null && RegionBoxesIt(size) ? BoundingBox(g) : g;
+    }
+
+    private static PhysicsGeometry BoundingBox(PhysicsGeometry g)
+    {
+        float[] min = { float.MaxValue, float.MaxValue, float.MaxValue }, max = { float.MinValue, float.MinValue, float.MinValue };
+        for (int i = 0; i < g.Positions.Length; i++)
+        {
+            min[i % 3] = Math.Min(min[i % 3], g.Positions[i]);
+            max[i % 3] = Math.Max(max[i % 3], g.Positions[i]);
+        }
+        // the corners and triangles in the order the region's mesher lists them (Meshmerizer.CreateSimpleBoxMesh)
+        float[] corners =
+        {
+            min[0], max[1], min[2],   max[0], max[1], min[2],   max[0], min[1], min[2],   min[0], min[1], min[2],
+            max[0], max[1], max[2],   min[0], max[1], max[2],   min[0], min[1], max[2],   max[0], min[1], max[2]
+        };
+        int[] indices = { 0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7, 5, 0, 3, 5, 3, 6, 1, 0, 5, 1, 5, 4, 7, 1, 4, 7, 2, 1, 3, 2, 7, 3, 7, 6 };
+        return new PhysicsGeometry { Positions = corners, Indices = indices };
+    }
+
+    private static PhysicsGeometry BuildGeometry(ShapeData shape, byte[] sculptJp2, SculptMap sculptMap, out string problem)
+    {
         problem = null;
         PrimitiveBaseShape pbs = FaceAgreement.ToServerShape(shape);
         try

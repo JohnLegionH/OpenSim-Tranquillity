@@ -105,7 +105,7 @@ public sealed class ArchiveConverter
                         continue;
                     }
                     faces = FaceBuilder.Slots(sr.Faces, sr.ViewerFaceCount);
-                    physics = PrimPhysics.Build(pp.Shape, (sculptMaps as ISculptMapBytes)?.GetBytes(pp.Shape.SculptTexture.Guid), map, out string physicsProblem);
+                    physics = PrimPhysics.Build(pp.Shape, (sculptMaps as ISculptMapBytes)?.GetBytes(pp.Shape.SculptTexture.Guid), map, pp.Scale, out string physicsProblem);
                     if (physics == null)
                     {
                         Keep(result, row, "PHYSICS_UNAVAILABLE", physicsProblem);
@@ -115,7 +115,7 @@ public sealed class ArchiveConverter
                 else
                 {
                     faces = FaceBuilder.FromPrim(pp.Shape, out unnumbered);
-                    physics = PrimPhysics.Build(pp.Shape, null, null, out string physicsProblem);
+                    physics = PrimPhysics.Build(pp.Shape, null, null, pp.Scale, out string physicsProblem);
                     if (physics == null)
                     {
                         Keep(result, row, "PHYSICS_UNAVAILABLE", physicsProblem);

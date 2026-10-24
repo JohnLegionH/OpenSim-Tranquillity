@@ -145,6 +145,59 @@ public class PhysicsModelTests
         Assert.True(reading.RegionTriangles > 0 && reading.RegionTriangles <= converted.PhysicsTriangles);
     }
 
+    public static IEnumerable<object[]> SmallParts()
+    {
+        yield return new object[] { "hollow box", "box", "hollow", "0.15,0.15,0.15" };
+        yield return new object[] { "cut torus", "torus", "profile-cut-quarter", "0.1,0.12,0.1" };
+        yield return new object[] { "cylinder", "cylinder", "plain", "0.19,0.19,0.19" };
+        yield return new object[] { "tapered box", "box", "taper", "0.05,0.1,0.18" };
+        yield return new object[] { "sphere", "sphere", "plain", "0.03,0.03,0.03" };
+    }
+
+    [Theory]
+    [MemberData(nameof(SmallParts))]
+    public void APartTheRegionBoxesGetsTheBoxThePrimHad(string label, string shape, string modifier, string scale)
+    {
+        _ = label;
+        KitPart part = Fixture(shape, modifier, "Fixture", scale);
+        (SceneObjectPart before, SceneObjectPart after, byte[] asset, ConvertedPart converted) = ConvertOne(part);
+
+        // the region answers a static prim under 0.2 m on every side with the 8-corner box of its mesh
+        (float[] positions, int[] indices) prim = RegionMesh(before.Shape, before.Scale, false);
+        Assert.Equal(12, prim.indices.Length / 3);
+        Assert.Equal(12, converted.PhysicsTriangles);
+        after.Shape.SculptData = (byte[])asset.Clone();
+        (float[] positions, int[] indices) mesh = RegionMesh(after.Shape, after.Scale, true);
+        Assert.Equal(12, mesh.indices.Length / 3);
+        AssertSameTriangles(prim, mesh, before.Scale);
+    }
+
+    [Theory]
+    [InlineData("0.2,0.1,0.1")]
+    [InlineData("0.1,0.1,0.2")]
+    [InlineData("1,1,1")]
+    public void APartWithASideOfAtLeastTwoDecimetresKeepsItsRealTriangles(string scale)
+    {
+        KitPart part = Fixture("box", "hollow", "Fixture", scale);
+        (SceneObjectPart before, SceneObjectPart after, byte[] asset, ConvertedPart converted) = ConvertOne(part);
+
+        (float[] positions, int[] indices) prim = RegionMesh(before.Shape, before.Scale, false);
+        Assert.True(prim.indices.Length / 3 > 12);
+        Assert.True(converted.PhysicsTriangles > 12);
+        after.Shape.SculptData = (byte[])asset.Clone();
+        AssertSameTriangles(prim, RegionMesh(after.Shape, after.Scale, true), before.Scale);
+    }
+
+    [Theory]
+    [InlineData(0.199f, 0.199f, 0.199f, true)]
+    [InlineData(0.2f, 0.1f, 0.1f, false)]
+    [InlineData(0.1f, 0.1f, 0.2f, false)]
+    [InlineData(0.01f, 0.01f, 0.01f, true)]
+    public void TheRegionsBoxRuleIsAllThreeSidesUnderTwoDecimetres(float x, float y, float z, bool boxed)
+    {
+        Assert.Equal(boxed, PrimPhysics.RegionBoxesIt(new Vector3(x, y, z)));
+    }
+
     [Fact]
     public void ATwistedAndTaperedPartKeepsItsPrimCollision()
     {
