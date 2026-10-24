@@ -11,6 +11,17 @@ using System.Numerics;
 
 namespace OpenSim.MeshAsset;
 
+/// <summary>What <see cref="MeshCodec.Decode(byte[], MeshDecodeOptions?)"/> may leave unread. Every flag defaults to reading everything.</summary>
+public sealed class MeshDecodeOptions
+{
+    /// <summary>Read only the highest display level present (high, then medium, low, lowest); the others stay null.</summary>
+    public bool HighestLevelOnly { get; set; }
+    /// <summary>Do not read the physics_convex and physics_mesh blocks.</summary>
+    public bool SkipPhysics { get; set; }
+    /// <summary>Do not read the per-vertex skin weights of a face; <see cref="MeshFace.Weights"/> stays null.</summary>
+    public bool SkipWeights { get; set; }
+}
+
 /// <summary>Reads and writes the Linden Lab mesh asset: a binary LLSD header, then zlib-compressed binary LLSD blocks.</summary>
 public static class MeshCodec
 {
@@ -221,8 +232,18 @@ public static class MeshCodec
 
     // ---------------------------------------------------------------- decode
 
-    public static MeshAssetModel Decode(byte[] data)
+    /// <summary>Decodes the whole asset.</summary>
+    public static MeshAssetModel Decode(byte[] data) => Decode(data, null);
+
+    /// <summary>
+    /// Decodes the asset, leaving out the parts <paramref name="options"/> says the caller will not use. The parts left out
+    /// are not read at all, which keeps a large asset's memory use down; with no options everything is read.
+    /// </summary>
+    public static MeshAssetModel Decode(byte[] data, MeshDecodeOptions? options)
     {
+        bool highestOnly = options?.HighestLevelOnly ?? false;
+        bool skipPhysics = options?.SkipPhysics ?? false;
+        bool skipWeights = options?.SkipWeights ?? false;
         var headerObj = LlsdBinary.Read(data, out int headerLen);
         if (headerObj is not IDictionary<string, object?> header) throw new MeshFormatException("the asset header is not a map");
 
@@ -246,22 +267,26 @@ public static class MeshCodec
 
         var skinRaw = Block("skin", out _);
         if (skinRaw != null) model.Skin = SkinFromLlsd(LlsdBinary.Read(skinRaw, out _));
-        var convex = Block("physics_convex", out _);
+        var convex = skipPhysics ? null : Block("physics_convex", out _);
         if (convex != null) model.PhysicsConvex = LlsdBinary.Read(convex, out _);
 
         var decoded = new Dictionary<(int, int), MeshLod>();
-        for (int i = 0; i < MeshAssetModel.LodCount; i++)
+        bool haveLod = false;
+        for (int i = MeshAssetModel.LodCount - 1; i >= 0; i--)
         {
+            // the highest level present is the last one needed when only that level was asked for
+            if (highestOnly && haveLod) break;
             var raw = Block(LodKeys[i], out var at);
             if (raw == null) continue;
+            haveLod = true;
             if (!decoded.TryGetValue(at, out var lod))
             {
-                lod = LodFromLlsd(LlsdBinary.Read(raw, out _), LodKeys[i], model.Warnings);
+                lod = LodFromLlsd(LlsdBinary.Read(raw, out _), LodKeys[i], model.Warnings, skipWeights);
                 decoded[at] = lod;
             }
             model.SetLod(i, lod);
         }
-        var phys = Block("physics_mesh", out _);
+        var phys = skipPhysics ? null : Block("physics_mesh", out _);
         if (phys != null) model.PhysicsMesh = LlsdBinary.Read(phys, out _);
 
         foreach (var kv in header)
@@ -331,7 +356,7 @@ public static class MeshCodec
         return new Vector2((float)d[0], (float)d[1]);
     }
 
-    static MeshLod LodFromLlsd(object? o, string lodName, List<string> warnings)
+    static MeshLod LodFromLlsd(object? o, string lodName, List<string> warnings, bool skipWeights = false)
     {
         if (o is not IList<object?> faces) throw new MeshFormatException($"{lodName} is not a list of faces");
         var lod = new MeshLod();
@@ -406,7 +431,7 @@ public static class MeshCodec
                 if (face.Indices[i] >= n) warnings.Add($"{tag}: index {face.Indices[i]} is outside {n} vertices");
             }
 
-            if (m.TryGetValue("Weights", out var wo) && wo is byte[] wb)
+            if (!skipWeights && m.TryGetValue("Weights", out var wo) && wo is byte[] wb)
                 face.Weights = ReadWeights(wb, n, tag);
         }
         return lod;
