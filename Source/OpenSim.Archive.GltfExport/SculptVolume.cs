@@ -45,7 +45,7 @@ public static partial class SculptGeometry
     }
 
     /// <summary>A circle profile on a circular path: the combination <see cref="BuildVolume"/> generates the viewer's grid for.</summary>
-    internal static bool Described(PrimParams p) => p != null && p.ProfileCurve == 0 && (p.PathCurve & 0xF0) == 0x20;
+    public static bool Described(PrimParams p) => p != null && p.ProfileCurve == 0 && (p.PathCurve & 0xF0) == 0x20;
 
     /// <summary>
     /// A sculpt's faces by the viewer's rule. Without a cut, a hollow or an open path it is <see cref="Build"/>. With one, the

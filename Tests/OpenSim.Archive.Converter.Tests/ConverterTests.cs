@@ -162,6 +162,40 @@ public class ConverterTests
         Assert.True(r.Converted[0].Triangles > 100);
     }
 
+    [Theory]
+    [InlineData("torus", "hollow", 2)]
+    [InlineData("torus", "profile-cut-quarter", 3)]
+    public void ACutOrHollowSculptOnACircleProfileAndACircularPathBecomesAMeshWithTheViewersFaces(string shape, string modifier, int faces)
+    {
+        Guid map = Guid.NewGuid();
+        KitPart sculpt = new KitPart("Sculpt") { Shape = FaceMatrix.Shape(shape, modifier), Scale = "2,3,4", SculptTexture = map };
+        sculpt.Shape.SculptEntry = true;
+        sculpt.Shape.SculptType = (int)SculptType.Torus;
+        string source = EligibilityKit.WriteArchive(new List<List<KitPart>> { new List<KitPart> { sculpt } }, new Dictionary<string, byte[]> { ["assets/" + map + "_texture.jp2"] = new byte[] { 1, 2, 3 } });
+
+        ConvertResult r = Convert(source, out string output);
+
+        Assert.True(r.Pass, r.ToText());
+        Assert.Equal(faces, r.Converted.Single().Faces);
+        Assert.Equal(faces, LoadParts(output)[sculpt.Id].GetNumberOfSides());
+    }
+
+    [Fact]
+    public void AHollowSculptOnAnotherProfileIsKeptAsAPrim()
+    {
+        Guid map = Guid.NewGuid();
+        KitPart sculpt = new KitPart("Sculpt") { Shape = FaceMatrix.Shape("box", "hollow"), SculptTexture = map };
+        sculpt.Shape.SculptEntry = true;
+        sculpt.Shape.SculptType = (int)SculptType.Plane;
+        string source = EligibilityKit.WriteArchive(new List<List<KitPart>> { new List<KitPart> { sculpt } }, new Dictionary<string, byte[]> { ["assets/" + map + "_texture.jp2"] = new byte[] { 1, 2, 3 } });
+
+        ConvertResult r = Convert(source, out string output);
+
+        Assert.True(r.Pass, r.ToText());
+        Assert.Empty(r.Converted);
+        Assert.Contains(r.Kept, k => k.Code == "SCULPT_SHAPE_UNVERIFIED");
+    }
+
     [Fact]
     public void ALinksetKeepsLinkNumbersNamesAndContentsAndOnlyConvertibleChildrenChange()
     {

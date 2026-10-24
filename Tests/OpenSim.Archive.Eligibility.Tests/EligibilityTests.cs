@@ -224,6 +224,59 @@ public class EligibilityTests
         Assert.Equal(1, row.TargetFaces);
     }
 
+    private static EligibilityRow SculptRow(string shape, string modifier)
+    {
+        Guid map = Guid.NewGuid();
+        KitPart p = new KitPart("Sculpt") { SculptTexture = map, Shape = FaceMatrix.Shape(shape, modifier) };
+        p.Shape.SculptEntry = true;
+        p.Shape.SculptType = 1;
+        p.Shape.SculptTexture = new OpenMetaverse.UUID(map);
+        return One(p, new Dictionary<string, byte[]> { ["assets/" + map + "_texture.jp2"] = new byte[] { 1, 2, 3 } });
+    }
+
+    [Fact]
+    public void AHollowSculptOnACircleProfileAndACircularPathConvertsWithTheViewersFaces()
+    {
+        EligibilityRow row = SculptRow("torus", "hollow");
+        Assert.Equal(PartAction.Convert, row.Action);
+        Assert.Equal("sculpt", row.Kind);
+        Assert.Equal(2, row.TargetFaces);
+        Assert.Equal(1, row.ServerFaces);
+        Assert.Contains(row.Warnings, w => w.Code == ReasonCodes.SideCountChanges);
+    }
+
+    [Fact]
+    public void ACutSculptOnACircleProfileAndACircularPathConvertsWithTheViewersFaces()
+    {
+        EligibilityRow row = SculptRow("torus", "profile-cut-quarter");
+        Assert.Equal(PartAction.Convert, row.Action);
+        Assert.Equal(3, row.TargetFaces);
+    }
+
+    [Theory]
+    [InlineData("box", "hollow")]
+    [InlineData("box", "profile-cut-quarter")]
+    [InlineData("cylinder", "hollow")]
+    [InlineData("sphere", "hollow")]
+    [InlineData("prism", "path-cut")]
+    public void AHollowOrCutSculptOnAnyOtherProfileOrPathIsKept(string shape, string modifier)
+    {
+        EligibilityRow row = SculptRow(shape, modifier);
+        Assert.Equal(PartAction.KeepPrim, row.Action);
+        Assert.Equal(ReasonCodes.SculptShapeUnverified, row.Code);
+    }
+
+    [Theory]
+    [InlineData("box", "plain")]
+    [InlineData("box", "taper")]
+    [InlineData("torus", "plain")]
+    public void ASculptWithNoCutOrHollowStaysOneFace(string shape, string modifier)
+    {
+        EligibilityRow row = SculptRow(shape, modifier);
+        Assert.Equal(PartAction.Convert, row.Action);
+        Assert.Equal(1, row.TargetFaces);
+    }
+
     [Fact]
     public void ASculptWhoseMapIsMissingIsKept()
     {

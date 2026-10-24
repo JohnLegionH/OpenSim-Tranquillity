@@ -26,7 +26,7 @@ is only read. Prints a summary and one line per kept or warned part.
                              prims; the report says loudly when this is used)
 
 Reason codes: ALREADY_MESH, PLANT, OTHER_PCODE, NO_SHAPE (skipped); EXPORT_DENIED, PHYSICAL, FLEXI, FACES_GT8,
-SCRIPT_UNSAFE, SCRIPT_UNCERTAIN, FACECOUNT_MISMATCH, SCULPT_MAP_MISSING (kept).
+SCRIPT_UNSAFE, SCRIPT_UNCERTAIN, FACECOUNT_MISMATCH, SCULPT_MAP_MISSING, SCULPT_SHAPE_UNVERIFIED (kept).
 Exit codes: 0 no part is kept, 3 at least one part is kept, 2 the tool could not run (unreadable archive, bad command line).";
 
     public static int Run(string[] args)

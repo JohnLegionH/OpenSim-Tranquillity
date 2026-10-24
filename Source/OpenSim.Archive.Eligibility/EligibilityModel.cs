@@ -34,6 +34,8 @@ public static class ReasonCodes
     public const string ScriptUncertain = "SCRIPT_UNCERTAIN";
     public const string FaceCountMismatch = "FACECOUNT_MISMATCH";
     public const string SculptMapMissing = "SCULPT_MAP_MISSING";
+    /// <summary>A sculpt with a profile cut, a hollow or an open path whose faces are not built exactly as the viewer builds them (anything but a circle profile on a circular path).</summary>
+    public const string SculptShapeUnverified = "SCULPT_SHAPE_UNVERIFIED";
     /// <summary>A script turns physics on at run time (STATUS_PHYSICS, PRIM_PHYSICS or a vehicle call); the part would become a physical convex-hull mesh.</summary>
     public const string PhysicalScript = "PHYSICAL_SCRIPT";
     /// <summary>The server and viewer face counts differ for a reason that is not one of the settled cases (see FaceRuleCases).</summary>

@@ -73,12 +73,16 @@ public static class FaceAgreement
     /// <summary>What the server reports for the shape: the real <c>SceneObjectPart.GetNumberOfSides</c>.</summary>
     public static int ServerCount(ShapeData s) => new SceneObjectPart { Shape = ToServerShape(s) }.GetNumberOfSides();
 
-    /// <summary>The faces a prim of this shape has by the viewer's rule. A sculpt is one face.</summary>
+    /// <summary>
+    /// The faces a prim of this shape has by the viewer's rule. A sculpt is one face, except a circle profile on a circular
+    /// path (what a sculpt is made with), whose profile cut, hollow or open path give it the faces the viewer's rule lists.
+    /// </summary>
     public static int ViewerCount(ShapeData s)
     {
-        if (s.SculptEntry)
+        PrimParams p = PrimParams.FromShape(s);
+        if (s.SculptEntry && !SculptGeometry.Described(p))
             return 1;
-        return ViewerFaceRule.Faces(PrimParams.FromShape(s)).Count;
+        return ViewerFaceRule.Faces(p).Count;
     }
 
     public static FaceCounts Measure(ShapeData s) => new FaceCounts(ServerCount(s), ViewerCount(s));

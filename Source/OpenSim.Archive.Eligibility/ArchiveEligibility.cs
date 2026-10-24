@@ -9,6 +9,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
 using OpenMetaverse;
+using OpenSim.Archive.GltfExport;
 using OpenSim.Archive.Inspection;
 using OpenSim.Archive.Rewrite;
 using OpenSim.Framework;
@@ -247,7 +248,7 @@ public sealed class ArchiveEligibility
         if (isPrimCode && !isSculpt && UvRules.Unverified(shape) is string uvReason)
             Add(PartAction.KeepPrim, ReasonCodes.UvUnverified, uvReason);
 
-        if (isPrimCode && !isSculpt && er.ServerFaces != er.ViewerFaces)
+        if (isPrimCode && er.ServerFaces != er.ViewerFaces)
         {
             string detail = "the server counts " + er.ServerFaces + " sides and the viewer " + er.ViewerFaces;
             if (scanRow.FaceCountDependent)
@@ -260,6 +261,11 @@ public sealed class ArchiveEligibility
             if (!er.Warnings.Any(x => x.Code == w.Code))
                 er.Warnings.Add(new EligibilityReason { Code = w.Code, Detail = "script scan" + (string.IsNullOrEmpty(w.Script) ? "" : " (script '" + Sanitize.Text(w.Script) + "')") + (string.IsNullOrEmpty(w.Detail) ? "" : ": " + w.Detail) });
 
+        // A cut, hollow or open sculpt converts only where the faces are built exactly as the viewer builds them: a circle
+        // profile on a circular path. Any other combination would need a face list nobody has checked.
+        if (isSculpt && SculptHasProfileFaces(shape) && !SculptGeometry.Described(PrimParams.FromShape(shape)))
+            Add(PartAction.KeepPrim, ReasonCodes.SculptShapeUnverified, "the sculpt has a profile cut, a hollow or an open path and is not a circle profile on a circular path");
+
         if (isSculpt && shape.SculptTexture != UUID.Zero && !assetIds.Contains(shape.SculptTexture))
             Add(PartAction.KeepPrim, ReasonCodes.SculptMapMissing, "the sculpt map is not in the archive");
         else if (isSculpt && shape.SculptTexture == UUID.Zero)
@@ -268,10 +274,17 @@ public sealed class ArchiveEligibility
         if (er.Code == null)
         {
             er.Action = PartAction.Convert;
-            // A sculpt is one face, to the server and to the viewer.
-            er.TargetFaces = isSculpt ? 1 : er.ViewerFaces;
+            // A plain sculpt is one face, to the server and to the viewer; a cut, hollow or open one has the viewer's list.
+            er.TargetFaces = er.ViewerFaces;
         }
         return er;
+    }
+
+    // A profile cut, a hollow or a path cut: the cases that give a sculpt faces beyond its one outer face.
+    private static bool SculptHasProfileFaces(ShapeData shape)
+    {
+        PrimParams p = PrimParams.FromShape(shape);
+        return p.ProfileHollow > 0f || p.ProfileBegin > 0f || p.ProfileEnd < 1f || p.PathBegin > 0f || p.PathEnd < 1f;
     }
 
     /// <summary>
