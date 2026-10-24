@@ -37,7 +37,7 @@ public sealed class ArchiveConverter
     public ConvertResult Convert(string sourcePath, string outputPath, string planOutPath = null)
     {
         Stopwatch sw = Stopwatch.StartNew();
-        IMeshEncoder encoder = m_options.Encoder ?? new StandInMeshEncoder();
+        IMeshEncoder encoder = m_options.Encoder ?? new MeshAssetEncoder();
 
         Dictionary<Guid, ParsedPart> parsed = new Dictionary<Guid, ParsedPart>();
         EligibilityResult elig = new ArchiveEligibility(new EligibilityOptions
@@ -71,6 +71,8 @@ public sealed class ArchiveConverter
         ISculptMapSource sculptMaps = m_options.SculptMaps;
         ArchiveRewriter rewriter = new ArchiveRewriter();
         Dictionary<Guid, byte[]> meshes = new Dictionary<Guid, byte[]>();
+        // the faces each distinct mesh was encoded from, and what the validity check found for it
+        Dictionary<Guid, List<string>> verdicts = new Dictionary<Guid, List<string>>();
 
         foreach (EligibilityRow row in elig.Parts.Where(r => r.Action == PartAction.Convert))
         {
@@ -121,13 +123,28 @@ public sealed class ArchiveConverter
                 continue;
             }
 
-            byte[] bytes = encoder.Encode(faces, new EncodeOptions());
+            byte[] bytes;
+            try
+            {
+                bytes = encoder.Encode(faces, new EncodeOptions());
+            }
+            catch (Exception e) when (e is InvalidOperationException || e is ArgumentException || e is OverflowException || e is IndexOutOfRangeException)
+            {
+                Keep(result, row, "ENCODE_FAILED", e.GetType().Name + ": " + e.Message);
+                continue;
+            }
             if (bytes == null || bytes.Length == 0)
                 throw new ConvertException("the encoder returned no bytes for part " + row.PartId);
             Guid id = MeshId.FromBytes(bytes);
             if (StandInIds.Is(id))
                 throw new ConvertException("a stand-in mesh id remains for part " + row.PartId);
-            meshes.TryAdd(id, bytes);
+            if (meshes.TryAdd(id, bytes) && encoder.ProducesValidMesh)
+                verdicts[id] = MeshValidator.Check(bytes, faces, out _);
+            if (verdicts.TryGetValue(id, out List<string> problems) && problems.Count > 0)
+            {
+                result.Invalid.Add(new InvalidMeshPart { PartId = row.PartId, Build = row.Build, LinkNum = row.LinkNum, Name = row.Name, MeshId = id, Problems = problems });
+                continue;
+            }
 
             int faceCount = faces.Count;
             byte[] extra = pp.ExtraParams;
@@ -146,9 +163,20 @@ public sealed class ArchiveConverter
             result.Converted.Add(cp);
         }
 
+        result.MeshesAdded = meshes.Count;
+        result.MeshBytes = meshes.Values.Sum(b => (long)b.Length);
+        result.MeshesValidated = verdicts.Count(v => v.Value.Count == 0);
+        result.SourceBytes = new FileInfo(sourcePath).Length;
+
+        // A mesh that fails the check means the archive would hold something a region cannot use: nothing is written.
+        if (result.Invalid.Count > 0)
+        {
+            result.Seconds = sw.Elapsed.TotalSeconds;
+            return result;
+        }
+
         foreach (KeyValuePair<Guid, byte[]> m in meshes)
             rewriter.AddAsset(m.Key, AssetType.Mesh, m.Value);
-        result.MeshesAdded = meshes.Count;
 
         // The plan states exactly what changes. It is built from the real ids, and nothing is written while a stand-in id is in it.
         string planJson = PlanJson(result.Converted, meshes.Keys);
@@ -159,6 +187,7 @@ public sealed class ArchiveConverter
             File.WriteAllText(planOutPath, planJson);
 
         result.Rewrite = rewriter.Rewrite(sourcePath, outputPath);
+        result.OutputBytes = new FileInfo(outputPath).Length;
         result.Parity = new ArchiveComparer().Compare(sourcePath, outputPath, ComparePlan.Parse(planJson));
         result.Seconds = sw.Elapsed.TotalSeconds;
         return result;

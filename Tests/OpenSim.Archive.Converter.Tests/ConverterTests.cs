@@ -218,7 +218,7 @@ public class ConverterTests
         ConvertedPart c = r.Converted.Single();
         Assert.False(StandInIds.Is(c.MeshId));
         List<EncoderFace> faces = FaceBuilder.FromPrim(part.Shape, out _);
-        Assert.Equal(c.MeshId, MeshId.FromBytes(new StandInMeshEncoder().Encode(faces, new EncodeOptions())));
+        Assert.Equal(c.MeshId, MeshId.FromBytes(new MeshAssetEncoder().Encode(faces, new EncodeOptions())));
         Assert.DoesNotContain(StandInIds.Prefix, r.PlanJson);
         Assert.All(Entries(output), e => Assert.DoesNotContain(StandInIds.Prefix, e));
     }
@@ -289,7 +289,7 @@ public class ConverterTests
         Assert.Contains(c.Unplanned, d => d.Field == "standInId");
     }
 
-    // ------------------------------------------------------------ rulings on the eligibility rules
+    // ------------------------------------------------------------ the eligibility rules
 
     private static EligibilityRow Row(string source, KitPart p) => new ArchiveEligibility().Evaluate(source).Parts.Single(x => x.PartId == p.Id);
 

@@ -24,7 +24,7 @@ public sealed class ConvertOptions
 {
     /// <summary>Treat a script with no readable source as harmless (see the eligibility command). Off by default.</summary>
     public bool AssumeSafeUnscanned { get; set; }
-    /// <summary>Writes the mesh assets. Null means the stand-in encoder, whose output is not a valid mesh.</summary>
+    /// <summary>Writes the mesh assets. Null means <see cref="MeshAssetEncoder"/>.</summary>
     public IMeshEncoder Encoder { get; set; }
     /// <summary>Supplies sculpt maps. Null means the maps are read from the source archive.</summary>
     public ISculptMapSource SculptMaps { get; set; }
@@ -53,6 +53,17 @@ public sealed class ConvertedPart
     public List<string> Warnings { get; set; } = new List<string>();
 }
 
+/// <summary>A converted part whose mesh failed the validity check; nothing is written while there is one.</summary>
+public sealed class InvalidMeshPart
+{
+    public Guid PartId { get; set; }
+    public string Build { get; set; }
+    public int LinkNum { get; set; }
+    public string Name { get; set; }
+    public Guid MeshId { get; set; }
+    public List<string> Problems { get; set; } = new List<string>();
+}
+
 /// <summary>A part the converter left as it was: the eligibility rules kept it, or the geometry step could not give it a mesh.</summary>
 public sealed class KeptPart
 {
@@ -79,6 +90,14 @@ public sealed class ConvertResult
     public int SkippedTotal => Skipped.Values.Sum();
     /// <summary>Distinct mesh assets written (identical meshes share one).</summary>
     public int MeshesAdded { get; set; }
+    /// <summary>Total bytes of the distinct mesh assets.</summary>
+    public long MeshBytes { get; set; }
+    /// <summary>Meshes that passed the validity check (the encoder's output decoded and read back as encoded).</summary>
+    public int MeshesValidated { get; set; }
+    /// <summary>Parts whose mesh failed the validity check. When there are any, no archive is written.</summary>
+    public List<InvalidMeshPart> Invalid { get; } = new List<InvalidMeshPart>();
+    public long SourceBytes { get; set; }
+    public long OutputBytes { get; set; }
     public RewriteSummary Rewrite { get; set; }
     public CompareResult Parity { get; set; }
     public string PlanJson { get; set; }
@@ -99,13 +118,19 @@ public sealed class ConvertResult
     {
         StringBuilder sb = new StringBuilder();
         CultureInfo ci = CultureInfo.InvariantCulture;
-        sb.AppendLine(Pass ? "PASS: the rewritten archive matches the plan" : "FAIL: the rewritten archive does not match the plan");
+        if (Invalid.Count > 0)
+            sb.AppendLine("FAIL: " + Invalid.Count + " converted part(s) have a mesh that failed the validity check; NOTHING WAS WRITTEN");
+        else
+            sb.AppendLine(Pass ? "PASS: the rewritten archive matches the plan" : "FAIL: the rewritten archive does not match the plan");
         sb.AppendLine("source: " + System.IO.Path.GetFileName(Source) + "; output: " + System.IO.Path.GetFileName(Output));
         sb.AppendLine("encoder: " + EncoderName + (EncoderValid ? string.Empty : "  -- THE MESH ASSETS ARE NOT VALID MESHES; do not load this archive"));
         if (AssumeSafeUnscanned)
             sb.AppendLine("WARNING: --assume-safe-unscanned was used; scripts with no source were treated as harmless");
         sb.AppendLine(string.Format(ci, "parts: {0}; converted: {1}; kept: {2}; skipped: {3}; mesh assets added: {4}",
             Parts, Converted.Count, Kept.Count, SkippedTotal, MeshesAdded));
+        sb.AppendLine(string.Format(ci, "meshes: {0} validated of {1}; {2} bytes in all", MeshesValidated, MeshesAdded, MeshBytes));
+        if (OutputBytes > 0)
+            sb.AppendLine(string.Format(ci, "archive size: {0} bytes written, {1} bytes in the source ({2:0.0}%)", OutputBytes, SourceBytes, SourceBytes == 0 ? 0 : 100.0 * OutputBytes / SourceBytes));
         if (Skipped.Count > 0)
             sb.AppendLine("skipped: " + string.Join(", ", Skipped.Select(k => k.Key + " " + k.Value)));
         if (Kept.Count > 0)
@@ -115,6 +140,13 @@ public sealed class ConvertResult
                 Parity.PartsMatched, Parity.Unplanned.Count, Parity.Planned.Count, Parity.UnmetPlan.Count));
         sb.AppendLine(string.Format(ci, "{0:0.0} s", Seconds));
 
+        if (Invalid.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("Parts whose mesh failed the validity check:");
+            foreach (InvalidMeshPart p in Invalid)
+                sb.AppendLine(string.Format(ci, "  {0} link {1} '{2}' (mesh {3}): {4}", p.Build, p.LinkNum, p.Name, p.MeshId, string.Join("; ", p.Problems)));
+        }
         if (Kept.Count > 0)
         {
             sb.AppendLine();
@@ -157,6 +189,11 @@ public sealed class ConvertResult
             skippedByCode = Skipped,
             keptByCode = KeptByCode(),
             meshesAdded = MeshesAdded,
+            meshesValidated = MeshesValidated,
+            meshBytes = MeshBytes,
+            sourceBytes = SourceBytes,
+            outputBytes = OutputBytes,
+            invalidMeshParts = Invalid.Select(p => new { part = p.PartId, build = p.Build, link = p.LinkNum, name = p.Name, mesh = p.MeshId, problems = p.Problems }),
             seconds = Math.Round(Seconds, 1),
             convertedParts = Converted.Select(c => new { part = c.PartId, build = c.Build, link = c.LinkNum, name = c.Name, kind = c.Kind, faces = c.Faces, emptyFaces = c.EmptyFaces, triangles = c.Triangles, unnumberedTriangles = c.UnnumberedTriangles, mesh = c.MeshId, serverFacesBefore = c.ServerFacesBefore, warnings = c.Warnings }),
             keptParts = Kept.Select(k => new { part = k.PartId, build = k.Build, link = k.LinkNum, name = k.Name, code = k.Code, detail = k.Detail, byConverter = k.ByConverter })
