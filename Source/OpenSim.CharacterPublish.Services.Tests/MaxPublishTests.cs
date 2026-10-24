@@ -74,9 +74,9 @@ public class MaxPublishTests
         Assert.True(b.Validation.Ok, b.Validation.ToString());
         var beforeA = g.Snapshot(ra.Id); var beforeB = g.Snapshot(rb.Id);
 
-        // resident A: the third item write fails, then the retry completes
+        // resident A: the previous look goes first; then the third outfit item write fails, and the retry completes
         var inv1 = g.NewInventory();
-        inv1.FailAddItem = (n, _) => n == 3;
+        inv1.FailAddItem = (n, _) => n == 4 + 3; // the four links of the previous look are written first, then the outfit items
         var broken = new PublishService(g.NewAssets(), inv1).Publish(a.Bundle, a.Content, ra.Id);
         Assert.True(broken.Partial);
         Assert.Equal(2, broken.ItemsCreated.Count);

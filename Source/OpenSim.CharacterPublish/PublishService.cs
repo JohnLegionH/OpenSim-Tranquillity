@@ -30,6 +30,12 @@ public sealed class PublishOptions
     /// <summary>Save the resident's current look as a folder of links before the outfit is written (default on). Needs the bundle to carry the plan.</summary>
     public bool SaveCurrentLook { get; init; } = true;
 
+    /// <summary>
+    /// A texture a wearable names that the asset service does not hold: false (the default) refuses the publish, true publishes
+    /// with a warning and the viewer shows the default texture there.
+    /// </summary>
+    public bool MissingTextureIsWarning { get; init; }
+
     /// <summary>When set, a bundle whose creator is anyone else is refused (the operator's creator service account).</summary>
     public UUID? RequiredCreator { get; init; }
 }
@@ -272,7 +278,14 @@ public sealed class PublishService
         {
             var ext = _assets.AssetsExist(bundle.ExternalAssets.Select(e => e.ToString()).ToArray());
             for (var i = 0; i < ext.Length; i++)
-                if (!ext[i]) result.Warnings.Add($"A texture the outfit uses ({bundle.ExternalAssets[i]}) is not on this grid; it will show as the default texture.");
+            {
+                if (ext[i]) continue;
+                if (options.MissingTextureIsWarning)
+                    result.Warnings.Add($"A texture the outfit uses ({bundle.ExternalAssets[i]}) is not on this grid; it will show as the default texture.");
+                else
+                    Refuse("texture-missing", $"A texture the outfit uses ({bundle.ExternalAssets[i]}) is not on this grid, so the outfit would show the default texture there. Upload the texture to the grid, then publish again. Nothing was written.");
+            }
+            if (result.Refused) return;
         }
 
         // the previous look: read the Current Outfit now, write it last
@@ -316,22 +329,7 @@ public sealed class PublishService
         }
         result.MyOutfitsFolderId = myOutfits.ID;
 
-        // the outfit folder, then its items
-        if (existingFolder == null)
-        {
-            var f = new InventoryFolderBase(folder.Id, folder.Name, resident, myOutfits.ID) { Type = BundleTypes.FolderOutfit, Version = 1 };
-            if (!Try(() => _inventory.AddFolder(f), out var why)) { Fail("folder", folder.Name, Why(why, "create it")); return; }
-            result.OutfitFolderCreated = true;
-        }
-        foreach (var (it, row) in expected)
-        {
-            result.ItemIds.Add(it.Id);
-            if (itemPresent[it.Id]) { result.ItemsAlreadyPresent.Add(it.Id); continue; }
-            if (!Try(() => _inventory.AddItem(row), out var why)) { Fail("item", it.Name, Why(why, "add it")); return; }
-            result.ItemsCreated.Add(it.Id);
-        }
-
-        // the previous look last
+        // the previous look first: the resident's way back exists before the new outfit does
         if (look != null && lookLinks.Count > 0)
         {
             if (existingLookFolder == null)
@@ -355,6 +353,21 @@ public sealed class PublishService
                 result.PreviousLookLinks.Add(link.ID);
                 result.PreviousLookLinksCreated.Add(link.ID);
             }
+        }
+
+        // the outfit folder, then its items
+        if (existingFolder == null)
+        {
+            var f = new InventoryFolderBase(folder.Id, folder.Name, resident, myOutfits.ID) { Type = BundleTypes.FolderOutfit, Version = 1 };
+            if (!Try(() => _inventory.AddFolder(f), out var why)) { Fail("folder", folder.Name, Why(why, "create it")); return; }
+            result.OutfitFolderCreated = true;
+        }
+        foreach (var (it, row) in expected)
+        {
+            result.ItemIds.Add(it.Id);
+            if (itemPresent[it.Id]) { result.ItemsAlreadyPresent.Add(it.Id); continue; }
+            if (!Try(() => _inventory.AddItem(row), out var why)) { Fail("item", it.Name, Why(why, "add it")); return; }
+            result.ItemsCreated.Add(it.Id);
         }
 
         void Fail(string step, string what, string message) => result.Failures.Add(new PublishFailure(step, what, message));

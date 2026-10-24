@@ -54,6 +54,18 @@ public sealed class ScratchGrid
 
         Plain = new XInventoryService(Config);
         PlainAssets = new AssetService(Config);
+
+        // The textures the fixture wearables name are on a real grid, and a missing texture is a refusal, so the scratch grid holds them.
+        // 5748decc-... is the grid's blank texture, which the Max bundle names in every slot
+        foreach (var id in new[] { BundleFixtures.SkinHead, BundleFixtures.SkinUpper, BundleFixtures.SkinLower, BundleFixtures.Iris, new UUID("5748decc-f629-461c-9a36-a35a221fe21f") })
+            AddTexture(id);
+    }
+
+    /// <summary>Stores a texture asset under <paramref name="id"/> (the bytes do not matter to the publish service).</summary>
+    public void AddTexture(UUID id)
+    {
+        var a = new AssetBase(id, "texture " + id, (sbyte)AssetType.Texture, BundleFixtures.Creator.ToString()) { Data = new byte[] { 1, 2, 3, 4 } };
+        Assert.False(string.IsNullOrEmpty(PlainAssets.Store(a)));
     }
 
     public RecordingInventory NewInventory() => new(Config);

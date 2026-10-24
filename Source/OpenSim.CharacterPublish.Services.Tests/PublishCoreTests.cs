@@ -144,8 +144,8 @@ public class PublishCoreTests
         Assert.Empty(ast.Forbidden);
         // an outfit with the order's parts: shape, skin, eyes, one attachment, the credits notecard
         Assert.Equal(new[] { "attachment-1", "eyes", "notecard", "shape", "skin" }, a.Bundle.Items.Select(i => i.Role).Order().ToArray());
-        // the blank texture the wearables use is not on this scratch grid, which the result says
-        Assert.Contains(res.Warnings, w => w.Contains("not on this grid"));
+        // the textures the wearables use are on the scratch grid, so there is nothing to warn about
+        Assert.DoesNotContain(res.Warnings, w => w.Contains("not on this grid"));
     }
 
     [Fact]
@@ -213,6 +213,57 @@ public class PublishCoreTests
         Assert.Contains(again.Warnings, w => w.Contains("no longer holds"));
     }
 
+    [Fact]
+    public void TheWayBackIsWrittenBeforeTheNewOutfit()
+    {
+        var r = g.NewResident();
+        var a = BundleFixtures.Assemble(r.Id);
+        var inv = g.NewInventory();
+
+        var res = Service(inv, g.NewAssets()).Publish(a.Bundle, a.Content, r.Id);
+
+        Assert.True(res.Complete, res.Summary);
+        var folderOrder = inv.FoldersAdded.Select(f => f.ID).ToList();
+        Assert.True(folderOrder.IndexOf(a.Bundle.CurrentLook!.FolderId) < folderOrder.IndexOf(a.Bundle.OutfitFolder.Id), "the previous-look folder comes first");
+        var lastLink = inv.ItemsAdded.FindLastIndex(i => i.AssetType == 24);
+        var firstOutfitItem = inv.ItemsAdded.FindIndex(i => i.Folder == a.Bundle.OutfitFolder.Id);
+        Assert.True(lastLink >= 0 && lastLink < firstOutfitItem, "every link is written before the first outfit item");
+    }
+
+    [Fact]
+    public void ATextureTheGridDoesNotHoldIsARefusalByDefaultAndWritesNothing()
+    {
+        var r = g.NewResident();
+        var missing = UUID.Random();
+        var a = BundleFixtures.Assemble(r.Id, skinHead: missing);
+        var before = g.Snapshot(r.Id);
+        var inv = g.NewInventory(); var ast = g.NewAssets();
+
+        var res = Service(inv, ast).Publish(a.Bundle, a.Content, r.Id);
+
+        Assert.True(res.Refused);
+        var refusal = Assert.Single(res.Refusals);
+        Assert.Equal("texture-missing", refusal.Code);
+        Assert.Contains(missing.ToString(), refusal.Message);
+        Assert.Contains("Nothing was written", refusal.Message);
+        Assert.Empty(inv.Calls); Assert.Empty(ast.Stored);
+        Assert.Empty(ScratchGrid.AssertOnlyAdditions(before, g.Snapshot(r.Id)));
+    }
+
+    [Fact]
+    public void ATextureTheGridDoesNotHoldIsAWarningWhenTheOperatorSaysSo()
+    {
+        var r = g.NewResident();
+        var missing = UUID.Random();
+        var a = BundleFixtures.Assemble(r.Id, skinHead: missing);
+        var before = g.Snapshot(r.Id);
+
+        var res = Service(g.NewInventory(), g.NewAssets()).Publish(a.Bundle, a.Content, r.Id, new PublishOptions { MissingTextureIsWarning = true });
+
+        Verify.Published(g, r, a.Bundle, a.Content, res, before);
+        Assert.Contains(res.Warnings, w => w.Contains(missing.ToString()) && w.Contains("not on this grid"));
+    }
+
     // ---- failure injection -----------------------------------------------------------------------------------------
 
     [Fact]
@@ -222,7 +273,8 @@ public class PublishCoreTests
         var a = BundleFixtures.Assemble(r.Id);
         var before = g.Snapshot(r.Id);
         var inv1 = g.NewInventory(); var ast1 = g.NewAssets();
-        inv1.FailAddItem = (n, _) => n == 3; // the first two items are written, the third is refused by the database
+        // the previous look goes first (four links), then the outfit: the first two items are written, the third (call 7) is refused by the database
+        inv1.FailAddItem = (n, _) => n == 4 + 3;
 
         var broken = Service(inv1, ast1).Publish(a.Bundle, a.Content, r.Id);
 
@@ -232,11 +284,12 @@ public class PublishCoreTests
         Assert.Equal(2, broken.ItemsCreated.Count);
         Assert.Contains("completes it", broken.Summary);
         Assert.Empty(inv1.Forbidden);
-        // what is in the inventory now: only additions, the outfit folder and two items, no previous look yet
+        // what is in the inventory now: only additions, the whole previous look (folder and four links) and the outfit folder with two items,
+        // so the resident's way back exists although the outfit is not finished
         var mid = g.Snapshot(r.Id);
         var added = ScratchGrid.AssertOnlyAdditions(before, mid, r.Root, g.MyOutfitsOf(r.Id)!.ID);
-        Assert.Equal(1 + 1 + 2, added.Count);
-        Assert.Null(g.Plain.GetFolder(r.Id, a.Bundle.CurrentLook!.FolderId));
+        Assert.Equal(1 + 1 + 4 + 1 + 2, added.Count); // My Outfits, the look folder, its links, the outfit folder, two items
+        Assert.Equal(4, g.Plain.GetFolderContent(r.Id, a.Bundle.CurrentLook!.FolderId).Items.Count);
 
         var inv2 = g.NewInventory(); var ast2 = g.NewAssets();
         var fixedUp = Service(inv2, ast2).Publish(a.Bundle, a.Content, r.Id);
@@ -259,7 +312,7 @@ public class PublishCoreTests
         var a = BundleFixtures.Assemble(r.Id);
         var before = g.Snapshot(r.Id);
         var inv1 = g.NewInventory();
-        inv1.FailAddItem = (n, _) => n >= 2; inv1.FailByException = true;
+        inv1.FailAddItem = (n, _) => n >= 4 + 2; inv1.FailByException = true; // four links, then one outfit item, then the database throws
 
         var broken = Service(inv1, g.NewAssets()).Publish(a.Bundle, a.Content, r.Id);
 
@@ -277,13 +330,14 @@ public class PublishCoreTests
         var a = BundleFixtures.Assemble(r.Id);
         var before = g.Snapshot(r.Id);
         var inv1 = g.NewInventory();
-        inv1.FailAddItem = (n, _) => n == a.Bundle.Items.Count + 3; // the outfit is whole, two links are written, the third fails
+        inv1.FailAddItem = (n, _) => n == 3; // the previous look is written first: two links are written, the third fails, the outfit is not started
 
         var broken = Service(inv1, g.NewAssets()).Publish(a.Bundle, a.Content, r.Id);
 
         Assert.True(broken.Partial);
         Assert.Equal("link", broken.Failures[0].Step);
-        Assert.Equal(a.Bundle.Items.Count, broken.ItemsCreated.Count);
+        Assert.Empty(broken.ItemsCreated);
+        Assert.Null(g.Plain.GetFolder(r.Id, a.Bundle.OutfitFolder.Id));
         Assert.Equal(2, broken.PreviousLookLinksCreated.Count);
         Assert.Equal(2, g.Plain.GetFolderContent(r.Id, a.Bundle.CurrentLook!.FolderId).Items.Count);
 
@@ -328,7 +382,7 @@ public class PublishCoreTests
         var a = BundleFixtures.Assemble(r.Id);
         var before = g.Snapshot(r.Id);
         var inv1 = g.NewInventory();
-        inv1.FailAddFolder = (n, _) => n == 2; // My Outfits is made, the outfit folder is refused
+        inv1.FailAddFolder = (n, _) => n == 2; // My Outfits is made, the previous-look folder (written before the outfit folder) is refused
 
         var broken = Service(inv1, g.NewAssets()).Publish(a.Bundle, a.Content, r.Id);
 

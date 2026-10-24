@@ -59,13 +59,13 @@ internal static class BundleFixtures
     public const string Credit = "Mesh body: Example by Test User, CC BY 4.0, modified.";
     public const string NotecardText = "Base body credit\n\nExample body by Test User.\nLicence: https://creativecommons.org/licenses/by/4.0/legalcode\nChanges: converted to the Second Life mesh format.\n";
 
-    public static CharacterDescription Description(string name) => new(
+    public static CharacterDescription Description(string name, UUID? skinHead = null) => new(
         name,
         new AttributionDescription(Credit, NotecardName: name + " credits", NotecardText: NotecardText + name + "\n"),
         new List<PartDescription> { new(name + " Body", PartRole.Body, "body.llmesh", new() { ["0"] = "head", ["1"] = "upper", ["2"] = "lower" }) },
         new WearablesDescription(
             new ShapeDescription(Values: new() { ["1"] = 0.4f, ["80"] = 0.25f }),
-            new SkinDescription(SkinHead, SkinUpper, SkinLower),
+            new SkinDescription(skinHead ?? SkinHead, SkinUpper, SkinLower),
             new EyesDescription(Iris),
             null));
 
@@ -73,12 +73,12 @@ internal static class BundleFixtures
     /// The synthetic character as a validated bundle made for <paramref name="owner"/>. Without a name, the character is named for the
     /// calling test, so one test's bundles share assets with each other and with no other test's.
     /// </summary>
-    public static AssembledBundle Assemble(UUID owner, int folderNumber = 1, string? name = null, bool saveLook = true, int date = Date,
+    public static AssembledBundle Assemble(UUID owner, int folderNumber = 1, string? name = null, bool saveLook = true, int date = Date, UUID? skinHead = null,
         [System.Runtime.CompilerServices.CallerMemberName] string caller = "")
     {
         name ??= UniqueName(caller);
         var mesh = Mesh(3, name);
-        var a = OutfitAssembler.Assemble(Description(name), new PublishContext(owner, Creator, folderNumber, date, SaveCurrentLook: saveLook),
+        var a = OutfitAssembler.Assemble(Description(name, skinHead), new PublishContext(owner, Creator, folderNumber, date, SaveCurrentLook: saveLook),
             f => f == "body.llmesh" ? mesh : throw new FileNotFoundException(f));
         Assert.True(a.Validation.Ok, a.Validation.ToString());
         return a;
