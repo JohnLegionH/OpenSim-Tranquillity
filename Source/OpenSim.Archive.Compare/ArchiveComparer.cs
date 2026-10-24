@@ -148,6 +148,32 @@ public sealed class ArchiveComparer
         return Compare(ArchiveSnapshot.Read(originalPath), ArchiveSnapshot.Read(rewrittenPath), plan);
     }
 
+    /// <summary>
+    /// Compares an archive with the one a region saved after loading it. Parts are matched by build position, link number
+    /// and name (see <see cref="ArchiveSnapshot.ByPosition"/>), items by name, type and asset id, and only asset entries are
+    /// compared; no plan applies. Parts that share a key (identical prims stacked on one spot) are paired in the order of
+    /// their own contents.
+    /// </summary>
+    public CompareResult CompareByPosition(string originalPath, string rewrittenPath)
+    {
+        if (string.Equals(System.IO.Path.GetFullPath(originalPath), System.IO.Path.GetFullPath(rewrittenPath), StringComparison.OrdinalIgnoreCase))
+            throw new CompareException("both archives are the same file");
+        return CompareByPosition(ArchiveSnapshot.Read(originalPath), ArchiveSnapshot.Read(rewrittenPath));
+    }
+
+    public CompareResult CompareByPosition(ArchiveSnapshot a, ArchiveSnapshot b)
+    {
+        int partsA = a.Parts.Count, partsB = b.Parts.Count;
+        ArchiveSnapshot ka = a.ByPosition(out _), kb = b.ByPosition(out _);
+        foreach (ArchiveSnapshot k in new[] { ka, kb })
+            foreach (string key in k.Entries.Keys.Where(e => !e.StartsWith("assets/", StringComparison.Ordinal)).ToList())
+                k.Entries.Remove(key);
+        CompareResult r = Compare(ka, kb, ComparePlan.Empty());
+        r.PartsOriginal = partsA;
+        r.PartsRewritten = partsB;
+        return r;
+    }
+
     public CompareResult Compare(ArchiveSnapshot a, ArchiveSnapshot b, ComparePlan plan = null)
     {
         plan ??= ComparePlan.Empty();

@@ -99,6 +99,107 @@ public sealed class ArchiveSnapshot
         return snap;
     }
 
+    /// <summary>
+    /// The same archive with each part and item keyed by what survives a load, for comparing an archive with the one a region
+    /// saves after loading it (the loader gives every part and item a new id, and rewrites creator and owner fields that name
+    /// accounts it does not know). A part is keyed by its build (the root part's name and position, to two decimals), its link
+    /// number and its name; an item by its name, type and asset id. Creator, owner, last owner and group are left out of the
+    /// comparison. Parts that share a key (identical prims stacked on one spot) are put in order of their own contents and
+    /// told apart by their place in that order; the keys are returned in <paramref name="shared"/> so a report can say so.
+    /// </summary>
+    public ArchiveSnapshot ByPosition(out List<string> shared)
+    {
+        shared = new List<string>();
+        ArchiveSnapshot copy = new ArchiveSnapshot { Path = Path, ObjectFiles = ObjectFiles };
+        foreach (KeyValuePair<string, string> e in Entries)
+            copy.Entries[e.Key] = e.Value;
+
+        Dictionary<string, List<PartSnapshot>> byKey = new Dictionary<string, List<PartSnapshot>>(StringComparer.Ordinal);
+        foreach (PartSnapshot p in Parts.Values)
+        {
+            string key = PositionKey(p);
+            if (!byKey.TryGetValue(key, out List<PartSnapshot> list))
+                byKey[key] = list = new List<PartSnapshot>();
+            list.Add(p);
+        }
+
+        foreach (KeyValuePair<string, List<PartSnapshot>> group in byKey)
+        for (int ordinal = 0; ordinal < group.Value.Count; ordinal++)
+        {
+            string key = group.Value.Count > 1 ? group.Key + "#" + (ordinal + 1) : group.Key;
+            if (group.Value.Count > 1 && ordinal == 0)
+            {
+                shared.Add("'" + group.Key + "' names " + group.Value.Count + " parts");
+                group.Value.Sort((x, y) => string.CompareOrdinal(Signature(x), Signature(y)));
+            }
+            PartSnapshot p = group.Value[ordinal];
+            Parts.TryGetValue(p.RootId, out PartSnapshot root);
+            root ??= p;
+            PartSnapshot q = new PartSnapshot
+            {
+                Id = KeyGuid(key),
+                RootId = KeyGuid(PositionKey(root)),
+                Entry = p.Entry, BuildLabel = p.BuildLabel, Name = p.Name, LinkNum = p.LinkNum
+            };
+            foreach (KeyValuePair<string, SortedDictionary<string, string>> g in p.Groups)
+                if (g.Key != "creator" && g.Key != "owner")
+                    q.Groups[g.Key] = g.Key == "shape" ? WithoutDefaultsTheServerAdds(g.Value) : g.Value;
+            Dictionary<string, int> seen = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (ItemSnapshot it in p.Items.Values.OrderBy(i => i.Name, StringComparer.Ordinal).ThenBy(i => string.Join(";", i.Fields.Select(f => f.Value)), StringComparer.Ordinal))
+            {
+                it.Fields.TryGetValue("Type", out string type);
+                it.Fields.TryGetValue("AssetID", out string asset);
+                string ik = it.Name + "|" + type + "|" + asset;
+                seen[ik] = seen.TryGetValue(ik, out int n) ? n + 1 : 1;
+                ItemSnapshot copyItem = new ItemSnapshot { Id = KeyGuid(key + "#" + ik + "#" + seen[ik]), Name = it.Name };
+                foreach (KeyValuePair<string, string> f in it.Fields)
+                    if (f.Key != "CreatorID" && f.Key != "CreatorData" && f.Key != "OwnerID" && f.Key != "LastOwnerID" && f.Key != "GroupID")
+                        copyItem.Fields[f.Key] = f.Value;
+                q.Items[copyItem.Id] = copyItem;
+            }
+            copy.Parts[q.Id] = q;
+        }
+        return copy;
+    }
+
+    /// <summary>
+    /// The server writes the flexible-path and light settings of every shape and an empty extra-parameter block as one zero
+    /// byte; an archive from another writer may leave them out. They count only when the flexible path or light is on, and an empty block counts as none.
+    /// </summary>
+    private static SortedDictionary<string, string> WithoutDefaultsTheServerAdds(SortedDictionary<string, string> shape)
+    {
+        SortedDictionary<string, string> kept = new SortedDictionary<string, string>(shape, StringComparer.Ordinal);
+        foreach (string prefix in new[] { "Flexi", "Light" })
+            if (!shape.TryGetValue(prefix + "Entry", out string on) || !string.Equals(on, "true", StringComparison.OrdinalIgnoreCase))
+                foreach (string key in shape.Keys.Where(k => k.StartsWith(prefix, StringComparison.Ordinal)).ToList())
+                    kept.Remove(key);
+        if (kept.TryGetValue("ExtraParams", out string extra) && (extra.Length == 0 || extra == "AA=="))
+            kept.Remove("ExtraParams");
+        return kept;
+    }
+
+    // A part's own values with no ids, to put identical-key parts in the same order in both archives.
+    private static string Signature(PartSnapshot p) =>
+        string.Join("|", p.Groups.Where(g => g.Key != "creator" && g.Key != "owner").OrderBy(g => g.Key, StringComparer.Ordinal).Select(g => g.Key + "=" + string.Join(";", g.Value.Select(v => v.Key + ":" + v.Value))))
+        + "|" + string.Join("|", p.Items.Values.Select(i => i.Name + ":" + string.Join(",", i.Fields.Where(f => f.Key != "CreatorID" && f.Key != "CreatorData" && f.Key != "OwnerID" && f.Key != "LastOwnerID" && f.Key != "GroupID").Select(f => f.Value))).OrderBy(x => x, StringComparer.Ordinal));
+
+    private string PositionKey(PartSnapshot p)
+    {
+        Parts.TryGetValue(p.RootId, out PartSnapshot root);
+        root ??= p;
+        return root.Name + "@" + RoundedPosition(root.Single("groupPosition")) + "|" + p.LinkNum.ToString(CultureInfo.InvariantCulture) + "|" + p.Name;
+    }
+
+    private static string RoundedPosition(string vector)
+    {
+        if (vector == null)
+            return "?";
+        string[] n = vector.Trim('<', '>').Split(',', StringSplitOptions.TrimEntries);
+        return "<" + string.Join(", ", n.Select(x => float.TryParse(x, NumberStyles.Float, CultureInfo.InvariantCulture, out float f) ? Math.Round(f, 2).ToString("0.##", CultureInfo.InvariantCulture) : x)) + ">";
+    }
+
+    private static Guid KeyGuid(string key) => new Guid(MD5.HashData(Encoding.UTF8.GetBytes(key)));
+
     /// <summary>A gzip file starts 1f 8b; anything else is taken to be a plain tar.</summary>
     private static Stream Decompressed(Stream raw)
     {

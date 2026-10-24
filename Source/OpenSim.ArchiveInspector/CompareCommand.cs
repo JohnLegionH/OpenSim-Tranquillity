@@ -14,7 +14,7 @@ namespace OpenSim.ArchiveInspector;
 internal static class CompareCommand
 {
     public const string Usage =
-@"Usage: OpenSim.ArchiveInspector oar-compare <original.oar> <rewritten.oar> [--plan <plan.json>] [--out <folder>]
+@"Usage: OpenSim.ArchiveInspector oar-compare <original.oar> <rewritten.oar> [--plan <plan.json>] [--match position] [--out <folder>]
 
 Compares two region archives without loading them. Parts are matched by part UUID. Every entry that is not an object
 file must have the same bytes. For each part it compares link number, name, description, position, rotation, scale, shape,
@@ -22,6 +22,10 @@ face count, texture entry, contents (item name, type, asset, permissions), creat
 The archives are only read.
   --plan <plan.json>   the changes the rewrite was meant to make; a difference the plan names passes, any other fails,
                        and a planned change that is not found fails
+  --match position     compare with the archive a region saved after loading the first: parts are matched by build
+                       (root part name and position), link number and name, items by name, type and asset id; creator,
+                       owner and group are left out because the loader rewrites them, and only asset entries are compared
+                       (no plan applies)
   --out <folder>       also write compare-report.txt and compare-report.json there
 
 Prints PASS or FAIL first, then one line per difference grouped by build.
@@ -31,6 +35,7 @@ Exit codes: 0 pass, 1 unplanned differences (or planned changes not found), 2 th
     public static int Run(string[] args)
     {
         string original = null, rewritten = null, planPath = null, outDir = null;
+        bool byPosition = false;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -39,6 +44,11 @@ Exit codes: 0 pass, 1 unplanned differences (or planned changes not found), 2 th
                 case "--plan":
                     if (i + 1 >= args.Length) return Fail("--plan needs a file");
                     planPath = args[++i];
+                    break;
+                case "--match":
+                    if (i + 1 >= args.Length || args[i + 1] != "position") return Fail("--match takes 'position'");
+                    byPosition = true;
+                    i++;
                     break;
                 case "--out":
                     if (i + 1 >= args.Length) return Fail("--out needs a folder");
@@ -59,11 +69,13 @@ Exit codes: 0 pass, 1 unplanned differences (or planned changes not found), 2 th
         }
         if (original == null || rewritten == null)
             return Fail("two archives are required");
+        if (byPosition && planPath != null)
+            return Fail("--match position takes no plan");
 
         try
         {
             ComparePlan plan = planPath == null ? ComparePlan.Empty() : ComparePlan.Load(planPath);
-            CompareResult result = new ArchiveComparer().Compare(original, rewritten, plan);
+            CompareResult result = byPosition ? new ArchiveComparer().CompareByPosition(original, rewritten) : new ArchiveComparer().Compare(original, rewritten, plan);
             Console.Out.Write(result.ToText());
 
             if (outDir != null)
