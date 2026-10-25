@@ -84,39 +84,42 @@ public sealed class RestSkeleton
         _byName.TryGetValue(name, out var j) ? j : _byAlias.TryGetValue(name, out j) ? j : null;
 
     /// <summary>
-    /// A copy of the skeleton at the avatar's default shape: every skeletal shape parameter of avatar_lad.xml
-    /// (the viewer's avatar definition) at its default value moves and scales the bones it names, by the default value
-    /// times the parameter's per-bone scale and offset. A few defaults are not zero (for example the arm length), so the
-    /// default avatar is not the bare skeleton file.
+    /// A copy of the skeleton at the avatar's default shape, as the viewer poses it: every skeletal shape parameter of
+    /// avatar_lad.xml (the viewer's avatar definition) moves and scales the bones it names, by its weight times the
+    /// parameter's per-bone scale and offset. The weight is the parameter's default, except that a parameter another
+    /// slider drives (the eye bones, head size, the Male switch) takes its weight from its driver
+    /// (<see cref="ShapeRules.Resolve"/>), so the default avatar is neither the bare skeleton file nor the skeleton the
+    /// driven parameters' own defaults give. A few defaults are not zero (for example the arm length).
     /// </summary>
     public RestSkeleton WithDefaultShape(string avatarDefinitionPath) => WithShape(avatarDefinitionPath, null);
 
     /// <summary>
-    /// <see cref="WithDefaultShape"/> with some skeletal shape parameters set to other values than their defaults, by the
-    /// parameter's name in avatar_lad.xml (for example "Male_Skeleton" = 1 is the Male switch's effect on the bones).
+    /// <see cref="WithDefaultShape"/> with some parameters set to other values than their defaults, by the parameter's
+    /// name in avatar_lad.xml. A slider that drives others (for example "Head Size") drives them from the given value; a
+    /// driven parameter named directly (for example "Male_Skeleton" = 1, the Male switch's effect on the bones) is set to
+    /// the given value after the drivers have been applied.
     /// </summary>
-    public RestSkeleton WithShape(string avatarDefinitionPath, IReadOnlyDictionary<string, float>? values)
+    public RestSkeleton WithShape(string avatarDefinitionPath, IReadOnlyDictionary<string, float>? values) =>
+        WithShape(ShapeRules.Load(avatarDefinitionPath), values);
+
+    /// <summary><see cref="WithShape(string, IReadOnlyDictionary{string, float})"/> with the definition already read.</summary>
+    public RestSkeleton WithShape(ShapeRules rules, IReadOnlyDictionary<string, float>? values)
     {
-        var doc = XDocument.Load(avatarDefinitionPath);
-        var effects = new List<(IEnumerable<ShapeRules.BoneEffect> Bones, float Weight)>();
-        foreach (var param in doc.Descendants("param"))
-        {
-            var sk = param.Element("param_skeleton");
-            if (sk == null) continue;
-            var paramName = (string?)param.Attribute("name") ?? "";
-            float w = values != null && values.TryGetValue(paramName, out var given) ? given : F((string?)param.Attribute("value_default") ?? "0");
-            effects.Add((sk.Elements("bone").Select(b => new ShapeRules.BoneEffect(
-                (string?)b.Attribute("name") ?? "",
-                b.Attribute("scale") != null ? Vec((string?)b.Attribute("scale"), Vector3.Zero) : null,
-                b.Attribute("offset") != null ? Vec((string?)b.Attribute("offset"), Vector3.Zero) : null)), w));
-        }
-        return Distorted(effects);
+        var driven = rules.Drivers.Values.SelectMany(l => l.Select(d => d.DrivenId)).ToHashSet();
+        var sliders = new Dictionary<int, float>();
+        var directly = new Dictionary<int, float>();
+        if (values != null)
+            foreach (var p in rules.Params.Values)
+                if (values.TryGetValue(p.Name, out var v)) (driven.Contains(p.Id) ? directly : sliders)[p.Id] = v;
+        var weights = rules.Resolve(sliders);
+        foreach (var (id, v) in directly) weights[id] = Math.Clamp(v, rules.Params[id].Min, rules.Params[id].Max);
+        return Distorted(rules.Params.Values.Where(p => p.Bones.Count > 0).Select(p => ((IEnumerable<ShapeRules.BoneEffect>)p.Bones, weights[p.Id])));
     }
 
     /// <summary>
     /// The skeleton the viewer poses for a shape wearable's weights, by parameter id (see <see cref="ShapeRules.Resolve"/>):
     /// parameters not given keep their defaults, and the parameters that other sliders drive (the eye bones, head size,
-    /// the Male switch) follow their drivers. <see cref="WithDefaultShape"/> does not do the second part.
+    /// the Male switch) follow their drivers, as <see cref="WithDefaultShape"/> does too.
     /// </summary>
     public RestSkeleton WithSliders(ShapeRules rules, IReadOnlyDictionary<int, float>? values)
     {
