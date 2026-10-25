@@ -385,3 +385,78 @@ public class RestorePlacementTests
         AssertNear(new[] { 2f, 0f, 0f }, Lset.Vec(part, "OffsetPosition"), "the added part's offset from the root");
     }
 }
+
+/// <summary>A deleted part kept as a stub: no Phantom flag on a child, physics type None, and the root part is never deleted.</summary>
+public class RestoreStubTests
+{
+    // a script in the last part keeps the linkset on the refuse-or-stub path, whichever other part is deleted
+    private static Lset Scripted(int childPhysics = -1) => new Lset(scriptIn: "C", childPhysics: childPhysics);
+
+    [Fact]
+    public void AStubNeverGetsThePhantomFlag()
+    {
+        Lset f = Scripted();
+        f.Edit(g => g.RemovePart(f.A.Id.ToString()));
+        RestoreResult r = f.Restore(new RestoreOptions { StubDeleted = true });
+
+        Assert.Equal(PartOutcome.Stubbed, RestoreTests.Of(r, f.A).Outcome);
+        Assert.Equal(0, r.ExitCode);
+        XElement was = f.PartIn(f.Before, f.A), now = f.PartIn(f.After, f.A);
+        Assert.Equal(was.Element("Flags").Value, now.Element("Flags").Value);
+        Assert.DoesNotContain("Phantom", now.Element("Flags").Value);
+        // phantom is a setting of the whole linkset, so no other part has it either
+        foreach (KitPart p in f.Parts)
+            Assert.DoesNotContain("Phantom", f.PartIn(f.After, p).Element("Flags").Value);
+    }
+
+    [Fact]
+    public void AStubGetsPhysicsShapeTypeNoneWhereThePartHasTheElement()
+    {
+        Lset f = Scripted(childPhysics: 0);
+        f.Edit(g => g.RemovePart(f.A.Id.ToString()));
+        RestoreResult r = f.Restore(new RestoreOptions { StubDeleted = true });
+
+        Assert.True(r.ExitCode == 0, r.ToText() + r.Parity?.ToText());
+        Assert.Equal("1", f.PartIn(f.After, f.A).Element("PhysicsShapeType").Value);
+        Assert.Equal("0", f.PartIn(f.After, f.B).Element("PhysicsShapeType").Value);
+    }
+
+    [Fact]
+    public void AStubGetsPhysicsShapeTypeNoneAddedWhereThePartLacksTheElement()
+    {
+        Lset f = Scripted();
+        Assert.Null(f.PartIn(f.Before, f.A).Element("PhysicsShapeType"));
+        f.Edit(g => g.RemovePart(f.A.Id.ToString()));
+        RestoreResult r = f.Restore(new RestoreOptions { StubDeleted = true });
+
+        Assert.True(r.ExitCode == 0, r.ToText() + r.Parity?.ToText());
+        Assert.Equal("1", f.PartIn(f.After, f.A).Element("PhysicsShapeType").Value);
+        Assert.Null(f.PartIn(f.After, f.B).Element("PhysicsShapeType"));
+        // the stub keeps its link number, name and contents
+        XElement was = f.PartIn(f.Before, f.A), now = f.PartIn(f.After, f.A);
+        Assert.Equal(was.Element("LinkNum").Value, now.Element("LinkNum").Value);
+        Assert.Equal(was.Element("Name").Value, now.Element("Name").Value);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void DeletingTheRootPartIsRefusedWithAndWithoutStubDeleted(bool stub)
+    {
+        Lset f = new Lset();   // no script: a child would really be deleted, the root never is
+        f.Edit(g => g.RemovePart(f.Root.Id.ToString()));
+        RestoreResult r = f.Restore(new RestoreOptions { StubDeleted = stub });
+
+        PartReport root = RestoreTests.Of(r, f.Root);
+        Assert.Equal(PartOutcome.Refused, root.Outcome);
+        Assert.Equal("ROOT_DELETED", root.Code);
+        Assert.Equal(3, r.ExitCode);
+        Assert.True(r.Written);
+        // the archive is written as it was
+        Dictionary<string, byte[]> before = f.Before, after = f.After;
+        Assert.Equal(before.Keys.OrderBy(k => k), after.Keys.OrderBy(k => k));
+        foreach (string k in before.Keys)
+            Assert.True(before[k].SequenceEqual(after[k]), "entry differs: " + k);
+        Assert.True(r.ToText().IndexOf("REFUSED PARTS (1)", StringComparison.Ordinal) >= 0);
+    }
+}

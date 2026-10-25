@@ -75,7 +75,7 @@ public class RestoreEditTests
     }
 
     [Fact]
-    public void ADeletedPartBecomesAnInvisiblePhantomStubThatKeepsItsLinkNumberAndScripts()
+    public void ADeletedPartBecomesAnInvisibleStubThatKeepsItsLinkNumberAndScripts()
     {
         RestoreTests.Fixture f = new RestoreTests.Fixture();
         Edit(f, f.Root, g => g.RemovePart(RestoreTests.PartUuid(f.Child)));
@@ -91,7 +91,9 @@ public class RestoreEditTests
         Assert.Equal(oldChild.Element("Name").Value, newChild.Element("Name").Value);
         Assert.Equal("2", newChild.Element("LinkNum").Value);
         Assert.Equal(oldChild.Element("TaskInventory").ToString(), newChild.Element("TaskInventory").ToString());
-        Assert.Contains("Phantom", newChild.Element("Flags").Value);
+        // phantom is a setting of the whole linkset, so a stub is never made phantom; it gets physics shape type None instead
+        Assert.Equal(oldChild.Element("Flags").Value, newChild.Element("Flags").Value);
+        Assert.Equal("1", newChild.Element("PhysicsShapeType").Value);
         byte[] te = Convert.FromBase64String(newChild.Element("Shape").Element("TextureEntry").Value);
         Primitive.TextureEntry entry = new Primitive.TextureEntry(te, 0, te.Length);
         Assert.Equal(0f, entry.DefaultTexture.RGBA.A);
