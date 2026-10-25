@@ -173,6 +173,7 @@ public sealed class ArchiveRewriter
     private RewriteSummary Write(Func<Stream> openSource, Stream dest, PlanResult plan)
     {
         RewriteSummary summary = new RewriteSummary();
+        long memberStart = dest.CanSeek ? dest.Position : 0;
         using Stream source = openSource();
         TarStreamReader tar = new TarStreamReader(Decompressed(source));
 
@@ -219,6 +220,7 @@ public sealed class ArchiveRewriter
             }
             summary.EntriesWritten = writer.EntriesWritten;
         }
+        GzipHeader.FixOsField(dest, memberStart);
         return summary;
     }
 }
