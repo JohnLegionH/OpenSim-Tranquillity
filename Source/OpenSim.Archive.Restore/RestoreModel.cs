@@ -131,7 +131,7 @@ public sealed class RestoreResult
           .Append(", without (kept exactly as they were): ").Append(BuildsWithoutGlb.Count.ToString(c)).Append('\n');
         sb.Append("parts: unchanged ").Append(Count(PartOutcome.Unchanged).ToString(c)).Append(", moved ").Append(Count(PartOutcome.Moved).ToString(c))
           .Append(", rebuilt ").Append(Count(PartOutcome.Rebuilt).ToString(c)).Append(", added ").Append(Count(PartOutcome.Added).ToString(c))
-          .Append(", stubbed ").Append(Count(PartOutcome.Stubbed).ToString(c)).Append(", refused ").Append(Count(PartOutcome.Refused).ToString(c)).Append('\n');
+          .Append(", stubbed ").Append(Count(PartOutcome.Stubbed).ToString(c)).Append(", deleted ").Append(Count(PartOutcome.Deleted).ToString(c)).Append(", refused ").Append(Count(PartOutcome.Refused).ToString(c)).Append('\n');
         sb.Append("meshes added: ").Append(MeshesAdded.ToString(c)).Append(" (").Append(MeshBytes.ToString(c)).Append(" bytes), textures added: ").Append(TexturesAdded.ToString(c)).Append('\n');
         if (Parity != null)
             sb.Append("parity check: ").Append(Parity.Pass ? "PASS" : "FAIL").Append('\n');
@@ -166,7 +166,7 @@ public sealed class RestoreResult
                 if (!string.IsNullOrEmpty(p.Detail) && p.Outcome == PartOutcome.Added)
                     sb.Append("  ").Append(p.Detail);
             }
-            else if (p.Outcome == PartOutcome.Moved || p.Outcome == PartOutcome.Stubbed)
+            else if (p.Outcome == PartOutcome.Moved || p.Outcome == PartOutcome.Stubbed || p.Outcome == PartOutcome.Deleted)
                 sb.Append("  ").Append(p.Detail);
             else
                 sb.Append("  within ").Append(p.MaxPosition.ToString("0.0#######", c)).Append(" m");
@@ -198,6 +198,7 @@ public sealed class RestoreResult
         rebuilt = Count(PartOutcome.Rebuilt),
         added = Count(PartOutcome.Added),
         stubbed = Count(PartOutcome.Stubbed),
+        deleted = Count(PartOutcome.Deleted),
         texturesAdded = TexturesAdded,
         refused = Count(PartOutcome.Refused),
         meshesAdded = MeshesAdded,

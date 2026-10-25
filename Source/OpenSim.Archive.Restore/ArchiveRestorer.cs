@@ -76,6 +76,8 @@ public sealed partial class ArchiveRestorer
         public Dictionary<Guid, byte[]> Meshes = new Dictionary<Guid, byte[]>();
         public List<PlanChange> Plan = new List<PlanChange>();
         public List<Guid> AddedParts = new List<Guid>();
+        /// <summary>Parts cut out of the archive because they were deleted in a linkset with no script.</summary>
+        public List<Guid> RemovedParts = new List<Guid>();
         public Dictionary<Guid, List<Func<PartView, IEnumerable<ElementEdit>>>> Edits = new Dictionary<Guid, List<Func<PartView, IEnumerable<ElementEdit>>>>();
         public Dictionary<Guid, ParsedPart> Parsed;
         public Dictionary<Guid, EligibilityRow> Rows;
@@ -205,7 +207,15 @@ public sealed partial class ArchiveRestorer
             Dictionary<Guid, PartNode> originalById = originalParts.ToDictionary(p => p.PartId);
             Guid.TryParse(build.Root, out Guid rootId);
 
-            string groupMove = MoveGroup(run, build, rootId, kept, originalById, user, original, userFrame, originFrame);
+            // In a linkset where no part holds a script, a part deleted in the .glb is deleted for real (the root part never is);
+            // otherwise a deleted part is refused, or kept as a stub, because scripts address their linkset's parts by link number.
+            HashSet<Guid> haveIds = kept.Select(p => p.PartId).ToHashSet();
+            List<PartNode> gone = originalParts.Where(p => !haveIds.Contains(p.PartId)).ToList();
+            bool scriptFree = !build.Parts.Concat(originalParts.Select(p => p.PartId)).Any(id => run.Parsed.TryGetValue(id, out ParsedPart held) && HoldsScript(held));
+            HashSet<Guid> removing = scriptFree
+                ? gone.Where(p => run.Parsed.TryGetValue(p.PartId, out ParsedPart q) && !q.Part.IsRoot).Select(p => p.PartId).ToHashSet()
+                : new HashSet<Guid>();
+            string groupMove = MoveGroup(run, build, rootId, kept, originalById, user, original, userFrame, originFrame, removing);
             int userRootNode = kept.FirstOrDefault(p => p.PartId == rootId)?.Node.Index ?? -1;
             int originRootNode = originalById.TryGetValue(rootId, out PartNode originalRootNode) ? originalRootNode.Node.Index : -1;
 
@@ -217,16 +227,17 @@ public sealed partial class ArchiveRestorer
                 Judge(run, report, up, op, user, original, userFrame, originFrame, up.PartId == rootId ? groupMove : null, userRootNode, originRootNode);
                 WarnTextureTransform(report, user, up.Node);
             }
-            HashSet<Guid> have = kept.Select(p => p.PartId).ToHashSet();
-            foreach (PartNode op in originalParts.Where(p => !have.Contains(p.PartId)))
+            foreach (PartNode op in gone)
             {
                 PartReport report = new PartReport { Glb = glbName, PartId = op.PartId, LinkNum = op.LinkNum, Name = op.Name };
                 result.Parts.Add(report);
-                Delete(run, report, op);
+                Delete(run, report, op, removing.Contains(op.PartId));
             }
+            int linksAfter = removing.Count > 0 ? Renumber(run, build, removing) : -1;
             if (addedNodes.Count > 0)
             {
-                int next = Math.Max(1, build.Parts.Select(g => run.Parsed.TryGetValue(g, out ParsedPart pp) ? pp.Part.LinkNum : 0).DefaultIfEmpty(0).Max());
+                int next = linksAfter >= 0 ? Math.Max(1, linksAfter)
+                    : Math.Max(1, build.Parts.Select(g => run.Parsed.TryGetValue(g, out ParsedPart pp) ? pp.Part.LinkNum : 0).DefaultIfEmpty(0).Max());
                 foreach (PartNode node in addedNodes)
                 {
                     PartReport report = new PartReport { Glb = glbName, Name = node.Name, Outcome = PartOutcome.Refused };
@@ -262,6 +273,8 @@ public sealed partial class ArchiveRestorer
                 return all;
             }));
         }
+        foreach (Guid id in run.RemovedParts)
+            run.Rewriter.RemovePart(id);
         foreach (KeyValuePair<Guid, byte[]> m in run.Meshes)
             run.Rewriter.AddAsset(m.Key, AssetType.Mesh, m.Value);
         foreach (KeyValuePair<Guid, byte[]> t in run.Textures.NewAssets)
@@ -283,7 +296,7 @@ public sealed partial class ArchiveRestorer
     /// (GroupPosition), the root its new rotation. Returns the sentence for the root's report, or null when nothing moved.
     /// </summary>
     private string MoveGroup(Run run, FreshBuild build, Guid rootId, List<PartNode> kept, Dictionary<Guid, PartNode> originalById,
-        GlbFile user, GlbFile original, NodeFrame userFrame, NodeFrame originFrame)
+        GlbFile user, GlbFile original, NodeFrame userFrame, NodeFrame originFrame, HashSet<Guid> removing)
     {
         PartNode userRoot = kept.FirstOrDefault(p => p.PartId == rootId);
         if (userRoot == null || !originalById.TryGetValue(rootId, out PartNode originalRoot) || !run.Parsed.TryGetValue(rootId, out ParsedPart rootPart))
@@ -313,7 +326,7 @@ public sealed partial class ArchiveRestorer
         // a group that was only turned keeps its position, so no part's group position is written
         foreach (Guid id in change.Moved ? build.Parts : new HashSet<Guid>())
         {
-            if (!run.Parsed.ContainsKey(id))
+            if (!run.Parsed.ContainsKey(id) || removing.Contains(id))
                 continue;
             run.Edit(id, view => VectorEdits("GroupPosition", PlaceFrom(new[] { Number(view, "GroupPosition/X"), Number(view, "GroupPosition/Y"), Number(view, "GroupPosition/Z") })));
             run.Plan1(id, "groupPosition");
@@ -828,6 +841,10 @@ public sealed partial class ArchiveRestorer
         foreach (Guid id in run.AddedParts)
             added.Add(id.ToString());
         root["addedParts"] = added;
+        JsonArray removed = new JsonArray();
+        foreach (Guid id in run.RemovedParts)
+            removed.Add(id.ToString());
+        root["removedParts"] = removed;
         JsonArray entries = new JsonArray();
         foreach (Guid id in run.Meshes.Keys.OrderBy(g => g.ToString(), StringComparer.Ordinal))
             entries.Add("assets/" + id.ToString("D") + "_mesh.llmesh");

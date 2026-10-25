@@ -23,7 +23,31 @@ public sealed partial class ArchiveRestorer
 
     // ------------------------------------------------------------------ a part the .glb no longer has
 
-    private void Delete(Run run, PartReport report, PartNode original)
+    /// <summary>True when the part's contents hold a script.</summary>
+    private static bool HoldsScript(ParsedPart part) =>
+        part.Items.Any(i => i.AssetType == (int)AssetType.LSLText || i.InvType == (int)InventoryType.LSL);
+
+    /// <summary>
+    /// After parts were cut out of a build, writes the link numbers of the parts left so they run from 1 without a gap in their old
+    /// order (a root left alone is numbered 0, as a single-part object is). Returns the highest number in use.
+    /// </summary>
+    private int Renumber(Run run, FreshBuild build, HashSet<Guid> removed)
+    {
+        List<(Guid id, int link)> left = build.Parts.Where(id => run.Parsed.ContainsKey(id) && !removed.Contains(id))
+            .Select(id => (id, link: run.Parsed[id].Part.LinkNum)).OrderBy(x => x.link).ToList();
+        for (int i = 0; i < left.Count; i++)
+        {
+            int number = left.Count == 1 ? 0 : i + 1;
+            if (number == left[i].link)
+                continue;
+            string text = number.ToString(Inv);
+            run.Edit(left[i].id, view => new[] { ElementEdit.SetText("LinkNum", text) });
+            run.Plan1(left[i].id, "linkNum");
+        }
+        return left.Count;
+    }
+
+    private void Delete(Run run, PartReport report, PartNode original, bool remove)
     {
         run.Parsed.TryGetValue(original.PartId, out ParsedPart pp);
         if (pp?.Part.IsRoot == true)
@@ -32,6 +56,13 @@ public sealed partial class ArchiveRestorer
             report.Outcome = PartOutcome.Refused;
             report.Code = "ROOT_DELETED";
             report.Detail = "the root part is not in the .glb any more; a root part is never deleted, so it stays as it was (to remove the whole object, delete it in the region)";
+            return;
+        }
+        if (remove)
+        {
+            run.RemovedParts.Add(original.PartId);
+            report.Outcome = PartOutcome.Deleted;
+            report.Detail = "deleted in the .glb; no part of this linkset holds a script, so the part is removed from the archive and the link numbers after it move down";
             return;
         }
         if (!m_options.StubDeleted)
