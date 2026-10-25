@@ -21,6 +21,9 @@ namespace OpenSim.Archive.Converter;
 /// </summary>
 public sealed class MeshAssetEncoder : IMeshEncoder
 {
+    /// <summary>Gets a line for every simplification pass of the next encodes; null says nothing.</summary>
+    public Action<string> Trace { get; set; }
+
     public string Name => "OpenSim.MeshAsset (viewer profile levels of detail, bounding hull, prim physics mesh)";
     public bool ProducesValidMesh => true;
 
@@ -30,11 +33,24 @@ public sealed class MeshAssetEncoder : IMeshEncoder
         foreach (EncoderFace f in faces)
             model.High.Faces.Add(ToModelFace(f));
 
-        LodGenerator.GenerateAll(model, LodGenerator.Decimation, LodGenerator.Profile.Viewer);
+        System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
+        void Lap(string what)
+        {
+            Trace?.Invoke(what + " in " + clock.Elapsed.TotalSeconds.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " s");
+            clock.Restart();
+        }
+        LodGenerator.Trace = Trace;
+        try { LodGenerator.GenerateAll(model, LodGenerator.Decimation, LodGenerator.Profile.Viewer); }
+        finally { LodGenerator.Trace = null; }
+        Lap("levels of detail made");
         PhysicsBlock.AddBoundingHull(model);
+        Lap("bounding hull made");
         if (options?.Physics != null)
             model.PhysicsMesh = PhysicsMeshBlock.Make(options.Physics);
-        return MeshCodec.Encode(model);
+        Lap("physics mesh made");
+        byte[] bytes = MeshCodec.Encode(model);
+        Lap("asset written");
+        return bytes;
     }
 
     private static MeshFace ToModelFace(EncoderFace f)

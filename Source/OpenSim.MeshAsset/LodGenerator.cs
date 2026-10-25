@@ -46,6 +46,9 @@ public static class LodGenerator
 
     enum Mode { Full, NoNormals, NoUvs, NoTopology }
 
+    /// <summary>Receives a line for every simplification pass, with its mode, target and time; null (the default) says nothing.</summary>
+    [ThreadStatic] public static Action<string> Trace;
+
     /// <summary>Fills the medium, low and lowest levels from the high one. Levels already present are replaced.</summary>
     public static List<LodResult> GenerateAll(MeshAssetModel model, int decimation = Decimation, Profile profile = Profile.Viewer)
     {
@@ -138,6 +141,14 @@ public static class LodGenerator
     /// came out; <paramref name="target"/> is rewritten only when it did.
     /// </summary>
     static float Run(MeshLod high, MeshLod target, float indicesDecimator, Mode mode)
+    {
+        Stopwatch clock = Trace == null ? null : Stopwatch.StartNew();
+        float ratio = RunPass(high, target, indicesDecimator, mode);
+        Trace?.Invoke("simplify " + mode + " by " + indicesDecimator.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + ": ratio " + ratio.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + " in " + clock.Elapsed.TotalSeconds.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " s");
+        return ratio;
+    }
+
+    static float RunPass(MeshLod high, MeshLod target, float indicesDecimator, Mode mode)
     {
         // I. Weld every face into one vertex and index buffer.
         int totalV = 0, totalI = 0;

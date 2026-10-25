@@ -52,6 +52,72 @@ public class RewriteTests
 
     private static byte[] Utf8(string s) => new UTF8Encoding(false).GetBytes(s);
 
+    private static readonly Guid NewPart = Guid.Parse("00000000-0000-4000-8000-0000000000c3");
+    private const string NewPartText = "<SceneObjectPart><UUID><UUID>00000000-0000-4000-8000-0000000000c3</UUID></UUID><Name>New</Name></SceneObjectPart>";
+
+    private static string Insert(string objectText, Func<Func<string, string>, string> make = null)
+    {
+        ObjectXml.Decoded d = ObjectXml.Decode(Utf8(objectText));
+        byte[] result = ObjectXml.Apply(d, new Dictionary<Guid, PartPatch>(), new[] { new PartInsertion(PartA, make ?? (_ => NewPartText)) }, "objects/t.xml");
+        return new UTF8Encoding(false).GetString(result);
+    }
+
+    [Fact]
+    public void ANewPart_GoesAtTheEndOfTheOtherParts_AndNothingElseMoves()
+    {
+        string before = ObjectText();
+        string after = Insert(before);
+        Assert.Equal(before.Replace("</OtherParts>", NewPartText + "</OtherParts>"), after);
+    }
+
+    [Theory]
+    [InlineData("<OtherParts />")]
+    [InlineData("<OtherParts/>")]
+    public void ANewPart_FillsAnEmptyOtherPartsElement(string empty)
+    {
+        string single = ObjectText();
+        single = single.Substring(0, single.IndexOf("<OtherParts>", StringComparison.Ordinal)) + empty + "</SceneObjectGroup>";
+        string after = Insert(single);
+        Assert.Contains("<OtherParts>" + NewPartText + "</OtherParts></SceneObjectGroup>", after);
+        Assert.DoesNotContain(empty, after);
+    }
+
+    [Fact]
+    public void ANewPart_MakesTheOtherPartsElementWhenThereIsNone()
+    {
+        string single = ObjectText();
+        single = single.Substring(0, single.IndexOf("  <OtherParts>", StringComparison.Ordinal)) + "</SceneObjectGroup>";
+        Assert.Contains("<OtherParts>" + NewPartText + "</OtherParts></SceneObjectGroup>", Insert(single));
+    }
+
+    [Fact]
+    public void ANewPart_CanReadTheAnchorPartsLeafElements()
+    {
+        string seen = null, missing = "not set";
+        Insert(ObjectText(), read =>
+        {
+            seen = read("Name");
+            missing = read("Nothing/Here");
+            return NewPartText;
+        });
+        Assert.Equal("Alpha", seen);
+        Assert.Null(missing);
+    }
+
+    [Fact]
+    public void ADeferredPatch_CanReadThePartsTextToBuildItsEdits()
+    {
+        byte[] after = Patch(Utf8(ObjectText()), new PartPatch(PartA, (PartView view) => new[] { ElementEdit.SetText("Name", view.Text("Name") + "!") }));
+        Assert.Contains("<Name>Alpha!</Name>", new UTF8Encoding(false).GetString(after));
+    }
+
+    [Fact]
+    public void ANewPart_ThatLeavesNoRoomForItsAnchor_IsRefused()
+    {
+        ObjectXml.Decoded d = ObjectXml.Decode(Utf8(ObjectText()));
+        Assert.Throws<InvalidDataException>(() => ObjectXml.Apply(d, new Dictionary<Guid, PartPatch>(), new[] { new PartInsertion(Guid.NewGuid(), _ => NewPartText) }, "objects/t.xml"));
+    }
+
     [Theory]
     [InlineData("\n")]
     [InlineData("\r\n")]

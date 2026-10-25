@@ -451,6 +451,13 @@ public sealed partial class ArchiveRestorer
         }
 
         Stopwatch buildClock = Stopwatch.StartNew();
+        string Lap(string what, Stopwatch clock)
+        {
+            double seconds = clock.Elapsed.TotalSeconds;
+            clock.Restart();
+            return seconds >= 1.0 ? what + " " + seconds.ToString("0.0", Inv) + " s; " : string.Empty;
+        }
+        string laps = string.Empty;
         List<EncoderFace> faces;
         List<int> sourceSlot;
         try { faces = BuildFaces(edited, user, pp.Scale, Vector3.Zero, faceCount, out sourceSlot); }
@@ -459,6 +466,7 @@ public sealed partial class ArchiveRestorer
             Refuse("GEOMETRY_FAILED", e.GetType().Name + ": " + e.Message);
             return;
         }
+        laps += Lap("faces", buildClock);
         bool split = faces.Count > faceCount;
         if (faces.Count > MeshShape.MaxFaces)
         {
@@ -467,16 +475,21 @@ public sealed partial class ArchiveRestorer
         }
 
         PhysicsGeometry physics = PhysicsFrom(faces, pp.Scale);
+        laps += Lap("physics", buildClock);
         byte[] bytes;
-        try { bytes = new MeshAssetEncoder().Encode(faces, new EncodeOptions { Physics = physics }); }
+        if (faces.Sum(x => x.TriangleCount) > 50000)
+            m_options.Progress?.Invoke("link " + op.LinkNum.ToString(Inv) + " '" + op.Name + "': encoding " + faces.Sum(x => x.TriangleCount).ToString(Inv) + " triangles in " + faces.Count.ToString(Inv) + " faces");
+        try { bytes = new MeshAssetEncoder { Trace = faces.Sum(x => x.TriangleCount) > 50000 ? m_options.Progress : null }.Encode(faces, new EncodeOptions { Physics = physics }); }
         catch (Exception e) when (e is InvalidOperationException || e is ArgumentException || e is OverflowException || e is IndexOutOfRangeException || e is MeshAsset.MeshFormatException)
         {
             Refuse("ENCODE_FAILED", e.GetType().Name + ": " + e.Message);
             return;
         }
-        if (buildClock.ElapsedMilliseconds > 2000)
-            m_options.Progress?.Invoke("link " + op.LinkNum.ToString(Inv) + " '" + op.Name + "': built and encoded in " + (buildClock.ElapsedMilliseconds / 1000.0).ToString("0.0", Inv) + " s");
+        laps += Lap("encode", buildClock);
         List<string> problems = MeshValidator.Check(bytes, faces, out _, physics);
+        laps += Lap("check", buildClock);
+        if (laps.Length > 0)
+            m_options.Progress?.Invoke("link " + op.LinkNum.ToString(Inv) + " '" + op.Name + "': " + laps.TrimEnd(' ', ';'));
         if (problems.Count > 0)
         {
             run.Result.Invalid.Add("link " + op.LinkNum.ToString(Inv) + " '" + op.Name + "': " + string.Join("; ", problems));

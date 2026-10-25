@@ -82,6 +82,14 @@ public static class ConvexHull
     }
 
     /// <summary>
+    /// The most points the first hull is built from. The hull is built by adding one point at a time and testing it against
+    /// every face so far, so the time grows with points times faces: a smooth mesh of 175 000 triangles still leaves 16 000 or more
+    /// points on a grid of 128 cells, nearly all of them on the hull. A point set larger than this is thinned to one point per cell
+    /// of a grid coarse enough to bring it under the limit.
+    /// </summary>
+    public const int MaxStartPoints = 2048;
+
+    /// <summary>
     /// The hull's vertices. When the points are flat or in a line there is no hull; the eight corners of their bounding box
     /// are returned instead, as the viewer does (<paramref name="box"/> says so). Above <paramref name="maxVertices"/> the points
     /// are thinned on a coarser grid until the hull fits.
@@ -96,31 +104,36 @@ public static class ConvexHull
         // Over the cap, the points are thinned to one per cell of a grid (the one furthest from the centre, so the hull keeps its
         // reach) and the cell grows until the hull fits. The result is the hull of some of the real points, never wider than the mesh.
         var centre = (min + max) / 2;
-        List<Vector3>? Try(float cell)
+        // A build can fail because the points are flat or in a line (no hull), or because rounding made the faces inconsistent so that
+        // the hull kept growing (runaway); a coarser grid is tried for the second kind.
+        (List<Vector3>? hull, bool runaway) Try(float cell)
         {
-            var hull = Build(cell == 0 ? pts : Thin(pts, cell, centre), extent);
-            return hull;
+            var hull = Build(cell == 0 ? pts : Thin(pts, cell, centre), extent, out bool runaway);
+            return (hull, runaway);
         }
 
         float lo = pts.Count > 4096 ? extent / 128f : 0;
-        var first = Try(lo);
-        if (first == null) { box = true; return Box(min, max); }
+        // a big point set starts on a grid coarse enough to leave MaxStartPoints or fewer points (bounded: 16 steps of 1.5x)
+        for (int step = 0; lo > 0 && step < 16 && Thin(pts, lo, centre).Count > MaxStartPoints; step++)
+            lo *= 1.5f;
+        var (first, firstRunaway) = Try(lo);
+        if (first == null && !firstRunaway) { box = true; return Box(min, max); }
         box = false;
-        if (first.Count <= maxVertices) return first;
+        if (first != null && first.Count <= maxVertices) return first;
 
         // grow the cell until the hull fits, then narrow in on the finest cell that still fits
         float hi = lo == 0 ? extent / 128f : lo * 1.5f;
         List<Vector3>? fit = null;
         for (int i = 0; i < 24 && fit == null; i++, lo = hi, hi *= 1.5f)
         {
-            var h = Try(hi);
+            var (h, _) = Try(hi);
             if (h != null && h.Count <= maxVertices) fit = h;
         }
         if (fit == null) { box = true; return Box(min, max); }
         for (int i = 0; i < 6; i++)
         {
             float mid = (lo + hi) / 2;
-            var h = Try(mid);
+            var (h, _) = Try(mid);
             if (h != null && h.Count <= maxVertices) { fit = h; hi = mid; } else lo = mid;
         }
         return fit;
@@ -143,8 +156,9 @@ public static class ConvexHull
         new(min.X, min.Y, max.Z), new(max.X, min.Y, max.Z), new(min.X, max.Y, max.Z), new(max.X, max.Y, max.Z),
     };
 
-    static List<Vector3>? Build(List<Vector3> p, float extent)
+    static List<Vector3>? Build(List<Vector3> p, float extent, out bool runaway)
     {
+        runaway = false;
         if (p.Count < 4 || extent <= 0) return null;
         float eps = extent * 1e-6f;
 
@@ -181,6 +195,7 @@ public static class ConvexHull
             faces.Add(new Face { A = a, B = b, C = c, N = n, D = d });
         }
         Add(i0, i1, i2); Add(i0, i1, i3); Add(i0, i2, i3); Add(i1, i2, i3);
+        int dead = 0;
 
         for (int i = 0; i < p.Count; i++)
         {
@@ -205,7 +220,12 @@ public static class ConvexHull
                 n /= len;
                 faces.Add(new Face { A = a, B = b, C = i, N = n, D = Vector3.Dot(n, p[a]) });
             }
-            if (faces.Count > 4096) faces.RemoveAll(f => f.Dead);
+            dead += visible.Count;
+            // a hull of n points has at most 2n - 4 faces; more means rounding has made the faces inconsistent and the hull would
+            // only keep growing (it used to take minutes and gigabytes on a nearly flat set of points)
+            if (faces.Count - dead > 2 * p.Count + 16) { runaway = true; return null; }
+            // drop the dead faces once they are as many as the live ones, so each point is tested against live faces mostly
+            if (faces.Count > 4096 && dead * 2 > faces.Count) { faces.RemoveAll(f => f.Dead); dead = 0; }
         }
 
         var used = new HashSet<int>();
