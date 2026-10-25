@@ -50,6 +50,8 @@ public static class PartOutcome
     public const string Added = "added";
     /// <summary>A deleted part kept as an invisible stub.</summary>
     public const string Stubbed = "stubbed";
+    /// <summary>A deleted part removed from the archive, with the link numbers after it moved down.</summary>
+    public const string Deleted = "deleted";
     public const string Refused = "refused";
 }
 

@@ -59,11 +59,11 @@ internal sealed class Lset
 
     public string Out(string name = "out.oar") => Path.Combine(Dir, name);
 
-    public RestoreResult Restore(RestoreOptions options = null)
+    public RestoreResult Restore(RestoreOptions options = null, string outName = "out.oar")
     {
         options ??= new RestoreOptions();
         options.WorkFolder ??= Path.Combine(Dir, "work");
-        return new ArchiveRestorer(options).Restore(Archive, GlbDir, Out());
+        return new ArchiveRestorer(options).Restore(Archive, GlbDir, Out(outName));
     }
 
     public Dictionary<string, byte[]> Before => RestoreTests.Entries(Archive);
@@ -458,5 +458,140 @@ public class RestoreStubTests
         foreach (string k in before.Keys)
             Assert.True(before[k].SequenceEqual(after[k]), "entry differs: " + k);
         Assert.True(r.ToText().IndexOf("REFUSED PARTS (1)", StringComparison.Ordinal) >= 0);
+    }
+}
+
+/// <summary>In a linkset where no part holds a script, a part deleted in Blender is deleted for real and the link numbers are rewritten contiguous.</summary>
+public class RestoreDeleteTests
+{
+    private static string LinkOf(Lset f, Dictionary<string, byte[]> entries, KitPart p) => f.PartIn(entries, p).Element("LinkNum").Value;
+
+    private static void AssertSameBytesExceptObjects(Dictionary<string, byte[]> before, Dictionary<string, byte[]> after)
+    {
+        Assert.Equal(before.Keys.OrderBy(k => k), after.Keys.OrderBy(k => k));
+        foreach (string k in before.Keys.Where(k => !k.StartsWith("objects/", StringComparison.Ordinal)))
+            Assert.True(before[k].SequenceEqual(after[k]), "entry differs: " + k);
+    }
+
+    private static void AssertSameExcept(XElement before, XElement after, params string[] except)
+    {
+        foreach (XElement e in before.Elements().Where(e => !except.Contains(e.Name.LocalName)))
+            Assert.Equal(e.ToString(), after.Element(e.Name).ToString());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ADeletedPartOfAScriptFreeLinksetIsRemovedAndTheLinkNumbersStayContiguous(bool stubDeleted)
+    {
+        Lset f = new Lset();
+        f.Edit(g => g.RemovePart(f.B.Id.ToString()));
+        RestoreResult r = f.Restore(new RestoreOptions { StubDeleted = stubDeleted });
+
+        Assert.True(r.ExitCode == 0, r.ToText() + r.Parity?.ToText());
+        Assert.Equal(PartOutcome.Deleted, RestoreTests.Of(r, f.B).Outcome);
+        Assert.Equal(1, r.Count(PartOutcome.Deleted));
+        Assert.Contains("DELETED  link 3  'B'", r.ToText());
+        Dictionary<string, byte[]> before = f.Before, after = f.After;
+        string key = Lset.ObjectKey(before);
+        XDocument doc = XDocument.Parse(System.Text.Encoding.UTF8.GetString(after[key]));
+        Assert.Equal(3, doc.Descendants("SceneObjectPart").Count());
+        Assert.DoesNotContain(doc.Descendants("SceneObjectPart"), p => p.Element("Name").Value == "B");
+        Assert.Equal(new[] { "1", "2", "3" }, new[] { f.Root, f.A, f.C }.Select(p => LinkOf(f, after, p)));
+        // nothing else in the archive changed: every other entry is the same bytes, and the parts left have the same text apart from C's number
+        AssertSameBytesExceptObjects(before, after);
+        AssertSameExcept(f.PartIn(before, f.Root), f.PartIn(after, f.Root));
+        AssertSameExcept(f.PartIn(before, f.A), f.PartIn(after, f.A));
+        AssertSameExcept(f.PartIn(before, f.C), f.PartIn(after, f.C), "LinkNum");
+        Assert.Equal("4", LinkOf(f, before, f.C));
+    }
+
+    [Fact]
+    public void TwoDeletedPartsLeaveContiguousNumbers()
+    {
+        Lset f = new Lset();
+        f.Edit(g =>
+        {
+            g.RemovePart(f.A.Id.ToString());
+            g.RemovePart(f.C.Id.ToString());
+        });
+        RestoreResult r = f.Restore();
+
+        Assert.True(r.ExitCode == 0, r.ToText() + r.Parity?.ToText());
+        Assert.Equal(2, r.Count(PartOutcome.Deleted));
+        Dictionary<string, byte[]> after = f.After;
+        Assert.Equal(new[] { "1", "2" }, new[] { f.Root, f.B }.Select(p => LinkOf(f, after, p)));
+        AssertSameBytesExceptObjects(f.Before, after);
+    }
+
+    [Fact]
+    public void DeletingTheLastPartLeavesTheOtherNumbersAlone()
+    {
+        Lset f = new Lset();
+        f.Edit(g => g.RemovePart(f.C.Id.ToString()));
+        RestoreResult r = f.Restore();
+
+        Assert.True(r.ExitCode == 0, r.ToText() + r.Parity?.ToText());
+        Dictionary<string, byte[]> before = f.Before, after = f.After;
+        foreach (KitPart p in new[] { f.Root, f.A, f.B })
+            Assert.Equal(f.PartIn(before, p).ToString(), f.PartIn(after, p).ToString());
+    }
+
+    [Fact]
+    public void DeletingEveryChildLeavesTheRootAsASinglePartWithLinkNumberZero()
+    {
+        Lset f = new Lset();
+        f.Edit(g =>
+        {
+            foreach (KitPart p in new[] { f.A, f.B, f.C })
+                g.RemovePart(p.Id.ToString());
+        });
+        RestoreResult r = f.Restore();
+
+        Assert.True(r.ExitCode == 0, r.ToText() + r.Parity?.ToText());
+        Dictionary<string, byte[]> after = f.After;
+        Assert.Equal("0", LinkOf(f, after, f.Root));
+        AssertSameExcept(f.PartIn(f.Before, f.Root), f.PartIn(after, f.Root), "LinkNum");
+    }
+
+    [Theory]
+    [InlineData("A")]
+    [InlineData("C")]
+    [InlineData("Root")]
+    public void ALinksetWithAScriptAnywhereKeepsRefuseOrStub(string scriptIn)
+    {
+        Lset f = new Lset(scriptIn: scriptIn);
+        f.Edit(g => g.RemovePart(f.B.Id.ToString()));
+
+        RestoreResult refused = f.Restore();
+        Assert.Equal(PartOutcome.Refused, RestoreTests.Of(refused, f.B).Outcome);
+        Assert.Equal("PART_DELETED", RestoreTests.Of(refused, f.B).Code);
+        Assert.Equal(3, refused.ExitCode);
+        Dictionary<string, byte[]> before = f.Before, same = f.After;
+        foreach (string k in before.Keys)
+            Assert.True(before[k].SequenceEqual(same[k]), "entry differs: " + k);
+
+        RestoreResult stubbed = f.Restore(new RestoreOptions { StubDeleted = true }, "stub.oar");
+        Assert.Equal(PartOutcome.Stubbed, RestoreTests.Of(stubbed, f.B).Outcome);
+        Dictionary<string, byte[]> after = RestoreTests.Entries(f.Out("stub.oar"));
+        Assert.Equal(new[] { "1", "2", "3", "4" }, f.Parts.Select(p => LinkOf(f, after, p)));
+    }
+
+    [Fact]
+    public void AnAddedPartFollowsTheRenumberedParts()
+    {
+        Lset f = new Lset();
+        f.Edit(g =>
+        {
+            g.RemovePart(f.B.Id.ToString());
+            g.Cube("New cube", 0.4f, -1, new[] { 3f, 0f, 0f });
+        });
+        RestoreResult r = f.Restore();
+
+        Assert.True(r.ExitCode == 0, r.ToText() + r.Parity?.ToText());
+        PartReport add = r.Parts.Single(p => p.Outcome == PartOutcome.Added);
+        Assert.Equal(4, add.LinkNum);
+        Dictionary<string, byte[]> after = f.After;
+        Assert.Equal(new[] { "1", "2", "3", "4" }, new[] { f.Root, f.A, f.C }.Select(p => LinkOf(f, after, p)).Append(f.PartIn(after, add.PartId).Element("LinkNum").Value));
     }
 }
