@@ -93,7 +93,7 @@ internal sealed class GlbEdit
     }
 
     /// <summary>A material with a colour and, when given, a picture; returns its index.</summary>
-    public int Material(float[] color, string alphaMode = "OPAQUE", byte[] picture = null)
+    public int Material(float[] color, string alphaMode = "OPAQUE", byte[] picture = null, bool textureTransform = false)
     {
         JsonObject pbr = new JsonObject { ["baseColorFactor"] = new JsonArray(color[0], color[1], color[2], color[3]) };
         if (picture != null)
@@ -101,7 +101,10 @@ internal sealed class GlbEdit
             int view = View(picture);
             Array("images").Add(new JsonObject { ["bufferView"] = view, ["mimeType"] = "image/png" });
             Array("textures").Add(new JsonObject { ["source"] = Json["images"].AsArray().Count - 1 });
-            pbr["baseColorTexture"] = new JsonObject { ["index"] = Json["textures"].AsArray().Count - 1 };
+            JsonObject info = new JsonObject { ["index"] = Json["textures"].AsArray().Count - 1 };
+            if (textureTransform)
+                info["extensions"] = new JsonObject { ["KHR_texture_transform"] = new JsonObject { ["offset"] = new JsonArray(0.25f, 0.5f), ["scale"] = new JsonArray(2f, 2f), ["rotation"] = 0.3f } };
+            pbr["baseColorTexture"] = info;
         }
         Array("materials").Add(new JsonObject { ["name"] = "Material", ["pbrMetallicRoughness"] = pbr, ["alphaMode"] = alphaMode });
         return Json["materials"].AsArray().Count - 1;
@@ -213,6 +216,14 @@ internal sealed class GlbEdit
         JsonObject node = nodes[at].AsObject();
         node.Remove("mesh");
         node["extras"].AsObject().Remove("partUuid");
+    }
+
+    /// <summary>Points every primitive of a part's mesh at a material.</summary>
+    public void UseMaterial(string partUuid, int material)
+    {
+        JsonNode mesh = Json["meshes"][(int)Part(partUuid)["mesh"]];
+        foreach (JsonNode primitive in mesh["primitives"].AsArray())
+            primitive["material"] = material;
     }
 
     public JsonNode Part(string partUuid) => Json["nodes"].AsArray().First(n => (string)n["extras"]?["partUuid"] == partUuid);

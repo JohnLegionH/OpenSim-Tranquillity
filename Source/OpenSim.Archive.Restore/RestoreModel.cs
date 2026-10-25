@@ -34,6 +34,8 @@ public sealed class RestoreOptions
     /// did not exist, or was empty, when the run started); a folder that held other files is never emptied.
     /// </summary>
     public bool KeepWork { get; set; }
+    /// <summary>The creator named on parts added from the .glb and on new texture assets. Null: the root part's owner.</summary>
+    public Guid? Creator { get; set; }
     public GeometryTolerance Tolerance { get; set; } = new GeometryTolerance();
     public Action<string> Progress { get; set; }
 }
