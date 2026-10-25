@@ -36,6 +36,8 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="OpenSim.Archive.GltfExport.Tests" />
+    <InternalsVisibleTo Include="OpenSim.Archive.Converter.Tests" />
+    <InternalsVisibleTo Include="OpenSim.Archive.Restore.Tests" />
   </ItemGroup>
 
   <ItemGroup>

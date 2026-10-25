@@ -1,0 +1,43 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+using OpenSim.ArchiveInspector;
+using Xunit;
+
+namespace OpenSim.Archive.Eligibility.Tests;
+
+/// <summary>The oar-convert command line: cleaning is on unless --no-clean is given, and --version names the version.</summary>
+public class CleanConvertCommandTests
+{
+    private static long ConvertedSize(params string[] extra)
+    {
+        KitPart part = new KitPart("Ring") { Shape = FaceMatrix.Shape("ring", "hollow"), Scale = "2,3,4" };
+        string source = EligibilityKit.WriteArchive(part);
+        string output = Path.Combine(Path.GetDirectoryName(source), Guid.NewGuid().ToString("N") + "-out.oar");
+        Assert.Equal(0, ConvertCommand.Run(new[] { source, "--out", output }.Concat(extra).ToArray()));
+        return new FileInfo(output).Length;
+    }
+
+    [Fact]
+    public void NoCleanWritesTheLargerUncleanedMeshAndTheDefaultWritesTheCleanedOne()
+    {
+        long cleaned = ConvertedSize();
+        long uncleaned = ConvertedSize("--no-clean");
+        Assert.True(cleaned < uncleaned, cleaned + " bytes cleaned, " + uncleaned + " uncleaned");
+    }
+
+    [Fact]
+    public void VersionPrintsTheProgramAndItsVersion()
+    {
+        TextWriter saved = Console.Out;
+        StringWriter capture = new StringWriter();
+        Console.SetOut(capture);
+        try { Assert.Equal(0, ConvertCommand.Run(new[] { "--version" })); }
+        finally { Console.SetOut(saved); }
+        Assert.Contains("oar-convert 0.2", capture.ToString());
+    }
+}
