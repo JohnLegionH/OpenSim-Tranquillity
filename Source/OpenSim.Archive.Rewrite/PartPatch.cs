@@ -19,6 +19,8 @@ public sealed class ElementEdit
     public string Value { get; }
     /// <summary>True when <see cref="Value"/> is XML markup that replaces the element's content; false when it is plain text.</summary>
     public bool IsMarkup { get; }
+    /// <summary>True when a part that lacks the element gets it added at the end of the part (only for an element directly below the part).</summary>
+    public bool AddIfMissing { get; private set; }
 
     private ElementEdit(string path, string value, bool isMarkup)
     {
@@ -40,7 +42,12 @@ public sealed class ElementEdit
     }
 
     /// <summary>Like <see cref="SetText"/>, but a part that lacks the element gets it added at the end of the part. Only an element directly below the part can be added.</summary>
-    public static ElementEdit SetTextOrAdd(string path, string text) => SetText(path, text);
+    public static ElementEdit SetTextOrAdd(string path, string text)
+    {
+        ElementEdit edit = SetText(path, text);
+        edit.AddIfMissing = true;
+        return edit;
+    }
 
     /// <summary>Replaces the content of the element with this XML markup, which must be well formed.</summary>
     public static ElementEdit SetInnerXml(string path, string markup)

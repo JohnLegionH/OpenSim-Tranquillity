@@ -31,6 +31,10 @@ internal static class ObjectXml
     {
         public Guid Id;
         public Dictionary<string, List<Span>> ByPath = new Dictionary<string, List<Span>>();
+        public int Start;         // offset of '<' of the part's start tag
+        public int CloseAt;       // offset of '<' of the part's end tag
+        public int End;           // offset just after '>' of the part's end tag
+        public bool InRootPart;   // the part is the group's RootPart
     }
 
     /// <summary>The bytes decoded to text; the BOM, if any, is set aside so offsets match the text that is parsed.</summary>
@@ -79,11 +83,11 @@ internal static class ObjectXml
         Apply(d, patches, Array.Empty<PartInsertion>(), entryName);
 
     /// <summary>Applies the edits, inserts the new parts and cuts out the parts named in <paramref name="removals"/>; returns the new bytes of the file.</summary>
-    public static byte[] Apply(Decoded d, IReadOnlyDictionary<Guid, PartPatch> patches, IReadOnlyList<PartInsertion> insertions, IReadOnlyCollection<Guid> removals, string entryName) =>
-        Apply(d, patches, insertions, entryName);
+    public static byte[] Apply(Decoded d, IReadOnlyDictionary<Guid, PartPatch> patches, IReadOnlyList<PartInsertion> insertions, string entryName) =>
+        Apply(d, patches, insertions, Array.Empty<Guid>(), entryName);
 
-    /// <summary>Applies the edits and inserts the new parts after the last part of the group; returns the new bytes of the file.</summary>
-    public static byte[] Apply(Decoded d, IReadOnlyDictionary<Guid, PartPatch> patches, IReadOnlyList<PartInsertion> insertions, string entryName)
+    /// <summary>Applies the edits, inserts the new parts after the last part of the group and cuts out the removed parts; returns the new bytes of the file.</summary>
+    public static byte[] Apply(Decoded d, IReadOnlyDictionary<Guid, PartPatch> patches, IReadOnlyList<PartInsertion> insertions, IReadOnlyCollection<Guid> removals, string entryName)
     {
         string text = d.Text;
         List<(int start, int end, string with)> cuts = new List<(int, int, string)>();
@@ -91,6 +95,8 @@ internal static class ObjectXml
         HashSet<Guid> wanted = new HashSet<Guid>(patches.Keys);
         foreach (PartInsertion ins in insertions)
             wanted.Add(ins.AnchorPartId);
+        foreach (Guid id in removals)
+            wanted.Add(id);
         List<string> inserted = new List<string>();
 
         foreach (PartSpans part in Scan(text, wanted))
@@ -103,11 +109,23 @@ internal static class ObjectXml
                     ? text.Substring(found[0].TagEnd, found[0].InnerEnd - found[0].TagEnd).Trim() : null;
             foreach (PartInsertion ins in insertions.Where(i => i.AnchorPartId == part.Id))
                 inserted.Add(ins.Make(Leaf));
+            if (removals.Contains(part.Id))
+            {
+                if (part.InRootPart)
+                    throw new InvalidDataException("part " + part.Id + " is the root part of its group in '" + entryName + "'; the root part cannot be removed");
+                cuts.Add(RemovalCut(text, part));
+                continue;
+            }
             if (!patches.TryGetValue(part.Id, out PartPatch patch))
                 continue;
             foreach (ElementEdit edit in patch.EditsFor(new PartView(new HashSet<string>(part.ByPath.Keys, StringComparer.Ordinal), Leaf)))
             {
-                if (!part.ByPath.TryGetValue(edit.Path, out List<Span> spans) || spans.Count == 0)
+                if ((!part.ByPath.TryGetValue(edit.Path, out List<Span> spans) || spans.Count == 0) && edit.AddIfMissing && edit.Path.IndexOf('/') < 0)
+                {
+                    cuts.Add((part.CloseAt, part.CloseAt, "<" + edit.Path + ">" + Escape(edit.Value) + "</" + edit.Path + ">"));
+                    continue;
+                }
+                if (!part.ByPath.TryGetValue(edit.Path, out spans) || spans.Count == 0)
                     throw new InvalidDataException("part " + part.Id + " in '" + entryName + "' has no element '" + edit.Path + "'");
                 if (spans.Count > 1)
                     throw new InvalidDataException("part " + part.Id + " in '" + entryName + "' has " + spans.Count + " elements '" + edit.Path + "'; the path is ambiguous");
@@ -132,9 +150,9 @@ internal static class ObjectXml
                 throw new InvalidDataException("part " + id + " is not in '" + entryName + "'");
 
         if (inserted.Count > 0)
-            cuts.Add(InsertionPoint(text, string.Concat(inserted), entryName));
+            cuts.Add(InsertionPoint(text, string.Concat(inserted.Select(p => "<Part>" + p + "</Part>")), entryName));
 
-        cuts.Sort((a, b) => a.start.CompareTo(b.start));
+        cuts = cuts.Select((c, i) => (c, i)).OrderBy(x => x.c.start).ThenBy(x => x.i).Select(x => x.c).ToList();
         for (int i = 1; i < cuts.Count; i++)
             if (cuts[i].start < cuts[i - 1].end)
                 throw new InvalidDataException("two edits to '" + entryName + "' overlap; an element and one inside it were both edited");
@@ -155,6 +173,30 @@ internal static class ObjectXml
             while (r.Read()) { }
 
         return d.Encode(result);
+    }
+
+    /// <summary>
+    /// The text a removed part takes with it: the part, the Part element that holds it as the region writes OtherParts, and the
+    /// blanks in front of them, so the line it stood on goes too.
+    /// </summary>
+    private static (int start, int end, string with) RemovalCut(string text, PartSpans part)
+    {
+        int start = part.Start, end = part.End;
+        int before = start, after = end;
+        while (before > 0 && char.IsWhiteSpace(text[before - 1]))
+            before--;
+        while (after < text.Length && char.IsWhiteSpace(text[after]))
+            after++;
+        const string open = "<Part>", close = "</Part>";
+        if (before >= open.Length && string.CompareOrdinal(text, before - open.Length, open, 0, open.Length) == 0
+            && string.CompareOrdinal(text, after, close, 0, close.Length) == 0)
+        {
+            start = before - open.Length;
+            end = after + close.Length;
+        }
+        while (start > 0 && char.IsWhiteSpace(text[start - 1]))
+            start--;
+        return (start, end, string.Empty);
     }
 
     /// <summary>Where new parts go: at the end of the group's other parts, which the file may not have yet.</summary>
@@ -237,7 +279,7 @@ internal static class ObjectXml
                 {
                     if (reader.Name == "SceneObjectPart")
                     {
-                        current = new PartSpans();
+                        current = new PartSpans { Start = span.TagStart, InRootPart = open.Any(o => o.Name == "RootPart") };
                         partDepth = reader.Depth;
                         pathStack.Clear();
                         if (span.SelfClosing)
@@ -267,6 +309,8 @@ internal static class ObjectXml
                 {
                     if (reader.Depth == partDepth)
                     {
+                        current.CloseAt = span.InnerEnd;
+                        current.End = text.IndexOf('>', span.InnerEnd) + 1;
                         // The part's own id is the UUID element's child: <UUID><UUID>..</UUID></UUID> as this server writes it,
                         // <UUID><Guid>..</Guid></UUID> in older archives.
                         if (TryPartId(current, text, out Guid id))
