@@ -49,7 +49,7 @@ public static class ShapeFit
 
     /// <summary>
     /// The weights a shape wearable should hold for a fit: the fitted sliders and, beside each driver among them, the weight it
-    /// gives the parameter it drives, so the wearable agrees with itself whichever order a viewer applies its parameters in.
+    /// gives each shape parameter it drives (parameters of other wearables are left out), so the wearable agrees with itself whichever order a viewer applies its parameters in.
     /// </summary>
     public static Dictionary<int, float> WearableValues(ShapeRules rules, IReadOnlyDictionary<int, float> fitted, int decimals = 2)
     {
@@ -58,7 +58,7 @@ public static class ShapeFit
         foreach (var (id, v) in fitted) result[id] = v;
         foreach (var id in fitted.Keys)
             if (rules.Drivers.TryGetValue(id, out var drives))
-                foreach (var d in drives)
+                foreach (var d in drives.Where(d => rules.Params.TryGetValue(d.DrivenId, out var p) && p.Wearable == "shape"))
                     result[d.DrivenId] = MathF.Round(all[d.DrivenId], decimals) is var r && r == 0 ? 0f : r;
         return result;
     }
