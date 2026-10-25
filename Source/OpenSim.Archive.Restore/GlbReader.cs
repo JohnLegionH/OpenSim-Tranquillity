@@ -65,6 +65,11 @@ public sealed class GlbFile
     public List<GlbMesh> Meshes = new List<GlbMesh>();
     public List<JsonObject> MaterialExtras = new List<JsonObject>();
     public List<GlbMaterial> Materials = new List<GlbMaterial>();
+    /// <summary>What the exporter wrote about how the file was made; null for a file with no stamp (made before cleaning existed, or by another tool).</summary>
+    public OpenSim.Archive.GltfExport.ExportStamp Stamp;
+
+    /// <summary>Reads only the stamp of a .glb file, without reading its geometry.</summary>
+    public static OpenSim.Archive.GltfExport.ExportStamp PeekStamp(string path) => null;
 
     public static GlbFile Read(byte[] data)
     {

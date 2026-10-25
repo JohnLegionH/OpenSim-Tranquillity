@@ -24,6 +24,8 @@ public sealed class ConvertOptions
 {
     /// <summary>Treat a script with no readable source as harmless (see the eligibility command). Off by default.</summary>
     public bool AssumeSafeUnscanned { get; set; }
+    /// <summary>Remove duplicate and loose vertices and zero-area triangles from every face before the levels of detail are made (on by default).</summary>
+    public bool Clean { get; set; } = true;
     /// <summary>Writes the mesh assets. Null means <see cref="MeshAssetEncoder"/>.</summary>
     public IMeshEncoder Encoder { get; set; }
     /// <summary>Supplies sculpt maps. Null means the maps are read from the source archive.</summary>

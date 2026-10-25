@@ -33,6 +33,8 @@ public sealed class ExportOptions
 {
     /// <summary>Folder the builds are written to; created when missing.</summary>
     public string OutputDirectory { get; set; }
+    /// <summary>Remove duplicate and loose vertices and zero-area triangles from every face (on by default; the command line's --no-clean turns it off).</summary>
+    public bool Clean { get; set; } = true;
     /// <summary>
     /// The start-up check of the image library: returns null when it works, otherwise the reason it does not (the export
     /// then stops before writing anything). Null runs the built-in check, <see cref="ImageSelfCheck.Problem"/>; tests replace it.
