@@ -22,7 +22,7 @@ public static class FaceBuilder
     /// that has no area is an empty slot and keeps its number.
     /// </summary>
     /// <param name="unnumberedTriangles">Triangles the mesher built that belong to no face of the viewer's list; they are left out.</param>
-    public static List<EncoderFace> FromPrim(ShapeData shape, out int unnumberedTriangles)
+    public static List<EncoderFace> FromPrim(ShapeData shape, out int unnumberedTriangles, bool clean = true)
     {
         PrimParams p = PrimParams.FromShape(shape);
         List<PrimFace> faces = PrimGeometry.BuildFaces(p, DetailLevel.High, out int count, out unnumberedTriangles);
@@ -30,7 +30,7 @@ public static class FaceBuilder
     }
 
     /// <summary>Puts each face in the slot of its number; the slots no face fills are empty.</summary>
-    public static List<EncoderFace> Slots(IEnumerable<PrimFace> faces, int count)
+    public static List<EncoderFace> Slots(IEnumerable<PrimFace> faces, int count, bool clean = true)
     {
         List<EncoderFace> result = new List<EncoderFace>(count);
         for (int i = 0; i < count; i++)

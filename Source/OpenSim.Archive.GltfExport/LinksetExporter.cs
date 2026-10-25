@@ -39,7 +39,7 @@ internal static class LinksetExporter
     private const byte NewTreeCode = 111;
     private const byte TreeCode = 255;
 
-    public static BuiltBuild Build(ParsedGroup g, string archiveName, string entry, string glbFileName, bool world = false, ArchiveAssets assets = null, bool shared = false)
+    public static BuiltBuild Build(ParsedGroup g, string archiveName, string entry, string glbFileName, bool world = false, ArchiveAssets assets = null, bool shared = false, bool clean = true)
     {
         // link-number order; the file order is not the link order. A stable sort keeps file order for equal numbers.
         List<ParsedPart> parts = g.Parts.Select((p, i) => (p, i)).OrderBy(t => t.p.Part.LinkNum).ThenBy(t => t.i).Select(t => t.p).ToList();

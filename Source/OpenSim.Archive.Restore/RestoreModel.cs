@@ -105,6 +105,8 @@ public sealed class RestoreResult
     /// <summary>Set when a rebuilt mesh failed its validity check; nothing is written then.</summary>
     public List<string> Invalid { get; set; } = new List<string>();
     public bool Written { get; set; }
+    /// <summary>True when the fresh export the .glb files were compared with was made with cleaning on (the files' stamp said so).</summary>
+    public bool ComparedAsCleaned { get; set; }
 
     public int Count(string outcome) => Parts.Count(p => p.Outcome == outcome);
 
