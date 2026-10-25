@@ -49,6 +49,16 @@ static class SkinRefs
     /// <summary>avatar_lad.xml, found beside the skeleton file, gives the default shape.</summary>
     public static string AvatarDefinition => Path.Combine(Path.GetDirectoryName(Skeleton) ?? "", "avatar_lad.xml");
     public static RestSkeleton LoadSkeleton() => RestSkeleton.Load(Skeleton).WithDefaultShape(AvatarDefinition);
+    /// <summary>The slider values (a JSON file {"shape": {"id": value}}) an asset was bound at, when it was not bound at the default shape.</summary>
+    public static string ShapeFile => Environment.GetEnvironmentVariable("MAX_SHAPE") ?? "";
+    /// <summary>The skeleton the asset under test is bound to: at the shape in MAX_SHAPE when that is set, else the default shape.</summary>
+    public static RestSkeleton LoadAssetFrame()
+    {
+        if (!File.Exists(ShapeFile)) return LoadSkeleton();
+        using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(ShapeFile));
+        var values = doc.RootElement.GetProperty("shape").EnumerateObject().ToDictionary(p => int.Parse(p.Name, System.Globalization.CultureInfo.InvariantCulture), p => p.Value.GetSingle());
+        return RestSkeleton.Load(Skeleton).WithSliders(ShapeRules.Load(AvatarDefinition), values);
+    }
     public static string GltfModel => Environment.GetEnvironmentVariable("MAX_GLB") ?? "";
     public static string GltfAsset => Environment.GetEnvironmentVariable("MAX_ASSET") ?? "";
     public static string ReportDir => Environment.GetEnvironmentVariable("SKINNING_REPORT_DIR") ?? "";
