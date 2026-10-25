@@ -233,6 +233,29 @@ public class OutfitAssemblerTests
         Assert.Equal(new[] { "shape", "skin", "eyes", "attachment-1", "attachment-2", "notecard" }, a.Bundle.Items.Select(i => i.Role));
     }
 
+    [Fact]
+    public void ASkinWithNoTexturesShowsItsSkinColourValues()
+    {
+        var json = """
+        { "name": "Example",
+          "attribution": { "credit": "Credit line", "notecardText": "Full text\n" },
+          "parts": [ { "name": "Example Body", "role": "body", "mesh": "body.llmesh", "faces": { "0": "head" } } ],
+          "wearables": { "skin": { "name": "Plain Skin", "values": { "111": 0.35, "110": 0.03 } } } }
+        """;
+        var a = OutfitAssembler.Assemble(CharacterDescription.Parse(json), Context(), Files());
+        Assert.True(a.Validation.Ok, a.Validation.ToString());
+        var skin = WearableReader.Read(Encoding.UTF8.GetString(a.Content[a.Bundle.Items.Single(i => i.Role == "skin").AssetId]));
+        Assert.Empty(skin.Textures);                  // no paint: the baker shows the skin colour over the grain
+        Assert.Equal(0.35f, skin.Parameters[111]);    // pigment
+        Assert.Equal(0.03f, skin.Parameters[110]);    // ruddiness
+        Assert.Equal(0f, skin.Parameters[108]);       // rainbow colour keeps its default
+        Assert.Empty(a.Bundle.ExternalAssets);
+
+        // a parameter that is not one of the skin's is refused, as for the shape
+        var bad = json.Replace("\"111\": 0.35", "\"1\": 0.35");
+        Assert.Throws<ArgumentException>(() => OutfitAssembler.Assemble(CharacterDescription.Parse(bad), Context(), Files()));
+    }
+
     static byte[] GridMesh(int n)
     {
         var f = new OpenSim.MeshAsset.MeshFace { NormalizedScale = new N.Vector3(1, 1, 1) };

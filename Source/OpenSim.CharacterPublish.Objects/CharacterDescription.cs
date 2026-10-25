@@ -42,8 +42,12 @@ public sealed record PartDescription(
 /// <summary>The shape wearable: the system defaults with these parameter values changed.</summary>
 public sealed record ShapeDescription(string? Name = null, Dictionary<string, float>? Values = null);
 
-/// <summary>The skin wearable and the textures it paints (ids of textures already on the grid).</summary>
-public sealed record SkinDescription(UUID Head, UUID Upper, UUID Lower, string? Name = null);
+/// <summary>
+/// The skin wearable: the textures it paints (ids of textures already on the grid) and the skin colour values it changes
+/// from the system defaults, by parameter id (for example 111 pigment, 110 ruddiness). A slot left out carries no
+/// texture, so the baked layer shows the skin colour over the system skin grain.
+/// </summary>
+public sealed record SkinDescription(UUID? Head = null, UUID? Upper = null, UUID? Lower = null, string? Name = null, Dictionary<string, float>? Values = null);
 
 /// <summary>The eyes wearable and its iris texture.</summary>
 public sealed record EyesDescription(UUID Iris, string? Name = null);

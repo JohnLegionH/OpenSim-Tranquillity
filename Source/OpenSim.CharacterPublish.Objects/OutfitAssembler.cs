@@ -121,8 +121,17 @@ public static class OutfitAssembler
             AddWearable("shape", shape);
         }
         if (w?.Skin != null)
-            AddWearable("skin", WearableFactory.Skin(w.Skin.Name ?? d.Name + " Skin", credit, perms,
-                External(w.Skin.Head), External(w.Skin.Upper), External(w.Skin.Lower)));
+        {
+            var skin = WearableFactory.Skin(w.Skin.Name ?? d.Name + " Skin", credit, perms,
+                w.Skin.Head is { } head ? External(head) : null, w.Skin.Upper is { } upper ? External(upper) : null, w.Skin.Lower is { } lower ? External(lower) : null);
+            foreach (var (key, value) in w.Skin.Values ?? new())
+            {
+                if (!int.TryParse(key, NumberStyles.Integer, CultureInfo.InvariantCulture, out var pid) || !skin.Parameters.ContainsKey(pid))
+                    throw new ArgumentException($"skin parameter '{key}' is not one of the skin wearable's parameters");
+                skin.Parameters[pid] = value;
+            }
+            AddWearable("skin", skin);
+        }
         if (w?.Eyes != null)
             AddWearable("eyes", WearableFactory.Eyes(w.Eyes.Name ?? d.Name + " Eyes", credit, perms, External(w.Eyes.Iris)));
         if (w?.Hair != null)

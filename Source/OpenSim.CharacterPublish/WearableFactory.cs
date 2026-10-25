@@ -37,13 +37,16 @@ public static class WearableFactory
     public static WearableDocument Shape(string name, string description, PermissionBlock permissions, AvatarLad? lad = null) =>
         CreateDefault(WearableKind.Shape, name, description, permissions, null, lad);
 
-    /// <summary>A skin carrying the head, upper body and lower body paint textures (slots 0, 5 and 6).</summary>
+    /// <summary>A skin carrying the head, upper body and lower body paint textures (slots 0, 5 and 6); a slot given as null has no texture.</summary>
     public static WearableDocument Skin(string name, string description, PermissionBlock permissions,
-        UUID head, UUID upper, UUID lower, AvatarLad? lad = null) =>
-        CreateDefault(WearableKind.Skin, name, description, permissions, new KeyValuePair<TextureSlot, UUID>[]
-        {
-            new(TextureSlot.HeadBodypaint, head), new(TextureSlot.UpperBodypaint, upper), new(TextureSlot.LowerBodypaint, lower),
-        }, lad);
+        UUID? head, UUID? upper, UUID? lower, AvatarLad? lad = null)
+    {
+        var textures = new List<KeyValuePair<TextureSlot, UUID>>();
+        if (head is { } h) textures.Add(new(TextureSlot.HeadBodypaint, h));
+        if (upper is { } u) textures.Add(new(TextureSlot.UpperBodypaint, u));
+        if (lower is { } l) textures.Add(new(TextureSlot.LowerBodypaint, l));
+        return CreateDefault(WearableKind.Skin, name, description, permissions, textures, lad);
+    }
 
     /// <summary>Eyes carrying the iris texture (slot 3).</summary>
     public static WearableDocument Eyes(string name, string description, PermissionBlock permissions, UUID iris, AvatarLad? lad = null) =>
