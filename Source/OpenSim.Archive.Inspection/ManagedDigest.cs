@@ -5,6 +5,8 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+using Org.BouncyCastle.Crypto.Digests;
+
 namespace OpenSim.Archive.Inspection;
 
 /// <summary>
@@ -14,7 +16,15 @@ namespace OpenSim.Archive.Inspection;
 /// </summary>
 public static class ManagedDigest
 {
-    public static byte[] Sha256(ReadOnlySpan<byte> data) => throw new NotImplementedException();
+    public static byte[] Sha256(ReadOnlySpan<byte> data) => ManagedSha256.HashData(data);
 
-    public static byte[] Md5(ReadOnlySpan<byte> data) => throw new NotImplementedException();
+    // RFC 1321 from BouncyCastle (MIT), which OpenSim.Framework already carries
+    public static byte[] Md5(ReadOnlySpan<byte> data)
+    {
+        MD5Digest md5 = new MD5Digest();
+        md5.BlockUpdate(data);
+        byte[] digest = new byte[md5.GetDigestSize()];
+        md5.DoFinal(digest, 0);
+        return digest;
+    }
 }

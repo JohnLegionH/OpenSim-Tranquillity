@@ -7,7 +7,6 @@
 
 using System.Globalization;
 using System.IO.Compression;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml;
@@ -89,7 +88,7 @@ public sealed class ArchiveSnapshot
                     snap.ReadObjectFile(h.Name, body);
                 }
                 else
-                    snap.Entries[name] = Convert.ToHexString(SHA256.HashData(body));
+                    snap.Entries[name] = Convert.ToHexString(ManagedDigest.Sha256(body));
             }
         }
         catch (Exception e) when (e is IOException || e is InvalidDataException || e is TarFormatException || e is ArchiveLimitException || e is UnauthorizedAccessException)
@@ -198,7 +197,7 @@ public sealed class ArchiveSnapshot
         return "<" + string.Join(", ", n.Select(x => float.TryParse(x, NumberStyles.Float, CultureInfo.InvariantCulture, out float f) ? Math.Round(f, 2).ToString("0.##", CultureInfo.InvariantCulture) : x)) + ">";
     }
 
-    private static Guid KeyGuid(string key) => new Guid(MD5.HashData(Encoding.UTF8.GetBytes(key)));
+    private static Guid KeyGuid(string key) => new Guid(ManagedDigest.Md5(Encoding.UTF8.GetBytes(key)));
 
     /// <summary>A gzip file starts 1f 8b; anything else is taken to be a plain tar.</summary>
     private static Stream Decompressed(Stream raw)
@@ -249,7 +248,7 @@ public sealed class ArchiveSnapshot
         StringBuilder sb = new StringBuilder();
         foreach (XElement s in group.Elements().Where(e => e.Name.LocalName == "GroupScriptStates" || e.Name.LocalName == "PhloxGroupScriptStates"))
             sb.Append(s.Name.LocalName).Append('=').Append(s.ToString(SaveOptions.DisableFormatting));
-        return sb.Length == 0 ? "(none)" : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString())));
+        return sb.Length == 0 ? "(none)" : Convert.ToHexString(ManagedDigest.Sha256(Encoding.UTF8.GetBytes(sb.ToString())));
     }
 
     private static string Label(PartSnapshot root)

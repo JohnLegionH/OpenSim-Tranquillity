@@ -5,7 +5,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-using System.Security.Cryptography;
+using OpenSim.Archive.Inspection;
 using System.Text;
 
 namespace OpenSim.Archive.Converter;
@@ -98,7 +98,7 @@ public static class MeshId
     /// </summary>
     public static Guid FromBytes(byte[] data)
     {
-        byte[] hash = SHA256.HashData(data);
+        byte[] hash = ManagedDigest.Sha256(data);
         byte[] b = new byte[16];
         Array.Copy(hash, b, 16);
         b[6] = (byte)((b[6] & 0x0F) | 0x80);

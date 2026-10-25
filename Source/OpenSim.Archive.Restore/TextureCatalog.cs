@@ -5,7 +5,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-using System.Security.Cryptography;
+using OpenSim.Archive.Inspection;
 using OpenSim.Archive.Converter;
 using OpenSim.Framework;
 using SkiaSharp;
@@ -110,7 +110,7 @@ internal sealed class TextureCatalog
     {
         using SKBitmap rgba = bitmap.ColorType == SKColorType.Rgba8888 && bitmap.AlphaType == SKAlphaType.Unpremul ? bitmap.Copy() : bitmap.Copy(SKColorType.Rgba8888);
         byte[] pixels = rgba.Bytes;
-        return rgba.Width.ToString(System.Globalization.CultureInfo.InvariantCulture) + "x" + rgba.Height.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" + Convert.ToHexString(SHA256.HashData(pixels));
+        return rgba.Width.ToString(System.Globalization.CultureInfo.InvariantCulture) + "x" + rgba.Height.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" + Convert.ToHexString(ManagedDigest.Sha256(pixels));
     }
 
     private static bool TryHeader(string png, out int width, out int height)
