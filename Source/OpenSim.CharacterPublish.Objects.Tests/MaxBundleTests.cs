@@ -77,7 +77,7 @@ public class MaxBundleTests
         var a = OutfitAssembler.AssembleFromFile(description,
             new PublishContext(new UUID("66666666-7777-4888-8999-aaaaaaaaaaaa"), new UUID("11111111-2222-4333-8444-555555555555"), 1, 1_790_000_000));
         Assert.True(a.Validation.Ok, a.Validation.ToString());
-        Assert.Equal(new[] { "shape", "skin", "eyes", "hair", "attachment-1", "notecard" }, a.Bundle.Items.Select(i => i.Role));
+        Assert.Equal(new[] { "shape", "skin", "eyes", "hair", "attachment-1", "attachment-2", "notecard" }, a.Bundle.Items.Select(i => i.Role));
 
         var item = a.Bundle.Items.Single(i => i.Role == "hair");
         Assert.Equal((uint)WearableKind.Hair, item.Flags);
@@ -85,5 +85,32 @@ public class MaxBundleTests
         Assert.Equal(WearableKind.Hair, hair.Type);
         Assert.Equal(BakeConstants.InvisibleTexture, hair.Textures[(int)TextureSlot.Hair]);
         Assert.Contains(BakeConstants.InvisibleTexture, a.Bundle.ExternalAssets);
+    }
+
+    /// <summary>
+    /// The eyes bake is the whole eyeball: a "whites" layer, then the iris layer tinted with the eye colour. An iris texture
+    /// with no transparency (a plain white one) paints every texel in the eye colour, which reads as black eyes. The eyes
+    /// wearable therefore carries the library's default iris (the one the grid's own Default Eyes wear), and the character's
+    /// eye mesh has its face on the eyes bake, so the viewer hides the system eyeballs and the bake shows on the model's own.
+    /// </summary>
+    [BundleFact]
+    public void TheEyesCarryTheLibrarysDefaultIrisAndTheEyeMeshShowsTheEyesBake()
+    {
+        var libraryDefaultIris = new UUID("6522e74d-1660-4e7f-b601-6f48c1659a77");
+        var description = Environment.GetEnvironmentVariable("PUB_BUNDLE_DESCRIPTION")!;
+        var a = OutfitAssembler.AssembleFromFile(description,
+            new PublishContext(new UUID("66666666-7777-4888-8999-aaaaaaaaaaaa"), new UUID("11111111-2222-4333-8444-555555555555"), 1, 1_790_000_000));
+        Assert.True(a.Validation.Ok, a.Validation.ToString());
+
+        var eyes = WearableReader.Read(Encoding.UTF8.GetString(a.Content[a.Bundle.Items.Single(i => i.Role == "eyes").AssetId]));
+        Assert.Equal(WearableKind.Eyes, eyes.Type);
+        Assert.Equal(libraryDefaultIris, eyes.Textures[(int)TextureSlot.EyesIris]);
+        Assert.Contains(libraryDefaultIris, a.Bundle.ExternalAssets);
+
+        // one attachment's object shows the eyes bake on its single face
+        var eyesBake = BakeChannelIds.Of(BakeChannel.Eyes);
+        var showing = a.Bundle.Items.Where(i => i.Role.StartsWith("attachment-"))
+            .Where(i => AttachmentObjectTests.Read(Encoding.UTF8.GetString(a.Content[i.AssetId])).RootPart.Shape.Textures.GetFace(0).TextureID == eyesBake).ToList();
+        Assert.Single(showing);
     }
 }
