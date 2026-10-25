@@ -13,6 +13,21 @@
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
 
+  <!-- dotnet publish -p:OarConvertExe=true builds the converter alone as oar-convert(.exe); an ordinary build is unchanged -->
+  <PropertyGroup Condition="'$(OarConvertExe)' == 'true'">
+    <AssemblyName>oar-convert</AssemblyName>
+    <AssemblyTitle>oar-convert</AssemblyTitle>
+    <DefineConstants>$(DefineConstants);OAR_CONVERT_ONLY</DefineConstants>
+    <!-- no ICU library is needed on Linux; the OpenMetaverse library asks for the culture "en-us" when it starts, which invariant mode allows only with this -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <PredefinedCulturesOnly>false</PredefinedCulturesOnly>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(OarConvertExe)' == 'true'">
+    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="4.151.1" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.151.1" />
+  </ItemGroup>
+
   <!-- dotnet publish -p:OarRestoreExe=true builds the restore tool alone as oar-restore(.exe); an ordinary build is unchanged -->
   <PropertyGroup Condition="'$(OarRestoreExe)' == 'true'">
     <AssemblyName>oar-restore</AssemblyName>
