@@ -20,8 +20,10 @@ public sealed class RestoreOptions
     /// <summary>Treat a script with no readable source as harmless (as oar-eligibility does).</summary>
     public bool AssumeSafeUnscanned { get; set; }
     /// <summary>
-    /// A part the .glb no longer has is refused by default. With this on it becomes an invisible stub: fully transparent faces and
-    /// no collision, keeping its name, description, scripts and contents, so link numbers never shift or leave a gap.
+    /// A part the .glb no longer has, in a linkset where some part holds a script, is refused by default. With this on it becomes an
+    /// invisible stub: fully transparent faces and physics shape type None (never the Phantom flag, which belongs to the whole
+    /// linkset), keeping its name, description, scripts and contents, so link numbers never shift. A stub's scripts still run and it can
+    /// still be touched. The root part is never deleted.
     /// </summary>
     public bool StubDeleted { get; set; }
     /// <summary>
@@ -48,7 +50,7 @@ public static class PartOutcome
     public const string Rebuilt = "rebuilt";
     /// <summary>A part that was not in the original, added after the last link number.</summary>
     public const string Added = "added";
-    /// <summary>A deleted part kept as an invisible stub.</summary>
+    /// <summary>A deleted part kept as an invisible stub with no collision.</summary>
     public const string Stubbed = "stubbed";
     /// <summary>A deleted part removed from the archive, with the link numbers after it moved down.</summary>
     public const string Deleted = "deleted";

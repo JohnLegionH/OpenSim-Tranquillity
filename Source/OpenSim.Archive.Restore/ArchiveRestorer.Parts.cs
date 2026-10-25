@@ -25,14 +25,23 @@ public sealed partial class ArchiveRestorer
 
     private void Delete(Run run, PartReport report, PartNode original)
     {
+        run.Parsed.TryGetValue(original.PartId, out ParsedPart pp);
+        if (pp?.Part.IsRoot == true)
+        {
+            // the root part is what holds the linkset together; it is never deleted, whatever else is asked
+            report.Outcome = PartOutcome.Refused;
+            report.Code = "ROOT_DELETED";
+            report.Detail = "the root part is not in the .glb any more; a root part is never deleted, so it stays as it was (to remove the whole object, delete it in the region)";
+            return;
+        }
         if (!m_options.StubDeleted)
         {
             report.Outcome = PartOutcome.Refused;
             report.Code = "PART_DELETED";
-            report.Detail = "the part is not in the .glb any more; deleting a part is not restored, so it stays as it was (--stub-deleted keeps a deleted part as an invisible stub with its scripts and contents)";
+            report.Detail = "the part is not in the .glb any more; deleting a part in a linkset that has a script is not restored, so it stays as it was (--stub-deleted keeps it as an invisible stub with no collision; its scripts still run and it can still be touched)";
             return;
         }
-        if (!run.Parsed.TryGetValue(original.PartId, out ParsedPart pp) || pp.TextureEntry == null || pp.TextureEntry.Length <= 16)
+        if (pp == null || pp.TextureEntry == null || pp.TextureEntry.Length <= 16)
         {
             report.Outcome = PartOutcome.Refused;
             report.Code = "STUB_UNSUPPORTED";
@@ -56,39 +65,26 @@ public sealed partial class ArchiveRestorer
             report.Detail = "the part's texture entry cannot be read: " + e.Message;
             return;
         }
-        bool setShapeType = pp.PhysicsShapeType >= 0 && pp.PhysicsShapeType != PhysShapeNone;
+        // The Phantom flag is a setting of the whole linkset, so a stub never gets it; physics shape type None is the part's own setting.
+        bool setShapeType = pp.PhysicsShapeType != PhysShapeNone;
         run.Edit(original.PartId, view =>
         {
-            List<ElementEdit> edits = new List<ElementEdit>
-            {
-                ElementEdit.SetText("Flags", WithPhantom(view.Text("Flags"))),
-                ElementEdit.SetText("Shape/TextureEntry", Convert.ToBase64String(transparent))
-            };
-            if (setShapeType && view.Present.Contains("PhysicsShapeType"))
-                edits.Add(ElementEdit.SetText("PhysicsShapeType", PhysShapeNone.ToString(Inv)));
+            List<ElementEdit> edits = new List<ElementEdit> { ElementEdit.SetText("Shape/TextureEntry", Convert.ToBase64String(transparent)) };
+            if (setShapeType)
+                edits.Add(ElementEdit.SetTextOrAdd("PhysicsShapeType", PhysShapeNone.ToString(Inv)));
             return edits;
         });
         run.Plan1(original.PartId, "textureEntry");
         if (setShapeType)
             run.Plan1(original.PartId, "physics");
         report.Outcome = PartOutcome.Stubbed;
-        report.Detail = "deleted in the .glb; kept as an invisible phantom stub with its name, description, scripts and contents";
+        report.Detail = "deleted in the .glb; kept as an invisible stub with no collision, with its name, description, link number, scripts and contents (its scripts still run and it can still be touched)";
     }
 
     private static void Clear(Primitive.TextureEntryFace face)
     {
         Color4 c = face.RGBA;
         face.RGBA = new Color4(c.R, c.G, c.B, 0f);
-    }
-
-    /// <summary>The part's Flags text with Phantom added, in the spelling the region reads (PrimFlags names, comma separated).</summary>
-    private static string WithPhantom(string current)
-    {
-        if (string.IsNullOrWhiteSpace(current))
-            return PrimFlags.Phantom.ToString();
-        if (Enum.TryParse(current, true, out PrimFlags flags))
-            return (flags | PrimFlags.Phantom).ToString();
-        return current + ", " + PrimFlags.Phantom;
     }
 
     // ------------------------------------------------------------------ a node that is no part of the original

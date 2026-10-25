@@ -29,8 +29,10 @@ files after Blender opened and saved them) and writes a new archive.
     why. --allow-unsafe rebuilds it anyway and records that it did.
   - A part that only moved, turned or was resized keeps its shape (a prim stays a prim); its position, rotation and size are
     updated. Moving or turning a root part moves the whole linkset.
-  - A part the .glb no longer has is refused (it stays as it was). With --stub-deleted it becomes an invisible, phantom stub that
-    keeps its name, description, scripts and contents, so link numbers never shift.
+  - A part the .glb no longer has is refused (it stays as it was). With --stub-deleted it becomes an invisible stub with no
+    collision (physics shape type None; never the Phantom flag, which is a setting of the whole linkset) that keeps its name,
+    description, link number, scripts and contents; its scripts still run and it can still be touched. The root part is never
+    deleted: that is refused with or without --stub-deleted.
   - A node with no part id becomes a new part with the next link number after the last, built as a mesh; its colours and pictures
     come from the node's materials (a picture identical to an existing texture reuses that asset). It is credited to the root
     part's owner (not the root's creator) unless --creator names someone; the report lists every added part and new texture with
