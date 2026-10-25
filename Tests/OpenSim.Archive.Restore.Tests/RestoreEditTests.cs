@@ -379,7 +379,7 @@ public class RestoreEditTests
         Assert.Equal(0, r.ExitCode);
     }
 
-    // ------------------------------------------------------------------ the work folder
+    // ------------------------------------------------------------------ the comparison export's folder
 
     [Fact]
     public void TheWorkFolderIsRemovedWhenTheRunMadeItUnlessKept()

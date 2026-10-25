@@ -94,7 +94,7 @@ public sealed partial class ArchiveRestorer
     // ------------------------------------------------------------------ a node that is no part of the original
 
     /// <summary>Builds a new part from a node and puts it in the build after the last link number. Returns false, with the report refused, when it cannot.</summary>
-    private bool Add(Run run, PartReport report, PartNode node, GlbFile user, NodeFrame frame, Guid rootId, int linkNum, int ordinal)
+    private bool Add(Run run, PartReport report, PartNode node, GlbFile user, NodeFrame frame, Guid rootId, int rootNode, int linkNum, int ordinal)
     {
         void Refuse(string code, string detail)
         {
@@ -114,7 +114,7 @@ public sealed partial class ArchiveRestorer
         report.Name = name;
         report.LinkNum = linkNum;
 
-        NodePose pose = frame.Relative(node.Node.Index);
+        NodePose pose = frame.InRootFrame(node.Node.Index, rootNode);
         PartGeometry g = PartGeometry.FromNode(user, node.Node, new[] { pose.Scale.X, pose.Scale.Y, pose.Scale.Z }, true);
         if (g.TriangleCount == 0)
         {
@@ -277,8 +277,9 @@ public sealed partial class ArchiveRestorer
         string group = Value("GroupID/UUID", zero);
         string lastOwner = Value("LastOwnerID/UUID", owner);
         string rezzer = Value("RezzerID/UUID", owner);
-        float[] groupAt = run.GroupPlace.TryGetValue(rootId, out var moved) ? moved.position
-            : new[] { Parse(read("GroupPosition/X")), Parse(read("GroupPosition/Y")), Parse(read("GroupPosition/Z")) };
+        float[] groupAt = { Parse(read("GroupPosition/X")), Parse(read("GroupPosition/Y")), Parse(read("GroupPosition/Z")) };
+        if (run.GroupShift.TryGetValue(rootId, out Func<float[], float[]> moved))
+            groupAt = moved(groupAt);
 
         StringBuilder sb = new StringBuilder();
         sb.Append("<SceneObjectPart xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\">");

@@ -100,8 +100,26 @@ public sealed class NodeFrame
         return world;
     }
 
+    private Matrix4x4 RelativeMatrix(int index) => World(index) * m_objectFrameInverse;
+
     /// <summary>The node's place relative to the object node (its translation and rotation taken away, its scale kept).</summary>
-    public NodePose Relative(int index) => NodePose.FromMatrix(World(index) * m_objectFrameInverse);
+    public NodePose Relative(int index) => NodePose.FromMatrix(RelativeMatrix(index));
+
+    /// <summary>
+    /// The node's place inside the root part's own frame (the root's translation and rotation taken away, its scale left out), which
+    /// is what a child part's position and rotation in the archive are. Where the node is in the .glb, wherever its parents are,
+    /// decides the answer: a child that moved with its root keeps its answer, and a child left in place while the root moved gets a new one.
+    /// </summary>
+    public NodePose InRootFrame(int index, int rootIndex)
+    {
+        if (rootIndex < 0 || rootIndex == index)
+            return Relative(index);
+        NodePose root = NodePose.FromMatrix(RelativeMatrix(rootIndex));
+        Matrix4x4 frame = new NodePose(root.Translation, root.Rotation, Vector3.One).ToMatrix();
+        if (!Matrix4x4.Invert(frame, out Matrix4x4 inverse))
+            return Relative(index);
+        return NodePose.FromMatrix(RelativeMatrix(index) * inverse);
+    }
 }
 
 /// <summary>What changed between two poses of one node.</summary>
@@ -152,6 +170,12 @@ public static class PoseMath
     private static float Ratio(float before, float after) => before != 0f && float.IsFinite(after / before) ? after / before : 1f;
 
     public static float[] ViewerVector(Vector3 v) => new[] { v.X, -v.Z, v.Y };
+
+    /// <summary>The glTF-axes vector for viewer axes; the inverse of <see cref="ViewerVector"/>.</summary>
+    public static Vector3 GltVector(float[] v) => new Vector3(v[0], v[2], -v[1]);
+
+    /// <summary>The glTF-axes rotation for a viewer-axes one (x, y, z, w); the inverse of <see cref="ViewerQuat"/>.</summary>
+    public static Quaternion GltQuat(float[] q) => new Quaternion(q[0], q[2], -q[1], q[3]);
 
     public static float[] ViewerQuat(Quaternion q)
     {

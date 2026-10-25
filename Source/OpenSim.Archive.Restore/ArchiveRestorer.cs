@@ -83,8 +83,8 @@ public sealed partial class ArchiveRestorer
         public string SourcePath;
         public RestoreResult Result;
         public TextureCatalog Textures;
-        /// <summary>The new place of each build whose linkset was moved (by the root part's id): position, then rotation, viewer axes.</summary>
-        public Dictionary<Guid, (float[] position, float[] rotation)> GroupPlace = new Dictionary<Guid, (float[], float[])>();
+        /// <summary>For each build whose linkset was moved or turned (by the root part's id): the group's new position, given its old one (viewer axes).</summary>
+        public Dictionary<Guid, Func<float[], float[]>> GroupShift = new Dictionary<Guid, Func<float[], float[]>>();
 
         public void Edit(Guid part, Func<PartView, IEnumerable<ElementEdit>> edits)
         {
@@ -206,13 +206,15 @@ public sealed partial class ArchiveRestorer
             Guid.TryParse(build.Root, out Guid rootId);
 
             string groupMove = MoveGroup(run, build, rootId, kept, originalById, user, original, userFrame, originFrame);
+            int userRootNode = kept.FirstOrDefault(p => p.PartId == rootId)?.Node.Index ?? -1;
+            int originRootNode = originalById.TryGetValue(rootId, out PartNode originalRootNode) ? originalRootNode.Node.Index : -1;
 
             foreach (PartNode up in kept)
             {
                 PartNode op = originalById[up.PartId];
                 PartReport report = new PartReport { Glb = glbName, PartId = up.PartId, LinkNum = op.LinkNum, Name = op.Name };
                 result.Parts.Add(report);
-                Judge(run, report, up, op, user, original, userFrame, originFrame, up.PartId == rootId ? groupMove : null);
+                Judge(run, report, up, op, user, original, userFrame, originFrame, up.PartId == rootId ? groupMove : null, userRootNode, originRootNode);
                 WarnTextureTransform(report, user, up.Node);
             }
             HashSet<Guid> have = kept.Select(p => p.PartId).ToHashSet();
@@ -229,7 +231,7 @@ public sealed partial class ArchiveRestorer
                 {
                     PartReport report = new PartReport { Glb = glbName, Name = node.Name, Outcome = PartOutcome.Refused };
                     result.Parts.Add(report);
-                    if (Add(run, report, node, user, userFrame, rootId, next + 1, result.Parts.Count(p => p.Outcome == PartOutcome.Added)))
+                    if (Add(run, report, node, user, userFrame, rootId, userRootNode, next + 1, result.Parts.Count(p => p.Outcome == PartOutcome.Added)))
                         next++;
                 }
             }
@@ -286,34 +288,34 @@ public sealed partial class ArchiveRestorer
         PartNode userRoot = kept.FirstOrDefault(p => p.PartId == rootId);
         if (userRoot == null || !originalById.TryGetValue(rootId, out PartNode originalRoot) || !run.Parsed.TryGetValue(rootId, out ParsedPart rootPart))
             return null;
+        GlbNode userObject = userFrame.ObjectNode >= 0 ? user.Nodes[userFrame.ObjectNode] : null;
+        bool world = GlbFile.Str(userObject?.Extras, "placement") == "world";
+        // The comparison export always has the build at the root part's own frame. A .glb in world placement carries the build at its
+        // place in the region, so what it is compared with is the place the original's object node records.
         NodePose before = PoseMath.RootPlace(originFrame.Relative(originalRoot.Node.Index), originFrame.ObjectPose);
+        if (world && RegionPlace(original, originFrame) is NodePose recorded)
+            before = recorded;
         NodePose after = PoseMath.RootPlace(userFrame.Relative(userRoot.Node.Index), userFrame.ObjectPose);
         PoseChange change = PoseMath.Compare(before, after, m_options.Tolerance.Position);
         if (!change.Moved && !change.Turned)
             return null;
 
-        GlbNode userObject = userFrame.ObjectNode >= 0 ? user.Nodes[userFrame.ObjectNode] : null;
-        bool world = GlbFile.Str(userObject?.Extras, "placement") == "world";
-        Quaternion oldRotation = rootPart.RotationOffset;
-        PoseMath.GroupPlace(world, new[] { 0f, 0f, 0f }, new[] { oldRotation.X, oldRotation.Y, oldRotation.Z, oldRotation.W }, after, out float[] shift, out float[] newRotation);
-        if (world)
-            run.GroupPlace[rootId] = (shift, newRotation);
+        float[] oldRotation = { rootPart.RotationOffset.X, rootPart.RotationOffset.Y, rootPart.RotationOffset.Z, rootPart.RotationOffset.W };
+        PoseMath.GroupPlace(world, new[] { 0f, 0f, 0f }, oldRotation, after, out _, out float[] newRotation);
+        float[] PlaceFrom(float[] old)
+        {
+            // in world placement the answer is the root's place in the .glb; otherwise the change is in the root's own frame and is added to the old place
+            PoseMath.GroupPlace(world, old, oldRotation, after, out float[] position, out _);
+            return position;
+        }
+        run.GroupShift[rootId] = PlaceFrom;
 
-        foreach (Guid id in build.Parts)
+        // a group that was only turned keeps its position, so no part's group position is written
+        foreach (Guid id in change.Moved ? build.Parts : new HashSet<Guid>())
         {
             if (!run.Parsed.ContainsKey(id))
                 continue;
-            run.Edit(id, view =>
-            {
-                float[] position = shift;
-                if (!world)
-                {
-                    // the change is in the root's own frame: it is added to the place the part's file gives
-                    float[] old = { Number(view, "GroupPosition/X"), Number(view, "GroupPosition/Y"), Number(view, "GroupPosition/Z") };
-                    PoseMath.GroupPlace(false, old, new[] { oldRotation.X, oldRotation.Y, oldRotation.Z, oldRotation.W }, after, out position, out _);
-                }
-                return VectorEdits("GroupPosition", position);
-            });
+            run.Edit(id, view => VectorEdits("GroupPosition", PlaceFrom(new[] { Number(view, "GroupPosition/X"), Number(view, "GroupPosition/Y"), Number(view, "GroupPosition/Z") })));
             run.Plan1(id, "groupPosition");
         }
         if (change.Turned)
@@ -322,6 +324,32 @@ public sealed partial class ArchiveRestorer
             run.Plan1(rootId, "rotation");
         }
         return "the whole linkset " + change.Describe(true, true) + " with its root part";
+    }
+
+    /// <summary>Where the exporter recorded the build in the region (viewer axes), as a glTF-axes pose; null when the file does not say.</summary>
+    private static NodePose? RegionPlace(GlbFile file, NodeFrame frame)
+    {
+        if (frame.ObjectNode < 0)
+            return null;
+        JsonObject extras = file.Nodes[frame.ObjectNode].Extras;
+        float[] position = Numbers(extras?["regionPosition"], 3), rotation = Numbers(extras?["regionRotation"], 4);
+        if (position == null || rotation == null)
+            return null;
+        return new NodePose(PoseMath.GltVector(position), PoseMath.GltQuat(rotation), System.Numerics.Vector3.One);
+    }
+
+    private static float[] Numbers(JsonNode node, int count)
+    {
+        if (node is not JsonArray a || a.Count != count)
+            return null;
+        float[] result = new float[count];
+        for (int i = 0; i < count; i++)
+        {
+            if (a[i] is not JsonValue v || !v.TryGetValue(out double d))
+                return null;
+            result[i] = (float)d;
+        }
+        return result;
     }
 
     private static float Number(PartView view, string path) =>
@@ -347,13 +375,15 @@ public sealed partial class ArchiveRestorer
     // ------------------------------------------------------------------ one part
 
     private void Judge(Run run, PartReport report, PartNode up, PartNode op, GlbFile user, GlbFile original,
-        NodeFrame userFrame, NodeFrame originFrame, string groupMove)
+        NodeFrame userFrame, NodeFrame originFrame, string groupMove, int userRootNode, int originRootNode)
     {
         Stopwatch readClock = Stopwatch.StartNew();
-        NodePose poseBefore = originFrame.Relative(op.Node.Index), poseAfter = userFrame.Relative(up.Node.Index);
-        PoseChange pose = PoseMath.Compare(poseBefore, poseAfter, m_options.Tolerance.Position);
         run.Parsed.TryGetValue(up.PartId, out ParsedPart pp);
         bool isRoot = pp?.Part.IsRoot == true;
+        // a child is judged by its place in the root part's frame, wherever its parents are in the .glb
+        NodePose poseBefore = isRoot ? originFrame.Relative(op.Node.Index) : originFrame.InRootFrame(op.Node.Index, originRootNode);
+        NodePose poseAfter = isRoot ? userFrame.Relative(up.Node.Index) : userFrame.InRootFrame(up.Node.Index, userRootNode);
+        PoseChange pose = PoseMath.Compare(poseBefore, poseAfter, m_options.Tolerance.Position);
         if (isRoot)
         {
             // a root part's place is the linkset's place, handled with the whole group; only a resize is the part's own
