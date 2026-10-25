@@ -32,7 +32,10 @@ Other commands: OpenSim.ArchiveInspector oar-export --help  (writes each build o
 
     public static int Main(string[] args)
     {
-#if OAR_EXPORT_ONLY
+#if OAR_RESTORE_ONLY
+        // the oar-restore build of this program: only the restore, with or without the word oar-restore first
+        return RestoreCommand.Run(args.Length > 0 && args[0] == "oar-restore" ? args.Skip(1).ToArray() : args);
+#elif OAR_EXPORT_ONLY
         // the oar-export build of this program: only the exporter, with or without the word oar-export first
         return ExportCommand.Run(args.Length > 0 && args[0] == "oar-export" ? args.Skip(1).ToArray() : args);
 #else

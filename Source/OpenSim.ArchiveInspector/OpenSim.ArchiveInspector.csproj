@@ -13,6 +13,21 @@
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
 
+  <!-- dotnet publish -p:OarRestoreExe=true builds the restore tool alone as oar-restore(.exe); an ordinary build is unchanged -->
+  <PropertyGroup Condition="'$(OarRestoreExe)' == 'true'">
+    <AssemblyName>oar-restore</AssemblyName>
+    <AssemblyTitle>oar-restore</AssemblyTitle>
+    <DefineConstants>$(DefineConstants);OAR_RESTORE_ONLY</DefineConstants>
+    <!-- no ICU library is needed on Linux; the OpenMetaverse library asks for the culture "en-us" when it starts, which invariant mode allows only with this -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <PredefinedCulturesOnly>false</PredefinedCulturesOnly>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(OarRestoreExe)' == 'true'">
+    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="4.151.1" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.151.1" />
+  </ItemGroup>
+
   <!-- the single-file build carries the image library's native code for both platforms it is published for; the Linux package is the variant that does not need fontconfig -->
   <ItemGroup Condition="'$(OarExportExe)' == 'true'">
     <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="4.151.1" />
