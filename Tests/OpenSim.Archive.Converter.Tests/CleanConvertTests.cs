@@ -96,7 +96,7 @@ public class CleanConvertTests
 
     // ------------------------------------------------------------ the converted asset
 
-    private static (ConvertResult result, MeshAssetModel model) ConvertOne(bool clean, string shape = "sphere", string modifier = "hollow")
+    private static (ConvertResult result, MeshAssetModel model) ConvertOne(bool clean, string shape = "ring", string modifier = "plain")
     {
         KitPart part = new KitPart("Fixture") { Id = Guid.Parse("c1ea0000-0000-4000-8000-000000000002"), Shape = FaceMatrix.Shape(shape, modifier), Scale = "2,3,4" };
         string source = EligibilityKit.WriteArchive(part);
@@ -116,33 +116,40 @@ public class CleanConvertTests
     [Fact]
     public void EveryLevelOfDetailOfACleanedMeshKeepsTheFaceCount()
     {
-        (ConvertResult r, MeshAssetModel m) = ConvertOne(clean: true, "torus", "hollow");
-        int faces = r.Converted.Single().Faces;
+        (ConvertResult r, MeshAssetModel m) = ConvertOne(clean: true, "ring", "hollow");
+        int faces = ConvertOne(clean: false, "ring", "hollow").result.Converted.Single().Faces;
         Assert.True(faces >= 2);
+        Assert.Equal(faces, r.Converted.Single().Faces);
         for (int l = 0; l < MeshAssetModel.LodCount; l++)
             Assert.Equal(faces, m.Lod(l).Faces.Count);
     }
 
     [Fact]
-    public void ACleanedMeshHasFewerVerticesAndTheSameTextureCoordinatesAsAnUncleanedOne()
+    public void CleanedMeshesHaveFewerVerticesInAllAndTheSameTextureCoordinatesAsUncleanedOnes()
     {
-        (_, MeshAssetModel off) = ConvertOne(clean: false, "torus", "hollow");
-        (_, MeshAssetModel on) = ConvertOne(clean: true, "torus", "hollow");
-        Assert.Equal(off.High.Faces.Count, on.High.Faces.Count);
-        Assert.True(on.High.Faces.Sum(f => f.VertexCount) < off.High.Faces.Sum(f => f.VertexCount));
-        for (int f = 0; f < off.High.Faces.Count; f++)
-        {
-            // every texture coordinate the cleaned face holds is one the uncleaned face held, to the asset's 16-bit step
-            HashSet<(int, int)> had = off.High.Faces[f].Uvs.Select(u => ((int)Math.Round(u.X * 30000), (int)Math.Round(u.Y * 30000))).ToHashSet();
-            Assert.All(on.High.Faces[f].Uvs, u => Assert.Contains(((int)Math.Round(u.X * 30000), (int)Math.Round(u.Y * 30000)), had));
-        }
+        int off = 0, on = 0;
+        foreach (string shape in FaceMatrix.Shapes)
+            foreach (string modifier in new[] { "plain", "hollow" })
+            {
+                MeshAssetModel a = ConvertOne(clean: false, shape, modifier).model, b = ConvertOne(clean: true, shape, modifier).model;
+                Assert.Equal(a.High.Faces.Count, b.High.Faces.Count);
+                off += a.High.Faces.Sum(f => f.VertexCount);
+                on += b.High.Faces.Sum(f => f.VertexCount);
+                for (int f = 0; f < a.High.Faces.Count; f++)
+                {
+                    // every texture coordinate the cleaned face holds is one the uncleaned face held, to the asset's 16-bit step
+                    HashSet<(int, int)> had = (a.High.Faces[f].Uvs ?? Array.Empty<System.Numerics.Vector2>()).Select(u => ((int)Math.Round(u.X * 30000), (int)Math.Round(u.Y * 30000))).ToHashSet();
+                    Assert.All(b.High.Faces[f].Uvs ?? Array.Empty<System.Numerics.Vector2>(), u => Assert.Contains(((int)Math.Round(u.X * 30000), (int)Math.Round(u.Y * 30000)), had));
+                }
+            }
+        Assert.True(on < off, "cleaning left " + on + " vertices of " + off);
     }
 
     [Fact]
     public void WithCleaningOffTheMeshIsByteForByteWhatTheConverterWroteBeforeCleaningExisted()
     {
         // the mesh's asset id is derived from its bytes
-        Assert.Equal(Guid.Parse("9ffa004c-be33-84a0-a0fc-d9acc5befb3e"), ConvertOne(false).result.Converted.Single().MeshId);
+        Assert.Equal(Guid.Parse("46019f5a-5fc0-81d1-9a69-be8cc0d4a89c"), ConvertOne(false).result.Converted.Single().MeshId);
     }
 
     [Fact]

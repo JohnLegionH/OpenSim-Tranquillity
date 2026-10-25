@@ -26,7 +26,7 @@ public static class FaceBuilder
     {
         PrimParams p = PrimParams.FromShape(shape);
         List<PrimFace> faces = PrimGeometry.BuildFaces(p, DetailLevel.High, out int count, out unnumberedTriangles);
-        return Slots(faces, count);
+        return Slots(faces, count, clean);
     }
 
     /// <summary>Puts each face in the slot of its number; the slots no face fills are empty.</summary>
@@ -39,7 +39,7 @@ public static class FaceBuilder
         {
             if (f.Number < 0 || f.Number >= count)
                 throw new InvalidOperationException("the geometry has a face numbered " + f.Number + " but the shape has " + count + " faces");
-            result[f.Number] = ToMeshFace(f);
+            result[f.Number] = ToMeshFace(f, clean);
         }
         return result;
     }
@@ -132,8 +132,14 @@ public static class FaceBuilder
     /// Indexes the face's triangles, merging vertices that agree in position, normal and texture coordinate, and turns the
     /// texture coordinates from the exporter's convention (v = 0 at the top of the image) to the viewer's (v = 0 at the bottom).
     /// </summary>
-    public static EncoderFace ToMeshFace(PrimFace f)
+    public static EncoderFace ToMeshFace(PrimFace f, bool clean = false)
     {
+        if (clean)
+        {
+            EncoderFace cleaned = Cleaned(f);
+            if (!cleaned.KeptAsWas)
+                return cleaned;
+        }
         int corners = f.Positions.Length / 3;
         Dictionary<(int, int, int, int, int, int, int, int), uint> seen = new Dictionary<(int, int, int, int, int, int, int, int), uint>();
         List<float> pos = new List<float>(), nor = new List<float>(), uv = new List<float>();
@@ -156,6 +162,22 @@ public static class FaceBuilder
             index.Add(at);
         }
         return new EncoderFace { Positions = pos.ToArray(), Normals = nor.ToArray(), Uvs = uv.ToArray(), Indices = index.ToArray() };
+    }
+
+    /// <summary>The face with duplicate and loose vertices and zero-area triangles removed (<see cref="GeometryCleaner"/>), in the viewer's texture convention.</summary>
+    private static EncoderFace Cleaned(PrimFace f)
+    {
+        float[] uv = new float[f.Uvs.Length];
+        for (int i = 0; i < uv.Length; i += 2)
+        {
+            uv[i] = f.Uvs[i];
+            uv[i + 1] = 1f - f.Uvs[i + 1];
+        }
+        CleanedFace c = GeometryCleaner.Clean((float[])f.Positions.Clone(), (float[])f.Normals.Clone(), uv);
+        uint[] index = new uint[c.Indices.Length];
+        for (int i = 0; i < index.Length; i++)
+            index[i] = (uint)c.Indices[i];
+        return new EncoderFace { Positions = c.Positions, Normals = c.Normals, Uvs = c.Uvs, Indices = index, KeptAsWas = c.KeptAsWas };
     }
 
     // x + 0 turns a negative zero into a positive one, so the two compare equal.

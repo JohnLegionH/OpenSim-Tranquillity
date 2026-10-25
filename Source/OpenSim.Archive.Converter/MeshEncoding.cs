@@ -25,6 +25,8 @@ public sealed class EncoderFace
     public float[] Uvs = Array.Empty<float>();
     /// <summary>Three vertex numbers for each triangle.</summary>
     public uint[] Indices = Array.Empty<uint>();
+    /// <summary>True when cleaning found only triangles without area in the face and left it as it was.</summary>
+    public bool KeptAsWas;
 
     public int VertexCount => Positions.Length / 3;
     public int TriangleCount => Indices.Length / 3;

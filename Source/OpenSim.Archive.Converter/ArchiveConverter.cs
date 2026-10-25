@@ -104,7 +104,7 @@ public sealed class ArchiveConverter
                         Keep(result, row, "NO_GEOMETRY", sr.Problem ?? "the sculpt gave no geometry");
                         continue;
                     }
-                    faces = FaceBuilder.Slots(sr.Faces, sr.ViewerFaceCount);
+                    faces = FaceBuilder.Slots(sr.Faces, sr.ViewerFaceCount, m_options.Clean);
                     // from the decoded map: the region's mesher, which would take the map's bytes, needs a decoded-map cache folder that this program has no config to name
                     physics = PrimPhysics.Build(pp.Shape, null, map, pp.Scale, out string physicsProblem);
                     if (physics == null)
@@ -115,7 +115,7 @@ public sealed class ArchiveConverter
                 }
                 else
                 {
-                    faces = FaceBuilder.FromPrim(pp.Shape, out unnumbered);
+                    faces = FaceBuilder.FromPrim(pp.Shape, out unnumbered, m_options.Clean);
                     physics = PrimPhysics.Build(pp.Shape, null, null, pp.Scale, out string physicsProblem);
                     if (physics == null)
                     {
@@ -189,6 +189,9 @@ public sealed class ArchiveConverter
                 PhysicsVertices = physics.VertexCount, PhysicsTriangles = physics.TriangleCount,
                 PhysicsShapeTypeBefore = shapeTypeBefore, PhysicsShapeTypeAfter = shapeTypeAfter
             };
+            for (int fi = 0; fi < faces.Count; fi++)
+                if (faces[fi].KeptAsWas)
+                    cp.UncleanedFaces.Add(fi);
             foreach (EligibilityReason w in row.Warnings)
                 cp.Warnings.Add(w.Code + ": " + w.Detail);
             if (unnumbered > 0)

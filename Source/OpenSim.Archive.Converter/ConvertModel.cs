@@ -55,6 +55,8 @@ public sealed class ConvertedPart
     public int Faces { get; set; }
     public int EmptyFaces { get; set; }
     public int Triangles { get; set; }
+    /// <summary>Numbers of the faces cleaning left as they were because every triangle of them had no area.</summary>
+    public List<int> UncleanedFaces { get; set; } = new List<int>();
     /// <summary>Triangles the mesher built that belong to no viewer face; left out of the mesh.</summary>
     public int UnnumberedTriangles { get; set; }
     /// <summary>Vertices and triangles of the physics_mesh block written for the part (the region's physics mesher at unit size).</summary>
@@ -210,7 +212,7 @@ public sealed class ConvertResult
             outputBytes = OutputBytes,
             invalidMeshParts = Invalid.Select(p => new { part = p.PartId, build = p.Build, link = p.LinkNum, name = p.Name, mesh = p.MeshId, problems = p.Problems }),
             seconds = Math.Round(Seconds, 1),
-            convertedParts = Converted.Select(c => new { part = c.PartId, build = c.Build, link = c.LinkNum, name = c.Name, kind = c.Kind, faces = c.Faces, emptyFaces = c.EmptyFaces, triangles = c.Triangles, unnumberedTriangles = c.UnnumberedTriangles, physicsVertices = c.PhysicsVertices, physicsTriangles = c.PhysicsTriangles, physicsShapeTypeBefore = c.PhysicsShapeTypeBefore, physicsShapeTypeAfter = c.PhysicsShapeTypeAfter, mesh = c.MeshId, serverFacesBefore = c.ServerFacesBefore, warnings = c.Warnings }),
+            convertedParts = Converted.Select(c => new { part = c.PartId, build = c.Build, link = c.LinkNum, name = c.Name, kind = c.Kind, faces = c.Faces, emptyFaces = c.EmptyFaces, triangles = c.Triangles, uncleanedFaces = c.UncleanedFaces.Count == 0 ? null : c.UncleanedFaces, unnumberedTriangles = c.UnnumberedTriangles, physicsVertices = c.PhysicsVertices, physicsTriangles = c.PhysicsTriangles, physicsShapeTypeBefore = c.PhysicsShapeTypeBefore, physicsShapeTypeAfter = c.PhysicsShapeTypeAfter, mesh = c.MeshId, serverFacesBefore = c.ServerFacesBefore, warnings = c.Warnings }),
             keptParts = Kept.Select(k => new { part = k.PartId, build = k.Build, link = k.LinkNum, name = k.Name, code = k.Code, detail = k.Detail, byConverter = k.ByConverter })
         };
         return JsonSerializer.Serialize(doc, new JsonSerializerOptions { WriteIndented = true });
