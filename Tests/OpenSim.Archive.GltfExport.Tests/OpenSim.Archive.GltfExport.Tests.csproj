@@ -23,6 +23,13 @@
     <Compile Include="..\..\Source\OpenSim.Region.PhysicsModules.Meshing\Meshmerizer\SculptMesh.cs" Link="Reference\SculptMesh.cs" />
   </ItemGroup>
 
+  <!-- The exporter compiles the prim mesher's source into its own assembly, and the command-line project this one references brings in the region's mesher assembly through the converter; both then define the mesher's types (Coord, Path, ...) and every use of them is ambiguous. This project builds the sculpt mesher itself (above), so the region's assembly is dropped from its compile references. -->
+  <Target Name="DropRegionMesherReference" AfterTargets="FindReferenceAssembliesForReferences">
+    <ItemGroup>
+      <ReferencePathWithRefAssemblies Remove="@(ReferencePathWithRefAssemblies)" Condition="'%(Filename)' == 'OpenSim.Region.PhysicsModules.Meshing'" />
+    </ItemGroup>
+  </Target>
+
   <ItemGroup>
     <None Include="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
