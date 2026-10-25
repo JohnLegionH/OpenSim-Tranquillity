@@ -105,7 +105,8 @@ public sealed class ArchiveConverter
                         continue;
                     }
                     faces = FaceBuilder.Slots(sr.Faces, sr.ViewerFaceCount);
-                    physics = PrimPhysics.Build(pp.Shape, (sculptMaps as ISculptMapBytes)?.GetBytes(pp.Shape.SculptTexture.Guid), map, pp.Scale, out string physicsProblem);
+                    // from the decoded map: the region's mesher, which would take the map's bytes, needs a decoded-map cache folder that this program has no config to name
+                    physics = PrimPhysics.Build(pp.Shape, null, map, pp.Scale, out string physicsProblem);
                     if (physics == null)
                     {
                         Keep(result, row, "PHYSICS_UNAVAILABLE", physicsProblem);
