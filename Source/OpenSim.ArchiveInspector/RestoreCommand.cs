@@ -103,6 +103,9 @@ Exit codes: 0 done and the new archive passed the check against the original; 1 
                     else options.Tolerance.Uv = value;
                     i++;
                     break;
+                case "--version":
+                    Console.Out.WriteLine("oar-restore " + OpenSim.Archive.GltfExport.ExportStamp.CurrentVersion);
+                    return 0;
                 case "-h":
                 case "--help":
                     Console.Out.WriteLine(Usage);

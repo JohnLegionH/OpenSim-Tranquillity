@@ -17,7 +17,7 @@ namespace OpenSim.ArchiveInspector;
 internal static class ConvertCommand
 {
     public const string Usage =
-@"Usage: OpenSim.ArchiveInspector oar-convert <archive.oar> --out <new.oar> [--plan-out <plan.json>] [--report <folder>] [--assume-safe-unscanned]
+@"Usage: OpenSim.ArchiveInspector oar-convert <archive.oar> --out <new.oar> [--plan-out <plan.json>] [--report <folder>] [--assume-safe-unscanned] [--no-clean]
 
 Turns every part the eligibility rules pass (see oar-eligibility) into a mesh part and writes a new archive. A converted part
 keeps its link number, name, description, contents, size and texture entry; its faces, their numbers and their texture
@@ -27,6 +27,8 @@ Then the new archive is checked against the source with a plan that states exact
   --plan-out <plan.json>     also write the plan the check used
   --report <folder>          also write convert-report.txt and convert-report.json there
   --assume-safe-unscanned    treat a script with no readable source as harmless (see oar-eligibility)
+  --no-clean                 keep the faces as the mesher builds them; by default duplicate and loose vertices and zero-area triangles
+                             are removed before the levels of detail are made (texture coordinates and faces are never changed)
 
 The mesh assets are written with OpenSim.MeshAsset: the faces as the high level of detail, the lower levels made with the
 viewer's profile, a bounding-hull physics block, and a physics_mesh block holding the collision shape the region's own prim
@@ -58,6 +60,12 @@ Exit codes: 0 the check passed, 1 the parity check failed or a mesh failed its v
                 case "--assume-safe-unscanned":
                     options.AssumeSafeUnscanned = true;
                     break;
+                case "--no-clean":
+                    options.Clean = false;
+                    break;
+                case "--version":
+                    Console.Out.WriteLine("oar-convert " + OpenSim.Archive.GltfExport.ExportStamp.CurrentVersion);
+                    return 0;
                 case "-h":
                 case "--help":
                     Console.Out.WriteLine(Usage);
