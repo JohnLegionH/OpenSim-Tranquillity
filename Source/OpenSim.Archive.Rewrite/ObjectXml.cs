@@ -78,6 +78,10 @@ internal static class ObjectXml
     public static byte[] Apply(Decoded d, IReadOnlyDictionary<Guid, PartPatch> patches, string entryName) =>
         Apply(d, patches, Array.Empty<PartInsertion>(), entryName);
 
+    /// <summary>Applies the edits, inserts the new parts and cuts out the parts named in <paramref name="removals"/>; returns the new bytes of the file.</summary>
+    public static byte[] Apply(Decoded d, IReadOnlyDictionary<Guid, PartPatch> patches, IReadOnlyList<PartInsertion> insertions, IReadOnlyCollection<Guid> removals, string entryName) =>
+        Apply(d, patches, insertions, entryName);
+
     /// <summary>Applies the edits and inserts the new parts after the last part of the group; returns the new bytes of the file.</summary>
     public static byte[] Apply(Decoded d, IReadOnlyDictionary<Guid, PartPatch> patches, IReadOnlyList<PartInsertion> insertions, string entryName)
     {

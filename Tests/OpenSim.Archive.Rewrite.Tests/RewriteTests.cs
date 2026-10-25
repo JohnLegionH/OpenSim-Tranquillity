@@ -67,7 +67,7 @@ public class RewriteTests
     {
         string before = ObjectText();
         string after = Insert(before);
-        Assert.Equal(before.Replace("</OtherParts>", NewPartText + "</OtherParts>"), after);
+        Assert.Equal(before.Replace("</OtherParts>", "<Part>" + NewPartText + "</Part></OtherParts>"), after);
     }
 
     [Theory]
@@ -78,7 +78,7 @@ public class RewriteTests
         string single = ObjectText();
         single = single.Substring(0, single.IndexOf("<OtherParts>", StringComparison.Ordinal)) + empty + "</SceneObjectGroup>";
         string after = Insert(single);
-        Assert.Contains("<OtherParts>" + NewPartText + "</OtherParts></SceneObjectGroup>", after);
+        Assert.Contains("<OtherParts><Part>" + NewPartText + "</Part></OtherParts></SceneObjectGroup>", after);
         Assert.DoesNotContain(empty, after);
     }
 
@@ -87,7 +87,7 @@ public class RewriteTests
     {
         string single = ObjectText();
         single = single.Substring(0, single.IndexOf("  <OtherParts>", StringComparison.Ordinal)) + "</SceneObjectGroup>";
-        Assert.Contains("<OtherParts>" + NewPartText + "</OtherParts></SceneObjectGroup>", Insert(single));
+        Assert.Contains("<OtherParts><Part>" + NewPartText + "</Part></OtherParts></SceneObjectGroup>", Insert(single));
     }
 
     [Fact]
@@ -116,6 +116,62 @@ public class RewriteTests
     {
         ObjectXml.Decoded d = ObjectXml.Decode(Utf8(ObjectText()));
         Assert.Throws<InvalidDataException>(() => ObjectXml.Apply(d, new Dictionary<Guid, PartPatch>(), new[] { new PartInsertion(Guid.NewGuid(), _ => NewPartText) }, "objects/t.xml"));
+    }
+
+    // The region reads OtherParts as a list of Part elements, each holding one SceneObjectPart
+    // (SceneObjectSerializer.FromOriginalXmlFormat reads "Part" and then its "SceneObjectPart").
+    [Fact]
+    public void ANewPart_IsWrappedInAPartElementAsTheRegionReadsIt()
+    {
+        string after = Insert(ObjectText());
+        Assert.Contains("<Part>" + NewPartText + "</Part></OtherParts>", after);
+        Assert.Equal(1, System.Xml.Linq.XDocument.Parse(after).Descendants("OtherParts").SelectMany(o => o.Elements("Part")).Count(p => p.Element("SceneObjectPart")?.Element("Name")?.Value == "New"));
+    }
+
+    private static string Remove(string objectText, params Guid[] ids)
+    {
+        ObjectXml.Decoded d = ObjectXml.Decode(Utf8(objectText));
+        byte[] result = ObjectXml.Apply(d, new Dictionary<Guid, PartPatch>(), Array.Empty<PartInsertion>(), ids, "objects/t.xml");
+        return new UTF8Encoding(false).GetString(result);
+    }
+
+    [Fact]
+    public void ARemovedPart_GoesWithItsPartWrapper_AndNothingElseMoves()
+    {
+        string before = ObjectText();
+        int start = before.IndexOf("\n    <Part><SceneObjectPart>", StringComparison.Ordinal);
+        int end = before.IndexOf("</Part>", StringComparison.Ordinal) + "</Part>".Length;
+        Assert.Equal(before.Remove(start, end - start), Remove(before, PartB));
+    }
+
+    [Fact]
+    public void ARemovedRootPart_IsRefused()
+    {
+        Assert.Throws<InvalidDataException>(() => Remove(ObjectText(), PartA));
+    }
+
+    [Fact]
+    public void ARemovedPartThatIsNotInTheFile_IsRefused()
+    {
+        Assert.Throws<InvalidDataException>(() => Remove(ObjectText(), Guid.NewGuid()));
+    }
+
+    [Fact]
+    public void AnEditCanAddAnElementThePartLacks_AndReplacesOneItHas()
+    {
+        string text = ObjectText();
+        byte[] added = Patch(Utf8(text), new PartPatch(PartB, new[] { ElementEdit.SetTextOrAdd("PhysicsShapeType", "1") }));
+        string after = new UTF8Encoding(false).GetString(added);
+        Assert.Contains("<PhysicsShapeType>1</PhysicsShapeType></SceneObjectPart>", after);
+        Assert.Equal(1, System.Xml.Linq.XDocument.Parse(after).Descendants("PhysicsShapeType").Count());
+
+        byte[] replaced = Patch(added, new PartPatch(PartB, new[] { ElementEdit.SetTextOrAdd("PhysicsShapeType", "2") }));
+        string again = new UTF8Encoding(false).GetString(replaced);
+        Assert.Contains("<PhysicsShapeType>2</PhysicsShapeType>", again);
+        Assert.Equal(1, System.Xml.Linq.XDocument.Parse(again).Descendants("PhysicsShapeType").Count());
+
+        // an element nested below another one is never invented
+        Assert.Throws<InvalidDataException>(() => Patch(Utf8(text), new PartPatch(PartB, new[] { ElementEdit.SetTextOrAdd("Shape/NoSuchThing", "1") })));
     }
 
     [Theory]

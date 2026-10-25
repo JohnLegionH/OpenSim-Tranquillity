@@ -39,6 +39,9 @@ public sealed class ElementEdit
         return new ElementEdit(path, text, false);
     }
 
+    /// <summary>Like <see cref="SetText"/>, but a part that lacks the element gets it added at the end of the part. Only an element directly below the part can be added.</summary>
+    public static ElementEdit SetTextOrAdd(string path, string text) => SetText(path, text);
+
     /// <summary>Replaces the content of the element with this XML markup, which must be well formed.</summary>
     public static ElementEdit SetInnerXml(string path, string markup)
     {

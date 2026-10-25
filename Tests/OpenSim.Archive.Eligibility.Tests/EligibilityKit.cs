@@ -27,6 +27,8 @@ internal sealed class KitPart
     public string Name = "Part";
     public int LinkNum;
     public string Scale = "1.5,2.5,3.5";
+    /// <summary>The part's OffsetPosition (x,y,z) and RotationOffset (x,y,z,w).</summary>
+    public string Offset = "0,0,0", Rotation = "0,0,0,1";
     public string Creator = "a11ce000-0000-4000-8000-000000000001";
     public string Owner = "a11ce000-0000-4000-8000-000000000001";
     public string Flags = "None";
@@ -88,8 +90,9 @@ internal static class EligibilityKit
         sb.Append("<LocalId>").Append(100 + p.LinkNum).Append("</LocalId>");
         sb.Append("<Name>").Append(p.Name).Append("</Name>");
         sb.Append("<GroupPosition><X>1</X><Y>1</Y><Z>1</Z></GroupPosition>");
-        sb.Append("<OffsetPosition><X>0</X><Y>0</Y><Z>0</Z></OffsetPosition>");
-        sb.Append("<RotationOffset><X>0</X><Y>0</Y><Z>0</Z><W>1</W></RotationOffset>");
+        string[] off = p.Offset.Split(','), rot = p.Rotation.Split(',');
+        sb.Append("<OffsetPosition><X>").Append(off[0]).Append("</X><Y>").Append(off[1]).Append("</Y><Z>").Append(off[2]).Append("</Z></OffsetPosition>");
+        sb.Append("<RotationOffset><X>").Append(rot[0]).Append("</X><Y>").Append(rot[1]).Append("</Y><Z>").Append(rot[2]).Append("</Z><W>").Append(rot[3]).Append("</W></RotationOffset>");
         sb.Append("<Description></Description><LinkNum>").Append(p.LinkNum).Append("</LinkNum>");
         sb.Append("<Flags>").Append(p.Flags).Append("</Flags>");
         if (p.PhysicsShapeType >= 0)
