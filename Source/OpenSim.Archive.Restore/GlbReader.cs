@@ -69,7 +69,20 @@ public sealed class GlbFile
     public OpenSim.Archive.GltfExport.ExportStamp Stamp;
 
     /// <summary>Reads only the stamp of a .glb file, without reading its geometry.</summary>
-    public static OpenSim.Archive.GltfExport.ExportStamp PeekStamp(string path) => null;
+    public static OpenSim.Archive.GltfExport.ExportStamp PeekStamp(string path)
+    {
+        using FileStream fs = File.OpenRead(path);
+        byte[] header = new byte[20];
+        if (fs.Read(header, 0, 20) < 20 || BinaryPrimitives.ReadUInt32LittleEndian(header) != 0x46546C67 || BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(16)) != 0x4E4F534A)
+            throw new InvalidDataException("not a binary glTF file (no glTF header)");
+        int length = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(12)));
+        byte[] json = new byte[length];
+        if (fs.Read(json, 0, length) < length)
+            throw new InvalidDataException("the glTF file is cut short");
+        return StampOf(JsonNode.Parse(Encoding.UTF8.GetString(json)));
+    }
+
+    private static OpenSim.Archive.GltfExport.ExportStamp StampOf(JsonNode root) => OpenSim.Archive.GltfExport.ExportStamp.Read(root?["asset"]?["extras"]);
 
     public static GlbFile Read(byte[] data)
     {
@@ -100,7 +113,7 @@ public sealed class GlbFile
             throw new InvalidDataException("the glTF file has no JSON chunk");
 
         JsonNode root = JsonNode.Parse(json);
-        GlbFile file = new GlbFile();
+        GlbFile file = new GlbFile { Stamp = StampOf(root) };
         JsonArray accessors = root["accessors"] as JsonArray ?? new JsonArray();
         JsonArray views = root["bufferViews"] as JsonArray ?? new JsonArray();
 

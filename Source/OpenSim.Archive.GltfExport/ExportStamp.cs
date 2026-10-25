@@ -6,6 +6,7 @@
  */
 
 using System.Text.Json.Nodes;
+using OpenSim.Archive.Inspection;
 
 namespace OpenSim.Archive.GltfExport;
 
@@ -23,4 +24,23 @@ public sealed class ExportStamp
     public bool Clean { get; set; }
 
     public JsonObject ToJson() => new JsonObject { ["version"] = Version, ["clean"] = Clean };
+
+    /// <summary>
+    /// Reads the stamp from the asset extras of a .glb file. Null when the file has none (written before the stamp existed, or
+    /// by another tool, which means the geometry was not cleaned). A stamp from a version this build does not know is refused.
+    /// </summary>
+    /// <exception cref="InvalidDataException">The stamp names a version other than <see cref="CurrentVersion"/>.</exception>
+    public static ExportStamp Read(JsonNode assetExtras)
+    {
+        if (assetExtras?[Key] is not JsonObject o)
+            return null;
+        string version = (string)o["version"] ?? string.Empty;
+        if (version != CurrentVersion)
+        {
+            bool newer = System.Version.TryParse(version, out System.Version theirs) && theirs > System.Version.Parse(CurrentVersion);
+            throw new InvalidDataException("the file was made by " + (newer ? "a newer" : "an unknown") + " oar-export (version " + Sanitize.Text(version) + "); this program knows version " + CurrentVersion
+                + ". Use the oar-restore that came with the oar-export that made the file.");
+        }
+        return new ExportStamp { Version = version, Clean = o["clean"] is JsonValue c && c.TryGetValue(out bool b) && b };
+    }
 }

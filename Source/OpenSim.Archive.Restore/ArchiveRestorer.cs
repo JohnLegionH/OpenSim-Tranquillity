@@ -170,10 +170,27 @@ public sealed partial class ArchiveRestorer
         foreach (EligibilityRow r in elig.Parts)
             rows.TryAdd(r.PartId, r);
 
+        // how the files were made decides how the fresh export is made: a file the exporter stamped as cleaned is compared with a
+        // cleaned export, a file with no stamp (made before cleaning existed) or one stamped as not cleaned with an uncleaned one
+        int cleanedFiles = 0;
+        foreach (string glbPath in glbPaths)
+        {
+            try
+            {
+                if (GlbFile.PeekStamp(glbPath)?.Clean == true)
+                    cleanedFiles++;
+            }
+            catch (Exception e) when (e is InvalidDataException || e is IOException || e is JsonException || e is FormatException)
+            { throw new RestoreException("'" + Path.GetRelativePath(glbFolder, glbPath) + "' could not be read: " + e.Message, e); }
+        }
+        if (cleanedFiles != 0 && cleanedFiles != glbPaths.Count)
+            throw new RestoreException(cleanedFiles + " of the " + glbPaths.Count + " .glb files were exported with cleaning and the others without; export them all the same way");
+        result.ComparedAsCleaned = cleanedFiles > 0;
+
         // a fresh export of the original: what the .glb files would hold if nothing had been edited
         result.WorkFolder = work;
-        say("exporting the original into " + work + " to compare against");
-        ExportSummary exported = ArchiveExporter.Export(fullSource, new ExportOptions { OutputDirectory = work, Progress = say });
+        say("exporting the original into " + work + " to compare against" + (result.ComparedAsCleaned ? string.Empty : " (without cleaning, as the .glb files were made)"));
+        ExportSummary exported = ArchiveExporter.Export(fullSource, new ExportOptions { OutputDirectory = work, Progress = say, Clean = result.ComparedAsCleaned });
         if (exported.ExitCode == ExitCodes.Unreadable || exported.ExitCode == ExitCodes.EveryBuildFailed || exported.ExitCode == ExitCodes.LowDiskSpace)
             throw new RestoreException("the original could not be exported for the comparison (exit code " + exported.ExitCode.ToString(Inv) + ")");
         List<FreshBuild> fresh = IndexFresh(work);

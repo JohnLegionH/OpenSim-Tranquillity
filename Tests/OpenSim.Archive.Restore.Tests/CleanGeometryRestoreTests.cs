@@ -6,6 +6,7 @@
  */
 
 using System.Text;
+using OpenSim.Archive.Eligibility.Tests;
 using OpenSim.Archive.GltfExport;
 using Xunit;
 
@@ -71,5 +72,32 @@ public class CleanGeometryRestoreTests
         Assert.Contains("9.9", e.Message);
         Assert.Contains("newer", e.Message);
         Assert.Contains("0.2", e.Message);
+    }
+
+    /// <summary>A box tapered to a point: its top face and one triangle of each side have no area, so cleaning changes its triangle count.</summary>
+    private static string ApexArchive()
+    {
+        var p = FaceMatrix.Make("box", "plain");
+        p.PathTaperX = 1f;
+        p.PathTaperY = 1f;
+        KitPart apex = new KitPart("Apex", 1) { Scale = "2,2,2", Shape = FaceMatrix.Stored(p) };
+        return EligibilityKit.WriteArchive(apex);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AShapeCleaningChangesIsComparedWithAFreshExportMadeTheSameWayAsTheFilesWereAndStaysUnchanged(bool clean)
+    {
+        string archive = ApexArchive();
+        string dir = Path.Combine(Path.GetDirectoryName(archive), "glb-" + clean);
+        Assert.Equal(0, ArchiveExporter.Export(archive, new ExportOptions { OutputDirectory = dir, ImageCheck = () => null, Clean = clean }).ExitCode);
+
+        RestoreResult r = new ArchiveRestorer(new RestoreOptions { WorkFolder = Path.Combine(Path.GetDirectoryName(archive), "work-" + clean) }).Restore(archive, dir, Path.Combine(Path.GetDirectoryName(archive), "out-" + clean + ".oar"));
+
+        Assert.Equal(clean, r.ComparedAsCleaned);
+        Assert.Equal(1, r.Count(PartOutcome.Unchanged));
+        Assert.Equal(0, r.Count(PartOutcome.Rebuilt));
+        Assert.Equal(0, r.ExitCode);
     }
 }
