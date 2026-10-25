@@ -316,12 +316,17 @@ public class RestoreEditTests
     }
 
     [Fact]
-    public void MovingTheRootPartMovesTheWholeLinkset()
+    public void MovingTheRootPartWithItsChildrenFollowingMovesTheWholeLinkset()
     {
         RestoreTests.Fixture f = new RestoreTests.Fixture();
         float h = MathF.Sqrt(0.5f);
-        Set(f, f.Root, f.Root, "translation", 0f, 1f, 0f);   // one metre up
-        Edit(f, f.Root, g => g.Part(RestoreTests.PartUuid(f.Root))["rotation"] = new JsonArray(0f, h, 0f, h));
+        // Blender parenting: the child follows the root, so the whole linkset moves and turns
+        Edit(f, f.Root, g =>
+        {
+            g.Reparent(RestoreTests.PartUuid(f.Child), RestoreTests.PartUuid(f.Root));
+            g.Part(RestoreTests.PartUuid(f.Root))["translation"] = new JsonArray(0f, 1f, 0f);   // one metre up
+            g.Part(RestoreTests.PartUuid(f.Root))["rotation"] = new JsonArray(0f, h, 0f, h);
+        });
         RestoreResult r = f.Restore();
 
         Assert.Equal(PartOutcome.Moved, RestoreTests.Of(r, f.Root).Outcome);

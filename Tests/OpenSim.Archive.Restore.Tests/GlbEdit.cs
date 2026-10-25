@@ -226,5 +226,21 @@ internal sealed class GlbEdit
             primitive["material"] = material;
     }
 
+    /// <summary>Makes a part's node a child of another part's node, as parenting in a modelling tool does; the child keeps its own transform.</summary>
+    public void Reparent(string childUuid, string parentUuid)
+    {
+        JsonArray nodes = Json["nodes"].AsArray();
+        int child = nodes.ToList().FindIndex(n => (string)n["extras"]?["partUuid"] == childUuid);
+        foreach (JsonNode n in nodes)
+            if (n["children"] is JsonArray c)
+                for (int i = c.Count - 1; i >= 0; i--)
+                    if ((int)c[i] == child)
+                        c.RemoveAt(i);
+        JsonNode parent = Part(parentUuid);
+        if (parent["children"] is not JsonArray list)
+            parent["children"] = list = new JsonArray();
+        list.Add(child);
+    }
+
     public JsonNode Part(string partUuid) => Json["nodes"].AsArray().First(n => (string)n["extras"]?["partUuid"] == partUuid);
 }

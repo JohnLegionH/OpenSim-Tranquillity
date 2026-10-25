@@ -193,3 +193,195 @@ public class RestoreCreatorTests
         Assert.DoesNotContain(RestoreTests.Of(r, f.B).Notes, n => n.Contains("texture transform"));
     }
 }
+
+/// <summary>What you see in Blender is what you get: every part lands at its place in the .glb, in both placements the exporter writes.</summary>
+public class RestorePlacementTests
+{
+    private const string QuarterTurnZ = "0,0,0.70710678,0.70710678";
+    private static readonly float H = MathF.Sqrt(0.5f);
+
+    private static void SetTranslation(GlbEdit g, KitPart part, float x, float y, float z) =>
+        g.Part(part.Id.ToString())["translation"] = new JsonArray(x, y, z);
+
+    private static float[] Translation(GlbEdit g, KitPart part) =>
+        g.Part(part.Id.ToString())["translation"] is JsonArray a ? new[] { (float)a[0], (float)a[1], (float)a[2] } : new[] { 0f, 0f, 0f };
+
+    private static void AssertNear(float[] expected, float[] actual, string what)
+    {
+        for (int i = 0; i < 3; i++)
+            Assert.True(MathF.Abs(expected[i] - actual[i]) < 1e-3f, what + ": expected <" + string.Join(", ", expected) + "> but found <" + string.Join(", ", actual) + ">");
+    }
+
+    private static void AssertSameExcept(XElement before, XElement after, params string[] except)
+    {
+        foreach (XElement e in before.Elements().Where(e => !except.Contains(e.Name.LocalName)))
+            Assert.Equal(e.ToString(), after.Element(e.Name).ToString());
+    }
+
+    private static string Rotation(bool rotated) => rotated ? QuarterTurnZ : "0,0,0,1";
+
+    // the root moved one metre along the viewer's X axis: the group's place is (1,1,1) plus that metre seen through the root's own turn
+    private static float[] MovedGroup(bool rotated) => rotated ? new[] { 1f, 2f, 1f } : new[] { 2f, 1f, 1f };
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public void TheRootMovedAloneLeavesTheChildrenWhereTheyAre(bool world, bool rotated)
+    {
+        Lset f = new Lset(world, rootRotation: Rotation(rotated));
+        f.Edit(g => SetTranslation(g, f.Root, 1f, 0f, 0f));
+        RestoreResult r = f.Restore();
+
+        Assert.True(r.ExitCode == 0, r.ToText() + r.Parity?.ToText());
+        Assert.True(r.Parity.Pass, r.Parity.ToText());
+        Dictionary<string, byte[]> before = f.Before, after = f.After;
+        foreach (KitPart p in f.Parts)
+            AssertNear(MovedGroup(rotated), Lset.Vec(f.PartIn(after, p), "GroupPosition"), p.Name + " group position");
+        // the children keep their place in the world, so their offsets from the root lose the metre the root moved
+        AssertNear(new[] { 1f, 0f, 0f }, Lset.Vec(f.PartIn(after, f.A), "OffsetPosition"), "A");
+        AssertNear(new[] { -1f, 3f, 0f }, Lset.Vec(f.PartIn(after, f.B), "OffsetPosition"), "B");
+        AssertNear(new[] { -1f, 0f, 4f }, Lset.Vec(f.PartIn(after, f.C), "OffsetPosition"), "C");
+        // the root keeps its turn, and nothing else about any part changed
+        AssertSameExcept(f.PartIn(before, f.Root), f.PartIn(after, f.Root), "GroupPosition");
+        foreach (KitPart p in new[] { f.A, f.B, f.C })
+            AssertSameExcept(f.PartIn(before, p), f.PartIn(after, p), "GroupPosition", "OffsetPosition");
+        foreach (KitPart p in f.Parts)
+            Assert.Equal(PartOutcome.Moved, RestoreTests.Of(r, p).Outcome);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public void TheRootMovedWithItsChildrenMovesTheWholeLinkset(bool world, bool rotated)
+    {
+        Lset f = new Lset(world, rootRotation: Rotation(rotated));
+        f.Edit(g =>
+        {
+            foreach (KitPart p in f.Parts)
+            {
+                float[] t = Translation(g, p);
+                SetTranslation(g, p, t[0] + 1f, t[1], t[2]);
+            }
+        });
+        RestoreResult r = f.Restore();
+
+        Assert.True(r.ExitCode == 0, r.ToText() + r.Parity?.ToText());
+        Assert.True(r.Parity.Pass, r.Parity.ToText());
+        Dictionary<string, byte[]> before = f.Before, after = f.After;
+        foreach (KitPart p in f.Parts)
+            AssertNear(MovedGroup(rotated), Lset.Vec(f.PartIn(after, p), "GroupPosition"), p.Name + " group position");
+        foreach (KitPart p in new[] { f.A, f.B, f.C })
+        {
+            AssertSameExcept(f.PartIn(before, p), f.PartIn(after, p), "GroupPosition");
+            Assert.Equal(PartOutcome.Unchanged, RestoreTests.Of(r, p).Outcome);
+        }
+        AssertSameExcept(f.PartIn(before, f.Root), f.PartIn(after, f.Root), "GroupPosition");
+        Assert.Equal(PartOutcome.Moved, RestoreTests.Of(r, f.Root).Outcome);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public void TheRootMovedWithItsChildrenParentedInBlenderMovesTheWholeLinkset(bool world, bool rotated)
+    {
+        Lset f = new Lset(world, rootRotation: Rotation(rotated));
+        f.Edit(g =>
+        {
+            foreach (KitPart p in new[] { f.A, f.B, f.C })
+                g.Reparent(p.Id.ToString(), f.Root.Id.ToString());
+            SetTranslation(g, f.Root, 1f, 0f, 0f);
+        });
+        RestoreResult r = f.Restore();
+
+        Assert.True(r.ExitCode == 0, r.ToText() + r.Parity?.ToText());
+        Assert.True(r.Parity.Pass, r.Parity.ToText());
+        Dictionary<string, byte[]> before = f.Before, after = f.After;
+        foreach (KitPart p in f.Parts)
+            AssertNear(MovedGroup(rotated), Lset.Vec(f.PartIn(after, p), "GroupPosition"), p.Name + " group position");
+        foreach (KitPart p in new[] { f.A, f.B, f.C })
+        {
+            AssertSameExcept(f.PartIn(before, p), f.PartIn(after, p), "GroupPosition");
+            Assert.Equal(PartOutcome.Unchanged, RestoreTests.Of(r, p).Outcome);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void OneMovedChildChangesOnlyThatChild(bool world)
+    {
+        Lset f = new Lset(world);
+        f.Edit(g => SetTranslation(g, f.B, 1f, 0f, -3f));   // viewer <1, 3, 0>
+        RestoreResult r = f.Restore();
+
+        Assert.True(r.ExitCode == 0, r.ToText() + r.Parity?.ToText());
+        Assert.True(r.Parity.Pass, r.Parity.ToText());
+        Dictionary<string, byte[]> before = f.Before, after = f.After;
+        AssertNear(new[] { 1f, 3f, 0f }, Lset.Vec(f.PartIn(after, f.B), "OffsetPosition"), "B");
+        Assert.Equal(PartOutcome.Moved, RestoreTests.Of(r, f.B).Outcome);
+        foreach (KitPart p in new[] { f.Root, f.A, f.C })
+        {
+            Assert.Equal(f.PartIn(before, p).ToString(), f.PartIn(after, p).ToString());
+            Assert.Equal(PartOutcome.Unchanged, RestoreTests.Of(r, p).Outcome);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TheRootTurnedAloneLeavesTheChildrenWhereTheyAreInTheWorld(bool world)
+    {
+        Lset f = new Lset(world);
+        f.Edit(g => g.Part(f.Root.Id.ToString())["rotation"] = new JsonArray(0f, H, 0f, H));   // a quarter turn about glTF's up axis
+        RestoreResult r = f.Restore();
+
+        Assert.True(r.ExitCode == 0, r.ToText() + r.Parity?.ToText());
+        Assert.True(r.Parity.Pass, r.Parity.ToText());
+        Dictionary<string, byte[]> after = f.After;
+        XElement root = f.PartIn(after, f.Root);
+        Assert.Equal(H, Lset.F(root, "RotationOffset", "Z"), 3);
+        Assert.Equal(H, Lset.F(root, "RotationOffset", "W"), 3);
+        foreach (KitPart p in f.Parts)
+            AssertNear(new[] { 1f, 1f, 1f }, Lset.Vec(f.PartIn(after, p), "GroupPosition"), p.Name + " group position");
+        // each child keeps its place in the world: its offset and turn are the old ones seen from the turned root
+        AssertNear(new[] { 0f, -2f, 0f }, Lset.Vec(f.PartIn(after, f.A), "OffsetPosition"), "A");
+        AssertNear(new[] { 3f, 0f, 0f }, Lset.Vec(f.PartIn(after, f.B), "OffsetPosition"), "B");
+        AssertNear(new[] { 0f, 0f, 4f }, Lset.Vec(f.PartIn(after, f.C), "OffsetPosition"), "C");
+        foreach (KitPart p in new[] { f.A, f.B, f.C })
+        {
+            XElement part = f.PartIn(after, p);
+            Assert.Equal(-H, Lset.F(part, "RotationOffset", "Z"), 3);
+            Assert.Equal(H, Lset.F(part, "RotationOffset", "W"), 3);
+        }
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public void AnAddedPartIsPlacedInTheFrameOfTheMovedRoot(bool world, bool rotated)
+    {
+        Lset f = new Lset(world, rootRotation: Rotation(rotated));
+        f.Edit(g =>
+        {
+            SetTranslation(g, f.Root, 1f, 0f, 0f);
+            g.Cube("New cube", 0.4f, -1, new[] { 3f, 0f, 0f });
+        });
+        RestoreResult r = f.Restore();
+
+        Assert.True(r.ExitCode == 0, r.ToText() + r.Parity?.ToText());
+        Assert.True(r.Parity.Pass, r.Parity.ToText());
+        PartReport add = r.Parts.Single(p => p.Outcome == PartOutcome.Added);
+        Assert.Equal(5, add.LinkNum);
+        XElement part = f.PartIn(f.After, add.PartId);
+        AssertNear(MovedGroup(rotated), Lset.Vec(part, "GroupPosition"), "the added part's group position");
+        AssertNear(new[] { 2f, 0f, 0f }, Lset.Vec(part, "OffsetPosition"), "the added part's offset from the root");
+    }
+}
