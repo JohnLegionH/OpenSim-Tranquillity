@@ -74,7 +74,7 @@ public class SkinningCheckTests
     public void ARiggedAssetFromAGltfExportPosesOnItsOwnBindPoseWithAndWithoutJointPositions()
     {
         if (SkinRefs.SkipIfNoGltfAsset != null) return;
-        var sk = SkinRefs.LoadSkeleton();
+        var sk = SkinRefs.LoadAssetFrame();
         var m = MeshCodec.Decode(File.ReadAllBytes(SkinRefs.GltfAsset));
         var sb = new StringBuilder();
         foreach (var form in new[] { false, true })

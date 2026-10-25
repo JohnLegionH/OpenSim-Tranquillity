@@ -97,23 +97,47 @@ public sealed class RestSkeleton
     /// </summary>
     public RestSkeleton WithShape(string avatarDefinitionPath, IReadOnlyDictionary<string, float>? values)
     {
-        var pos = new Dictionary<string, Vector3>(StringComparer.Ordinal);
-        var scale = new Dictionary<string, Vector3>(StringComparer.Ordinal);
         var doc = XDocument.Load(avatarDefinitionPath);
+        var effects = new List<(IEnumerable<ShapeRules.BoneEffect> Bones, float Weight)>();
         foreach (var param in doc.Descendants("param"))
         {
             var sk = param.Element("param_skeleton");
             if (sk == null) continue;
             var paramName = (string?)param.Attribute("name") ?? "";
             float w = values != null && values.TryGetValue(paramName, out var given) ? given : F((string?)param.Attribute("value_default") ?? "0");
+            effects.Add((sk.Elements("bone").Select(b => new ShapeRules.BoneEffect(
+                (string?)b.Attribute("name") ?? "",
+                b.Attribute("scale") != null ? Vec((string?)b.Attribute("scale"), Vector3.Zero) : null,
+                b.Attribute("offset") != null ? Vec((string?)b.Attribute("offset"), Vector3.Zero) : null)), w));
+        }
+        return Distorted(effects);
+    }
+
+    /// <summary>
+    /// The skeleton the viewer poses for a shape wearable's weights, by parameter id (see <see cref="ShapeRules.Resolve"/>):
+    /// parameters not given keep their defaults, and the parameters that other sliders drive (the eye bones, head size,
+    /// the Male switch) follow their drivers. <see cref="WithDefaultShape"/> does not do the second part.
+    /// </summary>
+    public RestSkeleton WithSliders(ShapeRules rules, IReadOnlyDictionary<int, float>? values)
+    {
+        var weights = rules.Resolve(values);
+        return Distorted(rules.Params.Values.Where(p => p.Bones.Count > 0).Select(p => ((IEnumerable<ShapeRules.BoneEffect>)p.Bones, weights[p.Id])));
+    }
+
+    RestSkeleton Distorted(IEnumerable<(IEnumerable<ShapeRules.BoneEffect> Bones, float Weight)> effects)
+    {
+        var pos = new Dictionary<string, Vector3>(StringComparer.Ordinal);
+        var scale = new Dictionary<string, Vector3>(StringComparer.Ordinal);
+        foreach (var (bones, w) in effects)
+        {
             if (w == 0) continue;
-            foreach (var b in sk.Elements("bone"))
+            foreach (var b in bones)
             {
-                var j = Find((string?)b.Attribute("name") ?? "");
+                var j = Find(b.Bone);
                 if (j == null) continue;
-                if (b.Attribute("scale") != null)
+                if (b.Scale is { } s)
                 {
-                    var delta = w * Vec((string?)b.Attribute("scale"), Vector3.Zero);
+                    var delta = w * s;
                     scale[j.Name] = scale.GetValueOrDefault(j.Name) + delta;
                     // A collision volume under a scaled bone is scaled along with it: its own scale times the bone's
                     // scale deformation (LLPolySkeletalDistortion::setInfo, the children that inherit scale).
@@ -121,8 +145,8 @@ public sealed class RestSkeleton
                         if (child.IsCollisionVolume && child.Parent == j.Name)
                             scale[child.Name] = scale.GetValueOrDefault(child.Name) + child.Scale * delta;
                 }
-                if (b.Attribute("offset") != null)
-                    pos[j.Name] = pos.GetValueOrDefault(j.Name) + w * Vec((string?)b.Attribute("offset"), Vector3.Zero);
+                if (b.Offset is { } o)
+                    pos[j.Name] = pos.GetValueOrDefault(j.Name) + w * o;
             }
         }
         var copy = new RestSkeleton();

@@ -238,6 +238,35 @@ public static class GltfToMesh
         return (model, report);
     }
 
+    /// <summary>
+    /// Where the model's own rig puts each joint it shares with the avatar skeleton, in the avatar's frame (after the
+    /// quarter turn that makes it face the way the avatar does), by the avatar joint's name. Read from the skin's inverse
+    /// bind matrices, which hold the joints' bind-pose world positions.
+    /// </summary>
+    public static Dictionary<string, Vector3> JointPositions(ModelRoot root, RestSkeleton skeleton, Func<string, bool>? isKnownJoint = null, string? ignoredJoint = null)
+    {
+        var skin = root.LogicalNodes.Where(n => n.Mesh != null).Select(n => n.Skin).FirstOrDefault(s => s != null)
+            ?? throw new InvalidDataException("the file has no skinned mesh");
+        var yaw = Matrix4x4.CreateRotationZ(FacingQuarterTurns(root, skeleton, isKnownJoint) * MathF.PI / 2);
+        var result = new Dictionary<string, Vector3>(StringComparer.Ordinal);
+        for (int i = 0; i < skin.JointsCount; i++)
+        {
+            var (joint, ibm) = skin.GetJoint(i);
+            var j = skeleton.Find(joint.Name ?? "");
+            if (j == null || joint.Name == ignoredJoint || (isKnownJoint != null && !isKnownJoint(j.Name)) || !Matrix4x4.Invert(ibm, out var w)) continue;
+            result[j.Name] = Vector3.Transform(new Vector3(w.M41, w.M42, w.M43), Rotation * yaw);
+        }
+        return result;
+    }
+
+    /// <summary>The quarter turns about the vertical axis (0 to 3) that make the model's rig face the way the avatar skeleton does.</summary>
+    public static int FacingQuarterTurns(ModelRoot root, RestSkeleton skeleton, Func<string, bool>? isKnownJoint = null)
+    {
+        var skin = root.LogicalNodes.Where(n => n.Mesh != null).Select(n => n.Skin).FirstOrDefault(s => s != null)
+            ?? throw new InvalidDataException("the file has no skinned mesh");
+        return QuarterTurnToSkeleton(skin, skeleton, isKnownJoint, new BridgeReport());
+    }
+
     /// <summary>The number of quarter turns about Z (0 to 3) that brings the file's joints closest to the skeleton's.</summary>
     static int QuarterTurnToSkeleton(Skin skin, RestSkeleton sk, Func<string, bool>? isKnownJoint, BridgeReport report)
     {
