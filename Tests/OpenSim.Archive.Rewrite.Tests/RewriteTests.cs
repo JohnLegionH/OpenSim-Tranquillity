@@ -384,6 +384,17 @@ public class RewriteTests
     }
 
     [Fact]
+    public void TheGzipHeaderNamesTheSameSystemOnEveryPlatform()
+    {
+        // the framework writes the running platform's code into the header's OS field (10 on Windows, 3 on Linux);
+        // the field is fixed so that the same input gives the same bytes on every platform
+        (RewriteSummary _, byte[] output) = Run(MakeOar(HandMade()));
+        Assert.Equal(0x1f, output[0]);
+        Assert.Equal(0x8b, output[1]);
+        Assert.Equal(10, output[9]);
+    }
+
+    [Fact]
     public void Refusals_HappenBeforeTheOutputIsWritten()
     {
         byte[] source = MakeOar(HandMade());
