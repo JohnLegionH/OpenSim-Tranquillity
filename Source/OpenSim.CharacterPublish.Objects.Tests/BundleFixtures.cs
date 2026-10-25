@@ -27,7 +27,7 @@ internal static class BundleFixtures
     public const int Date = 1_790_000_000; // 2026-09-21, a fixed time so output is repeatable
 
     /// <summary>A mesh asset of <paramref name="faces"/> one-triangle faces.</summary>
-    public static byte[] Mesh(int faces, N.Vector3? size = null, bool rigged = true, bool normalizedScale = true)
+    public static byte[] Mesh(int faces, N.Vector3? size = null, bool rigged = true, bool normalizedScale = true, N.Vector3? bindShapeScale = null)
     {
         var model = new MeshAssetModel { High = new MeshLod() };
         for (var i = 0; i < faces; i++)
@@ -49,6 +49,9 @@ internal static class BundleFixtures
             {
                 JointNames = { "mPelvis", "mTorso" },
                 InverseBind = Enumerable.Range(0, 2).Select(i => new double[] { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -i * 0.5, 0, 0.25, 1 }).ToList(),
+                BindShape = bindShapeScale is { } b
+                    ? new double[] { b.X, 0, 0, 0, 0, b.Y, 0, 0, 0, 0, b.Z, 0, 0.01, 0, 1.0, 1 }
+                    : new double[] { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 },
             };
         return MeshCodec.Encode(model);
     }

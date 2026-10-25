@@ -17,7 +17,11 @@ namespace OpenSim.CharacterPublish;
 /// when the asset has none (older uploads).
 /// </param>
 /// <param name="Rigged">True when the asset carries a skin block.</param>
-public sealed record MeshInfo(int FaceCount, Vector3? NormalizedScale, bool Rigged);
+/// <param name="BindShapeScale">
+/// The scale of the skin's bind shape matrix (the length of each of its three axis rows), or null without a skin. A rigged
+/// model uploaded from Collada may carry no per-face NormalizedScale; its size is then the bind shape matrix's scale.
+/// </param>
+public sealed record MeshInfo(int FaceCount, Vector3? NormalizedScale, bool Rigged, Vector3? BindShapeScale = null);
 
 public static class MeshInspector
 {
@@ -31,6 +35,12 @@ public static class MeshInspector
         // The viewer's uploader writes the model's own size on every face (LLModel::writeModel, NormalizedScale), and the
         // object it makes takes that size. The first face that has one stands for the model.
         var ns = lod.Faces.FirstOrDefault(f => f.NormalizedScale is not null)?.NormalizedScale;
-        return new MeshInfo(lod.Faces.Count, ns, model.Skin != null);
+        Vector3? bindShape = null;
+        if (model.Skin is { BindShape.Length: 16 } skin)
+        {
+            double Row(int r) => Math.Sqrt(skin.BindShape[r * 4] * skin.BindShape[r * 4] + skin.BindShape[r * 4 + 1] * skin.BindShape[r * 4 + 1] + skin.BindShape[r * 4 + 2] * skin.BindShape[r * 4 + 2]);
+            bindShape = new Vector3((float)Row(0), (float)Row(1), (float)Row(2));
+        }
+        return new MeshInfo(lod.Faces.Count, ns, model.Skin != null, bindShape);
     }
 }

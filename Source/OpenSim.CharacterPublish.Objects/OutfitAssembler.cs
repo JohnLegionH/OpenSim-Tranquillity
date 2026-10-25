@@ -145,7 +145,8 @@ public static class OutfitAssembler
             MeshInfo info;
             try { info = MeshInspector.Inspect(meshBytes); }
             catch (Exception e) { throw new ArgumentException($"part '{part.Name}': mesh '{part.Mesh}' does not decode: {e.Message}", e); }
-            var size = info.NormalizedScale
+            // A rigged mesh without a per-face size (a Collada upload) is as large as its bind shape matrix scales it.
+            var size = info.NormalizedScale ?? info.BindShapeScale
                 ?? throw new ArgumentException($"part '{part.Name}': mesh '{part.Mesh}' has no NormalizedScale; the object's size comes from it");
             var meshId = AddAsset(meshBytes, BundleTypes.AssetMesh, "llmesh", part.Mesh);
 

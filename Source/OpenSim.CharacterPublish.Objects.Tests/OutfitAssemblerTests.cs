@@ -80,10 +80,24 @@ public class OutfitAssemblerTests
     }
 
     [Fact]
-    public void AMeshWithoutANormalizedScaleIsRefusedWithAReason()
+    public void AnUnriggedMeshWithoutANormalizedScaleIsRefusedWithAReason()
     {
-        var e = Assert.Throws<ArgumentException>(() => Assemble(files: Files(Mesh(3, normalizedScale: false))));
+        var e = Assert.Throws<ArgumentException>(() => Assemble(files: Files(Mesh(3, rigged: false, normalizedScale: false))));
         Assert.Contains("NormalizedScale", e.Message);
+    }
+
+    /// <summary>
+    /// A rigged mesh uploaded from Collada may carry no per-face NormalizedScale: the size is in its bind shape matrix, whose scale
+    /// is the model's size (Ruth2's own uploads: object size 0.2876 x 1.7708 x 1.7141, bind shape scale the same). The object takes it.
+    /// </summary>
+    [Fact]
+    public void ARiggedMeshWithoutANormalizedScaleTakesItsBindShapeScaleAsTheObjectSize()
+    {
+        var a = Assemble(files: Files(Mesh(3, rigged: true, normalizedScale: false, bindShapeScale: new N.Vector3(0.3f, 1.8f, 1.7f)),
+            Mesh(2, new N.Vector3(0.2f, 0.22f, 0.25f), rigged: false)));
+        Assert.True(a.Validation.Ok, a.Validation.ToString());
+        var body = ReadObject(a, "attachment-1").RootPart.Scale;
+        Assert.Equal(0.3f, body.X, 4); Assert.Equal(1.8f, body.Y, 4); Assert.Equal(1.7f, body.Z, 4);
     }
 
     // ---- the safe-description rule is enforced in the wearable writer (LightProjectTests); the assembler passes the credit through it
