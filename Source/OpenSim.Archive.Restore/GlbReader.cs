@@ -54,6 +54,8 @@ public sealed class GlbMaterial
     public string AlphaMode = "OPAQUE";
     /// <summary>The encoded base colour image (PNG or JPEG) the material points at; null when it has none or the image is a file next to the .glb.</summary>
     public byte[] Image;
+    /// <summary>The material gives a picture an offset, scale or rotation (the KHR_texture_transform extension).</summary>
+    public bool HasTextureTransform;
 }
 
 /// <summary>A binary glTF file read as far as the restore needs: nodes with their extras, meshes with their primitives, and the material extras.</summary>
@@ -168,6 +170,9 @@ public sealed class GlbFile
         if (m["alphaMode"] != null)
             result.AlphaMode = (string)m["alphaMode"];
         JsonNode tex = m["pbrMetallicRoughness"]?["baseColorTexture"];
+        foreach (JsonNode info in new[] { tex, m["pbrMetallicRoughness"]?["metallicRoughnessTexture"], m["normalTexture"], m["occlusionTexture"], m["emissiveTexture"] })
+            if (info?["extensions"]?["KHR_texture_transform"] != null)
+                result.HasTextureTransform = true;
         if (tex?["index"] == null)
             return result;
         try

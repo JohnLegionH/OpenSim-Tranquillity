@@ -30,8 +30,8 @@ public sealed class RestoreOptions
     /// </summary>
     public string WorkFolder { get; set; }
     /// <summary>
-    /// Leave the work folder in place at the end of the run. Without it the tool removes the folder, when the run made it (the folder
-    /// did not exist, or was empty, when the run started); a folder that held other files is never emptied.
+    /// Leave the comparison export's folder in place at the end of the run. Without it the tool removes the folder, when the run made it
+    /// (the folder did not exist, or was empty, when the run started); a folder that held other files is never emptied.
     /// </summary>
     public bool KeepWork { get; set; }
     /// <summary>The creator named on parts added from the .glb and on new texture assets. Null: the root part's owner.</summary>
@@ -67,6 +67,8 @@ public sealed class PartReport
     public int Faces { get; set; }
     public int Triangles { get; set; }
     public Guid MeshId { get; set; }
+    /// <summary>For an added part, the creator written on it.</summary>
+    public Guid Creator { get; set; }
     /// <summary>The largest differences found between the .glb's geometry and the fresh export, among the matched triangles (an unchanged part), in metres, normal components and texture coordinates.</summary>
     public float MaxPosition { get; set; }
     public float MaxNormal { get; set; }
@@ -104,6 +106,9 @@ public sealed class RestoreResult
 
     public int TexturesAdded { get; set; }
 
+    /// <summary>The new texture assets and the creator named for each.</summary>
+    public List<(Guid Id, Guid Creator)> NewTextures { get; set; } = new List<(Guid, Guid)>();
+
     /// <summary>0 all parts restored and the archive passed its check; 1 the check failed or a mesh was invalid; 3 written, but some part was refused.</summary>
     public int ExitCode => Invalid.Count > 0 || (Written && (Parity == null || !Parity.Pass)) ? 1 : Count(PartOutcome.Refused) > 0 ? 3 : 0;
 
@@ -134,6 +139,16 @@ public sealed class RestoreResult
             sb.Append("REFUSED PARTS (").Append(refused.Count.ToString(c)).Append("): these stay as they were in the original\n");
             foreach (PartReport p in refused)
                 sb.Append("  link ").Append(p.LinkNum.ToString(c)).Append("  '").Append(p.Name).Append("'  ").Append(p.PartId.ToString("D")).Append("  ").Append(p.Code).Append(": ").Append(p.Detail).Append('\n');
+            sb.Append('\n');
+        }
+        List<PartReport> addedParts = Parts.Where(p => p.Outcome == PartOutcome.Added).ToList();
+        if (addedParts.Count > 0 || NewTextures.Count > 0)
+        {
+            sb.Append("CREATOR OF NEW CONTENT (an archive carries no creator for a texture asset; the creator is named here and on each added part)\n");
+            foreach (PartReport p in addedParts)
+                sb.Append("  added part link ").Append(p.LinkNum.ToString(c)).Append(" '").Append(p.Name).Append("' ").Append(p.PartId.ToString("D")).Append("  creator ").Append(p.Creator.ToString("D")).Append('\n');
+            foreach ((Guid id, Guid creator) in NewTextures)
+                sb.Append("  new texture ").Append(id.ToString("D")).Append("  creator ").Append(creator.ToString("D")).Append('\n');
             sb.Append('\n');
         }
         foreach (PartReport p in Parts)

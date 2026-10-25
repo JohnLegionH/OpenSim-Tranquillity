@@ -126,6 +126,9 @@ public sealed partial class ArchiveRestorer
             Refuse("FACES_JOINED", g.MixedTriangles + " triangles take their corners from more than one prim face");
             return false;
         }
+        // an added part is credited to the root part's owner unless the caller named a creator; the root's own creator is not borrowed
+        Guid creator = m_options.Creator ?? root.Part.OwnerId.Guid;
+        report.Creator = creator;
         int faceCount = g.Faces.Keys.Max() + 1;
         if (g.Faces.Keys.Min() < 0 || faceCount > MeshShape.MaxFaces)
         {
@@ -187,7 +190,7 @@ public sealed partial class ArchiveRestorer
         run.Meshes.TryAdd(meshId, bytes);
 
         List<string> textureNotes = new List<string>();
-        byte[] textureEntry = TextureEntryFor(run, user, g, faceCount, textureNotes);
+        byte[] textureEntry = TextureEntryFor(run, user, g, faceCount, textureNotes, creator, report);
 
         // where it is: the node's place in the build, with the centre of its box carried through the rotation
         float[] rotation = PoseMath.ViewerQuat(pose.Rotation);
@@ -200,7 +203,7 @@ public sealed partial class ArchiveRestorer
         string description = Clean(GlbFile.Str(node.Node.Extras, "description") ?? string.Empty);
         run.Rewriter.AddPart(new PartInsertion(rootId, read =>
         {
-            string xml = NewPartXml(read, run, rootId, id, name, description, linkNum, position, rotation, size, textureEntry);
+            string xml = NewPartXml(read, run, rootId, id, name, description, linkNum, position, rotation, size, textureEntry, creator);
             return PartXml.Edit(xml, id, MeshShape.Edits(faceCount, meshId, null));
         }));
         run.AddedParts.Add(id);
@@ -218,7 +221,7 @@ public sealed partial class ArchiveRestorer
     }
 
     /// <summary>The texture entry of an added part: face i takes the colour and picture of the material of the primitive that holds its triangles.</summary>
-    private byte[] TextureEntryFor(Run run, GlbFile user, PartGeometry g, int faceCount, List<string> notes)
+    private byte[] TextureEntryFor(Run run, GlbFile user, PartGeometry g, int faceCount, List<string> notes, Guid creator, PartReport report)
     {
         Primitive.TextureEntry te = new Primitive.TextureEntry(new UUID(PlywoodTexture));
         for (int f = 0; f < faceCount; f++)
@@ -226,6 +229,8 @@ public sealed partial class ArchiveRestorer
             if (!g.Materials.TryGetValue(f, out List<int> materials) || materials.Count == 0 || materials[0] < 0 || materials[0] >= user.Materials.Count)
                 continue;
             GlbMaterial m = user.Materials[materials[0]];
+            if (m.HasTextureTransform)
+                report.Notes.Add("face " + f.ToString(Inv) + ": the material gives its picture a texture transform (offset, scale or rotation); it is not applied to the new part's texture settings");
             Primitive.TextureEntryFace face = te.CreateFace((uint)f);
             float alpha = m.AlphaMode == "OPAQUE" ? 1f : m.BaseColor[3];
             face.RGBA = new Color4(Clamp01(m.BaseColor[0]), Clamp01(m.BaseColor[1]), Clamp01(m.BaseColor[2]), Clamp01(alpha));
@@ -239,6 +244,8 @@ public sealed partial class ArchiveRestorer
                 continue;
             }
             face.TextureID = new UUID(asset.Value);
+            if (isNew && !run.Result.NewTextures.Any(t => t.Id == asset.Value))
+                run.Result.NewTextures.Add((asset.Value, creator));
             notes.Add("face " + f.ToString(Inv) + ": " + (isNew ? "new texture " : "texture ") + asset.Value.ToString("D") + (isNew ? string.Empty : " (the same picture as an existing asset)"));
         }
         return te.GetBytes();
@@ -262,13 +269,11 @@ public sealed partial class ArchiveRestorer
     /// creator, group and permissions are the root part's (read from the object file), so it belongs to whoever owns the build.
     /// </summary>
     private static string NewPartXml(Func<string, string> read, Run run, Guid rootId, Guid id, string name, string description, int linkNum,
-        float[] position, float[] rotation, Vector3 size, byte[] textureEntry)
+        float[] position, float[] rotation, Vector3 size, byte[] textureEntry, Guid creator)
     {
         string Value(string path, string fallback) => string.IsNullOrEmpty(read(path)) ? fallback : read(path);
         string zero = Guid.Empty.ToString("D");
         string owner = Value("OwnerID/UUID", zero);
-        string creator = Value("CreatorID/UUID", owner);
-        string creatorData = read("CreatorData");
         string group = Value("GroupID/UUID", zero);
         string lastOwner = Value("LastOwnerID/UUID", owner);
         string rezzer = Value("RezzerID/UUID", owner);
@@ -277,9 +282,7 @@ public sealed partial class ArchiveRestorer
 
         StringBuilder sb = new StringBuilder();
         sb.Append("<SceneObjectPart xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\">");
-        sb.Append("<AllowedDrop>false</AllowedDrop><CreatorID><UUID>").Append(creator).Append("</UUID></CreatorID>");
-        if (!string.IsNullOrEmpty(creatorData))
-            sb.Append("<CreatorData>").Append(creatorData).Append("</CreatorData>");
+        sb.Append("<AllowedDrop>false</AllowedDrop><CreatorID><UUID>").Append(creator.ToString("D")).Append("</UUID></CreatorID>");
         sb.Append("<FolderID><UUID>").Append(id.ToString("D")).Append("</UUID></FolderID><InventorySerial>0</InventorySerial>");
         sb.Append("<UUID><UUID>").Append(id.ToString("D")).Append("</UUID></UUID><LocalId>0</LocalId>");
         sb.Append("<Name>").Append(X(name)).Append("</Name><Material>").Append(Value("Material", "3")).Append("</Material>");

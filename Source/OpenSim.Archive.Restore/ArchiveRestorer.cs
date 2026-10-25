@@ -213,6 +213,7 @@ public sealed partial class ArchiveRestorer
                 PartReport report = new PartReport { Glb = glbName, PartId = up.PartId, LinkNum = op.LinkNum, Name = op.Name };
                 result.Parts.Add(report);
                 Judge(run, report, up, op, user, original, userFrame, originFrame, up.PartId == rootId ? groupMove : null);
+                WarnTextureTransform(report, user, up.Node);
             }
             HashSet<Guid> have = kept.Select(p => p.PartId).ToHashSet();
             foreach (PartNode op in originalParts.Where(p => !have.Contains(p.PartId)))
@@ -533,6 +534,15 @@ public sealed partial class ArchiveRestorer
             report.Notes.Add("a face had more than " + FaceBuilder.SplitAtVertices + " vertices and was split into parts, as the viewer's uploader does; the part has " + faceTotal + " faces and each part keeps the texture settings of its face");
         if (physics == null)
             report.Notes.Add("the physics mesh has more vertices than a mesh asset can index; the part collides as its bounding hull");
+    }
+
+    /// <summary>A glTF texture transform on a part's material is never dropped without a word: the report says it is not applied.</summary>
+    private static void WarnTextureTransform(PartReport report, GlbFile user, GlbNode node)
+    {
+        if (node.Mesh < 0 || node.Mesh >= user.Meshes.Count)
+            return;
+        if (user.Meshes[node.Mesh].Primitives.Any(p => p.Material >= 0 && p.Material < user.Materials.Count && user.Materials[p.Material].HasTextureTransform))
+            report.Notes.Add("the .glb gives this part's material a texture transform (offset, scale or rotation); it is not applied, the part keeps its texture settings");
     }
 
     /// <summary>The geometry is the original's: only the place or size may have changed, and the shape stays as it was.</summary>
