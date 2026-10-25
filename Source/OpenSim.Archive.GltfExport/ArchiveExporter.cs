@@ -155,7 +155,7 @@ public static class ArchiveExporter
                 occurrences.TryGetValue(idKey, out int occurrence);
                 occurrences[idKey] = occurrence + 1;
                 Pending p = new Pending { Group = group, Entry = entry, SourceHash = obj.BodyHash, Occurrence = occurrence };
-                if (done.TryGetValue(idKey + "|" + occurrence.ToString(CultureInfo.InvariantCulture), out SummaryBuild row) && row.ToolVersion == ToolVersion)
+                if (done.TryGetValue(idKey + "|" + occurrence.ToString(CultureInfo.InvariantCulture), out SummaryBuild row) && row.ToolVersion == (options.Clean ? ToolVersion : ToolVersion + " (not cleaned)"))
                     p.Resumed = row;
                 groups.Add(p);
                 // a build that is already written needs none of its assets
@@ -263,7 +263,7 @@ public static class ArchiveExporter
                 try
                 {
                     BeforeBuild?.Invoke(p.Group);
-                    row = WriteBuild(p.Group, archiveName, p.Entry, fullOut, usedFolders, options.World, assets, shared, sharedWritten);
+                    row = WriteBuild(p.Group, archiveName, p.Entry, fullOut, usedFolders, options.World, assets, shared, sharedWritten, options.Clean);
                 }
                 catch (Exception e) when (DiskFull.Is(e))
                 {
@@ -286,7 +286,7 @@ public static class ArchiveExporter
                     say("build failed, continuing: " + row.Name + " (" + row.RootPartUuid + "): " + row.Error);
                 }
                 row.SourceHash = p.SourceHash;
-                row.ToolVersion = ToolVersion;
+                row.ToolVersion = options.Clean ? ToolVersion : ToolVersion + " (not cleaned)";
                 row.ArchiveEntry = Text.Clean(p.Entry);
                 row.Occurrence = p.Occurrence;
                 try
@@ -535,7 +535,7 @@ public static class ArchiveExporter
         return string.Equals(g.Name, filter, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static SummaryBuild WriteBuild(ParsedGroup group, string archiveName, string entry, string outDir, HashSet<string> usedFolders, bool world, ArchiveAssets assets, bool shared, HashSet<string> sharedWritten)
+    private static SummaryBuild WriteBuild(ParsedGroup group, string archiveName, string entry, string outDir, HashSet<string> usedFolders, bool world, ArchiveAssets assets, bool shared, HashSet<string> sharedWritten, bool clean = true)
     {
         string baseName = FileSafe(group.Name);
         string idPart = group.RootId.ToString().Replace("-", string.Empty);
@@ -547,7 +547,7 @@ public static class ArchiveExporter
         BuiltBuild build;
         try
         {
-            build = LinksetExporter.Build(group, archiveName, entry, glbName, world, assets, shared);
+            build = LinksetExporter.Build(group, archiveName, entry, glbName, world, assets, shared, clean);
         }
         catch (OutOfMemoryException)
         {
@@ -556,7 +556,7 @@ public static class ArchiveExporter
             assets.ReleaseCaches();
             System.Runtime.GCSettings.LargeObjectHeapCompactionMode = System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
             GC.Collect();
-            build = LinksetExporter.Build(group, archiveName, entry, glbName, world, assets, shared);
+            build = LinksetExporter.Build(group, archiveName, entry, glbName, world, assets, shared, clean);
         }
 
         string dir = Path.Combine(outDir, folder);

@@ -45,7 +45,7 @@ internal static class LinksetExporter
         List<ParsedPart> parts = g.Parts.Select((p, i) => (p, i)).OrderBy(t => t.p.Part.LinkNum).ThenBy(t => t.i).Select(t => t.p).ToList();
         ParsedPart root = parts.FirstOrDefault(p => p.Part.IsRoot) ?? parts[0];
 
-        GltfDocument doc = new GltfDocument();
+        GltfDocument doc = new GltfDocument { Clean = clean };
         // The object node is named apart from the parts: the root part has the object's name, and two nodes of one
         // name would make Blender rename one of them.
         GltfNode objectNode = new GltfNode
@@ -133,6 +133,7 @@ internal static class LinksetExporter
                         node.Mesh = doc.Meshes.Count - 1;
                         mp.Status = ExportStatus.Exported;
                         mp.Faces = faces;
+                        mp.UncleanedFaces = mesh.UncleanedFaces;
                         mp.Triangles = triangles;
                         extras["geometry"] = "exported";
                         extras["faces"] = faces;
@@ -492,6 +493,18 @@ internal static class LinksetExporter
             for (int i = 0; i < uv.Length; i++)
                 uv[i] = Finite(f.Uvs[i]);
 
+            int[] indices = null;
+            int faceTriangles = f.TriangleCount;
+            if (doc.Clean)
+            {
+                CleanedFace cleaned = GeometryCleaner.Clean(pos, nor, uv);
+                pos = cleaned.Positions; nor = cleaned.Normals; uv = cleaned.Uvs; indices = cleaned.Indices;
+                faceTriangles = cleaned.TriangleCount;
+                if (cleaned.KeptAsWas)
+                    (mesh.UncleanedFaces ??= new List<int>()).Add(f.Number);
+            }
+            n = pos.Length;
+
             float[] faceNumbers = new float[n / 3];
             Array.Fill(faceNumbers, (float)f.Number);
             float[] partLinks = new float[n / 3];
@@ -509,12 +522,13 @@ internal static class LinksetExporter
                 Uvs = uv,
                 FaceNumbers = faceNumbers,
                 PartLinks = partLinks,
+                Indices = indices,
                 Material = materialIndex,
                 Extras = new JsonObject { ["primFace"] = f.Number }
             };
             mesh.Primitives.Add(prim);
             numbers.Add(f.Number);
-            triangleCount += f.TriangleCount;
+            triangleCount += faceTriangles;
         }
 
         mesh.Extras = new JsonObject

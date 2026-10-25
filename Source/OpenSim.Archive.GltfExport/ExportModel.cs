@@ -138,6 +138,8 @@ public sealed class ManifestPart
     /// <summary>Prim faces written (exported parts only).</summary>
     public int? Faces { get; set; }
     public int? Triangles { get; set; }
+    /// <summary>Numbers of the faces cleaning left as they were because every triangle of them had no area; absent when there are none.</summary>
+    public List<int> UncleanedFaces { get; set; }
     /// <summary>The sculpt map or mesh asset the part is built from (sculpt and mesh parts only).</summary>
     public string GeometryAssetId { get; set; }
     /// <summary>Status of that asset: copied, missing-from-archive, over-size-limit or undecodable.</summary>

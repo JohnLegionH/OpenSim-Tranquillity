@@ -59,6 +59,8 @@ internal sealed class GltfPrimitive
     public float[] FaceNumbers;
     /// <summary>One value per vertex, written as the application attribute _PART_LINK: the link number of the part the vertex belongs to (0 for a single-part build), so a tool that joins parts' meshes keeps which part each vertex came from.</summary>
     public float[] PartLinks;
+    /// <summary>Three vertex numbers for each triangle; null for a non-indexed triangle list (every three vertices are a triangle).</summary>
+    public int[] Indices;
     public int Material = -1;
     public JsonObject Extras;
 }
@@ -68,6 +70,8 @@ internal sealed class GltfMesh
     public string Name;
     public List<GltfPrimitive> Primitives = new List<GltfPrimitive>();
     public JsonObject Extras;
+    /// <summary>Numbers of the faces cleaning left as they were because every triangle of them was degenerate; not written to the file.</summary>
+    public List<int> UncleanedFaces;
 }
 
 internal sealed class GltfNode
@@ -88,6 +92,8 @@ internal sealed class GltfDocument
     public List<GltfImage> Images = new List<GltfImage>();
     /// <summary>One entry per glTF texture: the index of its image. All textures share one repeating sampler.</summary>
     public List<int> Textures = new List<int>();
+    /// <summary>True when the geometry was cleaned (see <see cref="GeometryCleaner"/>); written to asset.extras with the exporter version.</summary>
+    public bool Clean;
     /// <summary>Written to asset.generator.</summary>
     public string Generator = "OpenSim.Archive.GltfExport";
 
@@ -95,13 +101,13 @@ internal sealed class GltfDocument
     {
         using MemoryStream bin = new MemoryStream();
         List<(int offset, int length, int target)> views = new List<(int, int, int)>();
-        List<(int view, int count, string type, float[] min, float[] max)> accessors = new List<(int, int, string, float[], float[])>();
-        // per mesh, per primitive: accessor indices of position, normal, uv
-        List<List<(int pos, int nor, int uv, int face, int link)>> meshAccessors = new List<List<(int, int, int, int, int)>>();
+        List<(int view, int count, string type, float[] min, float[] max, int componentType)> accessors = new List<(int, int, string, float[], float[], int)>();
+        // per mesh, per primitive: accessor indices of position, normal, uv, face number, part link, indices
+        List<List<(int pos, int nor, int uv, int face, int link, int idx)>> meshAccessors = new List<List<(int, int, int, int, int, int)>>();
 
         foreach (GltfMesh mesh in Meshes)
         {
-            List<(int, int, int, int, int)> list = new List<(int, int, int, int, int)>();
+            List<(int, int, int, int, int, int)> list = new List<(int, int, int, int, int, int)>();
             foreach (GltfPrimitive p in mesh.Primitives)
             {
                 int pos = AddFloats(bin, views, accessors, p.Positions, 3, "VEC3", true);
@@ -109,7 +115,8 @@ internal sealed class GltfDocument
                 int uv = p.Uvs != null ? AddFloats(bin, views, accessors, p.Uvs, 2, "VEC2", false) : -1;
                 int face = p.FaceNumbers != null ? AddFloats(bin, views, accessors, p.FaceNumbers, 1, "SCALAR", false) : -1;
                 int link = p.PartLinks != null ? AddFloats(bin, views, accessors, p.PartLinks, 1, "SCALAR", false) : -1;
-                list.Add((pos, nor, uv, face, link));
+                int idx = p.Indices != null ? AddIndices(bin, views, accessors, p.Indices, p.Positions.Length / 3) : -1;
+                list.Add((pos, nor, uv, face, link, idx));
             }
             meshAccessors.Add(list);
         }
@@ -160,7 +167,7 @@ internal sealed class GltfDocument
     }
 
     private static int AddFloats(MemoryStream bin, List<(int offset, int length, int target)> views,
-        List<(int view, int count, string type, float[] min, float[] max)> accessors, float[] data, int components, string type, bool withBounds)
+        List<(int view, int count, string type, float[] min, float[] max, int componentType)> accessors, float[] data, int components, string type, bool withBounds)
     {
         int offset = (int)bin.Length;
         int byteCount = data.Length * 4;
@@ -184,12 +191,36 @@ internal sealed class GltfDocument
                     max[c] = Math.Max(max[c], data[i + c]);
                 }
         }
-        accessors.Add((views.Count - 1, data.Length / components, type, min, max));
+        accessors.Add((views.Count - 1, data.Length / components, type, min, max, 5126));
         return accessors.Count - 1;
     }
 
-    private byte[] WriteJson(List<(int offset, int length, int target)> views, List<(int view, int count, string type, float[] min, float[] max)> accessors,
-        List<List<(int pos, int nor, int uv, int face, int link)>> meshAccessors, List<int> imageViews, int binLength)
+    /// <summary>Writes a triangle list's vertex numbers, as 16-bit numbers when every vertex number fits in one and as 32-bit numbers otherwise.</summary>
+    private static int AddIndices(MemoryStream bin, List<(int offset, int length, int target)> views,
+        List<(int view, int count, string type, float[] min, float[] max, int componentType)> accessors, int[] indices, int vertexCount)
+    {
+        while (bin.Length % 4 != 0)
+            bin.WriteByte(0);
+        int offset = (int)bin.Length;
+        bool wide = vertexCount > ushort.MaxValue;
+        byte[] bytes = new byte[indices.Length * (wide ? 4 : 2)];
+        for (int i = 0; i < indices.Length; i++)
+        {
+            if (wide)
+                System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(i * 4), (uint)indices[i]);
+            else
+                System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(i * 2), (ushort)indices[i]);
+        }
+        bin.Write(bytes, 0, bytes.Length);
+        views.Add((offset, bytes.Length, 34963));
+        while (bin.Length % 4 != 0)
+            bin.WriteByte(0);
+        accessors.Add((views.Count - 1, indices.Length, "SCALAR", null, null, wide ? 5125 : 5123));
+        return accessors.Count - 1;
+    }
+
+    private byte[] WriteJson(List<(int offset, int length, int target)> views, List<(int view, int count, string type, float[] min, float[] max, int componentType)> accessors,
+        List<List<(int pos, int nor, int uv, int face, int link, int idx)>> meshAccessors, List<int> imageViews, int binLength)
     {
         using MemoryStream ms = new MemoryStream();
         using (Utf8JsonWriter w = new Utf8JsonWriter(ms, new JsonWriterOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping }))
@@ -198,6 +229,13 @@ internal sealed class GltfDocument
             w.WriteStartObject("asset");
             w.WriteString("version", "2.0");
             w.WriteString("generator", Generator);
+            if (Clean)
+            {
+                w.WriteStartObject("extras");
+                w.WritePropertyName(ExportStamp.Key);
+                new ExportStamp { Version = ExportStamp.CurrentVersion, Clean = true }.ToJson().WriteTo(w);
+                w.WriteEndObject();
+            }
             w.WriteEndObject();
 
             bool usesTransform = Materials.Any(m => m.BaseColorTexture?.Offset != null || m.NormalTexture?.Offset != null);
@@ -254,7 +292,7 @@ internal sealed class GltfDocument
                     for (int p = 0; p < mesh.Primitives.Count; p++)
                     {
                         GltfPrimitive prim = mesh.Primitives[p];
-                        (int pos, int nor, int uv, int face, int link) = meshAccessors[m][p];
+                        (int pos, int nor, int uv, int face, int link, int idx) = meshAccessors[m][p];
                         w.WriteStartObject();
                         w.WriteStartObject("attributes");
                         w.WriteNumber("POSITION", pos);
@@ -267,6 +305,8 @@ internal sealed class GltfDocument
                         if (link >= 0)
                             w.WriteNumber("_PART_LINK", link);
                         w.WriteEndObject();
+                        if (idx >= 0)
+                            w.WriteNumber("indices", idx);
                         if (prim.Material >= 0)
                             w.WriteNumber("material", prim.Material);
                         w.WriteNumber("mode", 4);
@@ -375,11 +415,11 @@ internal sealed class GltfDocument
                 w.WriteEndArray();
 
                 w.WriteStartArray("accessors");
-                foreach ((int view, int count, string type, float[] min, float[] max) a in accessors)
+                foreach ((int view, int count, string type, float[] min, float[] max, int componentType) a in accessors)
                 {
                     w.WriteStartObject();
                     w.WriteNumber("bufferView", a.view);
-                    w.WriteNumber("componentType", 5126);
+                    w.WriteNumber("componentType", a.componentType);
                     w.WriteNumber("count", a.count);
                     w.WriteString("type", a.type);
                     if (a.min != null)

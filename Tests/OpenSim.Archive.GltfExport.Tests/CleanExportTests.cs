@@ -165,14 +165,11 @@ public class CleanExportTests
     [Fact]
     public void AFaceOfOnlyZeroAreaTrianglesIsKeptAsItWasAndListedInTheManifest()
     {
-        // a sculpt map whose points all lie on one line: every triangle has no area
-        SculptMap line = SculptTests.Map(16, 16, (c, r) => (c / 15.0 - 0.5, 0.0, 0.0));
-        byte[] j2k = SculptTests.J2k(line);
-        UUID mapId = UUID.Parse("a0000000-0000-4000-8000-0000000000c1");
-        PartSpec root = new PartSpec { Name = "Line", Id = FixedId, Scale = new Vector3(2, 3, 4), Shape = Box(profileCurve: 0, pathCurve: 32, sculptType: SculptGeometry.TypePlane, sculptTexture: mapId.ToString(), sculptEntry: true) };
+        // a box whose size is zero: every triangle of every face has no area
+        PartSpec root = new PartSpec { Name = "Flat", Id = FixedId, Scale = new Vector3(0, 0, 0), Shape = Box() };
         string dir = NewFolder();
-        string file = Path.Combine(dir, "line.oar");
-        File.WriteAllBytes(file, OarWithAssets(new[] { ("line", ObjectXml(root)) }, new[] { (mapId, (sbyte)AssetType.Texture, j2k) }));
+        string file = Path.Combine(dir, "flat.oar");
+        File.WriteAllBytes(file, Oar(("flat", ObjectXml(root))));
 
         int[] triangles = new int[2];
         JsonElement part = default;
@@ -182,13 +179,15 @@ public class CleanExportTests
             SummaryBuild b = Assert.Single(s.BuildList);
             string folder = Path.Combine(dir, clean ? "on" : "off", b.Folder);
             Glb glb = ReadGlb(File.ReadAllBytes(Path.Combine(folder, b.File)));
-            JsonElement prim = glb.Root.GetProperty("meshes")[0].GetProperty("primitives")[0];
-            triangles[clean ? 1 : 0] = CornersOf(glb, 0, 0, out _).Count / 3;
+            int faces = glb.Root.GetProperty("meshes")[0].GetProperty("primitives").GetArrayLength();
+            Assert.Equal(6, faces);
+            for (int f = 0; f < faces; f++)
+                triangles[clean ? 1 : 0] += CornersOf(glb, 0, f, out _).Count / 3;
             if (clean)
                 part = JsonDocument.Parse(File.ReadAllText(Path.Combine(folder, "manifest.json"))).RootElement.GetProperty("parts")[0].Clone();
         }
-        Assert.True(triangles[0] > 0);
+        Assert.Equal(12, triangles[0]);
         Assert.Equal(triangles[0], triangles[1]);
-        Assert.Contains(0, part.GetProperty("uncleanedFaces").EnumerateArray().Select(e => e.GetInt32()));
+        Assert.Equal(new[] { 0, 1, 2, 3, 4, 5 }, part.GetProperty("uncleanedFaces").EnumerateArray().Select(e => e.GetInt32()).ToArray());
     }
 }
