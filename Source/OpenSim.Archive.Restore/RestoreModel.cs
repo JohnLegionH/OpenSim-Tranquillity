@@ -20,10 +20,20 @@ public sealed class RestoreOptions
     /// <summary>Treat a script with no readable source as harmless (as oar-eligibility does).</summary>
     public bool AssumeSafeUnscanned { get; set; }
     /// <summary>
-    /// Folder for the fresh export of the original archive that the .glb files are compared with. Null: a folder next to the
-    /// output archive, named after it with ".work" added. The folder is left in place, so a second run reuses it.
+    /// A part the .glb no longer has is refused by default. With this on it becomes an invisible stub: fully transparent faces and
+    /// no collision, keeping its name, description, scripts and contents, so link numbers never shift or leave a gap.
+    /// </summary>
+    public bool StubDeleted { get; set; }
+    /// <summary>
+    /// Folder for the fresh export of the original archive that the .glb files are compared with. Null: a new folder under the
+    /// system's temporary folder.
     /// </summary>
     public string WorkFolder { get; set; }
+    /// <summary>
+    /// Leave the work folder in place at the end of the run. Without it the tool removes the folder, when the run made it (the folder
+    /// did not exist, or was empty, when the run started); a folder that held other files is never emptied.
+    /// </summary>
+    public bool KeepWork { get; set; }
     public GeometryTolerance Tolerance { get; set; } = new GeometryTolerance();
     public Action<string> Progress { get; set; }
 }
@@ -31,7 +41,13 @@ public sealed class RestoreOptions
 public static class PartOutcome
 {
     public const string Unchanged = "unchanged";
+    /// <summary>Only its place or size changed: position, rotation or scale updated, the shape left as it was.</summary>
+    public const string Moved = "moved";
     public const string Rebuilt = "rebuilt";
+    /// <summary>A part that was not in the original, added after the last link number.</summary>
+    public const string Added = "added";
+    /// <summary>A deleted part kept as an invisible stub.</summary>
+    public const string Stubbed = "stubbed";
     public const string Refused = "refused";
 }
 
@@ -62,6 +78,8 @@ public sealed class RestoreResult
     public string Output { get; set; }
     public string GlbFolder { get; set; }
     public string WorkFolder { get; set; }
+    public bool WorkFolderRemoved { get; set; }
+    public bool StubDeleted { get; set; }
     public bool AllowUnsafe { get; set; }
     public float TolerancePosition { get; set; }
     public float ToleranceNormal { get; set; }
@@ -82,6 +100,8 @@ public sealed class RestoreResult
 
     public int Count(string outcome) => Parts.Count(p => p.Outcome == outcome);
 
+    public int TexturesAdded { get; set; }
+
     /// <summary>0 all parts restored and the archive passed its check; 1 the check failed or a mesh was invalid; 3 written, but some part was refused.</summary>
     public int ExitCode => Invalid.Count > 0 || (Written && (Parity == null || !Parity.Pass)) ? 1 : Count(PartOutcome.Refused) > 0 ? 3 : 0;
 
@@ -95,22 +115,38 @@ public sealed class RestoreResult
         sb.Append("output: ").Append(Written ? Output : "(not written)").Append('\n');
         sb.Append("tolerance: position ").Append(TolerancePosition.ToString("0.#######", c)).Append(" m, normal ").Append(ToleranceNormal.ToString("0.#######", c))
           .Append(", texture coordinate ").Append(ToleranceUv.ToString("0.#######", c)).Append('\n');
-        sb.Append("allow unsafe: ").Append(AllowUnsafe ? "yes" : "no").Append('\n');
+        sb.Append("allow unsafe: ").Append(AllowUnsafe ? "yes" : "no").Append(", stub deleted parts: ").Append(StubDeleted ? "yes" : "no").Append('\n');
         sb.Append("builds in the archive: ").Append(BuildsInArchive.ToString(c)).Append(", with a .glb: ").Append((BuildsInArchive - BuildsWithoutGlb.Count).ToString(c))
           .Append(", without (kept exactly as they were): ").Append(BuildsWithoutGlb.Count.ToString(c)).Append('\n');
-        sb.Append("parts: unchanged ").Append(Count(PartOutcome.Unchanged).ToString(c)).Append(", rebuilt ").Append(Count(PartOutcome.Rebuilt).ToString(c))
-          .Append(", refused ").Append(Count(PartOutcome.Refused).ToString(c)).Append('\n');
-        sb.Append("meshes added: ").Append(MeshesAdded.ToString(c)).Append(" (").Append(MeshBytes.ToString(c)).Append(" bytes)\n");
+        sb.Append("parts: unchanged ").Append(Count(PartOutcome.Unchanged).ToString(c)).Append(", moved ").Append(Count(PartOutcome.Moved).ToString(c))
+          .Append(", rebuilt ").Append(Count(PartOutcome.Rebuilt).ToString(c)).Append(", added ").Append(Count(PartOutcome.Added).ToString(c))
+          .Append(", stubbed ").Append(Count(PartOutcome.Stubbed).ToString(c)).Append(", refused ").Append(Count(PartOutcome.Refused).ToString(c)).Append('\n');
+        sb.Append("meshes added: ").Append(MeshesAdded.ToString(c)).Append(" (").Append(MeshBytes.ToString(c)).Append(" bytes), textures added: ").Append(TexturesAdded.ToString(c)).Append('\n');
         if (Parity != null)
             sb.Append("parity check: ").Append(Parity.Pass ? "PASS" : "FAIL").Append('\n');
         sb.Append('\n');
+        // every refused part first, so it is the first thing a reader sees
+        List<PartReport> refused = Parts.Where(p => p.Outcome == PartOutcome.Refused).ToList();
+        if (refused.Count > 0)
+        {
+            sb.Append("REFUSED PARTS (").Append(refused.Count.ToString(c)).Append("): these stay as they were in the original\n");
+            foreach (PartReport p in refused)
+                sb.Append("  link ").Append(p.LinkNum.ToString(c)).Append("  '").Append(p.Name).Append("'  ").Append(p.PartId.ToString("D")).Append("  ").Append(p.Code).Append(": ").Append(p.Detail).Append('\n');
+            sb.Append('\n');
+        }
         foreach (PartReport p in Parts)
         {
             sb.Append(p.Outcome.ToUpperInvariant()).Append("  link ").Append(p.LinkNum.ToString(c)).Append("  '").Append(p.Name).Append("'  ").Append(p.PartId.ToString("D"));
             if (p.Outcome == PartOutcome.Refused)
                 sb.Append("  ").Append(p.Code).Append(": ").Append(p.Detail);
-            else if (p.Outcome == PartOutcome.Rebuilt)
+            else if (p.Outcome == PartOutcome.Rebuilt || p.Outcome == PartOutcome.Added)
+            {
                 sb.Append("  ").Append(p.Faces.ToString(c)).Append(" faces, ").Append(p.Triangles.ToString(c)).Append(" triangles, mesh ").Append(p.MeshId.ToString("D"));
+                if (!string.IsNullOrEmpty(p.Detail) && p.Outcome == PartOutcome.Added)
+                    sb.Append("  ").Append(p.Detail);
+            }
+            else if (p.Outcome == PartOutcome.Moved || p.Outcome == PartOutcome.Stubbed)
+                sb.Append("  ").Append(p.Detail);
             else
                 sb.Append("  within ").Append(p.MaxPosition.ToString("0.0#######", c)).Append(" m");
             sb.Append('\n');
@@ -131,11 +167,17 @@ public sealed class RestoreResult
         glbFolder = GlbFolder,
         glbFiles = GlbFiles,
         allowUnsafe = AllowUnsafe,
+        stubDeleted = StubDeleted,
+        workFolderRemoved = WorkFolderRemoved,
         tolerance = new { position = TolerancePosition, normal = ToleranceNormal, uv = ToleranceUv },
         buildsInArchive = BuildsInArchive,
         buildsWithoutGlb = BuildsWithoutGlb,
         unchanged = Count(PartOutcome.Unchanged),
+        moved = Count(PartOutcome.Moved),
         rebuilt = Count(PartOutcome.Rebuilt),
+        added = Count(PartOutcome.Added),
+        stubbed = Count(PartOutcome.Stubbed),
+        texturesAdded = TexturesAdded,
         refused = Count(PartOutcome.Refused),
         meshesAdded = MeshesAdded,
         meshBytes = MeshBytes,

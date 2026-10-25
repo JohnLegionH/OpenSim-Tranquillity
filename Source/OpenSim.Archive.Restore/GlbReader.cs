@@ -44,12 +44,25 @@ public sealed class GlbNode
     public JsonObject Extras;
 }
 
+/// <summary>A glTF material as far as the restore needs it for a part that was added: its colour, alpha mode and base colour image.</summary>
+public sealed class GlbMaterial
+{
+    public string Name;
+    public JsonObject Extras;
+    /// <summary>baseColorFactor (r, g, b, a); white when the material gives none.</summary>
+    public float[] BaseColor = { 1f, 1f, 1f, 1f };
+    public string AlphaMode = "OPAQUE";
+    /// <summary>The encoded base colour image (PNG or JPEG) the material points at; null when it has none or the image is a file next to the .glb.</summary>
+    public byte[] Image;
+}
+
 /// <summary>A binary glTF file read as far as the restore needs: nodes with their extras, meshes with their primitives, and the material extras.</summary>
 public sealed class GlbFile
 {
     public List<GlbNode> Nodes = new List<GlbNode>();
     public List<GlbMesh> Meshes = new List<GlbMesh>();
     public List<JsonObject> MaterialExtras = new List<JsonObject>();
+    public List<GlbMaterial> Materials = new List<GlbMaterial>();
 
     public static GlbFile Read(byte[] data)
     {
@@ -86,7 +99,10 @@ public sealed class GlbFile
 
         if (root["materials"] is JsonArray materials)
             foreach (JsonNode m in materials)
+            {
                 file.MaterialExtras.Add(m?["extras"] as JsonObject);
+                file.Materials.Add(ReadMaterial(m, root, views, data, binAt, binLength));
+            }
 
         if (root["meshes"] is JsonArray meshes)
             foreach (JsonNode m in meshes)
@@ -139,6 +155,47 @@ public sealed class GlbFile
                 file.Nodes.Add(node);
             }
         return file;
+    }
+
+    private static GlbMaterial ReadMaterial(JsonNode m, JsonNode root, JsonArray views, byte[] data, int binAt, int binLength)
+    {
+        GlbMaterial result = new GlbMaterial { Name = (string)m?["name"], Extras = m?["extras"] as JsonObject };
+        if (m == null)
+            return result;
+        float[] color = Floats(m["pbrMetallicRoughness"]?["baseColorFactor"], 4);
+        if (color != null)
+            result.BaseColor = color;
+        if (m["alphaMode"] != null)
+            result.AlphaMode = (string)m["alphaMode"];
+        JsonNode tex = m["pbrMetallicRoughness"]?["baseColorTexture"];
+        if (tex?["index"] == null)
+            return result;
+        try
+        {
+            JsonNode texture = root["textures"]?[(int)tex["index"]];
+            JsonNode image = texture?["source"] == null ? null : root["images"]?[(int)texture["source"]];
+            if (image == null)
+                return result;
+            if (image["bufferView"] != null)
+            {
+                JsonNode view = views[(int)image["bufferView"]];
+                int offset = view["byteOffset"] == null ? 0 : (int)view["byteOffset"], length = (int)view["byteLength"];
+                if (binAt >= 0 && offset >= 0 && length >= 0 && (long)offset + length <= binLength)
+                    result.Image = data.AsSpan(binAt + offset, length).ToArray();
+            }
+            else if (image["uri"] is JsonNode uri && ((string)uri).StartsWith("data:", StringComparison.Ordinal))
+            {
+                string text = (string)uri;
+                int comma = text.IndexOf(',');
+                if (comma > 0 && text.Substring(0, comma).EndsWith(";base64", StringComparison.Ordinal))
+                    result.Image = Convert.FromBase64String(text.Substring(comma + 1));
+            }
+        }
+        catch (Exception e) when (e is InvalidCastException || e is ArgumentOutOfRangeException || e is FormatException || e is NullReferenceException)
+        {
+            // a material that names an image that cannot be read has no image
+        }
+        return result;
     }
 
     private static float[] Floats(JsonNode n, int count)

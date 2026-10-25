@@ -45,6 +45,90 @@ public static class FaceBuilder
     }
 
     /// <summary>
+    /// A face is closed and a new one started when it holds this many vertices at the end of a triangle. This is the limit the
+    /// viewer's model uploader uses for a triangle list (lldaeloader.cpp:300, "verts.size() >= 65532"); a face's indices are 16
+    /// bits wide, so it is a few below 65535.
+    /// </summary>
+    public const int SplitAtVertices = 65532;
+
+    /// <summary>
+    /// Like <see cref="Slots"/>, but a face with <see cref="SplitAtVertices"/> or more vertices becomes several faces, as the
+    /// viewer's uploader splits one. The faces come out in slot order, a split face's parts together. <paramref name="sourceSlot"/>
+    /// gives, for each face of the result, the slot it came from, so a caller can give the parts the settings of their slot.
+    /// </summary>
+    public static List<EncoderFace> SlotsSplit(IEnumerable<PrimFace> faces, int count, out List<int> sourceSlot)
+    {
+        List<PrimFace>[] bySlot = new List<PrimFace>[count];
+        foreach (PrimFace f in faces)
+        {
+            if (f.Number < 0 || f.Number >= count)
+                throw new InvalidOperationException("the geometry has a face numbered " + f.Number + " but the shape has " + count + " faces");
+            (bySlot[f.Number] ??= new List<PrimFace>()).Add(f);
+        }
+        List<EncoderFace> result = new List<EncoderFace>(count);
+        sourceSlot = new List<int>(count);
+        for (int slot = 0; slot < count; slot++)
+        {
+            if (bySlot[slot] == null)
+            {
+                result.Add(new EncoderFace());
+                sourceSlot.Add(slot);
+                continue;
+            }
+            // a slot gets one face from the geometry; if a caller gave several for one slot, the last wins as in Slots
+            foreach (EncoderFace part in ToMeshFaces(bySlot[slot][bySlot[slot].Count - 1]))
+            {
+                result.Add(part);
+                sourceSlot.Add(slot);
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// <see cref="ToMeshFace"/>, split the way the viewer's uploader splits a triangle list: vertices are shared inside the part
+    /// being built; when a triangle ends and the part holds <see cref="SplitAtVertices"/> or more vertices, the part is closed
+    /// and the next triangle starts a new part with an empty vertex list.
+    /// </summary>
+    public static List<EncoderFace> ToMeshFaces(PrimFace f)
+    {
+        List<EncoderFace> parts = new List<EncoderFace>();
+        int corners = f.Positions.Length / 3;
+        Dictionary<(int, int, int, int, int, int, int, int), uint> seen = new Dictionary<(int, int, int, int, int, int, int, int), uint>();
+        List<float> pos = new List<float>(), nor = new List<float>(), uv = new List<float>();
+        List<uint> index = new List<uint>();
+
+        void Close()
+        {
+            parts.Add(new EncoderFace { Positions = pos.ToArray(), Normals = nor.ToArray(), Uvs = uv.ToArray(), Indices = index.ToArray() });
+            seen.Clear();
+            pos.Clear(); nor.Clear(); uv.Clear(); index.Clear();
+        }
+
+        for (int c = 0; c < corners; c++)
+        {
+            float px = f.Positions[c * 3], py = f.Positions[c * 3 + 1], pz = f.Positions[c * 3 + 2];
+            float nx = f.Normals[c * 3], ny = f.Normals[c * 3 + 1], nz = f.Normals[c * 3 + 2];
+            float u = f.Uvs[c * 2], v = 1f - f.Uvs[c * 2 + 1];
+            var key = (Bits(px), Bits(py), Bits(pz), Bits(nx), Bits(ny), Bits(nz), Bits(u), Bits(v));
+            if (!seen.TryGetValue(key, out uint at))
+            {
+                at = (uint)(pos.Count / 3);
+                seen[key] = at;
+                pos.Add(px); pos.Add(py); pos.Add(pz);
+                nor.Add(nx); nor.Add(ny); nor.Add(nz);
+                uv.Add(u); uv.Add(v);
+            }
+            index.Add(at);
+            if (index.Count % 3 == 0 && pos.Count / 3 >= SplitAtVertices && c + 1 < corners)
+                Close();
+        }
+        if (index.Count > 0 || parts.Count == 0)
+            Close();
+        return parts;
+    }
+
+    /// <summary>
     /// Indexes the face's triangles, merging vertices that agree in position, normal and texture coordinate, and turns the
     /// texture coordinates from the exporter's convention (v = 0 at the top of the image) to the viewer's (v = 0 at the bottom).
     /// </summary>

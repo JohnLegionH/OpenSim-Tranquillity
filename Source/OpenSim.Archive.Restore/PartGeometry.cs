@@ -42,26 +42,37 @@ public sealed class PartGeometry
     public int TriangleCount => Faces.Values.Sum(f => f.Count);
 
     /// <summary>Reads the geometry of a node. A scale on the node is applied to the vertices, as a viewer would show them.</summary>
-    public static PartGeometry FromNode(GlbFile file, GlbNode node)
+    public static PartGeometry FromNode(GlbFile file, GlbNode node) => FromNode(file, node, node.Scale, false);
+
+    /// <summary>
+    /// Reads the geometry of a node with the given scale (null for none) applied to the vertices. With <paramref name="numberFacesByPrimitive"/>
+    /// a primitive that carries no face numbers gets its position in the mesh as its face number, which is how a part made in a
+    /// modelling tool gets one face for each material.
+    /// </summary>
+    public static PartGeometry FromNode(GlbFile file, GlbNode node, float[] scale, bool numberFacesByPrimitive)
     {
         PartGeometry g = new PartGeometry();
         if (node.Mesh < 0 || node.Mesh >= file.Meshes.Count)
             return g;
         float sx = 1f, sy = 1f, sz = 1f;
-        if (node.Scale != null)
+        if (scale != null)
         {
-            sx = node.Scale[0]; sy = node.Scale[1]; sz = node.Scale[2];
+            sx = scale[0]; sy = scale[1]; sz = scale[2];
         }
+        int primitiveNumber = -1;
         bool scaled = Math.Abs(sx - 1f) > 1e-6f || Math.Abs(sy - 1f) > 1e-6f || Math.Abs(sz - 1f) > 1e-6f;
 
         foreach (GlbPrimitive p in file.Meshes[node.Mesh].Primitives)
         {
             int primFace = -1;
+            primitiveNumber++;
             if (p.FaceNumbers == null)
             {
                 double? e = GlbFile.Num(p.Extras, "primFace");
                 if (e.HasValue)
                     primFace = (int)Math.Round(e.Value);
+                else if (numberFacesByPrimitive)
+                    primFace = primitiveNumber;
                 else
                 {
                     g.PrimitivesWithoutFaceNumbers++;

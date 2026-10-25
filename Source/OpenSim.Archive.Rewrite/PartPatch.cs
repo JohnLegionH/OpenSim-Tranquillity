@@ -53,10 +53,28 @@ public sealed class ElementEdit
     }
 }
 
+/// <summary>What a deferred patch can look at in the part it is about to edit.</summary>
+public sealed class PartView
+{
+    private readonly Func<string, string> m_text;
+
+    public PartView(ISet<string> present, Func<string, string> text)
+    {
+        Present = present;
+        m_text = text;
+    }
+
+    /// <summary>The element paths (such as "Shape/ProfileShape") the part has.</summary>
+    public ISet<string> Present { get; }
+
+    /// <summary>The text of a leaf element as the file holds it (character references not decoded); null when the part has no such element or it is not unique.</summary>
+    public string Text(string path) => m_text(path);
+}
+
 /// <summary>The edits for one part, found by the part's UUID wherever it sits in the archive's object files.</summary>
 public sealed class PartPatch
 {
-    private readonly Func<ISet<string>, IReadOnlyList<ElementEdit>> m_deferred;
+    private readonly Func<PartView, IReadOnlyList<ElementEdit>> m_deferred;
 
     public Guid PartId { get; }
     /// <summary>The edits of an ordinary patch; empty for a deferred one (see <see cref="EditsFor"/>).</summary>
@@ -75,6 +93,18 @@ public sealed class PartPatch
     /// paths (such as "Shape/ProfileShape") when the object file is patched.
     /// </summary>
     public PartPatch(Guid partId, Func<ISet<string>, IReadOnlyList<ElementEdit>> make)
+        : this(partId, WrapPresent(make))
+    {
+    }
+
+    private static Func<PartView, IReadOnlyList<ElementEdit>> WrapPresent(Func<ISet<string>, IReadOnlyList<ElementEdit>> make)
+    {
+        ArgumentNullException.ThrowIfNull(make);
+        return view => make(view.Present);
+    }
+
+    /// <summary>A patch whose edits depend on what the part holds now (its element paths and their text).</summary>
+    public PartPatch(Guid partId, Func<PartView, IReadOnlyList<ElementEdit>> make)
     {
         ArgumentNullException.ThrowIfNull(make);
         PartId = partId;
@@ -82,14 +112,46 @@ public sealed class PartPatch
         m_deferred = make;
     }
 
-    /// <summary>The edits to apply to a part that has the given element paths.</summary>
-    public IReadOnlyList<ElementEdit> EditsFor(ISet<string> present)
+    /// <summary>The edits to apply to a part that looks like <paramref name="view"/>.</summary>
+    public IReadOnlyList<ElementEdit> EditsFor(PartView view)
     {
         if (m_deferred == null)
             return Edits;
-        IReadOnlyList<ElementEdit> edits = m_deferred(present);
+        IReadOnlyList<ElementEdit> edits = m_deferred(view);
         if (edits == null || edits.Count == 0)
             throw new InvalidOperationException("the patch for part " + PartId + " produced no edits");
         return edits;
+    }
+}
+
+/// <summary>
+/// A new part added to the group that holds an existing part (the anchor). <see cref="Make"/> gets a reader for the anchor's
+/// leaf elements (raw text, so owner and permission values can be copied) and returns the whole SceneObjectPart element.
+/// </summary>
+public sealed class PartInsertion
+{
+    public Guid AnchorPartId { get; }
+    public Func<Func<string, string>, string> Make { get; }
+
+    public PartInsertion(Guid anchorPartId, Func<Func<string, string>, string> make)
+    {
+        ArgumentNullException.ThrowIfNull(make);
+        AnchorPartId = anchorPartId;
+        Make = make;
+    }
+}
+
+/// <summary>Edits a single SceneObjectPart element held as text, with the same element edits a patch of an archive uses.</summary>
+public static class PartXml
+{
+    /// <summary>Returns <paramref name="partXml"/> with the edits applied; every edit's element must exist in it.</summary>
+    public static string Edit(string partXml, Guid partId, IReadOnlyList<ElementEdit> edits)
+    {
+        ArgumentNullException.ThrowIfNull(partXml);
+        ArgumentNullException.ThrowIfNull(edits);
+        byte[] bytes = new System.Text.UTF8Encoding(false).GetBytes(partXml);
+        ObjectXml.Decoded d = ObjectXml.Decode(bytes);
+        byte[] result = ObjectXml.Apply(d, new Dictionary<Guid, PartPatch> { [partId] = new PartPatch(partId, edits.ToArray()) }, "the new part");
+        return new System.Text.UTF8Encoding(false).GetString(result);
     }
 }

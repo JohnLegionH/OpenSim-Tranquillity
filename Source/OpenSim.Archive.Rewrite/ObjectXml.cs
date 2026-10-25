@@ -75,17 +75,33 @@ internal static class ObjectXml
     }
 
     /// <summary>Applies the edits and returns the new bytes of the file.</summary>
-    public static byte[] Apply(Decoded d, IReadOnlyDictionary<Guid, PartPatch> patches, string entryName)
+    public static byte[] Apply(Decoded d, IReadOnlyDictionary<Guid, PartPatch> patches, string entryName) =>
+        Apply(d, patches, Array.Empty<PartInsertion>(), entryName);
+
+    /// <summary>Applies the edits and inserts the new parts after the last part of the group; returns the new bytes of the file.</summary>
+    public static byte[] Apply(Decoded d, IReadOnlyDictionary<Guid, PartPatch> patches, IReadOnlyList<PartInsertion> insertions, string entryName)
     {
         string text = d.Text;
         List<(int start, int end, string with)> cuts = new List<(int, int, string)>();
         HashSet<Guid> done = new HashSet<Guid>();
+        HashSet<Guid> wanted = new HashSet<Guid>(patches.Keys);
+        foreach (PartInsertion ins in insertions)
+            wanted.Add(ins.AnchorPartId);
+        List<string> inserted = new List<string>();
 
-        foreach (PartSpans part in Scan(text, new HashSet<Guid>(patches.Keys)))
+        foreach (PartSpans part in Scan(text, wanted))
         {
             if (!done.Add(part.Id))
                 throw new InvalidDataException("part " + part.Id + " appears twice in '" + entryName + "'");
-            foreach (ElementEdit edit in patches[part.Id].EditsFor(new HashSet<string>(part.ByPath.Keys, StringComparer.Ordinal)))
+            PartSpans current = part;
+            string Leaf(string path) =>
+                current.ByPath.TryGetValue(path, out List<Span> found) && found.Count == 1 && !found[0].SelfClosing
+                    ? text.Substring(found[0].TagEnd, found[0].InnerEnd - found[0].TagEnd).Trim() : null;
+            foreach (PartInsertion ins in insertions.Where(i => i.AnchorPartId == part.Id))
+                inserted.Add(ins.Make(Leaf));
+            if (!patches.TryGetValue(part.Id, out PartPatch patch))
+                continue;
+            foreach (ElementEdit edit in patch.EditsFor(new PartView(new HashSet<string>(part.ByPath.Keys, StringComparer.Ordinal), Leaf)))
             {
                 if (!part.ByPath.TryGetValue(edit.Path, out List<Span> spans) || spans.Count == 0)
                     throw new InvalidDataException("part " + part.Id + " in '" + entryName + "' has no element '" + edit.Path + "'");
@@ -107,9 +123,12 @@ internal static class ObjectXml
             }
         }
 
-        foreach (Guid id in patches.Keys)
+        foreach (Guid id in wanted)
             if (!done.Contains(id))
                 throw new InvalidDataException("part " + id + " is not in '" + entryName + "'");
+
+        if (inserted.Count > 0)
+            cuts.Add(InsertionPoint(text, string.Concat(inserted), entryName));
 
         cuts.Sort((a, b) => a.start.CompareTo(b.start));
         for (int i = 1; i < cuts.Count; i++)
@@ -132,6 +151,26 @@ internal static class ObjectXml
             while (r.Read()) { }
 
         return d.Encode(result);
+    }
+
+    /// <summary>Where new parts go: at the end of the group's other parts, which the file may not have yet.</summary>
+    private static (int start, int end, string with) InsertionPoint(string text, string parts, string entryName)
+    {
+        if (text.IndexOf("<SceneObjectGroup", StringComparison.Ordinal) != text.LastIndexOf("<SceneObjectGroup", StringComparison.Ordinal))
+            throw new InvalidDataException("'" + entryName + "' holds more than one group; a part cannot be added to it");
+        int close = text.LastIndexOf("</OtherParts>", StringComparison.Ordinal);
+        if (close >= 0)
+            return (close, close, parts);
+        foreach (string empty in new[] { "<OtherParts />", "<OtherParts/>" })
+        {
+            int at = text.LastIndexOf(empty, StringComparison.Ordinal);
+            if (at >= 0)
+                return (at, at + empty.Length, "<OtherParts>" + parts + "</OtherParts>");
+        }
+        int end = text.LastIndexOf("</SceneObjectGroup>", StringComparison.Ordinal);
+        if (end < 0)
+            throw new InvalidDataException("'" + entryName + "' is not a group file; a part cannot be added to it");
+        return (end, end, "<OtherParts>" + parts + "</OtherParts>");
     }
 
     private static string Escape(string s) =>

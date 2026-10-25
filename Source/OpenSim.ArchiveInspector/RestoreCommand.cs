@@ -17,7 +17,7 @@ namespace OpenSim.ArchiveInspector;
 internal static class RestoreCommand
 {
     public const string Usage =
-@"Usage: OpenSim.ArchiveInspector oar-restore <original.oar> <glb folder> --out <new.oar> [--allow-unsafe] [--report <file>] [--work <folder>]
+@"Usage: OpenSim.ArchiveInspector oar-restore <original.oar> <glb folder> --out <new.oar> [--allow-unsafe] [--stub-deleted] [--report <file>] [--work <folder>] [--keep-work]
 
 Takes the archive the .glb files were exported from and the folder that holds the .glb files (the exporter's output, or the
 files after Blender opened and saved them) and writes a new archive.
@@ -27,12 +27,20 @@ files after Blender opened and saved them) and writes a new archive.
     settings of each face are kept; only its shape changes.
   - A changed part whose scripts the script scan rates UNSAFE or UNCERTAIN is refused (it stays as it was) and the report says
     why. --allow-unsafe rebuilds it anyway and records that it did.
-  - A .glb that does not match the original build part for part (a part added, deleted or renumbered) is refused as a whole and
-    nothing is written. A build with no .glb is kept as it was.
+  - A part that only moved, turned or was resized keeps its shape (a prim stays a prim); its position, rotation and size are
+    updated. Moving or turning a root part moves the whole linkset.
+  - A part the .glb no longer has is refused (it stays as it was). With --stub-deleted it becomes an invisible, phantom stub that
+    keeps its name, description, scripts and contents, so link numbers never shift.
+  - A node with no part id becomes a new part with the next link number after the last, built as a mesh; its colours and pictures
+    come from the node's materials (a picture identical to an existing texture reuses that asset).
+  - A .glb whose parts have other link numbers than the original's is refused as a whole and nothing is written.
+    A build with no .glb is kept as it was.
   --out <new.oar>       the archive to write (required; it must not exist)
   --report <file>       also write the report to <file>, the same as JSON to <file>.json, and the plan the check used to <file>.plan.json
   --allow-unsafe        rebuild a changed part even when its scripts are rated UNSAFE or UNCERTAIN
-  --work <folder>       where the original is exported for the comparison (default: the output name with .work added; kept)
+  --stub-deleted        keep a deleted part as an invisible stub instead of refusing it
+  --work <folder>       where the original is exported for the comparison (default: a new folder in the system's temporary folder)
+  --keep-work           leave the work folder in place; without it the tool removes the folder it made (a folder that held files before the run is never emptied)
   --assume-safe-unscanned   treat a script with no readable source as harmless (see oar-eligibility)
   --position-tolerance <m>, --normal-tolerance <n>, --uv-tolerance <n>   how far geometry may differ and count as unchanged
 The original archive and the .glb files are only read.
@@ -62,6 +70,12 @@ Exit codes: 0 done and the new archive passed the check against the original; 1 
                     break;
                 case "--allow-unsafe":
                     options.AllowUnsafe = true;
+                    break;
+                case "--stub-deleted":
+                    options.StubDeleted = true;
+                    break;
+                case "--keep-work":
+                    options.KeepWork = true;
                     break;
                 case "--assume-safe-unscanned":
                     options.AssumeSafeUnscanned = true;

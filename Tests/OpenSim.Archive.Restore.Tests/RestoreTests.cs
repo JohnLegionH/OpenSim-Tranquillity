@@ -72,11 +72,11 @@ internal static class GlbPatch
 
 public class RestoreTests
 {
-    private const string Benign = "default { state_entry() { llSay(0, \"hi\"); } }";
-    private const string ChangesShape = "default { state_entry() { llSetPrimitiveParams([PRIM_TYPE, PRIM_TYPE_BOX, 0, <0,1,0>, 0.0, <0,0,0>, <1,1,0>, <0,0,0>]); } }";
+    internal const string Benign = "default { state_entry() { llSay(0, \"hi\"); } }";
+    internal const string ChangesShape = "default { state_entry() { llSetPrimitiveParams([PRIM_TYPE, PRIM_TYPE_BOX, 0, <0,1,0>, 0.0, <0,0,0>, <1,1,0>, <0,0,0>]); } }";
 
     /// <summary>One run's folders and the parts of a two-build fixture: a linkset of two parts with a script in the child, and a single part.</summary>
-    private sealed class Fixture
+    internal sealed class Fixture
     {
         public string Dir = Path.Combine(Path.GetTempPath(), "archive-restore-tests", Guid.NewGuid().ToString("N"));
         public KitPart Root = new KitPart("Root", 0) { Scale = "1,2,3" };
@@ -84,9 +84,24 @@ public class RestoreTests
         public KitPart Solo = new KitPart("Solo", 0) { Scale = "1,1,1" };
         public string Archive, GlbDir;
 
+        /// <summary>Two faces with their own pictures and colours over a default one, as a texture entry a region could have written.</summary>
+        public static readonly Guid FacePicture0 = Guid.Parse("11111111-1111-4111-8111-111111111111"), FacePicture1 = Guid.Parse("22222222-2222-4222-8222-222222222222");
+
+        public static string ValidTextureEntry()
+        {
+            OpenMetaverse.Primitive.TextureEntry te = new OpenMetaverse.Primitive.TextureEntry(new OpenMetaverse.UUID("89556747-24cb-43ed-920b-47caed15465f"));
+            OpenMetaverse.Primitive.TextureEntryFace a = te.CreateFace(0), b = te.CreateFace(1);
+            a.TextureID = new OpenMetaverse.UUID(FacePicture0);
+            a.RGBA = new OpenMetaverse.Color4(1f, 0.5f, 0.25f, 1f);
+            b.TextureID = new OpenMetaverse.UUID(FacePicture1);
+            b.RGBA = new OpenMetaverse.Color4(0.1f, 0.2f, 0.3f, 1f);
+            return Convert.ToBase64String(te.GetBytes());
+        }
+
         public Fixture(string childScript = Benign, string childFlags = "None")
         {
             Directory.CreateDirectory(Dir);
+            Root.TextureEntry = Child.TextureEntry = Solo.TextureEntry = ValidTextureEntry();
             Child.Flags = childFlags;
             (KitItem item, string entry, byte[] data) s = EligibilityKit.Script("child script", childScript);
             Child.Items.Add(s.item);
@@ -116,7 +131,7 @@ public class RestoreTests
         }
     }
 
-    private static Dictionary<string, byte[]> Entries(string oar)
+    internal static Dictionary<string, byte[]> Entries(string oar)
     {
         Dictionary<string, byte[]> result = new Dictionary<string, byte[]>();
         using FileStream fs = File.OpenRead(oar);
@@ -133,9 +148,9 @@ public class RestoreTests
         return result;
     }
 
-    private static string PartUuid(KitPart p) => p.Id.ToString();
+    internal static string PartUuid(KitPart p) => p.Id.ToString();
 
-    private static PartReport Of(RestoreResult r, KitPart p) => r.Parts.Single(x => x.PartId == p.Id);
+    internal static PartReport Of(RestoreResult r, KitPart p) => r.Parts.Single(x => x.PartId == p.Id);
 
     [Fact]
     public void NoEditsLeavesEveryPartAndEntryUntouched()
@@ -193,7 +208,7 @@ public class RestoreTests
         Assert.InRange(top, 0.7f, 0.8f);
     }
 
-    private static XElement Part(byte[] objectXml, Guid id) =>
+    internal static XElement Part(byte[] objectXml, Guid id) =>
         XDocument.Parse(Encoding.UTF8.GetString(objectXml)).Descendants("SceneObjectPart").Single(p => p.Element("UUID").Element("UUID").Value == id.ToString());
 
     [Fact]
@@ -230,20 +245,6 @@ public class RestoreTests
     }
 
     [Fact]
-    public void AMovedPartIsRefused()
-    {
-        Fixture f = new Fixture();
-        f.Edit(f.Root, (j, bin) =>
-        {
-            JsonArray a = GlbPatch.PartNode(j, PartUuid(f.Child))["translation"].AsArray();
-            a[0] = (float)a[0] + 1f;
-        });
-        RestoreResult r = f.Restore();
-        Assert.Equal(PartOutcome.Refused, Of(r, f.Child).Outcome);
-        Assert.Equal("PART_MOVED", Of(r, f.Child).Code);
-    }
-
-    [Fact]
     public void ATriangleThatLostItsFaceNumberIsRefusedWhenItsPartChanged()
     {
         Fixture f = new Fixture();
@@ -259,36 +260,6 @@ public class RestoreTests
         });
         RestoreResult r = f.Restore();
         Assert.Equal("FACE_NUMBERS_LOST", Of(r, f.Child).Code);
-    }
-
-    [Fact]
-    public void AGlbWithAnAddedPartIsRefusedAsAWholeAndNothingIsWritten()
-    {
-        Fixture f = new Fixture();
-        f.Edit(f.Root, (j, bin) =>
-        {
-            JsonArray nodes = j["nodes"].AsArray();
-            JsonNode copy = JsonNode.Parse(GlbPatch.PartNode(j, PartUuid(f.Child)).ToJsonString());
-            copy["extras"].AsObject()["partUuid"] = Guid.NewGuid().ToString();
-            nodes.Add(copy);
-            nodes[0]["children"].AsArray().Add(nodes.Count - 1);
-        });
-        RestoreException e = Assert.Throws<RestoreException>(() => f.Restore());
-        Assert.Contains("part for part", e.Message);
-        Assert.False(File.Exists(f.Out()));
-    }
-
-    [Fact]
-    public void AGlbWithADeletedPartIsRefusedAsAWhole()
-    {
-        Fixture f = new Fixture();
-        f.Edit(f.Root, (j, bin) =>
-        {
-            JsonNode node = GlbPatch.PartNode(j, PartUuid(f.Child));
-            node["extras"].AsObject()["partUuid"] = Guid.NewGuid().ToString();
-        });
-        RestoreException e = Assert.Throws<RestoreException>(() => f.Restore());
-        Assert.Contains("is missing", e.Message);
     }
 
     [Fact]

@@ -7,6 +7,8 @@
 
 using System.Diagnostics;
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using OpenMetaverse;
@@ -23,14 +25,18 @@ namespace OpenSim.Archive.Restore;
 /// <summary>
 /// The way back from Blender. Reads the exporter's .glb files (possibly round-tripped through Blender), matches every node to a
 /// part of the original archive, and writes a new archive. A part whose geometry is the one a fresh export of the original
-/// gives (within <see cref="GeometryTolerance"/>) is not touched at all. A part whose geometry changed becomes a mesh part:
-/// the mesh is built from the node's triangles, and the part's object XML is patched in place (<see cref="MeshShape"/>), so
-/// its link number, name, description, scripts, contents and texture entry are kept exactly. The original is only read.
+/// gives (within <see cref="GeometryTolerance"/>) keeps its shape: if only its place or size changed, its position, rotation and
+/// scale are updated and it stays the prim (or sculpt, or mesh) it was. A part whose geometry changed becomes a mesh part: the
+/// mesh is built from the node's triangles, and the part's object XML is patched in place (<see cref="MeshShape"/>), so its link
+/// number, name, description, scripts, contents and texture entry are kept exactly. A part the .glb no longer has is refused, or
+/// with <see cref="RestoreOptions.StubDeleted"/> kept as an invisible stub; a node that is no part of the original becomes a new
+/// part after the last link number. The original is only read.
 /// </summary>
-public sealed class ArchiveRestorer
+public sealed partial class ArchiveRestorer
 {
     private const int PhysShapePrim = 0, PhysShapeNone = 1;
     private const float BoxBelow = PrimPhysics.BoundingBoxBelow;
+    private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
     private readonly RestoreOptions m_options;
 
@@ -55,10 +61,47 @@ public sealed class ArchiveRestorer
         public string Name;
     }
 
+    /// <summary>One change the parity check has to expect.</summary>
+    private sealed class PlanChange
+    {
+        public Guid Part;
+        public string Field;
+        public int Faces;
+    }
+
+    /// <summary>Everything one run collects before the archive is written.</summary>
+    private sealed class Run
+    {
+        public ArchiveRewriter Rewriter = new ArchiveRewriter();
+        public Dictionary<Guid, byte[]> Meshes = new Dictionary<Guid, byte[]>();
+        public List<PlanChange> Plan = new List<PlanChange>();
+        public List<Guid> AddedParts = new List<Guid>();
+        public Dictionary<Guid, List<Func<PartView, IEnumerable<ElementEdit>>>> Edits = new Dictionary<Guid, List<Func<PartView, IEnumerable<ElementEdit>>>>();
+        public Dictionary<Guid, ParsedPart> Parsed;
+        public Dictionary<Guid, EligibilityRow> Rows;
+        public Dictionary<Guid, PartRow> ScanRows;
+        public string SourcePath;
+        public RestoreResult Result;
+        public TextureCatalog Textures;
+        /// <summary>The new place of each build whose linkset was moved (by the root part's id): position, then rotation, viewer axes.</summary>
+        public Dictionary<Guid, (float[] position, float[] rotation)> GroupPlace = new Dictionary<Guid, (float[], float[])>();
+
+        public void Edit(Guid part, Func<PartView, IEnumerable<ElementEdit>> edits)
+        {
+            if (!Edits.TryGetValue(part, out List<Func<PartView, IEnumerable<ElementEdit>>> list))
+                Edits[part] = list = new List<Func<PartView, IEnumerable<ElementEdit>>>();
+            list.Add(edits);
+        }
+
+        public void Plan1(Guid part, string field, int faces = 0)
+        {
+            if (!Plan.Any(p => p.Part == part && p.Field == field))
+                Plan.Add(new PlanChange { Part = part, Field = field, Faces = faces });
+        }
+    }
+
     public RestoreResult Restore(string originalPath, string glbFolder, string outputPath, string reportJsonPath = null)
     {
-        Stopwatch sw = Stopwatch.StartNew();
-        Action<string> say = m_options.Progress ?? (_ => { });
         string fullSource = Path.GetFullPath(originalPath), fullOut = Path.GetFullPath(outputPath);
         if (!File.Exists(fullSource))
             throw new RestoreException("the original archive '" + originalPath + "' does not exist");
@@ -69,15 +112,51 @@ public sealed class ArchiveRestorer
         if (!Directory.Exists(glbFolder))
             throw new RestoreException("the .glb folder '" + glbFolder + "' does not exist");
 
+        string work = Path.GetFullPath(m_options.WorkFolder ?? Path.Combine(Path.GetTempPath(), "oar-restore-" + Guid.NewGuid().ToString("N")));
+        if (string.Equals(work, Path.GetFullPath(glbFolder), StringComparison.OrdinalIgnoreCase))
+            throw new RestoreException("the folder for the comparison export is the .glb folder; give --work a different one");
+        // The folder is the tool's own to remove only if this run makes it: a folder that already held files is never emptied.
+        bool ownsWork = !Directory.Exists(work) || !Directory.EnumerateFileSystemEntries(work).Any();
+        RestoreResult result = new RestoreResult();
+        try
+        {
+            return RestoreCore(fullSource, glbFolder, fullOut, work, result);
+        }
+        finally
+        {
+            if (!m_options.KeepWork && ownsWork && Directory.Exists(work))
+            {
+                try
+                {
+                    Directory.Delete(work, true);
+                    result.WorkFolderRemoved = true;
+                }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+                {
+                    m_options.Progress?.Invoke("the work folder '" + work + "' could not be removed: " + e.Message);
+                }
+            }
+        }
+    }
+
+    private RestoreResult RestoreCore(string fullSource, string glbFolder, string fullOut, string work, RestoreResult result)
+    {
+        Stopwatch sw = Stopwatch.StartNew();
+        Action<string> say = m_options.Progress ?? (_ => { });
+
         List<string> glbPaths = Directory.EnumerateFiles(glbFolder, "*.glb", SearchOption.AllDirectories).OrderBy(p => p, StringComparer.Ordinal).ToList();
         if (glbPaths.Count == 0)
             throw new RestoreException("there is no .glb file in '" + glbFolder + "'");
 
-        RestoreResult result = new RestoreResult
-        {
-            Source = fullSource, Output = fullOut, GlbFolder = Path.GetFullPath(glbFolder), AllowUnsafe = m_options.AllowUnsafe, GlbFiles = glbPaths.Count,
-            TolerancePosition = m_options.Tolerance.Position, ToleranceNormal = m_options.Tolerance.Normal, ToleranceUv = m_options.Tolerance.Uv
-        };
+        result.Source = fullSource;
+        result.Output = fullOut;
+        result.GlbFolder = Path.GetFullPath(glbFolder);
+        result.AllowUnsafe = m_options.AllowUnsafe;
+        result.StubDeleted = m_options.StubDeleted;
+        result.GlbFiles = glbPaths.Count;
+        result.TolerancePosition = m_options.Tolerance.Position;
+        result.ToleranceNormal = m_options.Tolerance.Normal;
+        result.ToleranceUv = m_options.Tolerance.Uv;
 
         // what the original holds, part by part
         Dictionary<Guid, ParsedPart> parsed = new Dictionary<Guid, ParsedPart>();
@@ -91,23 +170,16 @@ public sealed class ArchiveRestorer
             rows.TryAdd(r.PartId, r);
 
         // a fresh export of the original: what the .glb files would hold if nothing had been edited
-        string work = Path.GetFullPath(m_options.WorkFolder ?? (fullOut + ".work"));
         result.WorkFolder = work;
-        if (string.Equals(work, Path.GetFullPath(glbFolder), StringComparison.OrdinalIgnoreCase))
-            throw new RestoreException("the folder for the comparison export is the .glb folder; give --work a different one");
         say("exporting the original into " + work + " to compare against");
         ExportSummary exported = ArchiveExporter.Export(fullSource, new ExportOptions { OutputDirectory = work, Progress = say });
         if (exported.ExitCode == ExitCodes.Unreadable || exported.ExitCode == ExitCodes.EveryBuildFailed || exported.ExitCode == ExitCodes.LowDiskSpace)
-            throw new RestoreException("the original could not be exported for the comparison (exit code " + exported.ExitCode.ToString(CultureInfo.InvariantCulture) + ")");
+            throw new RestoreException("the original could not be exported for the comparison (exit code " + exported.ExitCode.ToString(Inv) + ")");
         List<FreshBuild> fresh = IndexFresh(work);
         result.BuildsInArchive = fresh.Count;
 
-        ArchiveRewriter rewriter = new ArchiveRewriter();
-        List<ConvertedPart> converted = new List<ConvertedPart>();
-        Dictionary<Guid, byte[]> meshes = new Dictionary<Guid, byte[]>();
+        Run run = new Run { Parsed = parsed, Rows = rows, SourcePath = fullSource, Result = result, Textures = new TextureCatalog(work) };
         HashSet<FreshBuild> covered = new HashSet<FreshBuild>();
-        Dictionary<Guid, PartRow> scanRows = null;
-        HashSet<Guid> seenParts = new HashSet<Guid>();
 
         foreach (string glbPath in glbPaths)
         {
@@ -124,60 +196,173 @@ public sealed class ArchiveRestorer
                 throw new RestoreException("'" + glbName + "' is the second .glb for the build '" + build.Root + "'; give one file for each build");
 
             if (fileClock.ElapsedMilliseconds > 2000)
-                say("'" + glbName + "': read in " + (fileClock.ElapsedMilliseconds / 1000.0).ToString("0.0", CultureInfo.InvariantCulture) + " s");
+                say("'" + glbName + "': read in " + (fileClock.ElapsedMilliseconds / 1000.0).ToString("0.0", Inv) + " s");
             GlbFile original = GlbFile.Read(File.ReadAllBytes(build.GlbPath));
-            if (fileClock.ElapsedMilliseconds > 2000)
-                say("'" + glbName + "': original read, total " + (fileClock.ElapsedMilliseconds / 1000.0).ToString("0.0", CultureInfo.InvariantCulture) + " s");
             List<PartNode> originalParts = PartNodes(original, build.GlbPath);
-            CheckLinkset(glbName, userParts, originalParts);
 
+            SortNodes(user, userParts, originalParts, glbName, out List<PartNode> kept, out List<PartNode> addedNodes);
+            NodeFrame userFrame = new NodeFrame(user), originFrame = new NodeFrame(original);
             Dictionary<Guid, PartNode> originalById = originalParts.ToDictionary(p => p.PartId);
-            foreach (PartNode up in userParts)
+            Guid.TryParse(build.Root, out Guid rootId);
+
+            string groupMove = MoveGroup(run, build, rootId, kept, originalById, user, original, userFrame, originFrame);
+
+            foreach (PartNode up in kept)
             {
                 PartNode op = originalById[up.PartId];
                 PartReport report = new PartReport { Glb = glbName, PartId = up.PartId, LinkNum = op.LinkNum, Name = op.Name };
                 result.Parts.Add(report);
-                seenParts.Add(up.PartId);
-                Judge(report, up, op, user, original, parsed, rows, rewriter, converted, meshes, ref scanRows, fullSource, result);
+                Judge(run, report, up, op, user, original, userFrame, originFrame, up.PartId == rootId ? groupMove : null);
             }
-            say("'" + glbName + "': " + userParts.Count.ToString(CultureInfo.InvariantCulture) + " parts read");
+            HashSet<Guid> have = kept.Select(p => p.PartId).ToHashSet();
+            foreach (PartNode op in originalParts.Where(p => !have.Contains(p.PartId)))
+            {
+                PartReport report = new PartReport { Glb = glbName, PartId = op.PartId, LinkNum = op.LinkNum, Name = op.Name };
+                result.Parts.Add(report);
+                Delete(run, report, op);
+            }
+            if (addedNodes.Count > 0)
+            {
+                int next = Math.Max(1, build.Parts.Select(g => run.Parsed.TryGetValue(g, out ParsedPart pp) ? pp.Part.LinkNum : 0).DefaultIfEmpty(0).Max());
+                foreach (PartNode node in addedNodes)
+                {
+                    PartReport report = new PartReport { Glb = glbName, Name = node.Name, Outcome = PartOutcome.Refused };
+                    result.Parts.Add(report);
+                    if (Add(run, report, node, user, userFrame, rootId, next + 1, result.Parts.Count(p => p.Outcome == PartOutcome.Added)))
+                        next++;
+                }
+            }
+            say("'" + glbName + "': " + userParts.Count.ToString(Inv) + " parts read");
         }
 
         foreach (FreshBuild b in fresh)
             if (!covered.Contains(b))
                 result.BuildsWithoutGlb.Add(b.Root + (string.IsNullOrEmpty(b.Entry) ? string.Empty : " (" + b.Entry + ")"));
 
-        result.MeshesAdded = meshes.Count;
-        result.MeshBytes = meshes.Values.Sum(b => (long)b.Length);
+        result.MeshesAdded = run.Meshes.Count;
+        result.MeshBytes = run.Meshes.Values.Sum(b => (long)b.Length);
+        result.TexturesAdded = run.Textures.NewAssets.Count();
         if (result.Invalid.Count > 0)
         {
             result.Seconds = sw.Elapsed.TotalSeconds;
             return result;
         }
 
-        foreach (KeyValuePair<Guid, byte[]> m in meshes)
-            rewriter.AddAsset(m.Key, AssetType.Mesh, m.Value);
+        foreach (KeyValuePair<Guid, List<Func<PartView, IEnumerable<ElementEdit>>>> e in run.Edits)
+        {
+            List<Func<PartView, IEnumerable<ElementEdit>>> makers = e.Value;
+            run.Rewriter.AddPatch(new PartPatch(e.Key, (PartView view) =>
+            {
+                List<ElementEdit> all = new List<ElementEdit>();
+                foreach (Func<PartView, IEnumerable<ElementEdit>> make in makers)
+                    all.AddRange(make(view));
+                return all;
+            }));
+        }
+        foreach (KeyValuePair<Guid, byte[]> m in run.Meshes)
+            run.Rewriter.AddAsset(m.Key, AssetType.Mesh, m.Value);
+        foreach (KeyValuePair<Guid, byte[]> t in run.Textures.NewAssets)
+            run.Rewriter.AddAsset(t.Key, AssetType.Texture, t.Value);
 
-        string planJson = ArchiveConverter.PlanJson(converted, meshes.Keys);
+        string planJson = PlanJson(run);
         result.PlanJson = planJson;
-        result.Rewrite = rewriter.Rewrite(fullSource, fullOut);
+        result.Rewrite = run.Rewriter.Rewrite(fullSource, fullOut);
         result.Written = true;
         result.Parity = new ArchiveComparer().Compare(fullSource, fullOut, ComparePlan.Parse(planJson));
         result.Seconds = sw.Elapsed.TotalSeconds;
         return result;
     }
 
+    // ------------------------------------------------------------------ the whole linkset
+
+    /// <summary>
+    /// The root part moved or turned, or the build was: the whole linkset moves. Every part of the build gets the new place
+    /// (GroupPosition), the root its new rotation. Returns the sentence for the root's report, or null when nothing moved.
+    /// </summary>
+    private string MoveGroup(Run run, FreshBuild build, Guid rootId, List<PartNode> kept, Dictionary<Guid, PartNode> originalById,
+        GlbFile user, GlbFile original, NodeFrame userFrame, NodeFrame originFrame)
+    {
+        PartNode userRoot = kept.FirstOrDefault(p => p.PartId == rootId);
+        if (userRoot == null || !originalById.TryGetValue(rootId, out PartNode originalRoot) || !run.Parsed.TryGetValue(rootId, out ParsedPart rootPart))
+            return null;
+        NodePose before = PoseMath.RootPlace(originFrame.Relative(originalRoot.Node.Index), originFrame.ObjectPose);
+        NodePose after = PoseMath.RootPlace(userFrame.Relative(userRoot.Node.Index), userFrame.ObjectPose);
+        PoseChange change = PoseMath.Compare(before, after, m_options.Tolerance.Position);
+        if (!change.Moved && !change.Turned)
+            return null;
+
+        GlbNode userObject = userFrame.ObjectNode >= 0 ? user.Nodes[userFrame.ObjectNode] : null;
+        bool world = GlbFile.Str(userObject?.Extras, "placement") == "world";
+        Quaternion oldRotation = rootPart.RotationOffset;
+        PoseMath.GroupPlace(world, new[] { 0f, 0f, 0f }, new[] { oldRotation.X, oldRotation.Y, oldRotation.Z, oldRotation.W }, after, out float[] shift, out float[] newRotation);
+        if (world)
+            run.GroupPlace[rootId] = (shift, newRotation);
+
+        foreach (Guid id in build.Parts)
+        {
+            if (!run.Parsed.ContainsKey(id))
+                continue;
+            run.Edit(id, view =>
+            {
+                float[] position = shift;
+                if (!world)
+                {
+                    // the change is in the root's own frame: it is added to the place the part's file gives
+                    float[] old = { Number(view, "GroupPosition/X"), Number(view, "GroupPosition/Y"), Number(view, "GroupPosition/Z") };
+                    PoseMath.GroupPlace(false, old, new[] { oldRotation.X, oldRotation.Y, oldRotation.Z, oldRotation.W }, after, out position, out _);
+                }
+                return VectorEdits("GroupPosition", position);
+            });
+            run.Plan1(id, "groupPosition");
+        }
+        if (change.Turned)
+        {
+            run.Edit(rootId, view => QuatEdits("RotationOffset", newRotation));
+            run.Plan1(rootId, "rotation");
+        }
+        return "the whole linkset " + change.Describe(true, true) + " with its root part";
+    }
+
+    private static float Number(PartView view, string path) =>
+        float.TryParse(view.Text(path), NumberStyles.Float, Inv, out float v) ? v : throw new InvalidDataException("the part has no number at '" + path + "'");
+
+    private static string Text(float v) => (Math.Abs(v) < 1e-7f ? 0f : (float)Math.Round(v, 6)).ToString("R", Inv);
+
+    private static IEnumerable<ElementEdit> VectorEdits(string element, float[] v)
+    {
+        yield return ElementEdit.SetText(element + "/X", Text(v[0]));
+        yield return ElementEdit.SetText(element + "/Y", Text(v[1]));
+        yield return ElementEdit.SetText(element + "/Z", Text(v[2]));
+    }
+
+    private static IEnumerable<ElementEdit> QuatEdits(string element, float[] q)
+    {
+        yield return ElementEdit.SetText(element + "/X", Text(q[0]));
+        yield return ElementEdit.SetText(element + "/Y", Text(q[1]));
+        yield return ElementEdit.SetText(element + "/Z", Text(q[2]));
+        yield return ElementEdit.SetText(element + "/W", Text(q[3]));
+    }
+
     // ------------------------------------------------------------------ one part
 
-    private void Judge(PartReport report, PartNode up, PartNode op, GlbFile user, GlbFile original, Dictionary<Guid, ParsedPart> parsed,
-        Dictionary<Guid, EligibilityRow> rows, ArchiveRewriter rewriter, List<ConvertedPart> converted, Dictionary<Guid, byte[]> meshes,
-        ref Dictionary<Guid, PartRow> scanRows, string sourcePath, RestoreResult result)
+    private void Judge(Run run, PartReport report, PartNode up, PartNode op, GlbFile user, GlbFile original,
+        NodeFrame userFrame, NodeFrame originFrame, string groupMove)
     {
         Stopwatch readClock = Stopwatch.StartNew();
-        PartGeometry before = PartGeometry.FromNode(original, op.Node);
-        PartGeometry after = PartGeometry.FromNode(user, up.Node);
+        NodePose poseBefore = originFrame.Relative(op.Node.Index), poseAfter = userFrame.Relative(up.Node.Index);
+        PoseChange pose = PoseMath.Compare(poseBefore, poseAfter, m_options.Tolerance.Position);
+        run.Parsed.TryGetValue(up.PartId, out ParsedPart pp);
+        bool isRoot = pp?.Part.IsRoot == true;
+        if (isRoot)
+        {
+            // a root part's place is the linkset's place, handled with the whole group; only a resize is the part's own
+            pose.Moved = false;
+            pose.Turned = false;
+        }
+        PartGeometry before = PartGeometry.FromNode(original, op.Node, null, false);
+        PartGeometry after = PartGeometry.FromNode(user, up.Node, null, false);
         if (readClock.ElapsedMilliseconds > 2000)
-            m_options.Progress?.Invoke("link " + op.LinkNum.ToString(CultureInfo.InvariantCulture) + " '" + op.Name + "': read " + before.TriangleCount.ToString(CultureInfo.InvariantCulture) + " + " + after.TriangleCount.ToString(CultureInfo.InvariantCulture) + " triangles in " + (readClock.ElapsedMilliseconds / 1000.0).ToString("0.0", CultureInfo.InvariantCulture) + " s");
+            m_options.Progress?.Invoke("link " + op.LinkNum.ToString(Inv) + " '" + op.Name + "': read " + before.TriangleCount.ToString(Inv) + " + " + after.TriangleCount.ToString(Inv) + " triangles in " + (readClock.ElapsedMilliseconds / 1000.0).ToString("0.0", Inv) + " s");
 
         void Refuse(string code, string detail)
         {
@@ -186,11 +371,9 @@ public sealed class ArchiveRestorer
             report.Detail = detail;
         }
 
-        string moved = TransformChange(op.Node, up.Node, m_options.Tolerance);
         if (before.TriangleCount == 0 && after.TriangleCount == 0)
         {
-            if (moved != null) { Refuse("PART_MOVED", moved); return; }
-            report.Outcome = PartOutcome.Unchanged;
+            PlaceOnly(run, report, up.PartId, pp, pose, poseAfter, groupMove);
             return;
         }
         if (after.PrimitivesWithoutFaceNumbers > 0 && after.TriangleCount > 0 && before.PrimitivesWithoutFaceNumbers == 0)
@@ -202,25 +385,19 @@ public sealed class ArchiveRestorer
         Stopwatch compareClock = Stopwatch.StartNew();
         GeometryComparison cmp = GeometryComparer.Compare(before, after, m_options.Tolerance);
         if (compareClock.ElapsedMilliseconds > 2000)
-            m_options.Progress?.Invoke("link " + op.LinkNum.ToString(CultureInfo.InvariantCulture) + " '" + op.Name + "': compared " + before.TriangleCount.ToString(CultureInfo.InvariantCulture) + " triangles in " + (compareClock.ElapsedMilliseconds / 1000.0).ToString("0.0", CultureInfo.InvariantCulture) + " s");
+            m_options.Progress?.Invoke("link " + op.LinkNum.ToString(Inv) + " '" + op.Name + "': compared " + before.TriangleCount.ToString(Inv) + " triangles in " + (compareClock.ElapsedMilliseconds / 1000.0).ToString("0.0", Inv) + " s");
         report.MaxPosition = cmp.MaxPosition;
         report.MaxNormal = cmp.MaxNormal;
         report.MaxUv = cmp.MaxUv;
         if (cmp.Equal)
         {
-            if (moved != null) { Refuse("PART_MOVED", moved); return; }
-            report.Outcome = PartOutcome.Unchanged;
-            return;
-        }
-        if (moved != null)
-        {
-            Refuse("PART_MOVED", moved + " (and its geometry changed: " + cmp.Difference + ")");
+            PlaceOnly(run, report, up.PartId, pp, pose, poseAfter, groupMove);
             return;
         }
 
         // ---- the part's geometry changed: it can only become a mesh part
-        m_options.Progress?.Invoke("link " + op.LinkNum.ToString(CultureInfo.InvariantCulture) + " '" + op.Name + "': geometry changed (" + cmp.Difference + ")");
-        if (!parsed.TryGetValue(up.PartId, out ParsedPart pp) || pp.Shape == null || !rows.TryGetValue(up.PartId, out EligibilityRow row))
+        m_options.Progress?.Invoke("link " + op.LinkNum.ToString(Inv) + " '" + op.Name + "': geometry changed (" + cmp.Difference + ")");
+        if (pp == null || pp.Shape == null || !run.Rows.TryGetValue(up.PartId, out EligibilityRow row))
         {
             Refuse("NO_PART_DATA", "the original archive holds no shape for this part");
             return;
@@ -235,29 +412,32 @@ public sealed class ArchiveRestorer
             Refuse("NOT_A_PRIM", "the part is a " + row.Kind + ", not a prim, sculpt or mesh");
             return;
         }
-        string blocked = BlockingReason(row, report, ref scanRows, sourcePath, up.PartId);
+        string blocked = BlockingReason(run, row, report, up.PartId);
         if (blocked != null)
         {
             Refuse(SplitCode(blocked), SplitDetail(blocked));
             return;
         }
-        if (after.PrimitivesWithoutFaceNumbers > 0)
+        // the node's scale is part of the edited geometry here: the mesh keeps the part's size and holds the scaled shape
+        float[] scale = { pose.ScaleRatio.X, pose.ScaleRatio.Y, pose.ScaleRatio.Z };
+        PartGeometry edited = PartGeometry.FromNode(user, up.Node, scale, false);
+        if (edited.PrimitivesWithoutFaceNumbers > 0)
         {
             Refuse("FACE_NUMBERS_LOST", "the .glb no longer says which prim face each triangle belongs to (the _PRIM_FACE attribute is missing); in Blender's export settings turn Attributes on");
             return;
         }
-        if (after.MixedTriangles > 0)
+        if (edited.MixedTriangles > 0)
         {
-            Refuse("FACES_JOINED", after.MixedTriangles + " triangles take their corners from more than one prim face; keep each face's triangles whole");
+            Refuse("FACES_JOINED", edited.MixedTriangles + " triangles take their corners from more than one prim face; keep each face's triangles whole");
             return;
         }
-        if (after.TriangleCount == 0)
+        if (edited.TriangleCount == 0)
         {
-            Refuse("NO_GEOMETRY", "the part has no triangles left; deleting a part is not restored in this version");
+            Refuse("NO_GEOMETRY", "the part has no triangles left; to delete a part, delete its node (--stub-deleted keeps it as an invisible stub)");
             return;
         }
-        int maxFace = after.Faces.Keys.Max();
-        if (after.Faces.ContainsKey(-1) || maxFace < 0)
+        int maxFace = edited.Faces.Keys.Max();
+        if (edited.Faces.ContainsKey(-1) || maxFace < 0)
         {
             Refuse("FACE_NUMBERS_LOST", "a triangle carries no prim face number");
             return;
@@ -270,11 +450,19 @@ public sealed class ArchiveRestorer
             return;
         }
 
+        Stopwatch buildClock = Stopwatch.StartNew();
         List<EncoderFace> faces;
-        try { faces = BuildFaces(after, user, pp.Scale, faceCount); }
+        List<int> sourceSlot;
+        try { faces = BuildFaces(edited, user, pp.Scale, Vector3.Zero, faceCount, out sourceSlot); }
         catch (Exception e) when (e is InvalidOperationException || e is ArgumentException || e is IndexOutOfRangeException)
         {
             Refuse("GEOMETRY_FAILED", e.GetType().Name + ": " + e.Message);
+            return;
+        }
+        bool split = faces.Count > faceCount;
+        if (faces.Count > MeshShape.MaxFaces)
+        {
+            Refuse("FACES_GT8", "a face has more than " + FaceBuilder.SplitAtVertices + " vertices and splitting it, as the viewer's uploader does, would give the part " + faces.Count + " faces; a mesh part has at most " + MeshShape.MaxFaces);
             return;
         }
 
@@ -286,47 +474,99 @@ public sealed class ArchiveRestorer
             Refuse("ENCODE_FAILED", e.GetType().Name + ": " + e.Message);
             return;
         }
+        if (buildClock.ElapsedMilliseconds > 2000)
+            m_options.Progress?.Invoke("link " + op.LinkNum.ToString(Inv) + " '" + op.Name + "': built and encoded in " + (buildClock.ElapsedMilliseconds / 1000.0).ToString("0.0", Inv) + " s");
         List<string> problems = MeshValidator.Check(bytes, faces, out _, physics);
         if (problems.Count > 0)
         {
-            result.Invalid.Add("link " + op.LinkNum.ToString(CultureInfo.InvariantCulture) + " '" + op.Name + "': " + string.Join("; ", problems));
+            run.Result.Invalid.Add("link " + op.LinkNum.ToString(Inv) + " '" + op.Name + "': " + string.Join("; ", problems));
             Refuse("MESH_INVALID", string.Join("; ", problems));
             return;
         }
         Guid id = MeshId.FromBytes(bytes);
         if (StandInIds.Is(id))
             throw new RestoreException("a stand-in mesh id remains for part " + up.PartId);
-        meshes.TryAdd(id, bytes);
+        run.Meshes.TryAdd(id, bytes);
 
         byte[] extra = pp.ExtraParams;
         int shapeTypeBefore = pp.PhysicsShapeType;
         // As the converter does for a prim: the region gives a root part of type None its default type when it applies
         // physics, which for the prim was Prim and would be convex for a mesh, so a converted root is set to Prim.
         bool rootNone = shapeTypeBefore == PhysShapeNone && pp.Part.IsRoot && row.Kind != "mesh";
-        int shapeTypeAfter = rootNone ? PhysShapePrim : shapeTypeBefore;
         int faceTotal = faces.Count;
-        rewriter.AddPatch(new PartPatch(up.PartId, present =>
+        byte[] newTextureEntry = split ? ExpandTextureEntry(pp.TextureEntry, sourceSlot) : null;
+        run.Edit(up.PartId, view =>
         {
-            List<ElementEdit> edits = new List<ElementEdit>(MeshShape.Edits(faceTotal, id, extra, present));
-            if (rootNone && present.Contains("PhysicsShapeType"))
-                edits.Add(ElementEdit.SetText("PhysicsShapeType", PhysShapePrim.ToString(CultureInfo.InvariantCulture)));
+            List<ElementEdit> edits = new List<ElementEdit>(MeshShape.Edits(faceTotal, id, extra, view.Present));
+            if (rootNone && view.Present.Contains("PhysicsShapeType"))
+                edits.Add(ElementEdit.SetText("PhysicsShapeType", PhysShapePrim.ToString(Inv)));
+            if (newTextureEntry != null)
+                edits.Add(ElementEdit.SetText("Shape/TextureEntry", Convert.ToBase64String(newTextureEntry)));
             return edits;
-        }));
-
-        converted.Add(new ConvertedPart
-        {
-            PartId = up.PartId, Build = row.Build, LinkNum = row.LinkNum, Name = row.Name, Kind = row.Kind, Faces = faceTotal,
-            EmptyFaces = faces.Count(f => f.IsEmpty), Triangles = faces.Sum(f => f.TriangleCount), MeshId = id, ServerFacesBefore = row.ServerFaces,
-            PhysicsVertices = physics?.VertexCount ?? 0, PhysicsTriangles = physics?.TriangleCount ?? 0,
-            PhysicsShapeTypeBefore = shapeTypeBefore, PhysicsShapeTypeAfter = shapeTypeAfter
         });
+        run.Plan1(up.PartId, "shape", faceTotal);
+        if (rootNone)
+            run.Plan1(up.PartId, "physics");
+        if (newTextureEntry != null)
+            run.Plan1(up.PartId, "textureEntry");
+        string placed = PlaceEdits(run, up.PartId, pp, pose, poseAfter, false);
+
         report.Outcome = PartOutcome.Rebuilt;
         report.Faces = faceTotal;
         report.Triangles = faces.Sum(f => f.TriangleCount);
         report.MeshId = id;
-        report.Detail = cmp.Difference;
+        report.Detail = cmp.Difference + (placed.Length > 0 ? "; " + placed : string.Empty);
+        if (split)
+            report.Notes.Add("a face had more than " + FaceBuilder.SplitAtVertices + " vertices and was split into parts, as the viewer's uploader does; the part has " + faceTotal + " faces and each part keeps the texture settings of its face");
         if (physics == null)
             report.Notes.Add("the physics mesh has more vertices than a mesh asset can index; the part collides as its bounding hull");
+    }
+
+    /// <summary>The geometry is the original's: only the place or size may have changed, and the shape stays as it was.</summary>
+    private void PlaceOnly(Run run, PartReport report, Guid partId, ParsedPart pp, PoseChange pose, NodePose poseAfter, string groupMove)
+    {
+        string placed = pp == null ? string.Empty : PlaceEdits(run, partId, pp, pose, poseAfter, true);
+        if (groupMove != null)
+            placed = placed.Length > 0 ? groupMove + "; " + placed : groupMove;
+        if (placed.Length == 0)
+        {
+            report.Outcome = PartOutcome.Unchanged;
+            return;
+        }
+        report.Outcome = PartOutcome.Moved;
+        report.Detail = placed;
+    }
+
+    /// <summary>
+    /// The edits for a part that moved, turned or was resized. A moved or turned child gets its position or rotation inside the
+    /// linkset; a resized part its new size (the size multiplied by the node's scale change). Returns the words for the report.
+    /// </summary>
+    private string PlaceEdits(Run run, Guid partId, ParsedPart pp, PoseChange pose, NodePose poseAfter, bool withScale)
+    {
+        List<string> said = new List<string>();
+        if (pose.Moved)
+        {
+            float[] position = PoseMath.ViewerVector(poseAfter.Translation);
+            run.Edit(partId, view => VectorEdits("OffsetPosition", position));
+            run.Plan1(partId, "position");
+            said.Add("moved " + pose.Distance.ToString("0.####", Inv) + " m");
+        }
+        if (pose.Turned)
+        {
+            float[] rotation = PoseMath.ViewerQuat(poseAfter.Rotation);
+            run.Edit(partId, view => QuatEdits("RotationOffset", rotation));
+            run.Plan1(partId, "rotation");
+            said.Add("turned");
+        }
+        if (pose.Scaled && withScale && pp != null)
+        {
+            float[] ratio = PoseMath.ViewerScale(pose.ScaleRatio);
+            float[] size = { pp.Scale.X * ratio[0], pp.Scale.Y * ratio[1], pp.Scale.Z * ratio[2] };
+            run.Edit(partId, view => VectorEdits("Scale", size));
+            run.Plan1(partId, "scale");
+            said.Add("resized to " + size[0].ToString("0.####", Inv) + " x " + size[1].ToString("0.####", Inv) + " x " + size[2].ToString("0.####", Inv) + " m");
+        }
+        return string.Join(", ", said);
     }
 
     private static string SplitCode(string blocked) => blocked.Substring(0, blocked.IndexOf('|'));
@@ -336,7 +576,7 @@ public sealed class ArchiveRestorer
     /// The reason a changed part may not be rebuilt, as "CODE|detail", or null. Script reasons are overridden by
     /// --allow-unsafe and recorded in the part's notes; every other reason stands.
     /// </summary>
-    private string BlockingReason(EligibilityRow row, PartReport report, ref Dictionary<Guid, PartRow> scanRows, string sourcePath, Guid partId)
+    private string BlockingReason(Run run, EligibilityRow row, PartReport report, Guid partId)
     {
         string[] hard = { ReasonCodes.ExportDenied, ReasonCodes.Physical, ReasonCodes.PhysicalScript, ReasonCodes.Flexi };
         EligibilityReason stop = row.Reasons.FirstOrDefault(r => hard.Contains(r.Code));
@@ -353,14 +593,14 @@ public sealed class ArchiveRestorer
         else if (row.Reasons.Any(r => r.Code == ReasonCodes.AlreadyMesh))
         {
             // the eligibility rules stop at "already a mesh" and do not look at its scripts: look at them here
-            scanRows ??= new ArchiveScriptScanner(new ScanOptions { AssumeSafeUnscanned = m_options.AssumeSafeUnscanned }).Scan(sourcePath).Parts.GroupBy(p => p.PartId).ToDictionary(g => g.Key, g => g.First());
-            if (scanRows.TryGetValue(partId, out PartRow sr) && PartDecisionNames.IsKept(sr.Decision))
+            run.ScanRows ??= new ArchiveScriptScanner(new ScanOptions { AssumeSafeUnscanned = m_options.AssumeSafeUnscanned }).Scan(run.SourcePath).Parts.GroupBy(p => p.PartId).ToDictionary(g => g.Key, g => g.First());
+            if (run.ScanRows.TryGetValue(partId, out PartRow sr) && PartDecisionNames.IsKept(sr.Decision))
             {
                 bool unsafeHit = sr.Decision == PartDecision.KeepPrimUnsafe;
                 string level = unsafeHit ? "unsafe" : "uncertain";
                 scriptCode = unsafeHit ? ReasonCodes.ScriptUnsafe : ReasonCodes.ScriptUncertain;
                 scriptDetail = "script scan: " + string.Join("; ", sr.Reasons.Where(r => r.Level == level).Take(6).Select(r =>
-                    r.Code + (string.IsNullOrEmpty(r.Script) ? string.Empty : " in script '" + Sanitize.Text(r.Script) + "'" + (r.Line > 0 ? " line " + r.Line.ToString(CultureInfo.InvariantCulture) : string.Empty))));
+                    r.Code + (string.IsNullOrEmpty(r.Script) ? string.Empty : " in script '" + Sanitize.Text(r.Script) + "'" + (r.Line > 0 ? " line " + r.Line.ToString(Inv) : string.Empty))));
             }
         }
         if (scriptCode != null)
@@ -374,8 +614,12 @@ public sealed class ArchiveRestorer
 
     // ------------------------------------------------------------------ geometry
 
-    /// <summary>The part's triangles as faces in the unit box: the node's metres, back in viewer axes, divided by the part's size.</summary>
-    private static List<EncoderFace> BuildFaces(PartGeometry g, GlbFile user, Vector3 size, int faceCount)
+    /// <summary>
+    /// The part's triangles as faces in the unit box: the node's metres, back in viewer axes, the centre taken away and divided by
+    /// the part's size. A face of 65 532 vertices or more is split as the viewer's uploader splits it
+    /// (<see cref="FaceBuilder.SlotsSplit"/>); <paramref name="sourceSlot"/> says which slot each resulting face came from.
+    /// </summary>
+    private static List<EncoderFace> BuildFaces(PartGeometry g, GlbFile user, Vector3 size, Vector3 center, int faceCount, out List<int> sourceSlot)
     {
         float sx = size.X != 0 ? size.X : 1f, sy = size.Y != 0 ? size.Y : 1f, sz = size.Z != 0 ? size.Z : 1f;
         List<PrimFace> primFaces = new List<PrimFace>();
@@ -392,7 +636,7 @@ public sealed class ArchiveRestorer
                 {
                     int o = c * 8, p = t * 9 + c * 3, q = t * 6 + c * 2;
                     // glTF (x, y, z) is the viewer's (x, -z, y)
-                    pos[p] = tri[o] / sx; pos[p + 1] = -tri[o + 2] / sy; pos[p + 2] = tri[o + 1] / sz;
+                    pos[p] = (tri[o] - center.X) / sx; pos[p + 1] = (-tri[o + 2] - center.Y) / sy; pos[p + 2] = (tri[o + 1] - center.Z) / sz;
                     float nx = tri[o + 3] * sx, ny = -tri[o + 5] * sy, nz = tri[o + 4] * sz;
                     float len = MathF.Sqrt(nx * nx + ny * ny + nz * nz);
                     if (len > 1e-12f) { nx /= len; ny /= len; nz /= len; }
@@ -404,7 +648,7 @@ public sealed class ArchiveRestorer
             }
             primFaces.Add(new PrimFace { Number = kv.Key, Kind = PrimFaceKind.Outer, MesherNumber = kv.Key, Positions = pos, Normals = nor, Uvs = uv });
         }
-        return FaceBuilder.Slots(primFaces, faceCount);
+        return FaceBuilder.SlotsSplit(primFaces, faceCount, out sourceSlot);
     }
 
     /// <summary>Undoes <c>UvTransform.Bake</c> for the three corners at <paramref name="at"/>: the exporter wrote the viewer's repeat, offset and rotation into the coordinates of such a face.</summary>
@@ -440,37 +684,104 @@ public sealed class ArchiveRestorer
     /// </summary>
     private static PhysicsGeometry PhysicsFrom(List<EncoderFace> faces, Vector3 size)
     {
-        List<float> positions = new List<float>();
-        List<int> indices = new List<int>();
+        int vertexTotal = 0, indexTotal = 0;
+        foreach (EncoderFace f in faces)
+            if (!f.IsEmpty)
+            {
+                vertexTotal += f.VertexCount;
+                indexTotal += f.Indices.Length;
+            }
+        if (indexTotal == 0)
+            return null;
+        float[] positions = new float[vertexTotal * 3];
+        int[] indices = new int[indexTotal];
+        int vertexAt = 0, indexAt = 0;
         foreach (EncoderFace f in faces)
         {
             if (f.IsEmpty)
                 continue;
-            int baseIndex = positions.Count / 3;
-            positions.AddRange(f.Positions);
+            Array.Copy(f.Positions, 0, positions, vertexAt * 3, f.Positions.Length);
             foreach (uint i in f.Indices)
-                indices.Add(baseIndex + (int)i);
+                indices[indexAt++] = vertexAt + (int)i;
+            vertexAt += f.VertexCount;
         }
-        if (indices.Count == 0)
-            return null;
-        PhysicsGeometry g = new PhysicsGeometry { Positions = positions.ToArray(), Indices = indices.ToArray() };
+        PhysicsGeometry g = new PhysicsGeometry { Positions = positions, Indices = indices };
         if (size.X < BoxBelow && size.Y < BoxBelow && size.Z < BoxBelow)
             return PrimPhysics.BoundingBox(g);
         return g.VertexCount > 65535 ? null : g;
     }
 
-    private static string TransformChange(GlbNode before, GlbNode after, GeometryTolerance tol)
+    /// <summary>
+    /// The texture entry of a part whose faces were split: the new face j takes the settings of the face it was cut from.
+    /// </summary>
+    private static byte[] ExpandTextureEntry(byte[] textureEntry, List<int> sourceSlot)
     {
-        float[] ta = before.Translation ?? new float[3], tb = after.Translation ?? new float[3];
-        float dt = Math.Max(Math.Abs(ta[0] - tb[0]), Math.Max(Math.Abs(ta[1] - tb[1]), Math.Abs(ta[2] - tb[2])));
-        if (dt > tol.Position)
-            return "the part was moved by " + dt.ToString("0.####", CultureInfo.InvariantCulture) + " m inside its build; moving a part is not restored in this version";
-        float[] ra = before.Rotation ?? new float[] { 0, 0, 0, 1 }, rb = after.Rotation ?? new float[] { 0, 0, 0, 1 };
-        float dot = Math.Abs(ra[0] * rb[0] + ra[1] * rb[1] + ra[2] * rb[2] + ra[3] * rb[3]);
-        float la = MathF.Sqrt(ra[0] * ra[0] + ra[1] * ra[1] + ra[2] * ra[2] + ra[3] * ra[3]), lb = MathF.Sqrt(rb[0] * rb[0] + rb[1] * rb[1] + rb[2] * rb[2] + rb[3] * rb[3]);
-        if (la > 0 && lb > 0 && dot / (la * lb) < 1f - 1e-6f)
-            return "the part was turned inside its build; turning a part is not restored in this version";
-        return null;
+        if (textureEntry == null || textureEntry.Length <= 16)
+            return null;
+        try
+        {
+            Primitive.TextureEntry old = new Primitive.TextureEntry(textureEntry, 0, textureEntry.Length);
+            Primitive.TextureEntry made = new Primitive.TextureEntry(old.DefaultTexture.TextureID);
+            CopyFace(old.DefaultTexture, made.DefaultTexture);
+            for (int j = 0; j < sourceSlot.Count && j < made.FaceTextures.Length; j++)
+            {
+                Primitive.TextureEntryFace from = sourceSlot[j] < old.FaceTextures.Length ? old.FaceTextures[sourceSlot[j]] : null;
+                if (from != null)
+                    CopyFace(from, made.CreateFace((uint)j));
+            }
+            return made.GetBytes();
+        }
+        catch (Exception e) when (e is ArgumentException || e is IndexOutOfRangeException || e is InvalidOperationException || e is NullReferenceException)
+        {
+            // a texture entry that cannot be read stays as it is; the new faces then use its default
+            return null;
+        }
+    }
+
+    private static void CopyFace(Primitive.TextureEntryFace from, Primitive.TextureEntryFace to)
+    {
+        to.TextureID = from.TextureID;
+        to.RGBA = from.RGBA;
+        to.RepeatU = from.RepeatU; to.RepeatV = from.RepeatV;
+        to.OffsetU = from.OffsetU; to.OffsetV = from.OffsetV;
+        to.Rotation = from.Rotation;
+        to.Glow = from.Glow;
+        to.Bump = from.Bump;
+        to.Shiny = from.Shiny;
+        to.Fullbright = from.Fullbright;
+        to.MediaFlags = from.MediaFlags;
+        to.TexMapType = from.TexMapType;
+        to.MaterialID = from.MaterialID;
+    }
+
+    // ------------------------------------------------------------------ the plan the parity check uses
+
+    private static string PlanJson(Run run)
+    {
+        JsonObject root = new JsonObject { ["version"] = 1 };
+        JsonArray changes = new JsonArray();
+        foreach (PlanChange c in run.Plan)
+        {
+            JsonObject o = new JsonObject { ["part"] = c.Part.ToString(), ["field"] = c.Field };
+            if (c.Field == "shape")
+            {
+                o["to"] = "mesh";
+                o["faces"] = c.Faces;
+            }
+            changes.Add(o);
+        }
+        root["partChanges"] = changes;
+        JsonArray added = new JsonArray();
+        foreach (Guid id in run.AddedParts)
+            added.Add(id.ToString());
+        root["addedParts"] = added;
+        JsonArray entries = new JsonArray();
+        foreach (Guid id in run.Meshes.Keys.OrderBy(g => g.ToString(), StringComparer.Ordinal))
+            entries.Add("assets/" + id.ToString("D") + "_mesh.llmesh");
+        foreach (Guid id in run.Textures.NewAssets.Select(a => a.Key).OrderBy(g => g.ToString(), StringComparer.Ordinal))
+            entries.Add("assets/" + id.ToString("D") + "_texture.jp2");
+        root["addedEntries"] = entries;
+        return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
     }
 
     // ------------------------------------------------------------------ matching
@@ -517,22 +828,58 @@ public sealed class ArchiveRestorer
         return candidates[0];
     }
 
-    /// <summary>A .glb whose parts are not the original build's parts, one for one, is refused (added and deleted parts are not restored in this version).</summary>
-    private static void CheckLinkset(string label, List<PartNode> user, List<PartNode> original)
+    /// <summary>
+    /// Sorts the .glb's nodes into the parts the original had and the nodes that are new: a node with a mesh and no part id; a copy
+    /// of a part (Blender copies the custom properties, so two nodes carry one part id; the one named as the original is the part
+    /// and the others are new); a node whose part id is not in the original build. A part whose link number changed refuses the
+    /// whole file, because link numbers are what scripts and the region's link messages use.
+    /// </summary>
+    private static void SortNodes(GlbFile user, List<PartNode> userParts, List<PartNode> original, string label, out List<PartNode> kept, out List<PartNode> added)
     {
+        kept = new List<PartNode>();
+        added = new List<PartNode>();
+        Dictionary<Guid, PartNode> originalById = original.ToDictionary(p => p.PartId);
+        foreach (IGrouping<Guid, PartNode> group in userParts.GroupBy(p => p.PartId))
+        {
+            List<PartNode> nodes = group.ToList();
+            if (!originalById.TryGetValue(group.Key, out PartNode op))
+            {
+                added.AddRange(nodes);
+                continue;
+            }
+            PartNode keep = nodes.FirstOrDefault(n => string.Equals(StripCopySuffix(n.Node.Name), op.Name, StringComparison.Ordinal) && n.Node.Name == StripCopySuffix(n.Node.Name))
+                ?? nodes.FirstOrDefault(n => string.Equals(StripCopySuffix(n.Node.Name), op.Name, StringComparison.Ordinal)) ?? nodes[0];
+            kept.Add(keep);
+            added.AddRange(nodes.Where(n => n != keep));
+        }
         List<string> problems = new List<string>();
-        foreach (IGrouping<Guid, PartNode> dup in user.GroupBy(p => p.PartId).Where(g => g.Count() > 1))
-            problems.Add("part " + dup.Key + " appears " + dup.Count() + " times (a copied part is a new part)");
-        HashSet<Guid> have = user.Select(p => p.PartId).ToHashSet(), want = original.Select(p => p.PartId).ToHashSet();
-        foreach (PartNode p in original.Where(p => !have.Contains(p.PartId)))
-            problems.Add("the part '" + p.Name + "' (link " + p.LinkNum.ToString(CultureInfo.InvariantCulture) + ", " + p.PartId + ") is missing");
-        foreach (PartNode p in user.Where(p => !want.Contains(p.PartId)))
-            problems.Add("the part '" + p.Name + "' (" + p.PartId + ") is not in the original build");
-        Dictionary<Guid, int> links = original.GroupBy(p => p.PartId).ToDictionary(g => g.Key, g => g.First().LinkNum);
-        foreach (PartNode p in user.Where(p => links.TryGetValue(p.PartId, out int l) && l != p.LinkNum))
-            problems.Add("the part '" + p.Name + "' has link number " + p.LinkNum.ToString(CultureInfo.InvariantCulture) + " and had " + links[p.PartId].ToString(CultureInfo.InvariantCulture));
+        foreach (PartNode p in kept)
+        {
+            int was = originalById[p.PartId].LinkNum;
+            if (was != p.LinkNum)
+                problems.Add("the part '" + p.Name + "' has link number " + p.LinkNum.ToString(Inv) + " and had " + was.ToString(Inv));
+        }
         if (problems.Count > 0)
-            throw new RestoreException("'" + label + "' does not match the original build part for part; nothing was written. Adding, deleting and renumbering parts is not restored in this version. " + string.Join(" ", problems.Take(8)) + (problems.Count > 8 ? " (and " + (problems.Count - 8) + " more)" : string.Empty));
+            throw new RestoreException("'" + label + "' does not match the original build: link numbers are not renumbered; nothing was written. " + string.Join(" ", problems.Take(8)) + (problems.Count > 8 ? " (and " + (problems.Count - 8) + " more)" : string.Empty));
+
+        foreach (GlbNode n in user.Nodes)
+        {
+            if (n.Mesh < 0 || GlbFile.Str(n.Extras, "partUuid") != null || GlbFile.Str(n.Extras, "kind") == "object")
+                continue;
+            added.Add(new PartNode { Node = n, PartId = Guid.Empty, Name = n.Name });
+        }
+        added.Sort((a, b) => a.Node.Index.CompareTo(b.Node.Index));
+    }
+
+    /// <summary>The name without Blender's ".001" suffix for a second object of one name.</summary>
+    private static string StripCopySuffix(string name)
+    {
+        if (name == null)
+            return string.Empty;
+        int dot = name.LastIndexOf('.');
+        if (dot > 0 && dot < name.Length - 1 && name.Skip(dot + 1).All(char.IsAsciiDigit))
+            return name.Substring(0, dot);
+        return name;
     }
 
     private static List<FreshBuild> IndexFresh(string work)

@@ -40,6 +40,8 @@ internal sealed class KitPart
     public ShapeData Shape = FaceMatrix.Shape("box", "plain");
     public Guid SculptTexture;
     public string ExtraParams = "";
+    /// <summary>The TextureEntry element, base64; the default is a block of zeros.</summary>
+    public string TextureEntry = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
     public uint BaseMask = 2147483647, OwnerMask = 2147483647, EveryoneMask;
     public List<KitItem> Items = new List<KitItem>();
 
@@ -96,7 +98,7 @@ internal static class EligibilityKit
             sb.Append("<Vehicle><TYPE>1</TYPE><FLAGS>0</FLAGS></Vehicle>");
         sb.Append("<Shape>");
         sb.Append("<ProfileCurve>").Append(s.ProfileCurve).Append("</ProfileCurve>");
-        sb.Append("<TextureEntry>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</TextureEntry>");
+        sb.Append("<TextureEntry>").Append(p.TextureEntry).Append("</TextureEntry>");
         sb.Append("<ExtraParams>").Append(p.ExtraParams).Append("</ExtraParams>");
         sb.Append("<PathBegin>").Append(s.PathBegin).Append("</PathBegin><PathCurve>").Append(s.PathCurve).Append("</PathCurve><PathEnd>").Append(s.PathEnd).Append("</PathEnd>");
         sb.Append("<PathRadiusOffset>").Append(s.PathRadiusOffset).Append("</PathRadiusOffset><PathRevolutions>").Append(s.PathRevolutions).Append("</PathRevolutions>");

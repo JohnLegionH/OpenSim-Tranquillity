@@ -26,6 +26,8 @@ public sealed class RewriteSummary
     /// <summary>Parts patched.</summary>
     public long ObjectsPatched { get; set; }
     public long AssetsAdded { get; set; }
+    /// <summary>New parts inserted into object files.</summary>
+    public long PartsAdded { get; set; }
     /// <summary>Entries in the output (copied, patched and added).</summary>
     public long EntriesWritten { get; set; }
     public bool ControlFileFirst { get; set; }
@@ -43,6 +45,7 @@ public sealed class RewriteSummary
 public sealed class ArchiveRewriter
 {
     private readonly Dictionary<Guid, PartPatch> m_patches = new Dictionary<Guid, PartPatch>();
+    private readonly List<PartInsertion> m_insertions = new List<PartInsertion>();
     private readonly List<(string name, byte[] data)> m_assets = new List<(string, byte[])>();
 
     /// <summary>Registers the edits for one part. A part can be patched once per rewrite.</summary>
@@ -51,6 +54,13 @@ public sealed class ArchiveRewriter
         ArgumentNullException.ThrowIfNull(patch);
         if (!m_patches.TryAdd(patch.PartId, patch))
             throw new InvalidOperationException("part " + patch.PartId + " already has a patch in this rewrite");
+    }
+
+    /// <summary>Registers a new part to be added to the group of an existing part.</summary>
+    public void AddPart(PartInsertion insertion)
+    {
+        ArgumentNullException.ThrowIfNull(insertion);
+        m_insertions.Add(insertion);
     }
 
     /// <summary>Registers a new asset, written as assets/&lt;uuid&gt;&lt;extension of the type&gt;.</summary>
@@ -107,11 +117,13 @@ public sealed class ArchiveRewriter
     private PlanResult Plan(Func<Stream> openSource)
     {
         PlanResult plan = new PlanResult();
-        if (m_patches.Count == 0 && m_assets.Count == 0)
+        if (m_patches.Count == 0 && m_assets.Count == 0 && m_insertions.Count == 0)
             return plan;
 
         HashSet<string> names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         HashSet<Guid> wanted = new HashSet<Guid>(m_patches.Keys);
+        foreach (PartInsertion ins in m_insertions)
+            wanted.Add(ins.AnchorPartId);
         string[] wantedText = wanted.Select(g => g.ToString("D")).ToArray();
         Dictionary<Guid, string> where = new Dictionary<Guid, string>();
 
@@ -174,10 +186,12 @@ public sealed class ArchiveRewriter
                 else if (plan.PartsByEntry.TryGetValue(h.Name, out HashSet<Guid> parts))
                 {
                     ObjectXml.Decoded d = ObjectXml.Decode(tar.ReadBody());
-                    Dictionary<Guid, PartPatch> mine = parts.ToDictionary(g => g, g => m_patches[g]);
-                    writer.WriteFile(h.Name, h.TypeFlag, ObjectXml.Apply(d, mine, h.Name));
+                    Dictionary<Guid, PartPatch> mine = parts.Where(g => m_patches.ContainsKey(g)).ToDictionary(g => g, g => m_patches[g]);
+                    List<PartInsertion> added = m_insertions.Where(i => parts.Contains(i.AnchorPartId)).ToList();
+                    writer.WriteFile(h.Name, h.TypeFlag, ObjectXml.Apply(d, mine, added, h.Name));
                     summary.ObjectFilesPatched++;
-                    summary.ObjectsPatched += parts.Count;
+                    summary.ObjectsPatched += mine.Count;
+                    summary.PartsAdded += added.Count;
                     summary.PatchedEntries.Add(h.Name);
                 }
                 else
