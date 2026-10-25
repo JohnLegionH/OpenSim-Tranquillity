@@ -30,5 +30,6 @@
     <ProjectReference Include="../../Source/OpenSim.Archive.ScriptScan/OpenSim.Archive.ScriptScan.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Archive.Eligibility/OpenSim.Archive.Eligibility.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Archive.Converter/OpenSim.Archive.Converter.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Archive.Restore/OpenSim.Archive.Restore.csproj" />
   </ItemGroup>
 </Project>

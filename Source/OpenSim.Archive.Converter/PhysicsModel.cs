@@ -102,7 +102,8 @@ public static class PrimPhysics
         return g != null && RegionBoxesIt(shape, size) ? BoundingBox(g) : g;
     }
 
-    private static PhysicsGeometry BoundingBox(PhysicsGeometry g)
+    /// <summary>The 8-corner bounding box of a geometry, in the order and with the triangles the region's mesher lists for a box.</summary>
+    public static PhysicsGeometry BoundingBox(PhysicsGeometry g)
     {
         float[] min = { float.MaxValue, float.MaxValue, float.MaxValue }, max = { float.MinValue, float.MinValue, float.MinValue };
         for (int i = 0; i < g.Positions.Length; i++)

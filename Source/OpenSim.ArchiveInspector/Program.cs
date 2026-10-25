@@ -27,7 +27,8 @@ Other commands: OpenSim.ArchiveInspector oar-export --help  (writes each build o
                 OpenSim.ArchiveInspector oar-compare --help  (checks a rewritten OAR against its original)
                 OpenSim.ArchiveInspector oar-scan --help  (finds parts whose scripts could break if they became mesh)
                 OpenSim.ArchiveInspector oar-eligibility --help  (decides which parts become mesh, which stay as they are, and why)
-                OpenSim.ArchiveInspector oar-convert --help  (writes a new OAR with the convertible parts turned into mesh parts)";
+                OpenSim.ArchiveInspector oar-convert --help  (writes a new OAR with the convertible parts turned into mesh parts)
+                OpenSim.ArchiveInspector oar-restore --help  (writes a new OAR from the original and its .glb files after editing in Blender)";
 
     public static int Main(string[] args)
     {
@@ -45,6 +46,8 @@ Other commands: OpenSim.ArchiveInspector oar-export --help  (writes each build o
             return EligibilityCommand.Run(args.Skip(1).ToArray());
         if (args.Length > 0 && args[0] == "oar-convert")
             return ConvertCommand.Run(args.Skip(1).ToArray());
+        if (args.Length > 0 && args[0] == "oar-restore")
+            return RestoreCommand.Run(args.Skip(1).ToArray());
 
         string input = null, jsonPath = null;
         bool all = false, stats = false;

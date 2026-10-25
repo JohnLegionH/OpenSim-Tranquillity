@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyTitle>OpenSim.Archive.Restore</AssemblyTitle>
+    <Company>http://opensimulator.org</Company>
+    <Product>OpenSim</Product>
+    <Copyright>OpenSimulator developers</Copyright>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../Source/OpenSim.Framework/OpenSim.Framework.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Archive.Inspection/OpenSim.Archive.Inspection.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Archive.GltfExport/OpenSim.Archive.GltfExport.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Archive.Rewrite/OpenSim.Archive.Rewrite.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Archive.Compare/OpenSim.Archive.Compare.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Archive.Eligibility/OpenSim.Archive.Eligibility.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Archive.ScriptScan/OpenSim.Archive.ScriptScan.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Archive.Converter/OpenSim.Archive.Converter.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="OpenSim.Archive.Restore.Tests" />
+  </ItemGroup>
+</Project>
