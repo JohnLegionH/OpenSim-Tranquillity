@@ -17,6 +17,9 @@ namespace OpenSim.ArchiveInspector;
 /// <summary>The oar-convert command: write a new OAR in which every convertible prim and sculpt part is a mesh part.</summary>
 internal static class ConvertCommand
 {
+    /// <summary>The release of oar-convert. It is separate from <see cref="OpenSim.Archive.GltfExport.ExportStamp.CurrentVersion"/>, the file format version written into a .glb, which only changes when the .glb itself changes.</summary>
+    public const string Version = "0.3";
+
     public const string Usage =
 @"Usage: OpenSim.ArchiveInspector oar-convert <archive.oar> --out <new.oar> [--plan-out <plan.json>] [--report <folder>] [--assume-safe-unscanned] [--no-clean]
        OpenSim.ArchiveInspector oar-convert <archive.oar> --merge --out <new.oar> --merge-plan-dir <folder> [--report <folder>] [--lod-pixel-limit <pixels>] [--assume-safe-unscanned]
@@ -96,7 +99,7 @@ Exit codes: 0 the check passed, 1 the parity check failed or a mesh failed its v
                         return Fail("--lod-pixel-limit needs a positive number of pixels, not '" + Sanitize.Text(args[i]) + "'");
                     break;
                 case "--version":
-                    Console.Out.WriteLine("oar-convert " + OpenSim.Archive.GltfExport.ExportStamp.CurrentVersion);
+                    Console.Out.WriteLine("oar-convert " + Version);
                     return 0;
                 case "-h":
                 case "--help":
