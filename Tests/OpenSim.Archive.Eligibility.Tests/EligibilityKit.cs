@@ -46,6 +46,8 @@ internal sealed class KitPart
     public string TextureEntry = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
     public uint BaseMask = 2147483647, OwnerMask = 2147483647, EveryoneMask;
     public List<KitItem> Items = new List<KitItem>();
+    /// <summary>Further elements of the part (sit target, hover text, surface material ...), written as they are.</summary>
+    public string ExtraXml = "";
 
     public KitPart() { }
     public KitPart(string name, int linkNum = 0) { Name = name; LinkNum = linkNum; }
@@ -122,6 +124,7 @@ internal static class EligibilityKit
         sb.Append("<OwnerID><UUID>").Append(p.Owner).Append("</UUID></OwnerID><GroupID><UUID>").Append(Guid.Empty).Append("</UUID></GroupID>");
         sb.Append("<BaseMask>").Append(p.BaseMask).Append("</BaseMask><OwnerMask>").Append(p.OwnerMask).Append("</OwnerMask><GroupMask>0</GroupMask><EveryoneMask>")
           .Append(p.EveryoneMask).Append("</EveryoneMask><NextOwnerMask>581632</NextOwnerMask>");
+        sb.Append(p.ExtraXml);
         sb.Append("</SceneObjectPart>");
         return sb.ToString();
     }
