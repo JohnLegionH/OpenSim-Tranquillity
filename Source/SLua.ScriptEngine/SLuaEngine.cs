@@ -842,6 +842,8 @@ namespace SLua.ScriptEngine
                 // (events other than the script's own state_entry and state_exit, which the runtime runs inside the script and are never posted to it);
                 // the region's own suspend queues.
                 record.Script.DropsEventsWhileSuspended = (after & (PauseReason.Estate | PauseReason.Parcel)) != 0;
+                // A script held by its object crossing does not hear chat: a listen is dropped, its other events are kept (Phlox, ProcessEventQueue, IsHeldOnlyForCrossing).
+                record.Script.DropsListensWhileSuspended = (after & PauseReason.Crossing) != 0;
                 if (before == PauseReason.None)
                     scheduler.Suspend(record.Script);
                 else if (after == PauseReason.None)

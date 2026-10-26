@@ -175,6 +175,7 @@ public sealed unsafe class Vm : IDisposable
     internal IntPtr Handle;
     readonly GCHandle _self;
     readonly List<HostFn> _fns = new();
+    readonly List<string> _names = new();
 
     public Vm(Watchdog watchdog = Watchdog.Default)
     {
@@ -189,6 +190,7 @@ public sealed unsafe class Vm : IDisposable
     {
         int id = _fns.Count;
         _fns.Add(fn);
+        _names.Add(table + "." + name);
         Host.Check($"slua_register_host_fn({table}.{name})",
             Native.slua_register_host_fn(Handle, table, name, id, &HostEntry.Call, (void*)GCHandle.ToIntPtr(_self)));
     }
@@ -202,8 +204,10 @@ public sealed unsafe class Vm : IDisposable
     {
         int startId = _fns.Count;
         _fns.Add(start);
+        _names.Add(table + "." + name);
         int takeId = _fns.Count;
         _fns.Add(take);
+        _names.Add(table + "." + name);
         Host.Check($"slua_register_pausing_fn({table}.{name})",
             Native.slua_register_pausing_fn(Handle, table, name, startId, takeId, &HostEntry.Call, (void*)GCHandle.ToIntPtr(_self)));
     }
@@ -238,6 +242,9 @@ public sealed unsafe class Vm : IDisposable
 
     internal HostFn Fn(int id) => _fns[id];
 
+    /// <summary>The "table.name" the host function with this id was registered under.</summary>
+    internal string NameOf(int id) => _names[id];
+
     public void Dispose()
     {
         if (Handle != IntPtr.Zero)
@@ -266,6 +273,7 @@ static unsafe class HostEntry
             var vm = (Vm)GCHandle.FromIntPtr((IntPtr)user).Target;
             Value[] a = new Value[nargs];
             for (int k = 0; k < nargs; k++) a[k] = Native.ToManaged(args[k]);
+            SLua.ScriptEngine.SchedulerScript.Current?.NoteHostCall(vm.NameOf(fnId));
             Value[] r = vm.Fn(fnId)(tag, a);
             if (ReferenceEquals(r, Host.Yield)) return Host.RetYield;
             if (r == null) return 0;

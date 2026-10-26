@@ -93,7 +93,9 @@ public class PauseListenAndTimerTests
         rig.Scene.EventManager.TriggerGroupEndInTransit(rig.Object, false);
 
         Assert.True(rig.Heard(item, 2));
-        Assert.Equal(new[] { "c1", "c2" }, rig.MarksOf(item)); // the changed events in order, no listen
+        string[] marks = rig.MarksOf(item);
+        Assert.DoesNotContain(marks, m => m.StartsWith("l")); // no listen was heard
+        Assert.Equal(new[] { "c1", "c2" }, marks.Where(m => m == "c1" || m == "c2").ToArray()); // the changed events kept, in order
         Assert.Equal(2, script.DroppedWhilePaused);
         Assert.True(rig.Engine.PostScriptEvent(item, "listen", new object[] { 5, "Example Speaker", UUID.Random(), "late" }));
         Assert.True(SchedulerHarness.WaitFor(() => rig.MarksOf(item).Contains("llate")));

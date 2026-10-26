@@ -98,11 +98,22 @@ namespace SLua.ScriptEngine
             Suspend(script);
         }
 
-        /// <summary>Stub: holds the script; with <paramref name="dropListens"/> a listen that reaches it meanwhile is dropped.</summary>
-        public void Suspend(SchedulerScript script, bool dropEvents, bool dropListens) => Suspend(script, dropEvents);
+        /// <summary>Holds the script; with <paramref name="dropListens"/> a listen that reaches it meanwhile is dropped, as Phlox drops it for a script held only by its object crossing.</summary>
+        public void Suspend(SchedulerScript script, bool dropEvents, bool dropListens)
+        {
+            script.DropsListensWhileSuspended = dropListens;
+            Suspend(script, dropEvents);
+        }
 
-        /// <summary>Stub: waived overruns of all scripts by the host function the step called last.</summary>
-        public System.Collections.Generic.IReadOnlyDictionary<string, long> WaivedOverrunsByFunction() => new System.Collections.Generic.Dictionary<string, long>();
+        /// <summary>Waived overruns of all scripts by the host function the step called last, for the status command.</summary>
+        public System.Collections.Generic.IReadOnlyDictionary<string, long> WaivedOverrunsByFunction()
+        {
+            var total = new System.Collections.Generic.Dictionary<string, long>();
+            foreach (ScriptWorker w in m_workers)
+                foreach (var kv in w.WaivedByFunction)
+                    total[kv.Key] = total.TryGetValue(kv.Key, out long n) ? n + kv.Value : kv.Value;
+            return total;
+        }
 
         /// <summary>Lets a suspended script go on.</summary>
         public void Resume(SchedulerScript script)

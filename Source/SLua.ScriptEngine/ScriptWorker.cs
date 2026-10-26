@@ -71,6 +71,10 @@ namespace SLua.ScriptEngine
         private long m_crashes;
         private volatile bool m_failed;
         private long m_droppedWhileStopped;
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> m_waivedByFunction = new System.Collections.Concurrent.ConcurrentDictionary<string, long>();
+
+        /// <summary>Waived overruns of this worker, by the host function the step called last.</summary>
+        internal System.Collections.Generic.IReadOnlyDictionary<string, long> WaivedByFunction => new System.Collections.Generic.Dictionary<string, long>(m_waivedByFunction);
         private long m_droppedUnhandled;
         private long m_droppedFull;
         private long m_cycles;
@@ -376,7 +380,7 @@ namespace SLua.ScriptEngine
                 Interlocked.Increment(ref m_droppedUnhandled);
                 return;
             }
-            if (s.Suspended && s.DropsEventsWhileSuspended)
+            if (s.Suspended && (s.DropsEventsWhileSuspended || (s.DropsListensWhileSuspended && eventIndex == ListenEvent())))
             {
                 s.CountPausedDrop();
                 return;
@@ -418,7 +422,7 @@ namespace SLua.ScriptEngine
                 }
                 s.Events.Clear();
                 s.TimerQueued = false;
-                HoldTimer(s);
+                HoldTimer(s, keepTimeLeft: false);
                 Reschedule(s);
                 return;
             }
@@ -442,22 +446,35 @@ namespace SLua.ScriptEngine
             if (s.State == ScriptRunState.Removed || s.State == ScriptRunState.Loading)
                 return;
             if (suspended)
-                HoldTimer(s);
+                HoldTimer(s, keepTimeLeft: true);
             else
                 RearmTimer(s);
             Reschedule(s);
         }
 
         /// <summary>A timer that is held keeps its interval and fires no tick; <see cref="RearmTimer"/> counts it again from now.</summary>
-        private void HoldTimer(SchedulerScript s)
+        private void HoldTimer(SchedulerScript s, bool keepTimeLeft)
         {
+            // A pause keeps the time the timer had left and the resume carries on with it, as Phlox does
+            // (PhloxExecutionScheduler.PauseForParcel keeps it, ResumeForParcel restores it). A timer already held keeps what it kept.
+            if (s.TimerArmed)
+            {
+                s.TimerHeldLeft = keepTimeLeft ? Math.Max(0, Math.Min(s.TimerDue - Now(), s.TimerInterval)) : -1;
+                s.TimerArmed = false;
+            }
+            else if (!keepTimeLeft)
+                s.TimerHeldLeft = -1;
             s.TimerGen++;
         }
 
         private void RearmTimer(SchedulerScript s)
         {
             if (s.TimerInterval > 0 && s.Running && !s.Suspended)
-                ArmTimer(s, Now() + s.TimerInterval);
+            {
+                double left = s.TimerHeldLeft >= 0 ? s.TimerHeldLeft : s.TimerInterval;
+                s.TimerHeldLeft = -1;
+                ArmTimer(s, Now() + left);
+            }
         }
 
         /// <summary>
@@ -475,6 +492,8 @@ namespace SLua.ScriptEngine
             s.NotHandled = 0;
             s.TimerQueued = false;
             s.TimerInterval = 0;
+            s.TimerArmed = false;
+            s.TimerHeldLeft = -1;
             s.TimerGen++;
             s.SleepUntil = 0;
             s.SleepGen++;
@@ -555,9 +574,11 @@ namespace SLua.ScriptEngine
         internal void SetTimerFor(SchedulerScript s, double seconds)
         {
             RemoveQueuedTimer(s);
+            s.TimerHeldLeft = -1; // a new timer replaces the time a pause kept
             if (seconds <= 0)
             {
                 s.TimerInterval = 0;
+                s.TimerArmed = false;
                 s.TimerGen++;
                 return;
             }
@@ -568,7 +589,18 @@ namespace SLua.ScriptEngine
         private void ArmTimer(SchedulerScript s, double due)
         {
             s.TimerGen++;
+            s.TimerDue = due;
+            s.TimerArmed = true;
             m_timers.Enqueue((s, s.TimerGen), due);
+        }
+
+        private static int s_listenEvent = -1;
+
+        private static int ListenEvent()
+        {
+            if (s_listenEvent < 0)
+                s_listenEvent = Host.EventIndex("listen");
+            return s_listenEvent;
         }
 
         private static int TimerEvent()
@@ -630,6 +662,7 @@ namespace SLua.ScriptEngine
             SchedulerScript.Current = s;
             s.WaitRequested = false;
             s.AskedSeconds = 0;
+            s.ClearHostCall();
             try
             {
                 if (dispatching)
@@ -733,7 +766,9 @@ namespace SLua.ScriptEngine
                 if (extra > SleepTolerance && !IsOwnOverrun(s))
                 {
                     // The windows' CPU time says the system kept this worker off the processor: not the script's doing.
-                    s.CountWaivedOverrun();
+                    string function = s.LastHostFunction ?? SchedulerScript.NoFunction;
+                    s.CountWaivedOverrun(function);
+                    m_waivedByFunction.AddOrUpdate(function, 1, (_, n) => n + 1);
                     extra = 0;
                 }
                 else if (extra > SleepTolerance)

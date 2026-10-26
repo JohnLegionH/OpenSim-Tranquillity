@@ -120,6 +120,11 @@ namespace SLua.ScriptEngine
         internal long SleepGen;
         internal long TimerGen;
         internal bool TimerQueued;
+        /// <summary>Worker only: when the armed timer is due, and whether one is armed.</summary>
+        internal double TimerDue;
+        internal bool TimerArmed;
+        /// <summary>Worker only: seconds the timer had left when a pause held it, or -1 when none are kept.</summary>
+        internal double TimerHeldLeft = -1;
         internal bool WaitRequested;
         internal bool Waiting;
         internal Value[] WaitResult;
@@ -159,16 +164,32 @@ namespace SLua.ScriptEngine
         private long m_droppedWhilePaused;
         internal void CountPausedDrop() => Interlocked.Increment(ref m_droppedWhilePaused);
 
-        internal void CountWaivedOverrun() => Interlocked.Increment(ref m_waivedOverruns);
 
-        /// <summary>Stub: the host function the script's last step called, by "table.name".</summary>
-        internal string LastHostFunction => null;
+        /// <summary>The host function the latest host call of this script ran, as "table.name"; null before its step made one.</summary>
+        internal string LastHostFunction { get; private set; }
 
-        /// <summary>Stub: records that a host function ran inside the current step.</summary>
-        internal void NoteHostCall(string name) { }
+        /// <summary>Records that a host function ran inside the current step.</summary>
+        internal void NoteHostCall(string name) => LastHostFunction = name;
 
-        /// <summary>Stub: waived overruns by the host function the step called last.</summary>
-        public IReadOnlyDictionary<string, long> WaivedByFunction => new Dictionary<string, long>();
+        internal void ClearHostCall() => LastHostFunction = null;
+
+        /// <summary>The key a waived overrun is counted under when its step called no host function.</summary>
+        internal const string NoFunction = "(none)";
+
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> m_waivedByFunction = new System.Collections.Concurrent.ConcurrentDictionary<string, long>();
+
+        /// <summary>Waived overruns by the host function the step called last (a script blocked in a host call without using CPU is waived too; this says where).</summary>
+        public IReadOnlyDictionary<string, long> WaivedByFunction => new Dictionary<string, long>(m_waivedByFunction);
+
+        internal void CountWaivedOverrun(string function)
+        {
+            Interlocked.Increment(ref m_waivedOverruns);
+            m_waivedByFunction.AddOrUpdate(function, 1, (_, n) => n + 1);
+        }
+
+        /// <summary>While the script is suspended, a listen that reaches it is dropped instead of queued (its object is crossing); its other events are kept.</summary>
+        internal bool DropsListensWhileSuspended { get => Volatile.Read(ref m_dropsListens) != 0; set => Volatile.Write(ref m_dropsListens, value ? 1 : 0); }
+        private int m_dropsListens;
 
         /// <summary>The run windows (wall time and CPU time) the overrun decision averages; worker thread only.</summary>
         internal RunWindowAverage Windows;

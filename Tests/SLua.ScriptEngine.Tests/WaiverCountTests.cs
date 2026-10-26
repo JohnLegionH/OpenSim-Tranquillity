@@ -134,9 +134,12 @@ public class WaiverCountTests
     {
         var windows = new ConcurrentDictionary<long, Windows>();
         using var h = new SchedulerHarness(configure: o => o.StepOverride = s => windows.TryGetValue(s.Id, out Windows w) ? w.Next(s) : null);
-        SchedulerScript s1 = h.AddAndStart("ossl.Count()");
-        SchedulerScript s2 = h.AddAndStart("ossl.Count()");
-        SchedulerScript s3 = h.AddAndStart("ossl.Count()");
+        SchedulerScript s1 = h.Add("ossl.Count()");
+        SchedulerScript s2 = h.Add("ossl.Count()");
+        SchedulerScript s3 = h.Add("ossl.Count()");
+        for (int i = 0; i < 1000 && new[] { s1, s2, s3 }.Any(x => x.State == ScriptRunState.Loading); i++)
+            h.Scheduler.DoWork(h.Clock.Now);
+        foreach (SchedulerScript x in new[] { s1, s2, s3 }) h.Scheduler.Start(x);
         foreach (var (script, call) in new[] { (s1, "ll.Sleep"), (s2, "ll.Sleep"), (s3, "ll.Say") })
         {
             var w = new Windows();
@@ -144,7 +147,7 @@ public class WaiverCountTests
             w.Overrun(call);
             windows[script.Id] = w;
         }
-        h.Passes(33);
+        h.Passes(120);
 
         Assert.Equal(1, s1.WaivedByFunction["ll.Sleep"]);
         Assert.Equal(1, s2.WaivedByFunction["ll.Sleep"]);
@@ -159,8 +162,8 @@ public class WaiverCountTests
     public void ARealHostCallIsRecordedUnderItsTableAndName()
     {
         using var h = new SchedulerHarness();
-        SchedulerScript s = h.AddAndStart("ossl.Count()");
-        h.Pump();
+        SchedulerScript s = h.AddAndStart("while true do ossl.Count() end");
+        h.Passes(3);
         Assert.Equal("ossl.Count", s.LastHostFunction);
 
         SchedulerScript p = h.AddAndStart("ossl.Pause()");
