@@ -20,24 +20,26 @@ namespace SLua.ScriptEngine
     /// </summary>
     internal static class EventArguments
     {
-        // Positions of the key parameters of each event, from the runtime's event list (builtins.txt, "event" lines).
-        private static readonly Dictionary<string, int[]> s_keyPositions = new Dictionary<string, int[]>
+        // Positions of the key parameters of each event, taken from the runtime's event list through the generated
+        // EventSignatures table (tools/slua-events/generate-event-signatures.py).
+        private static readonly Dictionary<string, int[]> s_keyPositions = KeyPositionsOf(EventSignatures.Parameters);
+
+        private static Dictionary<string, int[]> KeyPositionsOf(IReadOnlyDictionary<string, string[]> parameters)
         {
-            ["listen"] = new[] { 2 },
-            ["control"] = new[] { 0 },
-            ["money"] = new[] { 0 },
-            ["attach"] = new[] { 0 },
-            ["dataserver"] = new[] { 0 },
-            ["link_message"] = new[] { 3 },
-            ["object_rez"] = new[] { 0 },
-            ["remote_data"] = new[] { 1, 2 },
-            ["http_response"] = new[] { 0 },
-            ["http_request"] = new[] { 0 },
-            ["experience_permissions"] = new[] { 0 },
-            ["transaction_result"] = new[] { 0 },
-            ["experience_permissions_denied"] = new[] { 0 },
-            ["game_control"] = new[] { 0 },
-        };
+            var positions = new Dictionary<string, int[]>();
+            foreach (KeyValuePair<string, string[]> e in parameters)
+            {
+                var keys = new List<int>();
+                for (int i = 0; i < e.Value.Length; i++)
+                {
+                    if (e.Value[i] == "key")
+                        keys.Add(i);
+                }
+                if (keys.Count > 0)
+                    positions[e.Key] = keys.ToArray();
+            }
+            return positions;
+        }
 
         internal static Value[] Convert(string eventName, object[] args)
         {
