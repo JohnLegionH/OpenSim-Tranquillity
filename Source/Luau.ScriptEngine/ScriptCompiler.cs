@@ -12,11 +12,14 @@ using Luau.ScriptEngine.Bindings;
 
 namespace Luau.ScriptEngine
 {
+    /// <summary>The native compile call: source text to an asset; throws <see cref="SluaException"/> with the compiler's message on failure.</summary>
+    internal delegate byte[] NativeCompile(string text, bool lsl);
+
     /// <summary>
     /// Compiles script source to the runtime's asset format: SLua with Luau's compiler, LSL with the runtime's LSL
     /// compiler, both through the native library's compile export.
     /// </summary>
-    internal sealed class ScriptCompiler
+    internal sealed class ScriptCompiler : IDisposable
     {
         // The runtime's result code for LSL that calls an os*, iw* or bot* function (SLUA_ERR_UNSUPPORTED_FUNCTION).
         private const int UnsupportedFunctionCode = -10;
@@ -25,6 +28,17 @@ namespace Luau.ScriptEngine
         private const int LslLineOffset = 1;
 
         private static readonly Regex ErrorLine = new Regex(@"^(\d+): (.*)$", RegexOptions.Compiled | RegexOptions.Singleline);
+
+        private readonly CompileLimits m_limits;
+        private readonly NativeCompile m_native;
+
+        public ScriptCompiler(CompileLimits limits = null, NativeCompile native = null)
+        {
+            m_limits = limits ?? new CompileLimits();
+            m_native = native ?? Host.Compile;
+        }
+
+        public void Dispose() { }
 
         /// <summary>Compile source text as the language its first line (or, without one, its content) selects. Never throws for bad input.</summary>
         public CompileResult Compile(string source)
@@ -43,7 +57,7 @@ namespace Luau.ScriptEngine
 
             try
             {
-                byte[] asset = Host.Compile(text, language == ScriptLanguage.Lsl);
+                byte[] asset = m_native(text, language == ScriptLanguage.Lsl);
                 return new CompileResult { Asset = asset, Language = language };
             }
             catch (SluaException e)
