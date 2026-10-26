@@ -49,6 +49,7 @@ public class SelectionTests
         { "//SLua:\ndefault { state_entry() {} }", Phlox, Ours },
         { "//SLua:lsl\ndefault { state_entry() {} }", Phlox, Ours },
         { "//SLua:slua\nprint(1)", Phlox, Ours },
+        { "//SLua:LSL\ndefault { state_entry() {} }", Phlox, Ours },
         { "//SLua:SLua\nprint(1)", Phlox, Ours },
         { "// SLua :slua\nprint(1)", Phlox, Ours },
         { "//SLua:\ndefault {}", YEngine, Ours },
@@ -60,7 +61,6 @@ public class SelectionTests
         { "default { state_entry() {} }", Phlox, Phlox },
         { "// an ordinary comment\ndefault {}", Phlox, Phlox },
         { "//SLua\ndefault {}", Phlox, Phlox },                  // no colon
-        { "//slua:\ndefault {}", Phlox, Phlox },                 // ordinal comparison
         { "//SLua:", Phlox, Phlox },                             // no newline
         { "default { state_entry() {} }", Ours, Ours },              // an operator who made us the default
         { "--!slua\nprint(1)", Ours, Ours },
@@ -73,6 +73,18 @@ public class SelectionTests
     {
         Scene scene = RegionWithAllThree();
         Assert.Equal(expected, scene.ResolveScriptEngine(defaultEngine, source)?.ScriptEngineName);
+    }
+
+    [Fact]
+    public void ALowerCaseHeaderIsOursByOurOwnTestButTheRegionStillComparesNamesAsWritten()
+    {
+        // The region compares engine names ordinally (Scene.ResolveScriptEngine); the engine's own test does not.
+        // A "//slua:" script therefore reaches us only when we are the default engine, or by saved state.
+        const string source = "//slua:\nprint(1)";
+        Scene scene = RegionWithAllThree();
+        Assert.Equal(Phlox, scene.ResolveScriptEngine(Phlox, source)?.ScriptEngineName);
+        Assert.Equal(Ours, scene.ResolveScriptEngine(Ours, source)?.ScriptEngineName);
+        Assert.Equal(Ours, EngineHeader.Owner(source, Phlox, new[] { Phlox, YEngine, Ours }));
     }
 
     [Theory]

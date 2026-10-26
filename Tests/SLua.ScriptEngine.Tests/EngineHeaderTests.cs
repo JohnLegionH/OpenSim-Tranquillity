@@ -52,9 +52,14 @@ public class EngineHeaderTests
     }
 
     [Theory]
-    [InlineData("//SLua:\ndefault {}", ScriptLanguage.Lsl)]
+    [InlineData("//SLua:\nprint(1)", ScriptLanguage.Slua)]                // no language part: SLua
+    [InlineData("//SLua:\ndefault {}", ScriptLanguage.Slua)]              // the header decides, not the body
     [InlineData("//SLua:lsl\ndefault {}", ScriptLanguage.Lsl)]
     [InlineData("//SLua:LSL\ndefault {}", ScriptLanguage.Lsl)]
+    [InlineData("//slua:lsl\ndefault {}", ScriptLanguage.Lsl)]            // the engine name is read without regard to case
+    [InlineData("//SLUA:LSL\ndefault {}", ScriptLanguage.Lsl)]
+    [InlineData("//slua:\nprint(1)", ScriptLanguage.Slua)]
+    [InlineData("// SLUA :slua\nprint(1)", ScriptLanguage.Slua)]
     [InlineData("//SLua:slua\nprint(1)", ScriptLanguage.Slua)]
     [InlineData("//SLua:SLua\nprint(1)", ScriptLanguage.Slua)]
     [InlineData("//SLua:python\nprint(1)", ScriptLanguage.Unsupported)]
@@ -74,7 +79,9 @@ public class EngineHeaderTests
     [InlineData("//YEngine:\nx", "InWorldz.Phlox", "YEngine")]
     [InlineData("//InWorldz.Phlox:\nx", "SLua", "InWorldz.Phlox")]
     [InlineData("//Unloaded:\nx", "InWorldz.Phlox", "InWorldz.Phlox")]    // names no loaded engine: the scene's choice
-    [InlineData("//slua:\nx", "InWorldz.Phlox", "InWorldz.Phlox")]    // the comparison is ordinal
+    [InlineData("//slua:\nx", "InWorldz.Phlox", "SLua")]               // the name is read without regard to case
+    [InlineData("//SLUA:LSL\nx", "InWorldz.Phlox", "SLua")]
+    [InlineData("//yengine:\nx", "InWorldz.Phlox", "InWorldz.Phlox")]   // other engines are still compared as written
     [InlineData("default {}", "SLua", "SLua")]
     public void OwnerIsTheNamedLoadedEngineElseTheScenesChoice(string script, string sceneChoice, string expected)
     {

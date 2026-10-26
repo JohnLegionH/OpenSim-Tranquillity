@@ -153,18 +153,18 @@ public class ScriptCompilerTests
     // ---- what the first line means ----
 
     [RequiresNativeFact]
-    public void AHeaderWithNoLanguageSuffixIsLsl()
+    public void AHeaderWithNoLanguageSuffixIsSlua()
     {
-        CompileResult r = Compile("//SLua:\n" + GoodLsl);
+        CompileResult r = Compile("//SLua:\nll.Say(0, 'x')\n");
         Assert.True(r.Success);
-        Assert.Equal(ScriptLanguage.Lsl, r.Language);
+        Assert.Equal(ScriptLanguage.Slua, r.Language);
     }
 
     [RequiresNativeFact]
-    public void AHeaderWithNoSuffixIsNotSniffedAsSluaFromItsBody()
+    public void AnLslSuffixIsNotSniffedAsSluaFromItsBody()
     {
         // The header decides; the "--" test applies only to a script with no header naming this engine.
-        CompileResult r = Compile("//SLua:\n--!slua\nll.Say(0, 'x')\n");
+        CompileResult r = Compile("//SLua:LSL\n--!slua\nll.Say(0, 'x')\n");
         Assert.Equal(ScriptLanguage.Lsl, r.Language);
         Assert.False(r.Success);
     }
@@ -175,6 +175,17 @@ public class ScriptCompilerTests
         CompileResult r = Compile("//SLua:lsl\n" + GoodLsl);
         Assert.True(r.Success);
         Assert.Equal(ScriptLanguage.Lsl, r.Language);
+    }
+
+    [RequiresNativeFact]
+    public void TheEngineNameInTheHeaderIsReadWithoutRegardToCase()
+    {
+        CompileResult lsl = Compile("//SLUA:LSL\n" + GoodLsl);
+        Assert.True(lsl.Success);
+        Assert.Equal(ScriptLanguage.Lsl, lsl.Language);
+        CompileResult slua = Compile("//slua:\nll.Say(0, 'x')\n");
+        Assert.True(slua.Success);
+        Assert.Equal(ScriptLanguage.Slua, slua.Language);
     }
 
     [RequiresNativeFact]

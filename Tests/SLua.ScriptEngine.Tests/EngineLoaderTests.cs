@@ -230,7 +230,7 @@ public class EngineErrorsTests
     {
         using var rig = new Rig();
         UUID item = UUID.Random();
-        rig.Rez(item, "//SLua:\ndefault\n{\n    state_entry()\n    {\n        llSay(0, \"hi\");\n    }\n}\n");
+        rig.Rez(item, "//SLua:LSL\ndefault\n{\n    state_entry()\n    {\n        llSay(0, \"hi\");\n    }\n}\n");
         Assert.Empty(rig.Engine.GetScriptErrors(item));
         Assert.True(rig.Loader.IsReady(item));
     }
