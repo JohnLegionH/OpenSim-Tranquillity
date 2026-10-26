@@ -150,6 +150,15 @@ namespace SLua.ScriptEngine
         /// <summary>Overruns the runtime reported that were not punished because the script's CPU time, averaged over its recent run windows, says the system kept its worker off the processor.</summary>
         public long WaivedOverruns => Interlocked.Read(ref m_waivedOverruns);
         private long m_waivedOverruns;
+        /// <summary>While the script is suspended, events that reach it are dropped instead of queued (a policy pause).</summary>
+        internal bool DropsEventsWhileSuspended { get => Volatile.Read(ref m_dropsWhileSuspended) != 0; set => Volatile.Write(ref m_dropsWhileSuspended, value ? 1 : 0); }
+        private int m_dropsWhileSuspended;
+
+        /// <summary>Events dropped because a policy pause held the script.</summary>
+        public long DroppedWhilePaused => Interlocked.Read(ref m_droppedWhilePaused);
+        private long m_droppedWhilePaused;
+        internal void CountPausedDrop() => Interlocked.Increment(ref m_droppedWhilePaused);
+
         internal void CountWaivedOverrun() => Interlocked.Increment(ref m_waivedOverruns);
 
         /// <summary>The run windows (wall time and CPU time) the overrun decision averages; worker thread only.</summary>

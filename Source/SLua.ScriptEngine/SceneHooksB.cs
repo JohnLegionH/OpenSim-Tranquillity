@@ -28,6 +28,8 @@ namespace SLua.ScriptEngine
         Estate = 4,
         /// <summary>Its object is crossing into another region.</summary>
         Crossing = 8,
+        /// <summary>Its object arrived with riders and the region holds it for them (Scene.CrossingHold); the region's resume ends it.</summary>
+        Arrival = 16,
     }
 
     /// <summary>Counts of the pauses the policy hooks made, for the status command and the tests.</summary>
@@ -76,8 +78,6 @@ namespace SLua.ScriptEngine
     /// </summary>
     internal interface IScriptGrants
     {
-        /// <summary>A script of the object waits for an avatar that has not arrived (a grant from a rider still to come).</summary>
-        bool AwaitsRider(SceneObjectGroup group, ISet<UUID> arrived);
 
         void ObjectRemoved(SceneObjectGroup group);
 
@@ -100,7 +100,6 @@ namespace SLua.ScriptEngine
     {
         public static readonly NoGrants Instance = new NoGrants();
 
-        public bool AwaitsRider(SceneObjectGroup group, ISet<UUID> arrived) => false;
         public void ObjectRemoved(SceneObjectGroup group) { }
         public void OwnerChanged(SceneObjectGroup group) { }
         public void ControlsReleased(UUID agentId, UUID[] itemIds, bool byRegion) { }
@@ -117,9 +116,6 @@ namespace SLua.ScriptEngine
     /// </summary>
     internal sealed class SceneHooksB
     {
-        /// <summary>How long a crossing object's changed(CHANGED_REGION) waits for riders still to come, in seconds (Phlox: 10 000 ms).</summary>
-        internal const double ArrivalRiderWaitSeconds = 10;
-
         private static readonly DetectParams[] s_noDetected = Array.Empty<DetectParams>();
 
         private readonly Scene m_scene;
@@ -129,21 +125,9 @@ namespace SLua.ScriptEngine
         private readonly object m_lock = new object();
         private bool m_subscribed;
         private IEstateModule m_estate;
-        private bool m_frameSubscribed;
 
         // Scripts that run on a no-scripts parcel only because their avatar holds the controls they took.
         private readonly HashSet<UUID> m_controlsExempt = new HashSet<UUID>();
-
-        private sealed class HeldArrival
-        {
-            public UUID ItemID;
-            public SceneObjectGroup Group;
-            public int Change;
-            public double Deadline;
-            public readonly HashSet<UUID> Arrived = new HashSet<UUID>();
-        }
-
-        private readonly List<HeldArrival> m_held = new List<HeldArrival>();
 
         [ThreadStatic] private static int t_ownControlChange;
 
@@ -219,8 +203,6 @@ namespace SLua.ScriptEngine
                 m_subscribed = false;
                 estate = m_estate;
                 m_estate = null;
-                m_frameSubscribed = false;
-                m_held.Clear();
                 m_controlsExempt.Clear();
             }
             if (estate != null)
@@ -239,7 +221,6 @@ namespace SLua.ScriptEngine
             e.OnExperiencePermissionsRevoked -= OnExperiencePermissionsRevoked;
             e.OnScriptPermissionsRemoved -= OnScriptPermissionsRemoved;
             e.OnAttach -= OnAttach;
-            e.OnFrame -= OnFrame;
         }
 
         // ---- the parcel rule (hooks 35, 36, 37, 38, 39 and attach) ----
@@ -323,6 +304,8 @@ namespace SLua.ScriptEngine
                 }
                 if (!allowed)
                     reasons |= PauseReason.Parcel;
+                if (part.ParentGroup.HeldForRiders && !part.ParentGroup.IsAttachment)
+                    reasons |= PauseReason.Arrival;
             }
             return reasons;
         }
@@ -332,6 +315,22 @@ namespace SLua.ScriptEngine
         {
             m_host.SetPaused(itemID, PauseReason.Estate, m_scene.RegionInfo.RegionSettings.DisableScripts);
             EvaluateItem(itemID);
+            EvaluateArrival(itemID);
+        }
+
+        /// <summary>
+        /// The region holds an object that arrived with riders until they have come (Scene.CrossingHold), and its scripts
+        /// wait with it: held while the object is held, released by the region's resume once it is not. The engine keeps
+        /// no wait of its own.
+        /// </summary>
+        public void EvaluateArrival(UUID itemID)
+        {
+            if (!m_host.TryGetScript(itemID, out PolicyScript script))
+                return;
+            SceneObjectGroup group = m_scene.GetSceneObjectPart(script.LocalID)?.ParentGroup;
+            if (group == null)
+                return;
+            m_host.SetPaused(itemID, PauseReason.Arrival, group.HeldForRiders && !group.IsAttachment && !group.IsDeleted);
         }
 
         /// <summary>Asks the parcel rule again of one script and pauses or resumes it.</summary>
@@ -476,93 +475,12 @@ namespace SLua.ScriptEngine
                 m_host.SetPaused(item, PauseReason.Crossing, false);
         }
 
-        // Hook 40: an avatar became a root agent here (a crossing, a teleport, a login): riders waited for count as arrived.
+        // Hook 40: an avatar became a root agent here (a crossing, a teleport, a login). The region itself releases an
+        // object held for this avatar; the grants are told so a rider's pending grant can be decided.
         private void OnMakeRootAgent(ScenePresence sp)
         {
-            if (sp == null)
-                return;
-            lock (m_lock)
-            {
-                foreach (HeldArrival held in m_held)
-                    held.Arrived.Add(sp.UUID);
-            }
-            m_grants.AvatarArrived(sp.UUID);
-            ProcessHeldArrivals();
-        }
-
-        /// <summary>
-        /// A script of the object waits for a rider: the region holds the arrived object for riders still to come, or a
-        /// script holds a grant from an avatar that has not arrived.
-        /// </summary>
-        public bool AwaitsRider(SceneObjectGroup group, ISet<UUID> arrived) =>
-            group != null && (m_scene.HoldsArrival(group.UUID) || m_grants.AwaitsRider(group, arrived));
-
-        /// <summary>
-        /// Holds a crossing object's changed(CHANGED_REGION) until its riders have arrived and their grants are decided,
-        /// so the script sees them inside the event (Halcyon posts it once the last rider is seated). The wait ends after
-        /// <see cref="ArrivalRiderWaitSeconds"/> whatever has arrived; the event is posted once. The script runs its other events meanwhile.
-        /// </summary>
-        public void HoldArrival(UUID itemID, SceneObjectGroup group, int change)
-        {
-            bool subscribe;
-            lock (m_lock)
-            {
-                m_held.Add(new HeldArrival { ItemID = itemID, Group = group, Change = change, Deadline = m_clock.Now + ArrivalRiderWaitSeconds });
-                subscribe = !m_frameSubscribed && m_subscribed;
-                if (subscribe)
-                    m_frameSubscribed = true;
-            }
-            if (subscribe)
-                m_scene.EventManager.OnFrame += OnFrame;
-        }
-
-        public int HeldArrivalCount
-        {
-            get { lock (m_lock) return m_held.Count; }
-        }
-
-        /// <summary>A script was reset or removed: what it waited to be told of its arrival is dropped with its state.</summary>
-        public void ForgetHeldArrival(UUID itemID)
-        {
-            lock (m_lock) m_held.RemoveAll(h => h.ItemID == itemID);
-        }
-
-        private void OnFrame() => ProcessHeldArrivals();
-
-        /// <summary>Posts the held changed events whose riders have arrived or whose wait is over.</summary>
-        public void ProcessHeldArrivals()
-        {
-            List<HeldArrival> due = null;
-            bool unsubscribe = false;
-            double now = m_clock.Now;
-            lock (m_lock)
-            {
-                for (int i = m_held.Count - 1; i >= 0; i--)
-                {
-                    HeldArrival held = m_held[i];
-                    if (!m_host.TryGetScript(held.ItemID, out _) || held.Group.IsDeleted)
-                    {
-                        m_held.RemoveAt(i);
-                        continue;
-                    }
-                    if (now < held.Deadline && AwaitsRider(held.Group, held.Arrived))
-                        continue;
-                    m_held.RemoveAt(i);
-                    (due ??= new List<HeldArrival>()).Add(held);
-                }
-                if (m_held.Count == 0 && m_frameSubscribed)
-                {
-                    m_frameSubscribed = false;
-                    unsubscribe = true;
-                }
-            }
-            if (unsubscribe)
-                m_scene.EventManager.OnFrame -= OnFrame;
-            if (due == null)
-                return;
-            due.Reverse(); // the oldest hold first
-            foreach (HeldArrival held in due)
-                m_host.PostScriptEvent(held.ItemID, new EventParams("changed", new object[] { held.Change }, s_noDetected));
+            if (sp != null)
+                m_grants.AvatarArrived(sp.UUID);
         }
 
         // ---- grants, bots, Experiences (hooks 32, 41, 42, 43) ----

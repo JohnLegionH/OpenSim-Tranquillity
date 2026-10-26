@@ -35,6 +35,7 @@ public class PausedEventTests
         h.Scheduler.Suspend(s, dropEvents: true);
         h.Pump();
         Listen(h, s);
+        h.Pump(); // the worker handles the post while the script is held
         h.Scheduler.Resume(s);
         h.Pump();
 
@@ -54,6 +55,7 @@ public class PausedEventTests
         h.Scheduler.Suspend(s);
         h.Pump();
         Listen(h, s);
+        h.Pump();
         h.Scheduler.Resume(s);
         h.Pump();
 
@@ -100,8 +102,9 @@ public class PausedEventTests
         using var rig = new EngineRig();
         UUID item = rig.Rez(EngineRig.Lsl("integer n; default { changed(integer c) { n = n + 1; llOwnerSay(\"n\" + (string)n); } }"));
         rig.WaitScheduled(item);
+        Assert.True(SchedulerHarness.WaitFor(() => rig.MarksOf(item).Contains("n1")), "the start brings its own changed event");
         rig.PostProbe(item, 1);
-        Assert.True(SchedulerHarness.WaitFor(() => rig.MarksOf(item).Contains("n1")));
+        Assert.True(SchedulerHarness.WaitFor(() => rig.MarksOf(item).Contains("n2")));
         SchedulerScript before = rig.Engine.SchedulerScriptFor(item);
 
         rig.Scene.RegionInfo.RegionSettings.DisableScripts = true;
@@ -112,12 +115,10 @@ public class PausedEventTests
         rig.Engine.Policy.RegionSettingsChanged();
         Assert.Equal(PauseReason.None, rig.Engine.PauseReasonsOf(item));
         rig.PostProbe(item, 2);
-        Assert.True(SchedulerHarness.WaitFor(() => rig.MarksOf(item).Contains("n2")), "the counter went on from 1: the state was kept");
+        Assert.True(SchedulerHarness.WaitFor(() => rig.MarksOf(item).Contains("n3")), "the counter went on from 2: the state was kept");
 
         Assert.Same(before, rig.Engine.SchedulerScriptFor(item)); // the same script, not one made again
         string[] marks = rig.MarksOf(item);
-        Assert.Equal(1, marks.Count(m => m == "n1"));
-        Assert.Equal(1, marks.Count(m => m == "n2"));
-        Assert.Equal(2, marks.Length);
+        Assert.Equal(new[] { "n1", "n2", "n3" }, marks); // each handled once, in order
     }
 }

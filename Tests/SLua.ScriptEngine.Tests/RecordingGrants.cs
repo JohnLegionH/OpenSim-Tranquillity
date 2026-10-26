@@ -37,8 +37,6 @@ internal sealed class RecordingGrants : IScriptGrants
         lock (m_lock) m_calls.Add(call);
     }
 
-    public bool AwaitsRider(SceneObjectGroup group, ISet<UUID> arrived) => RiderPending && (arrived == null || !arrived.Contains(Rider));
-
     public void ObjectRemoved(SceneObjectGroup group) => Add("removed:" + group.UUID);
 
     public void OwnerChanged(SceneObjectGroup group) => Add("owner:" + group.UUID);

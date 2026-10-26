@@ -352,7 +352,7 @@ namespace SLua.ScriptEngine
                 foreach (PauseReason reason in new[] { PauseReason.Estate, PauseReason.Parcel })
                     if ((record.Pause & reason) != 0)
                         PolicyStats.Count(reason, true);
-                scheduler.Suspend(script);
+                scheduler.Suspend(script, (record.Pause & (PauseReason.Estate | PauseReason.Parcel)) != 0);
             }
             ScriptRecord replaced;
             lock (m_records)
@@ -461,12 +461,8 @@ namespace SLua.ScriptEngine
                 int change = ArrivalChange(start.StateSource, part);
                 if (change != 0)
                 {
-                    // A crossing object's changed waits for a rider still to come, as Phlox holds it (HeldArrival); a worn object, a teleport and a region start do not wait.
-                    SceneObjectGroup group = part?.ParentGroup;
-                    if (start.StateSource == (int)StateSource.PrimCrossing && group != null && !group.IsAttachment && m_policy != null && m_policy.AwaitsRider(group, null))
-                        m_policy.HoldArrival(record.ItemID, group, change);
-                    else
-                        scheduler.Post(record.Script, "changed", Value.Int(change));
+                    // An object that arrived with riders is held by the region (its scripts start paused, PauseReason.Arrival), so the event queues until the region releases it.
+                    scheduler.Post(record.Script, "changed", Value.Int(change));
                 }
             }
             FlushDeferred(record);
@@ -476,7 +472,7 @@ namespace SLua.ScriptEngine
         /// The changed() bits a start brings: CHANGED_REGION_START for a region start (https://wiki.secondlife.com/wiki/CHANGED_REGION_START);
         /// CHANGED_REGION for a crossing or a teleport, plus CHANGED_TELEPORT for a worn object that teleported
         /// (https://wiki.secondlife.com/wiki/CHANGED_REGION, https://wiki.secondlife.com/wiki/CHANGED_TELEPORT), to a
-        /// root prim only. Phlox's rule (PhloxExecutionScheduler.ArrivalChange); the wait for a rider is not copied.
+        /// root prim only. Phlox's rule (PhloxExecutionScheduler.ArrivalChange); the wait for riders is the region's own hold.
         /// </summary>
         private static int ArrivalChange(int stateSource, SceneObjectPart part)
         {
@@ -510,7 +506,6 @@ namespace SLua.ScriptEngine
                     return;
             }
             m_scheduler?.Remove(record.Script);
-            m_policy?.ForgetHeldArrival(itemID);
             ForgetEventFlags(record);
         }
 
@@ -538,7 +533,6 @@ namespace SLua.ScriptEngine
             ScriptRecord record = RecordOf(itemID);
             if (record == null)
                 return;
-            m_policy?.ForgetHeldArrival(itemID); // what it waited to be told of its arrival goes with its state
             if (record.Script.Killed)
                 SetItemRunningFlag(record.LocalID, itemID, true); // a reset is what starts a script a fault stopped
             m_scheduler?.Reset(record.Script);
@@ -844,6 +838,10 @@ namespace SLua.ScriptEngine
                     return;
                 record.Pause = after;
                 PolicyStats.Count(reason, paused);
+                // The parcel and the estate switch drop what reaches the script, as Phlox does for a script it has paused for the parcel
+                // (events other than the script's own state_entry and state_exit, which the runtime runs inside the script and are never posted to it);
+                // the region's own suspend queues.
+                record.Script.DropsEventsWhileSuspended = (after & (PauseReason.Estate | PauseReason.Parcel)) != 0;
                 if (before == PauseReason.None)
                     scheduler.Suspend(record.Script);
                 else if (after == PauseReason.None)
@@ -930,7 +928,7 @@ namespace SLua.ScriptEngine
             if (m_scheduler == null)
                 return false;
             ((IPolicyHost)this).SetPaused(itemID, PauseReason.Core, false);
-            m_policy?.ProcessHeldArrivals(); // the region's release of an arrived object also ends the wait for its riders
+            m_policy?.EvaluateArrival(itemID); // the region's release of an arrived object ends the hold it kept for its riders
             return true;
         }
 

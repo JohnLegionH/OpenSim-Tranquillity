@@ -156,7 +156,9 @@ public class ParcelPolicyTests
         Assert.True(rig.StaysSilent(item, 2));
 
         rig.SetParcelFlags(rig.EastParcel, otherScripts: true, groupScripts: false);
-        Assert.True(rig.Heard(item, 2));
+        rig.PostProbe(item, 3);
+        Assert.True(rig.Heard(item, 3));
+        Assert.False(rig.MarksOf(item).Contains("c2")); // dropped while paused
         Assert.Single(rig.MarksOf(item).Where(m => m == "c1"));  // nothing was replayed: it was never reset
     }
 
@@ -349,7 +351,9 @@ public class ParcelPolicyTests
         rig.Engine.Policy.RegionSettingsChanged();
         Assert.Equal(PauseReason.None, rig.Engine.PauseReasonsOf(a));
         Assert.Equal(PauseReason.None, rig.Engine.PauseReasonsOf(b));
-        Assert.True(rig.Heard(a, 5));
+        rig.PostProbe(a, 6);
+        Assert.True(rig.Heard(a, 6));
+        Assert.False(rig.MarksOf(a).Contains("c5")); // dropped while paused
         Assert.Equal(2, rig.Engine.PolicyStats.EstatePaused);
         Assert.Equal(2, rig.Engine.PolicyStats.EstateResumed);
     }
@@ -386,7 +390,9 @@ public class ParcelPolicyTests
         Assert.True(rig.StaysSilent(item, 4));
 
         rig.SetParcelFlags(rig.WestParcel, otherScripts: true, groupScripts: false);
-        Assert.True(rig.Heard(item, 4));
+        rig.PostProbe(item, 5);
+        Assert.True(rig.Heard(item, 5));
+        Assert.False(rig.MarksOf(item).Contains("c4")); // dropped while paused
     }
 
     [RequiresNativeFact]

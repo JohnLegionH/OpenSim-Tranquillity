@@ -109,7 +109,9 @@ public class AttachParcelTests
         Wear(rig);
 
         Assert.Equal(PauseReason.None, rig.Engine.PauseReasonsOf(item));
-        Assert.True(rig.Heard(item, 3));
+        rig.PostProbe(item, 4);
+        Assert.True(rig.Heard(item, 4));
+        Assert.False(rig.MarksOf(item).Contains("c3")); // dropped while paused
     }
 
     [RequiresNativeFact]

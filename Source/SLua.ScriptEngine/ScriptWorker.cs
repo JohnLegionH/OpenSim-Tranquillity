@@ -376,6 +376,11 @@ namespace SLua.ScriptEngine
                 Interlocked.Increment(ref m_droppedUnhandled);
                 return;
             }
+            if (s.Suspended && s.DropsEventsWhileSuspended)
+            {
+                s.CountPausedDrop();
+                return;
+            }
             if (s.Events.Count >= m_options.MaxEventQueue && !PassesFullQueue(eventIndex))
             {
                 s.CountDrop();
