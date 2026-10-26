@@ -105,6 +105,8 @@ public sealed class ScriptAnalysis
     public int CallsSeen { get; set; }
     /// <summary>True when the hit list was cut at the cap; the script is then treated as not fully read.</summary>
     public bool Truncated { get; set; }
+    /// <summary>Where the script addresses other parts of its linkset, or depends on the link numbering.</summary>
+    public List<LinkUse> LinkUses { get; } = new List<LinkUse>();
 }
 
 /// <summary>
