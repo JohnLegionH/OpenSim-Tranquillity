@@ -161,6 +161,15 @@ namespace SLua.ScriptEngine
 
         internal void CountWaivedOverrun() => Interlocked.Increment(ref m_waivedOverruns);
 
+        /// <summary>Stub: the host function the script's last step called, by "table.name".</summary>
+        internal string LastHostFunction => null;
+
+        /// <summary>Stub: records that a host function ran inside the current step.</summary>
+        internal void NoteHostCall(string name) { }
+
+        /// <summary>Stub: waived overruns by the host function the step called last.</summary>
+        public IReadOnlyDictionary<string, long> WaivedByFunction => new Dictionary<string, long>();
+
         /// <summary>The run windows (wall time and CPU time) the overrun decision averages; worker thread only.</summary>
         internal RunWindowAverage Windows;
 

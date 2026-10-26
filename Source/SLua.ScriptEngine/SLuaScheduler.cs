@@ -98,6 +98,12 @@ namespace SLua.ScriptEngine
             Suspend(script);
         }
 
+        /// <summary>Stub: holds the script; with <paramref name="dropListens"/> a listen that reaches it meanwhile is dropped.</summary>
+        public void Suspend(SchedulerScript script, bool dropEvents, bool dropListens) => Suspend(script, dropEvents);
+
+        /// <summary>Stub: waived overruns of all scripts by the host function the step called last.</summary>
+        public System.Collections.Generic.IReadOnlyDictionary<string, long> WaivedOverrunsByFunction() => new System.Collections.Generic.Dictionary<string, long>();
+
         /// <summary>Lets a suspended script go on.</summary>
         public void Resume(SchedulerScript script)
         {
