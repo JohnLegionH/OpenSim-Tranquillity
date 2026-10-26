@@ -50,6 +50,10 @@ public sealed class MergeFace
     public string UnbakedReason { get; set; } = "";
     /// <summary>True when the face is drawn alpha-blended (a colour alpha below 1, or a legacy material that blends).</summary>
     public bool Alpha { get; set; }
+    /// <summary>True when the face is drawn with a PBR material (held in its part's extra parameters, which a merge does not carry).</summary>
+    public bool Pbr { get; set; }
+    /// <summary>True when the face shows media (held in its part's media data, which a merge does not carry).</summary>
+    public bool Media { get; set; }
     public int Vertices { get; set; }
 
     /// <summary>
@@ -82,6 +86,8 @@ public sealed class MergePart
     public bool SitTarget { get; set; }
     public bool HoverText { get; set; }
     public bool Particles { get; set; }
+    /// <summary>True when the part has a texture animation, which moves the textures of all its faces.</summary>
+    public bool TextureAnimation { get; set; }
     public bool Sound { get; set; }
     public bool Physical { get; set; }
     public bool VolumeDetect { get; set; }
