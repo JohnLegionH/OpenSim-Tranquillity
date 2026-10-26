@@ -23,6 +23,9 @@ public sealed class LandImpactReport
     public double RegionLandImpact;
     /// <summary>The viewer's streaming cost of the mesh parts (llmeshrepository.cpp getRadiusBasedStreamingCost, over the byte sizes of the levels in the asset header, radius half the scale vector).</summary>
     public double ViewerStreamingCost;
+    /// <summary>The viewer's streaming cost of the plain prims (see <see cref="PrimStreaming"/>) and of both kinds together.</summary>
+    public double ViewerStreamingCostPrims;
+    public double ViewerStreamingCostTotal => ViewerStreamingCost + ViewerStreamingCostPrims;
     /// <summary>Triangles the mesh parts' levels hold, high to lowest, and the bytes of their mesh assets.</summary>
     public long HighTriangles, MediumTriangles, LowTriangles, LowestTriangles, MeshBytes;
 }
