@@ -39,11 +39,28 @@ public sealed class MeshAssetEncoder : IMeshEncoder
             Trace?.Invoke(what + " in " + clock.Elapsed.TotalSeconds.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " s");
             clock.Restart();
         }
-        LodGenerator.Trace = Trace;
-        try { LodGenerator.GenerateAll(model, LodGenerator.Decimation, LodGenerator.Profile.Viewer); }
-        finally { LodGenerator.Trace = null; }
-        Lap("levels of detail made");
-        PhysicsBlock.AddBoundingHull(model);
+        if (options?.Lods != null)
+        {
+            if (options.Lods.Count != 3)
+                throw new ArgumentException("the levels of detail are the medium, low and lowest: three lists of faces");
+            for (int i = 0; i < 3; i++)
+            {
+                MeshLod level = new MeshLod();
+                foreach (EncoderFace f in options.Lods[i])
+                    level.Faces.Add(ToModelFace(f));
+                model.SetLod(2 - i, level);
+            }
+            model.LodsGenerated = true;
+            Lap("levels of detail taken");
+        }
+        else
+        {
+            LodGenerator.Trace = Trace;
+            try { LodGenerator.GenerateAll(model, LodGenerator.Decimation, LodGenerator.Profile.Viewer); }
+            finally { LodGenerator.Trace = null; }
+            Lap("levels of detail made");
+        }
+        PhysicsBlock.AddBoundingHull(model, fromHigh: options?.Lods != null);
         Lap("bounding hull made");
         if (options?.Physics != null)
             model.PhysicsMesh = PhysicsMeshBlock.Make(options.Physics);

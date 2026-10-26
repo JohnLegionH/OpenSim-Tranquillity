@@ -90,6 +90,8 @@ public sealed class MergeWriteResult
     public MappingCensus Mapping { get; set; } = new MappingCensus();
     public int MeshesAdded => Parts.Count;
     public long SourceBytes { get; set; }
+    /// <summary>The most a lower level of detail may differ from the full mesh, in screen pixels at the distance the viewer switches to it.</summary>
+    public double LodPixelLimit { get; set; }
     public long OutputBytes { get; set; }
     public double Seconds { get; set; }
 
@@ -117,11 +119,19 @@ public sealed class MergeWriteResult
                 + (pp.MergedInto.Length > 0 ? " -> merged into " + pp.MergedInto : " -> stays (" + pp.KeptBy + ")"));
         if (Mapping.PlanarParts.Count > 200)
             sb.AppendLine("    ... and " + (Mapping.PlanarParts.Count - 200) + " more parts with planar faces");
+        sb.AppendLine("  levels of detail: each lower level is within " + LodPixelLimit.ToString("0.##", CultureInfo.InvariantCulture) + " pixel of the full mesh at the distance the viewer switches to it (measured: "
+            + Worst(p => p.Levels.Count == 0 ? 0 : p.Levels.Max(l => l.ErrorPixels), "0.00") + " pixel at most); triangles medium/low/lowest: "
+            + Parts.Sum(p => p.Levels.Count > 0 ? p.Levels[0].Triangles : 0) + "/" + Parts.Sum(p => p.Levels.Count > 1 ? p.Levels[1].Triangles : 0) + "/" + Parts.Sum(p => p.Levels.Count > 2 ? p.Levels[2].Triangles : 0)
+            + " of " + Parts.Sum(p => p.Triangles) + " in the full meshes; members left out of a level: " + Parts.Sum(p => p.Levels.Count > 2 ? p.Levels[2].DroppedMembers : 0) + " at the lowest");
         sb.AppendLine("  merged parts:");
         foreach (MergedPartReport p in Parts)
+        {
             sb.AppendLine("    " + p.Name.PadRight(48) + p.Members.ToString().PadLeft(4) + " parts, " + p.Faces + " faces, " + p.Vertices + " vertices, " + p.Triangles + " triangles, "
                 + p.MeshBytes + " bytes, position " + p.WorstPositionMeters.ToString("0.0e+0", CultureInfo.InvariantCulture) + " m, uv " + p.WorstUv.ToString("0.0e+0", CultureInfo.InvariantCulture)
                 + (p.TookTheRoot ? ", took the root" : "") + (p.PlanarFaces > 0 ? ", " + p.PlanarFaces + " planar faces" : ""));
+            sb.AppendLine("      levels of detail: " + string.Join(", ", p.Levels.Select(l => (l.Level == 2 ? "medium " : l.Level == 1 ? "low " : "lowest ") + l.Triangles + " triangles at " + l.SwitchDistance.ToString("0", CultureInfo.InvariantCulture) + " m (" + l.ErrorPixels.ToString("0.00", CultureInfo.InvariantCulture) + " pixel"
+                + (l.DroppedMembers > 0 ? ", " + l.DroppedMembers + " members left out" : "") + ")")));
+        }
         foreach (string warning in Plan.Warnings)
             sb.AppendLine("  WARNING: " + warning);
         return sb.ToString();
@@ -160,7 +170,7 @@ public static class MergeArchiveWriter
             throw new ConvertException("merging writes real meshes; the encoder in use does not");
 
         MergePlan plan = ArchiveMergePlanner.Plan(sourcePath, options, convert, out Dictionary<Guid, ParsedPart> parsed, out List<MergeLinkset> linksets);
-        MergeWriteResult result = new MergeWriteResult { Plan = plan, Output = outputPath, SourceBytes = new FileInfo(sourcePath).Length };
+        MergeWriteResult result = new MergeWriteResult { Plan = plan, Output = outputPath, SourceBytes = new FileInfo(sourcePath).Length, LodPixelLimit = options.Lod.PixelLimit };
         ArchiveRewriter rewriter = new ArchiveRewriter();
         HashSet<Guid> assets = new HashSet<Guid>();
         ISculptMapSource maps = new ArchiveSculptMapSource(sourcePath, plan.Linksets.SelectMany((l, i) => l.Merged.SelectMany(m => m.Members))
@@ -280,7 +290,8 @@ public static class MergeArchiveWriter
         if (g.Faces.All(f => f.IsEmpty))
             throw new ConvertException("merged part " + mp.Name + " has no triangles");
 
-        byte[] bytes = encoder.Encode(g.Faces, new EncodeOptions { Physics = g.Physics });
+        List<LodLevel> levels = MergedLods.Build(g, members, options.Lod);
+        byte[] bytes = encoder.Encode(g.Faces, new EncodeOptions { Physics = g.Physics, Lods = levels.Select(l => (IReadOnlyList<EncoderFace>)l.Faces).ToList() });
         List<string> problems = MeshValidator.Check(bytes, g.Faces, out _, g.Physics);
         if (problems.Count > 0)
             throw new ConvertException("the mesh of merged part " + mp.Name + " fails its check: " + string.Join("; ", problems));
@@ -331,7 +342,7 @@ public static class MergeArchiveWriter
         {
             Id = mp.Id, MeshId = meshId, ManifestAssetId = noteAsset, Name = mp.Name, Linkset = lp.Name, Members = mp.Members.Count, Faces = faceCount,
             Vertices = g.Faces.Sum(f => f.VertexCount), Triangles = g.Faces.Sum(f => f.TriangleCount), TookTheRoot = carrierIsRoot, MeshBytes = bytes.Length,
-            MapFaces = mapFaces, NewMaterials = newMaterials, PbrFaces = extras.PbrFaces, MediaFaces = extras.MediaFaces
+            MapFaces = mapFaces, NewMaterials = newMaterials, PbrFaces = extras.PbrFaces, MediaFaces = extras.MediaFaces, Levels = levels
         };
         foreach (MergeMember m in members)
             for (int i = 0; i < m.Faces.Count; i++)

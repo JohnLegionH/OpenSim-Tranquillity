@@ -23,11 +23,11 @@ public static class PhysicsBlock
 
     /// <summary>
     /// Sets <see cref="MeshAssetModel.PhysicsConvex"/> to the bounding hull of the Low level of detail (else Medium, else High:
-    /// the viewer's order). Call it after the levels of detail exist.
+    /// the viewer's order), or of the High level when <paramref name="fromHigh"/> is set. Call it after the levels of detail exist.
     /// </summary>
-    public static Result AddBoundingHull(MeshAssetModel model)
+    public static Result AddBoundingHull(MeshAssetModel model, bool fromHigh = false)
     {
-        (string name, MeshLod? lod) = model.Low != null ? ("low", model.Low) : model.Medium != null ? ("medium", model.Medium) : ("high", model.High);
+        (string name, MeshLod? lod) = fromHigh ? ("high", model.High) : model.Low != null ? ("low", model.Low) : model.Medium != null ? ("medium", model.Medium) : ("high", model.High);
         if (lod == null) throw new InvalidOperationException("the model has no level of detail to take a physics hull from");
         var points = lod.Faces.Where(f => !f.NoGeometry).SelectMany(f => f.Positions).ToList();
         if (points.Count == 0) throw new InvalidOperationException("the level of detail has no vertices");

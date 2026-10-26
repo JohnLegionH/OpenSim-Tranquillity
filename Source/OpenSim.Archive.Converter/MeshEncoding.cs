@@ -40,6 +40,13 @@ public sealed class EncodeOptions
     /// (the region then collides with a medium level of detail of the display mesh).
     /// </summary>
     public PhysicsGeometry Physics { get; set; }
+
+    /// <summary>
+    /// The medium, low and lowest levels of detail, in that order, one face list for each with the same number of faces as the full mesh; null
+    /// makes them with the viewer profile (a third, a ninth and a twenty-seventh of the triangles). When they are given, the physics_convex bounding
+    /// hull is made from the full mesh, so a level that leaves out small members does not shrink it.
+    /// </summary>
+    public IReadOnlyList<IReadOnlyList<EncoderFace>> Lods { get; set; }
 }
 
 /// <summary>
