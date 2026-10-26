@@ -153,15 +153,26 @@ namespace Luau.ScriptEngine
             DrainCommands();
             WakeDue(Now());
 
+            // A pass ends when every script that was runnable at its start has had a turn, or when the time budget
+            // is spent. The scripts that did not get their turn are still at the front of the ring, ahead of the
+            // ones that did, so the next pass carries on in the same order.
+            long budget = (long)(m_options.PassBudgetMs / 1000.0 * Stopwatch.Frequency);
+            long passStart = Stopwatch.GetTimestamp();
             int turns = m_ring.Count;
             for (int i = 0; i < turns; i++)
             {
                 SchedulerScript s = m_ring.Dequeue();
                 s.InRing = false;
-                if (s.State != ScriptRunState.Runnable)
-                    continue;
-                RunTurn(s);
-                Reschedule(s);
+                if (s.State == ScriptRunState.Runnable)
+                {
+                    RunTurn(s);
+                    Reschedule(s);
+                }
+                if (i + 1 < turns && Stopwatch.GetTimestamp() - passStart >= budget)
+                {
+                    Interlocked.Increment(ref m_budgetCutoffs);
+                    break;
+                }
             }
             return m_ring.Count > 0;
         }
