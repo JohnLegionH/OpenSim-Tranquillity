@@ -62,7 +62,6 @@ public class ScriptLoaderJoinTests
         ReadyScript ready = rig.Loader.GetReady(item);
         Assert.NotNull(ready.Asset);
         Assert.NotEmpty(ready.Asset);
-        Assert.Null(ready.Script);
         AllocStats after = Host.GetAllocStats();
         Assert.Equal(before.LiveScripts, after.LiveScripts);
         Assert.Equal(before.LiveImages, after.LiveImages);

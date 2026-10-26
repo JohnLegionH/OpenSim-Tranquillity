@@ -43,11 +43,11 @@ public class ScriptLoaderTests
         public readonly ScriptCompiler Compiler;
         public readonly ScriptLoader Loader;
 
-        public Rig(NativeCompile native = null, IScriptTextSource assets = null, CompileCache cache = null, Func<Vm> vmFactory = null)
+        public Rig(NativeCompile native = null, IScriptTextSource assets = null, CompileCache cache = null)
         {
             RealLibrary.Load();
             Compiler = new ScriptCompiler(null, native ?? Host.Compile, Log, cache);
-            Loader = new ScriptLoader(Compiler, assets ?? new FakeAssets(), Log, 128 * 1024, vmFactory ?? (() => new Vm(Watchdog.Resident)));
+            Loader = new ScriptLoader(Compiler, assets ?? new FakeAssets(), Log);
         }
 
         public List<string> Load(UUID item, string source, UUID? asset = null, uint local = 1)
@@ -73,7 +73,7 @@ public class ScriptLoaderTests
         ReadyScript ready = rig.Loader.GetReady(item);
         Assert.Equal(item, ready.ItemID);
         Assert.Equal(ScriptLanguage.Slua, ready.Language);
-        Assert.NotNull(ready.Script);
+        Assert.NotEmpty(ready.Asset);
     }
 
     [RequiresNativeFact]
@@ -159,7 +159,7 @@ public class ScriptLoaderTests
     }
 
     [RequiresNativeFact]
-    public void ManyItemsMadeFromOneAssetCompileOnceAndShareOneImage()
+    public void ManyItemsMadeFromOneAssetCompileOnce()
     {
         using var dir = new TempFolder();
         int natives = 0;
@@ -171,30 +171,7 @@ public class ScriptLoaderTests
             Assert.Empty(rig.Load(item, GoodSlua));
 
         Assert.Equal(10, rig.Loader.ReadyCount);
-        Assert.Equal(1, rig.Loader.ImageCount);
         Assert.Equal(1, natives);
-    }
-
-    [RequiresNativeFact]
-    public void AReadyScriptHasNotRunAndRunsOnlyWhenStarted()
-    {
-        int said = 0;
-        using var rig = new Rig(vmFactory: () =>
-        {
-            var vm = new Vm(Watchdog.Resident);
-            vm.Register("ll", "Say", (tag, args) => { Interlocked.Increment(ref said); return null; });
-            return vm;
-        });
-        UUID item = UUID.Random();
-        Assert.Empty(rig.Load(item, GoodSlua));
-
-        Thread.Sleep(300); // a window in which a script that was going to run would have run
-        Assert.Equal(0, said);
-
-        Script script = rig.Loader.GetReady(item).Script;
-        script.Start();
-        script.RunToIdle(0.05);
-        Assert.Equal(1, said); // the probe is live: the same script does call it once started
     }
 
     [RequiresNativeFact]
@@ -211,7 +188,6 @@ public class ScriptLoaderTests
         Assert.Empty(rig.Loader.WaitForCompileErrors(item, Wait)); // the answer for the save this thread posted last
         Assert.Equal(1, rig.Loader.ReadyCount);
         Assert.Equal(second, rig.Loader.GetReady(item).AssetID);
-        Assert.Equal(1, rig.Loader.ImageCount);
     }
 
     [RequiresNativeFact]
@@ -260,20 +236,16 @@ public class ScriptLoaderTests
     }
 
     [RequiresNativeFact]
-    public void DisowningAReadyScriptReleasesItAndItsImage()
+    public void DisowningAReadyScriptReleasesIt()
     {
         using var rig = new Rig();
         UUID item = UUID.Random();
         Assert.Empty(rig.Load(item, GoodSlua));
-        AllocStats held = Host.GetAllocStats();
 
         rig.Loader.Disown(item);
-        // The release runs on the loader's thread; poll for it.
-        SpinWait.SpinUntil(() => rig.Loader.ReadyCount == 0 && rig.Loader.ImageCount == 0, Wait);
 
         Assert.Equal(0, rig.Loader.ReadyCount);
-        Assert.Equal(0, rig.Loader.ImageCount);
-        Assert.True(Host.GetAllocStats().LiveScripts < held.LiveScripts);
+        Assert.False(rig.Loader.IsReady(item));
     }
 
     [RequiresNativeFact]
@@ -304,14 +276,17 @@ public class ScriptLoaderTests
     }
 
     [RequiresNativeFact]
-    public void DisposingTheLoaderFreesEveryScriptImageAndTheVm()
+    public void TheLoaderHoldsNoScriptImageOrVmWhileItWorksAndLeavesNoneBehind()
     {
         RealLibrary.Load();
         AllocStats before = Host.GetAllocStats();
         var rig = new Rig();
         for (int i = 0; i < 5; i++)
             Assert.Empty(rig.Load(UUID.Random(), GoodSlua));
-        Assert.True(Host.GetAllocStats().LiveScripts >= before.LiveScripts + 5);
+        AllocStats held = Host.GetAllocStats();
+        Assert.Equal(before.LiveScripts, held.LiveScripts); // the scheduler makes the script objects, not the loader
+        Assert.Equal(before.LiveImages, held.LiveImages);
+        Assert.Equal(before.LiveVms, held.LiveVms);
 
         rig.Dispose();
 

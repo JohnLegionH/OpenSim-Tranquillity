@@ -202,7 +202,7 @@ public class EngineErrorsTests
             RealLibrary.Load();
             var log = new RecordingLog();
             Engine = new LuauEngine(log, (settings, l) => true, null, (settings, l, scene) =>
-                Loader = new ScriptLoader(new ScriptCompiler(), new FakeAssets(), l, 128 * 1024, () => new Vm(Watchdog.Resident)));
+                Loader = new ScriptLoader(new ScriptCompiler(), new FakeAssets(), l));
             var source = new IniConfigSource();
             source.AddConfig(EngineIdentity.ConfigSection).Set("Enabled", "true");
             Engine.Initialise(source);

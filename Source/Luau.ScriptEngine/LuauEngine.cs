@@ -117,21 +117,14 @@ namespace Luau.ScriptEngine
         /// </summary>
         internal const string BoundFunctionHash = "none";
 
-        /// <summary>The loader the engine runs with: the compile cache in the engine's folder (unless switched off), the region's asset service for text, one VM.</summary>
+        /// <summary>The loader the engine runs with: the compile cache in the engine's folder (unless switched off), the region's asset service for text, scripts held as compiled bytes.</summary>
         private static IScriptLoader DefaultLoader(LuauSettings settings, IEngineLog log, Scene scene)
         {
             CompileCache cache = settings.CompileCache
                 ? new CompileCache(CompileCache.DirectoryFor(settings), CompileCache.MakeStamp(Host.Version(), BoundFunctionHash), log)
                 : null;
             var compiler = new ScriptCompiler(null, null, log, cache);
-            Bindings.Watchdog watchdog = settings.Watchdog switch
-            {
-                "resident" => Bindings.Watchdog.Resident,
-                "threaded" => Bindings.Watchdog.Threaded,
-                _ => Bindings.Watchdog.Default,
-            };
-            return new ScriptLoader(compiler, new SceneTextSource(scene.AssetService), log, settings.MemoryLimitKiB * 1024,
-                () => new Vm(watchdog), ownsCompiler: true);
+            return new ScriptLoader(compiler, new SceneTextSource(scene.AssetService), log, ownsCompiler: true);
         }
 
         /// <summary>How long GetScriptErrors waits for a compile; the region's own wait for a save is the same 15 seconds.</summary>

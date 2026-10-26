@@ -9,6 +9,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Tasks;
 using Luau.ScriptEngine.Bindings;
 using OpenMetaverse;
 
@@ -67,8 +68,8 @@ namespace Luau.ScriptEngine
         public List<string> Errors { get; init; }
     }
 
-    /// <summary>A compiled script held ready: its compiled bytes. The scheduler makes the script object from them when the script starts.</summary>
-    internal sealed class ReadyScript : IDisposable
+    /// <summary>A compiled script held ready: its compiled bytes. The scheduler worker makes the script object from them when the script starts.</summary>
+    internal sealed class ReadyScript
     {
         public UUID ItemID { get; init; }
         public uint LocalID { get; init; }
@@ -78,21 +79,13 @@ namespace Luau.ScriptEngine
 
         /// <summary>The compiled asset: header and bytecode.</summary>
         public byte[] Asset { get; init; }
-        public Script Script { get; init; }
-        internal ImageLease Lease { get; init; }
-
-        public void Dispose()
-        {
-            Script?.Dispose();
-            Lease?.Dispose();
-        }
     }
 
     /// <summary>
-    /// Fetches a script's text, compiles it off the region's threads, and holds the result ready. All native
-    /// virtual-machine work happens on the loader's own thread, which is the only thread that touches its VM; the
-    /// native compile runs on the compiler's thread. Compile outcomes are published per load (by serial), so an editor
-    /// that saved a script is answered for that save, as the region's other engines do.
+    /// Fetches a script's text, compiles it off the region's threads, and holds the compiled bytes ready. It makes no
+    /// script object and no virtual machine: a worker of the scheduler makes the script from the bytes when the script
+    /// starts. Compile outcomes are published per load (by serial), so an editor that saved a script is answered for
+    /// that save, as the region's other engines do; a failure no editor collects in time is announced for the owner.
     /// </summary>
     internal sealed class ScriptLoader : IScriptLoader
     {
@@ -105,23 +98,17 @@ namespace Luau.ScriptEngine
         private readonly bool m_ownsCompiler;
         private readonly IScriptTextSource m_assets;
         private readonly IEngineLog m_log;
-        private readonly int m_memoryLimit;
-        private readonly Func<Vm> m_vmFactory;
 
         private readonly BlockingCollection<Action> m_work = new BlockingCollection<Action>();
         private readonly Thread m_thread;
-
-        // Touched only on the loader thread (the image count may be read from any).
-        private Vm m_vm;
-        private volatile SharedImages m_images;
 
         private readonly object m_lock = new object();
         private readonly Dictionary<UUID, long> m_latest = new Dictionary<UUID, long>();
         private readonly Dictionary<UUID, int> m_inFlight = new Dictionary<UUID, int>();
         private readonly Dictionary<UUID, List<(long Serial, List<string> Errors)>> m_outcomes = new Dictionary<UUID, List<(long Serial, List<string> Errors)>>();
         private readonly Dictionary<UUID, ReadyScript> m_ready = new Dictionary<UUID, ReadyScript>();
+        private readonly Dictionary<UUID, long> m_unclaimed = new Dictionary<UUID, long>();
         private long m_serial;
-        private long m_tag;
         private volatile bool m_stopped;
 
         // The serial this thread posted last, so the editor that saved is answered for that save.
@@ -134,18 +121,11 @@ namespace Luau.ScriptEngine
         public TimeSpan UnclaimedGrace { get; set; } = TimeSpan.FromSeconds(2);
 
         public ScriptLoader(ScriptCompiler compiler, IScriptTextSource assets, IEngineLog log, bool ownsCompiler = false)
-            : this(compiler, assets, log, 128 * 1024, () => new Vm(Watchdog.Default), ownsCompiler)
-        {
-        }
-
-        public ScriptLoader(ScriptCompiler compiler, IScriptTextSource assets, IEngineLog log, int memoryLimitBytes, Func<Vm> vmFactory, bool ownsCompiler = false)
         {
             m_compiler = compiler;
             m_ownsCompiler = ownsCompiler;
             m_assets = assets;
             m_log = log;
-            m_memoryLimit = memoryLimitBytes;
-            m_vmFactory = vmFactory;
             m_thread = new Thread(Run) { IsBackground = true, Name = EngineIdentity.EngineName + " load" };
             m_thread.Start();
         }
@@ -156,8 +136,6 @@ namespace Luau.ScriptEngine
         {
             get { lock (m_lock) return m_ready.Count; }
         }
-
-        public int ImageCount => m_images?.ImageCount ?? 0;
 
         public long Post(LoadRequest request)
         {
@@ -176,17 +154,15 @@ namespace Luau.ScriptEngine
 
         public void Disown(UUID itemID)
         {
-            ReadyScript ready;
             lock (m_lock)
             {
                 m_latest.Remove(itemID);
                 m_inFlight.Remove(itemID);
                 m_outcomes.Remove(itemID);
-                m_ready.Remove(itemID, out ready);
+                m_unclaimed.Remove(itemID);
+                m_ready.Remove(itemID);
                 Monitor.PulseAll(m_lock);
             }
-            if (ready != null)
-                Enqueue(ready.Dispose);
         }
 
         public bool IsLoading(UUID itemID)
@@ -220,7 +196,10 @@ namespace Luau.ScriptEngine
                     if (!m_latest.ContainsKey(itemID))
                         return null; // disowned while waiting
                     if (OutcomeFor(itemID, wanted) is List<string> errors)
+                    {
+                        m_unclaimed.Remove(itemID); // the editor has the errors
                         return new List<string>(errors);
+                    }
                     TimeSpan left = until - DateTime.UtcNow;
                     if (m_stopped || left <= TimeSpan.Zero)
                         return new List<string> { ErrorWaitTimedOut };
@@ -275,18 +254,7 @@ namespace Luau.ScriptEngine
             }
             finally
             {
-                // The VM goes last: it cannot be freed while a script or image of it is alive.
-                List<ReadyScript> ready;
-                lock (m_lock)
-                {
-                    ready = new List<ReadyScript>(m_ready.Values);
-                    m_ready.Clear();
-                }
-                foreach (ReadyScript r in ready)
-                    r.Dispose();
-                m_images = null;
-                try { m_vm?.Dispose(); }
-                catch (Exception e) { m_log?.Error("the virtual machine could not be freed: " + e.Message); }
+                lock (m_lock) m_ready.Clear();
             }
         }
 
@@ -344,22 +312,9 @@ namespace Luau.ScriptEngine
             }
         }
 
-        /// <summary>Makes the script object from the shared image and holds it, not started. Loader thread only.</summary>
+        /// <summary>Holds the compiled bytes ready and announces them. Loader thread only.</summary>
         private void Install(LoadRequest request, long serial, CompileResult result)
         {
-            m_vm ??= m_vmFactory();
-            SharedImages images = m_images ?? (m_images = new SharedImages(m_vm));
-            ImageLease lease = images.Acquire(result.Asset);
-            Script script;
-            try
-            {
-                script = lease.NewScript(m_memoryLimit, Interlocked.Increment(ref m_tag));
-            }
-            catch
-            {
-                lease.Dispose();
-                throw;
-            }
             var ready = new ReadyScript
             {
                 ItemID = request.ItemID,
@@ -367,21 +322,19 @@ namespace Luau.ScriptEngine
                 AssetID = request.AssetID,
                 Language = result.Language,
                 Serial = serial,
-                Script = script,
-                Lease = lease,
+                Asset = result.Asset,
             };
-            ReadyScript replaced;
             bool kept;
             lock (m_lock)
             {
                 kept = m_latest.TryGetValue(request.ItemID, out long latest) && latest == serial;
-                m_ready.Remove(request.ItemID, out replaced);
                 if (kept)
                     m_ready[request.ItemID] = ready;
             }
-            replaced?.Dispose();
             if (!kept)
-                ready.Dispose(); // disowned or saved again while the script was being made
+                return; // disowned or saved again while the compile ran
+            try { ScriptReady?.Invoke(ready); }
+            catch (Exception e) { m_log?.Error($"a listener of the ready script {request.ItemID} failed: {e}"); }
         }
 
         private void Fail(LoadRequest request, long serial, Exception e)
@@ -407,9 +360,33 @@ namespace Luau.ScriptEngine
                     list.Add((serial, errors));
                     if (list.Count > OutcomesKept)
                         list.RemoveAt(0);
+                    if (errors.Count > 0 && m_latest[request.ItemID] == serial)
+                        m_unclaimed[request.ItemID] = serial;
+                    else
+                        errors = null; // nothing to announce
                 }
+                else
+                    errors = null;
                 Monitor.PulseAll(m_lock);
             }
+            if (errors != null)
+                AnnounceIfUnclaimed(request, serial, errors);
+        }
+
+        /// <summary>After the grace, tells the listener of a failure that no editor collected and that is still the latest of its item.</summary>
+        private void AnnounceIfUnclaimed(LoadRequest request, long serial, List<string> errors)
+        {
+            Task.Delay(UnclaimedGrace).ContinueWith(_ =>
+            {
+                lock (m_lock)
+                {
+                    if (m_stopped || !m_unclaimed.TryGetValue(request.ItemID, out long pending) || pending != serial)
+                        return;
+                    m_unclaimed.Remove(request.ItemID);
+                }
+                try { FailureUnclaimed?.Invoke(new LoadFailure { LocalID = request.LocalID, ItemID = request.ItemID, Errors = errors }); }
+                catch (Exception e) { m_log?.Error($"a listener of the failed script {request.ItemID} failed: {e}"); }
+            }, TaskScheduler.Default);
         }
     }
 }
