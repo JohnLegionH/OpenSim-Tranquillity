@@ -38,6 +38,6 @@ public class CleanConvertCommandTests
         Console.SetOut(capture);
         try { Assert.Equal(0, ConvertCommand.Run(new[] { "--version" })); }
         finally { Console.SetOut(saved); }
-        Assert.Contains("oar-convert 0.2", capture.ToString());
+        Assert.Contains("oar-convert 0.3", capture.ToString());
     }
 }
