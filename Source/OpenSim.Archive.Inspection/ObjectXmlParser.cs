@@ -88,8 +88,8 @@ public sealed class ParsedPart
     public string SitText = string.Empty, TouchText = string.Empty;
     /// <summary>The part's click action, object sale type and sale price as stored (0 when absent).</summary>
     public int ClickAction, SaleType, SalePrice;
-    /// <summary>The colour of the hover text packed as alpha, red, green, blue bytes (0 when absent).</summary>
-    public uint HoverTextColor;
+    /// <summary>The colour of the hover text packed as alpha, red, green, blue bytes; opaque black, the region's default, when absent.</summary>
+    public uint HoverTextColor = 0xFF000000;
     /// <summary>True when any of the part's five pay prices is not the default of -2.</summary>
     public bool PayPriceChanged;
     /// <summary>The part's surface material (wood, metal ...) as stored; 0 when absent.</summary>

@@ -96,7 +96,7 @@ public static class ArchiveMergePlanner
         p.ClickAction = pp.ClickAction != 0;
         p.SaleType = pp.SaleType != 0;
         p.SalePrice = pp.SalePrice != 0;
-        p.HoverTextColor = pp.HoverTextColor != 0;
+        p.HoverTextColor = pp.HoverTextColor != 0xFF000000;
         p.PayPrice = pp.PayPriceChanged;
         p.Particles = pp.HasParticles;
         p.TextureAnimation = pp.TextureAnimation.Length > 0;
