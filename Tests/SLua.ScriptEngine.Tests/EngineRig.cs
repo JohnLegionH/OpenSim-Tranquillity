@@ -86,6 +86,11 @@ internal sealed class EngineRig : IDisposable
         vm.Register("ossl", "Count", (tag, _) => { Counts.AddOrUpdate(tag, 1, (_, n) => n + 1); return null; });
         vm.Register("ossl", "Mark", (tag, a) => { lock (m_marks) m_marks.Add($"{tag}:{a[0].S}"); return null; });
         vm.Register("ll", "OwnerSay", (tag, a) => { lock (m_marks) m_marks.Add($"{tag}:{a[0].S}"); return null; });
+        // What the Detected functions will read: the detected objects of the event being handled, by index.
+        vm.Register("ossl", "DetectedCount", (tag, _) => new[] { Value.Int(SchedulerScript.Current.DetectedCount) });
+        vm.Register("ossl", "DetectedName", (tag, a) => new[] { Value.Str(SchedulerScript.Current.DetectedAt((int)a[0].I)?.Name ?? "none") });
+        vm.Register("ossl", "DetectedKey", (tag, a) => new[] { Value.Str(SchedulerScript.Current.DetectedAt((int)a[0].I)?.Key ?? "none") });
+        vm.Register("ossl", "DetectedFace", (tag, a) => new[] { Value.Int(SchedulerScript.Current.DetectedAt((int)a[0].I)?.TouchFace ?? -99) });
         vm.Register("ossl", "Burn", (tag, a) =>
         {
             long end = System.Diagnostics.Stopwatch.GetTimestamp() + (long)(a[0].N / 1000.0 * System.Diagnostics.Stopwatch.Frequency);
