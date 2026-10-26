@@ -38,11 +38,17 @@ namespace Luau.ScriptEngine
         private bool m_enabled;
         private Scene m_scene;
 
-        internal LuauEngine(IEngineLog log, RuntimeLoader loadRuntime)
+        private readonly ISavedStateStore m_store;
+
+        internal LuauEngine(IEngineLog log, RuntimeLoader loadRuntime, ISavedStateStore store = null)
         {
             m_log = log;
             m_loadRuntime = loadRuntime;
+            m_store = store ?? new EmptyStateStore();
         }
+
+        /// <summary>Whether the engine holds a load record for the item (a rez it accepted and has not forgotten).</summary>
+        internal bool IsTracking(UUID itemID) => false;
 
         internal LuauSettings Settings => m_settings;
 
@@ -75,7 +81,7 @@ namespace Luau.ScriptEngine
         public void RemoveRegion(Scene scene) { }
         public void RegionLoaded(Scene scene) { }
 
-        public bool HasSavedScriptState(UUID itemID, UUID assetID) => false;
+        public bool HasSavedScriptState(UUID itemID, UUID assetID) => m_store.HasSavedState(itemID, assetID);
 
         public string GetXMLState(UUID itemID) => string.Empty;
         public bool SetXMLState(UUID itemID, string xml) => false;
