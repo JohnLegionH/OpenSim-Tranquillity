@@ -85,6 +85,14 @@ public sealed class MergePart
     public bool Flexible { get; set; }
     public bool SitTarget { get; set; }
     public bool HoverText { get; set; }
+    /// <summary>Per-part fields a merged part does not carry: set when the value differs from the default.</summary>
+    public bool SitText { get; set; }
+    public bool TouchText { get; set; }
+    public bool ClickAction { get; set; }
+    public bool SaleType { get; set; }
+    public bool SalePrice { get; set; }
+    public bool HoverTextColor { get; set; }
+    public bool PayPrice { get; set; }
     public bool Particles { get; set; }
     /// <summary>True when the part has a texture animation, which moves the textures of all its faces.</summary>
     public bool TextureAnimation { get; set; }

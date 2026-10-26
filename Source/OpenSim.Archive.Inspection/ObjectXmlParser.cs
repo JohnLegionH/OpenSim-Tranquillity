@@ -84,6 +84,14 @@ public sealed class ParsedPart
     public bool SitTarget;
     /// <summary>True when the part has hover text.</summary>
     public bool HoverText;
+    /// <summary>The text shown on the pie menu's sit entry, and on its touch entry; empty when the part has none.</summary>
+    public string SitText = string.Empty, TouchText = string.Empty;
+    /// <summary>The part's click action, object sale type and sale price as stored (0 when absent).</summary>
+    public int ClickAction, SaleType, SalePrice;
+    /// <summary>The colour of the hover text packed as alpha, red, green, blue bytes (0 when absent).</summary>
+    public uint HoverTextColor;
+    /// <summary>True when any of the part's five pay prices is not the default of -2.</summary>
+    public bool PayPriceChanged;
     /// <summary>The part's surface material (wood, metal ...) as stored; 0 when absent.</summary>
     public int SurfaceMaterial;
     /// <summary>True when the part has a particle system.</summary>
@@ -393,6 +401,20 @@ internal static class ObjectXmlParser
                     break;
                 }
                 case "Text": pp.HoverText = !string.IsNullOrEmpty(XmlRead.Text(r)); break;
+                case "SitName": pp.SitText = XmlRead.Text(r); break;
+                case "TouchName": pp.TouchText = XmlRead.Text(r); break;
+                case "ClickAction": { XmlRead.TryInt(XmlRead.Text(r), out int ca); pp.ClickAction = ca; break; }
+                case "ObjectSaleType": { XmlRead.TryInt(XmlRead.Text(r), out int st); pp.SaleType = st; break; }
+                case "SalePrice": { XmlRead.TryInt(XmlRead.Text(r), out int sp); pp.SalePrice = sp; break; }
+                case "PayPrice0":
+                case "PayPrice1":
+                case "PayPrice2":
+                case "PayPrice3":
+                case "PayPrice4":
+                    if (!XmlRead.TryInt(XmlRead.Text(r), out int pay) || pay != -2)
+                        pp.PayPriceChanged = true;
+                    break;
+                case "Color": pp.HoverTextColor = ReadPackedColor(r); break;
                 case "Material": { XmlRead.TryInt(XmlRead.Text(r), out int sm); pp.SurfaceMaterial = sm; break; }
                 case "SOPAnims": ReadAnims(XmlRead.Text(r), pp); break;
                 case "Flags":
@@ -419,6 +441,35 @@ internal static class ObjectXmlParser
             i.PartName = part.Name;
         }
         return pp;
+    }
+
+    /// <summary>Reads the part's Color element (R, G, B, A bytes) as the region packs it: alpha, red, green, blue.</summary>
+    private static uint ReadPackedColor(XmlReader r)
+    {
+        int red = 0, green = 0, blue = 0, alpha = 0;
+        if (r.IsEmptyElement)
+        {
+            r.Read();
+            return 0;
+        }
+        int depth = r.Depth;
+        r.Read();
+        while (!r.EOF && !(r.NodeType == XmlNodeType.EndElement && r.Depth == depth))
+        {
+            if (r.NodeType == XmlNodeType.Element)
+            {
+                string name = r.Name;
+                XmlRead.TryInt(XmlRead.Text(r), out int value);
+                if (name == "R") red = value;
+                else if (name == "G") green = value;
+                else if (name == "B") blue = value;
+                else if (name == "A") alpha = value;
+            }
+            else
+                r.Read();
+        }
+        r.Read();
+        return unchecked((uint)(((alpha & 0xFF) << 24) | ((red & 0xFF) << 16) | ((green & 0xFF) << 8) | (blue & 0xFF)));
     }
 
     private static void ReadTaskInventory(XmlReader r, ParsedPart pp)

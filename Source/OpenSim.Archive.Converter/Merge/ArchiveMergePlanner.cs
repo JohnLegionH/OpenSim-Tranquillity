@@ -91,6 +91,13 @@ public static class ArchiveMergePlanner
         p.Flexible = pp.Flexible;
         p.SitTarget = pp.SitTarget;
         p.HoverText = pp.HoverText;
+        p.SitText = pp.SitText.Length > 0;
+        p.TouchText = pp.TouchText.Length > 0;
+        p.ClickAction = pp.ClickAction != 0;
+        p.SaleType = pp.SaleType != 0;
+        p.SalePrice = pp.SalePrice != 0;
+        p.HoverTextColor = pp.HoverTextColor != 0;
+        p.PayPrice = pp.PayPriceChanged;
         p.Particles = pp.HasParticles;
         p.TextureAnimation = pp.TextureAnimation.Length > 0;
         p.Sound = pp.HasSound;

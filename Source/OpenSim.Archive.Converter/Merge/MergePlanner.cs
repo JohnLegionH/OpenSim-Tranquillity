@@ -150,6 +150,13 @@ public static class MergePlanner
         if (p.Flexible) Add("part", "FLEXI", "per-part flexible path");
         if (p.SitTarget) Add("part", "SIT_TARGET", "per-part sit target");
         if (p.HoverText) Add("part", "HOVER_TEXT", "per-part hover text");
+        if (p.SitText) Add("part", "SIT_TEXT", "per-part sit text");
+        if (p.TouchText) Add("part", "TOUCH_TEXT", "per-part touch text");
+        if (p.ClickAction) Add("part", "CLICK_ACTION", "per-part click action");
+        if (p.SaleType) Add("part", "SALE_TYPE", "per-part sale type");
+        if (p.SalePrice) Add("part", "SALE_PRICE", "per-part sale price");
+        if (p.HoverTextColor) Add("part", "HOVER_TEXT_COLOR", "per-part hover text colour");
+        if (p.PayPrice) Add("part", "PAY_PRICE", "per-part pay prices");
         if (p.Particles) Add("part", "PARTICLES", "per-part particle system");
         if (p.Sound) Add("part", "SOUND", "per-part sound");
         if (p.Physical) Add("part", "PHYSICAL", "a physical part's hull is not the union of its pieces' hulls");
