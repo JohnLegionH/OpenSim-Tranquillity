@@ -317,6 +317,10 @@ public static class MergePlanFiles
             foreach (var g in KeptByFirstRule(plan))
                 w.WriteNumber(g.Key, g.Value);
             w.WriteEndObject();
+            w.WriteStartObject("keptByAnyRule");
+            foreach (var g in KeptByAnyRule(plan))
+                w.WriteNumber(g.Key, g.Value);
+            w.WriteEndObject();
             w.WriteEndObject();
             w.WriteStartArray("linksets");
             foreach (LinksetPlan l in plan.Linksets)
@@ -434,7 +438,13 @@ public static class MergePlanFiles
     /// <summary>For each rule and code, how many parts it applies to (a part with several reasons is counted under each).</summary>
     public static SortedDictionary<string, int> KeptByAnyRule(MergePlan plan)
     {
-        throw new NotImplementedException();
+        SortedDictionary<string, int> d = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        foreach (KeepRule r in plan.Linksets.SelectMany(l => l.Kept).SelectMany(k => k.Rules))
+        {
+            string key = r.Rule + " " + r.Code;
+            d[key] = d.TryGetValue(key, out int n) ? n + 1 : 1;
+        }
+        return d;
     }
 
     public static string ReportText(MergePlan plan)
@@ -446,6 +456,9 @@ public static class MergePlanFiles
         sb.AppendLine("  alpha faces marked " + plan.AlphaFaces + ", locked linksets " + plan.Linksets.Count(l => l.LockedBy.Length > 0) + " of " + plan.Linksets.Count);
         sb.AppendLine("  parts kept, by the first rule that keeps each:");
         foreach (var g in KeptByFirstRule(plan))
+            sb.AppendLine("    " + g.Key.PadRight(40) + g.Value);
+        sb.AppendLine("  parts kept, by every rule that applies (a part can have several):");
+        foreach (var g in KeptByAnyRule(plan))
             sb.AppendLine("    " + g.Key.PadRight(40) + g.Value);
         foreach (string warning in plan.Warnings)
             sb.AppendLine("  WARNING: " + warning);
