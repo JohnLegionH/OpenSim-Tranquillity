@@ -36,6 +36,15 @@ public static class PhysicsBlock
         return new Result(name, points.Count, hull.Count, box);
     }
 
+    /// <summary>
+    /// Sets <see cref="MeshAssetModel.PhysicsConvex"/> to a hull list: the hulls (each at most 256 points) with the counts of each in HullList
+    /// (0 standing for 256) and all their points in Positions, 16 bits an axis over the box that spans them, and the hull of everything as BoundingVerts.
+    /// </summary>
+    public static void AddHullList(MeshAssetModel model, IReadOnlyList<IReadOnlyList<Vector3>> hulls, IReadOnlyList<Vector3> bounding) => throw new NotImplementedException();
+
+    /// <summary>The hulls of a physics_convex map's hull list (empty when it has none).</summary>
+    public static List<List<Vector3>> ReadHullList(object? physicsConvex) => throw new NotImplementedException();
+
     /// <summary>The physics_convex map: Min and Max over the points, and the points as 16-bit values inside that box.</summary>
     public static SortedDictionary<string, object?> ToLlsd(IReadOnlyList<Vector3> hull)
     {

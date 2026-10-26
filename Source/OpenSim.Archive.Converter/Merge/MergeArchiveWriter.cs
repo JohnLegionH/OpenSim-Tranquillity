@@ -57,6 +57,9 @@ public sealed class MergedPartReport
     public double MeasuredMapTexels { get; set; }
     /// <summary>The lower levels of detail the mesh carries, medium first, with what was checked about each.</summary>
     public List<LodLevel> Levels { get; set; } = new List<LodLevel>();
+    /// <summary>The hulls in the part's hull list (0 when its collision is the triangle mesh only) and, then, why: the first member that is not exactly convex.</summary>
+    public int PhysicsHulls { get; set; }
+    public string PhysicsReason { get; set; } = "";
 }
 
 /// <summary>A part that holds planar-mapped faces: which faces, and whether the part went into a merged part or stayed.</summary>
