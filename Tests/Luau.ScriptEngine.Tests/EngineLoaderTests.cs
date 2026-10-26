@@ -27,7 +27,8 @@ internal sealed class RecordingLoader : IScriptLoader
     public void Disown(UUID itemID) { lock (Disowned) Disowned.Add(itemID); }
     public List<string> WaitForCompileErrors(UUID itemID, TimeSpan timeout) => Answers.TryGetValue(itemID, out var a) ? a : null;
     public bool IsLoading(UUID itemID) => false;
-    public bool IsReady(UUID itemID) => false;
+    public readonly HashSet<UUID> Ready = new();
+    public bool IsReady(UUID itemID) => Ready.Contains(itemID);
     public void Dispose() => Disposed = true;
 }
 
@@ -114,6 +115,41 @@ public class EngineLoaderTests
 
         Assert.Empty(rig.Engine.GetScriptErrors(item));
         Assert.Empty(rig.Engine.GetScriptErrors(UUID.Random())); // an item never seen
+    }
+
+    [Fact]
+    public void HasScriptAnswersTrueForAReadyScriptThatIsNotRunning()
+    {
+        var rig = new Rig();
+        UUID item = UUID.Random();
+        rig.Rez(item, "//NGC.Luau:slua\nprint(1)", Phlox);
+        rig.Loader.Ready.Add(item);
+
+        Assert.True(rig.Engine.HasScript(item, out bool running));
+        Assert.False(running); // compiled and held ready, not started
+    }
+
+    [Fact]
+    public void HasScriptAnswersFalseWhileTheScriptIsStillLoading()
+    {
+        var rig = new Rig();
+        UUID item = UUID.Random();
+        rig.Rez(item, "//NGC.Luau:slua\nprint(1)", Phlox);
+
+        Assert.False(rig.Engine.HasScript(item, out bool running));
+        Assert.False(running);
+    }
+
+    [Fact]
+    public void HasScriptAnswersFalseForAScriptThatIsNotOurs()
+    {
+        var rig = new Rig();
+        UUID item = UUID.Random();
+        rig.Rez(item, "default {}", Phlox);
+        rig.Loader.Ready.Add(item); // even if the loader holds something under the id
+
+        Assert.False(rig.Engine.HasScript(item, out _));
+        Assert.False(rig.Engine.HasScript(UUID.Random(), out _));
     }
 
     [Fact]
