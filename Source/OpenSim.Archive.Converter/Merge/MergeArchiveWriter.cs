@@ -245,11 +245,14 @@ public static class MergeArchiveWriter
         if (assets.Add(noteAsset))
             rewriter.AddAsset(noteAsset, AssetType.Notecard, notecardBytes);
 
-        string textureEntry = Convert.ToBase64String(TextureEntryOf(g, members, parsed).GetBytes());
+        byte[] textureEntryBytes = TextureEntryOf(g, members, parsed).GetBytes();
+        string textureEntry = Convert.ToBase64String(textureEntryBytes);
         int faceCount = g.Faces.Count;
         byte[] extra = carrier.ExtraParams;
         int physicsType = carrier.PhysicsShapeType;
-        rewriter.AddPatch(new PartPatch(mp.Id, (PartView view) => CarrierEdits(view, mp, g, faceCount, meshId, extra, textureEntry, carrierIsRoot, noteAsset, noteItem, physicsType)));
+        // a part alone in its object is link number 0, as the region writes it
+        int linkNum = lp.PartsAfter == 1 ? 0 : mp.NewLinkNum;
+        rewriter.AddPatch(new PartPatch(mp.Id, (PartView view) => CarrierEdits(view, mp, g, faceCount, meshId, extra, textureEntry, carrierIsRoot, noteAsset, noteItem, physicsType, linkNum)));
         foreach (MemberPlan x in mp.Members.Skip(1))
             rewriter.RemovePart(x.PartId);
 
@@ -272,7 +275,7 @@ public static class MergeArchiveWriter
                 else
                     report.UnbakedFaces++;
             }
-        MeshCheck.Measure(members, g, bytes, report);
+        MeshCheck.Measure(members, g, bytes, textureEntryBytes, report);
         return report;
     }
 
@@ -323,7 +326,7 @@ public static class MergeArchiveWriter
     private static string F(float v) => v.ToString("R", CultureInfo.InvariantCulture);
 
     private static IReadOnlyList<ElementEdit> CarrierEdits(PartView view, MergedPartPlan mp, MergedGeometry g, int faceCount, Guid meshId, byte[] extra, string textureEntry,
-        bool carrierIsRoot, Guid noteAsset, Guid noteItem, int physicsType)
+        bool carrierIsRoot, Guid noteAsset, Guid noteItem, int physicsType, int linkNum)
     {
         List<ElementEdit> edits = new List<ElementEdit>();
         void Need(string path)
@@ -359,7 +362,7 @@ public static class MergeArchiveWriter
             }
         }
         if (view.Present.Contains("LinkNum"))
-            edits.Add(ElementEdit.SetText("LinkNum", mp.NewLinkNum.ToString(CultureInfo.InvariantCulture)));
+            edits.Add(ElementEdit.SetText("LinkNum", linkNum.ToString(CultureInfo.InvariantCulture)));
         // a mesh part with no shape type of its own would collide as a convex hull; the prim it replaces collided as a prim
         if (physicsType == -1)
             edits.Add(ElementEdit.SetTextOrAdd("PhysicsShapeType", "0"));
@@ -398,15 +401,58 @@ public static class MergeArchiveWriter
     }
 }
 
-/// <summary>Compares a merged mesh with the parts it replaces, corner by corner, before it is encoded and after it is read back from the asset bytes.</summary>
+/// <summary>
+/// Compares a merged mesh with the parts it replaces, corner by corner, before it is encoded and after it is read back from the asset bytes.
+/// Texture coordinates are compared as the viewer will show them: the mesh's coordinates with the texture entry written for the merged face applied.
+/// </summary>
 internal static class MeshCheck
 {
-    public static void Measure(List<MergeMember> members, MergedGeometry g, byte[] bytes, MergedPartReport report)
+    public static void Measure(List<MergeMember> members, MergedGeometry g, byte[] bytes, byte[] textureEntryBytes, MergedPartReport report)
     {
         MeshAssetModel model = MeshCodec.Decode(bytes);
-        // the coordinates each face should have: the viewer's, worked out from the original face on the original part
+        // the texture entry as written: what the viewer will apply to the merged mesh's coordinates, face by face
+        Primitive.TextureEntry written = new Primitive.TextureEntry(textureEntryBytes, 0, textureEntryBytes.Length);
+        FaceTransform SlotTransform(int slot)
+        {
+            Primitive.TextureEntryFace face = (slot < written.FaceTextures.Length ? written.FaceTextures[slot] : null) ?? written.DefaultTexture;
+            return new FaceTransform(face.RepeatU, face.RepeatV, face.OffsetU, face.OffsetV, face.Rotation);
+        }
+        // what the viewer draws the original face with: a bakeable face has its mapping and transform applied; any other default-mapped face
+        // is drawn with the transform on its texture entry
         float[][][] wantUv = members.Select(m => m.Faces.Select((f, i) =>
-            f.IsEmpty ? Array.Empty<float>() : m.FaceInfo[i].Bakeable ? FaceUv.Bake(f.Positions, f.Normals, f.Uvs, m.FaceInfo[i].Transform, m.FaceInfo[i].TexGen == FaceBaking.PlanarMapping, m.Scale) : f.Uvs).ToArray()).ToArray();
+        {
+            if (f.IsEmpty)
+                return Array.Empty<float>();
+            MergeFace info = m.FaceInfo[i];
+            if (info.Bakeable)
+                return FaceUv.Bake(f.Positions, f.Normals, f.Uvs, info.Transform, info.TexGen == FaceBaking.PlanarMapping, m.Scale);
+            float[] shown = (float[])f.Uvs.Clone();
+            for (int v = 0; v < shown.Length; v += 2)
+                FaceUv.Transform(ref shown[v], ref shown[v + 1], info.Transform);
+            return shown;
+        }).ToArray()).ToArray();
+        // and what the viewer will draw the merged face with
+        float[][] gotUv = g.Faces.Select((f, slot) =>
+        {
+            FaceTransform t = SlotTransform(slot);
+            float[] shown = (float[])f.Uvs.Clone();
+            for (int v = 0; v < shown.Length; v += 2)
+                FaceUv.Transform(ref shown[v], ref shown[v + 1], t);
+            return shown;
+        }).ToArray();
+        float[][] decUv = model.High.Faces.Select((f, slot) =>
+        {
+            FaceTransform t = SlotTransform(slot);
+            float[] shown = new float[f.NoGeometry ? 0 : f.Uvs.Length * 2];
+            for (int v = 0; v < shown.Length / 2; v++)
+            {
+                float s = f.Uvs[v].X, tt = f.Uvs[v].Y;
+                FaceUv.Transform(ref s, ref tt, t);
+                shown[v * 2] = s;
+                shown[v * 2 + 1] = tt;
+            }
+            return shown;
+        }).ToArray();
 
         foreach (FaceRun run in g.Runs)
         {
@@ -424,14 +470,14 @@ internal static class MeshCheck
                 SysVector3 gotNormal = SysVector3.Normalize(new SysVector3(merged.Normals[mv * 3], merged.Normals[mv * 3 + 1], merged.Normals[mv * 3 + 2]) / g.Scale);
                 report.WorstPositionMeters = Math.Max(report.WorstPositionMeters, SysVector3.Distance(wantPos, gotPos));
                 report.WorstNormal = Math.Max(report.WorstNormal, MaxComponent(wantNormal - gotNormal));
-                report.WorstUv = Math.Max(report.WorstUv, Math.Max(Math.Abs(wu - merged.Uvs[mv * 2]), Math.Abs(wv - merged.Uvs[mv * 2 + 1])));
+                report.WorstUv = Math.Max(report.WorstUv, Math.Max(Math.Abs(wu - gotUv[run.Slot][mv * 2]), Math.Abs(wv - gotUv[run.Slot][mv * 2 + 1])));
 
                 int dv = dec.Indices[run.FirstIndex + k];
                 SysVector3 decPos = g.Position + dec.Positions[dv] * g.Scale;
                 SysVector3 decNormal = SysVector3.Normalize(dec.Normals[dv] / g.Scale);
                 report.WorstPositionMetersDecoded = Math.Max(report.WorstPositionMetersDecoded, SysVector3.Distance(wantPos, decPos));
                 report.WorstNormalDecoded = Math.Max(report.WorstNormalDecoded, MaxComponent(wantNormal - decNormal));
-                report.WorstUvDecoded = Math.Max(report.WorstUvDecoded, Math.Max(Math.Abs(wu - dec.Uvs[dv].X), Math.Abs(wv - dec.Uvs[dv].Y)));
+                report.WorstUvDecoded = Math.Max(report.WorstUvDecoded, Math.Max(Math.Abs(wu - decUv[run.Slot][dv * 2]), Math.Abs(wv - decUv[run.Slot][dv * 2 + 1])));
                 report.Corners++;
             }
         }
