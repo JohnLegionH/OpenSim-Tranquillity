@@ -46,12 +46,35 @@ public sealed class MergedPartReport
     public double WorstNormalDecoded { get; set; }
 }
 
+/// <summary>A part that holds planar-mapped faces: which faces, and whether the part went into a merged part or stayed.</summary>
+public sealed class PlanarPart
+{
+    public string Linkset { get; set; }
+    public string Name { get; set; }
+    public int LinkNum { get; set; }
+    public List<int> Faces { get; } = new List<int>();
+    /// <summary>The merged part it went into (empty when it stayed).</summary>
+    public string MergedInto { get; set; } = "";
+    /// <summary>Why it stayed (the codes of the rules that keep it); empty when it merged.</summary>
+    public string KeptBy { get; set; } = "";
+}
+
+/// <summary>How the faces of the convertible prims in the archive are mapped (default or planar), and which parts hold the planar ones.</summary>
+public sealed class MappingCensus
+{
+    public int DefaultFaces { get; set; }
+    public int PlanarFaces { get; set; }
+    public int OtherFaces { get; set; }
+    public List<PlanarPart> PlanarParts { get; } = new List<PlanarPart>();
+}
+
 public sealed class MergeWriteResult
 {
     public MergePlan Plan { get; set; }
     public string Output { get; set; }
     public RewriteSummary Rewrite { get; set; }
     public List<MergedPartReport> Parts { get; } = new List<MergedPartReport>();
+    public MappingCensus Mapping { get; set; } = new MappingCensus();
     public int MeshesAdded => Parts.Count;
     public long SourceBytes { get; set; }
     public long OutputBytes { get; set; }

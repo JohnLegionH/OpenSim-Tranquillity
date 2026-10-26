@@ -221,6 +221,30 @@ public class MergeArchiveWriterTests
     }
 
     [Fact]
+    public void TheMappingCensusCountsFacesByMappingAndNamesThePartsWithPlanarFacesMergedOrKept()
+    {
+        Primitive.TextureEntry planar = new Primitive.TextureEntry(UUID.Random());
+        planar.DefaultTexture.TexMapType = MappingType.Planar;
+        (string src, List<KitPart> parts) = Build(scripted: 4, change: p =>
+        {
+            p[1].TextureEntry = Convert.ToBase64String(planar.GetBytes());
+            p[3].TextureEntry = Convert.ToBase64String(planar.GetBytes());
+        });
+        MergeWriteResult r = Merge(src, out _);
+        MappingCensus c = r.Mapping;
+        Assert.Equal(12, c.PlanarFaces);
+        Assert.Equal(18, c.DefaultFaces);
+        Assert.Equal(0, c.OtherFaces);
+        PlanarPart merged = Assert.Single(c.PlanarParts, x => x.Name == "Box 2");
+        Assert.NotEmpty(merged.MergedInto);
+        Assert.Equal(Enumerable.Range(0, 6), merged.Faces);
+        PlanarPart kept = Assert.Single(c.PlanarParts, x => x.Name == "Box 4");
+        Assert.Equal("", kept.MergedInto);
+        Assert.Contains("SCRIPTED", kept.KeptBy);
+        Assert.Contains("Box 2", r.ToText());
+    }
+
+    [Fact]
     public void TheSourceArchiveIsNotChangedAndAnOutputThatExistsIsRefused()
     {
         (string src, _) = Build();
