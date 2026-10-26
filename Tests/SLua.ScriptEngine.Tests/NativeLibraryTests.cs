@@ -40,13 +40,13 @@ public class NativeLibraryTests
     }
 
     [RequiresNativeFact]
-    public void TheRealLibraryLoadsFromSluaShimPathAndReportsApiVersionThree()
+    public void TheRealLibraryLoadsFromSluaShimPathAndReportsApiVersionFour()
     {
         RuntimeLoadResult r = NativeRuntime.Load(new NativeRuntimeOptions());
         Assert.True(r.Ok, r.Message);
-        Assert.Equal(3, r.ApiVersion);
-        Assert.Equal(3, Host.ApiVersion());
-        Assert.Contains("api=3", Host.Version());
+        Assert.Equal(4, r.ApiVersion);
+        Assert.Equal(4, Host.ApiVersion());
+        Assert.Contains("api=4", Host.Version());
         Assert.True(File.Exists(r.LibraryPath));
     }
 

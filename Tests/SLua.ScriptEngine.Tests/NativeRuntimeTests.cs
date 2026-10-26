@@ -113,25 +113,25 @@ public class NativeRuntimeTests
     [Fact]
     public void AnApiVersionOtherThanTheRequiredOneIsNotOkAndTheMessageNamesBoth()
     {
-        var r = NativeRuntime.Load(Options(version: () => 2));
+        var r = NativeRuntime.Load(Options(version: () => 3));
         Assert.False(r.Ok);
-        Assert.Equal(2, r.ApiVersion);
-        Assert.Contains("API version 2", r.Message);
-        Assert.Contains("requires 3", r.Message);
+        Assert.Equal(3, r.ApiVersion);
+        Assert.Contains("API version 3", r.Message);
+        Assert.Contains("requires 4", r.Message);
     }
 
     [Fact]
     public void TheRequiredApiVersionIsOk()
     {
-        var r = NativeRuntime.Load(Options(version: () => 3));
+        var r = NativeRuntime.Load(Options(version: () => 4));
         Assert.True(r.Ok, r.Message);
-        Assert.Equal(3, r.ApiVersion);
+        Assert.Equal(4, r.ApiVersion);
     }
 
     [Fact]
     public void AVersionAboveTheRequiredOneIsAlsoRefused()
     {
-        Assert.False(NativeRuntime.Load(Options(version: () => 4)).Ok);
+        Assert.False(NativeRuntime.Load(Options(version: () => 5)).Ok);
     }
 
     [Fact]

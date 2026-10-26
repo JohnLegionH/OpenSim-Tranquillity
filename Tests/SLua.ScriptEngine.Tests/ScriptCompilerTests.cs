@@ -71,7 +71,7 @@ public class ScriptCompilerTests
     [RequiresNativeFact]
     public void ABadLslScriptGivesTheErrorsRealSourceLine()
     {
-        // The runtime reports an LSL error one line late; the engine corrects it so the editor marks the right line.
+        // The runtime reports an LSL error on the line it is on; the editor marks that line.
         string source = "default\n{\n    state_entry()\n    {\n        integer a = 1;\n        integer b = \"x\";\n    }\n}\n";
         CompileResult r = Compile(source);
         Assert.False(r.Success);
