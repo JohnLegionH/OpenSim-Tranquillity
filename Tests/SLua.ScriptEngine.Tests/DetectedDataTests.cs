@@ -23,8 +23,8 @@ namespace SLua.ScriptEngine.Tests;
 public class DetectedDataTests
 {
     private const string Handler =
-        "LLEvents:on(\"touch_start\", function(n) ossl.Mark(\"touch\", ossl.DetectedCount() .. \":\" .. ossl.DetectedName(0) .. \":\" .. ossl.DetectedFace(0)) end)\n" +
-        "LLEvents:on(\"moving_start\", function() ossl.Mark(\"moving\", ossl.DetectedCount() .. \":\" .. ossl.DetectedName(0)) end)";
+        "LLEvents:on(\"touch_start\", function(n) ossl.Mark(\"touch:\" .. ossl.DetectedCount() .. \":\" .. ossl.DetectedName(0) .. \":\" .. ossl.DetectedFace(0)) end)\n" +
+        "LLEvents:on(\"moving_start\", function() ossl.Mark(\"moving:\" .. ossl.DetectedCount() .. \":\" .. ossl.DetectedName(0)) end)";
 
     private static DetectParams Toucher(string name, int face = 1)
     {
