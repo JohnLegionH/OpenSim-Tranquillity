@@ -23,14 +23,14 @@ public class MergeUvPrecisionTests
 {
     // ---------------------------------------------------------------- the planner on hand-made parts
 
-    private static MergePart Part(int link, float rangeU, int width = 1024, int height = 1024)
+    private static MergePart Part(int link, float rangeU, int width = 1024, int height = 1024, float minU = 0)
     {
         MergePart p = new MergePart
         {
             PartId = Guid.NewGuid(), LinkNum = link, IsRoot = link == 1, Name = "Part " + link, Creator = "c", Masks = "m", PhysicsShapeType = 0, PhysicsVertices = 8,
             BoxMin = new[] { link * 1f, 0f, 0f }, BoxMax = new[] { link * 1f + 1, 1f, 1f }
         };
-        p.Faces.Add(new MergeFace { TextureId = "tex", Vertices = 24, TextureWidth = width, TextureHeight = height, Uv = new UvBounds(0, rangeU, 0, 1) });
+        p.Faces.Add(new MergeFace { TextureId = "tex", Vertices = 24, TextureWidth = width, TextureHeight = height, Uv = new UvBounds(minU, minU + rangeU, 0, 1) });
         return p;
     }
 
@@ -58,7 +58,8 @@ public class MergeUvPrecisionTests
         LinksetPlan plan = Plan(narrowA, wide, narrowB);
         MergedPartPlan merged = Assert.Single(plan.Merged);
         Assert.DoesNotContain(merged.Members, m => m.PartId == wide.PartId);
-        Assert.Contains(plan.Kept, k => k.PartId == wide.PartId);
+        KeptPartPlan kept = Assert.Single(plan.Kept, k => k.PartId == wide.PartId);
+        Assert.Contains(kept.Rules, r => r.Code == "UV_PRECISION");
     }
 
     [Fact]
@@ -66,8 +67,21 @@ public class MergeUvPrecisionTests
     {
         // 40 repeats: 0.31 texel at 1024, 1.25 at 4096, 0.02 at 64
         Assert.Single(Plan(Part(1, 1), Part(2, 40), Part(3, 1)).Merged);
-        Assert.Empty(Plan(Part(1, 1, 4096, 4096), Part(2, 40, 4096, 4096), Part(3, 1, 4096, 4096)).Merged);
+        LinksetPlan big = Plan(Part(1, 1, 4096, 4096), Part(2, 40, 4096, 4096), Part(3, 1, 4096, 4096));
+        Assert.Equal(2, Assert.Single(big.Merged).Members.Count);
+        Assert.Single(big.Kept);
         Assert.Single(Plan(Part(1, 1, 64, 64), Part(2, 40, 64, 64), Part(3, 1, 64, 64)).Merged);
+    }
+
+    [Fact]
+    public void FacesOfOneMaterialWhoseRangesApartWouldShowMoreThanHalfATexelGetAFaceEach()
+    {
+        // 0..1 and 0..40 together span 40 (0.31 texel); 100..140 as well, but all three together span 140 (1.09 texels)
+        LinksetPlan plan = Plan(Part(1, 1), Part(2, 40), Part(3, 40, minU: 100));
+        MergedPartPlan merged = Assert.Single(plan.Merged);
+        Assert.Equal(3, merged.Members.Count);
+        Assert.Equal(2, merged.Slots.Count);
+        Assert.Empty(plan.Kept);
     }
 
     [Fact]
@@ -120,14 +134,15 @@ public class MergeUvPrecisionTests
     }
 
     [Fact]
-    public void ADefaultMappedFaceWithHugeRepeatsIsNotBakedAndKeepsItsRepeatsOnItsOwnFace()
+    public void ADefaultMappedFaceWithHugeRepeatsKeepsItsPartOutOfTheMergeAndTheRestMerge()
     {
         MergeWriteResult r = Merge(Archive(Guid.NewGuid(), null, 300, planar: false));
         MergedPartReport part = Assert.Single(r.Parts);
-        Assert.Equal(5, part.Members);
-        Assert.Equal(6, part.UnbakedFaces);
-        Assert.Equal(24, part.BakedFaces);
+        Assert.Equal(4, part.Members);
         Assert.True(part.WorstUvTexels <= UvPrecision.MaxTexels, part.WorstUvTexels + " texels");
+        KeptPartPlan kept = Assert.Single(r.Plan.Linksets[0].Kept);
+        Assert.Equal("Box 3", kept.Name);
+        Assert.Contains(kept.Rules, x => x.Code == "UV_PRECISION");
     }
 
     [Fact]
@@ -142,18 +157,18 @@ public class MergeUvPrecisionTests
     [Fact]
     public void ThePlanReadsTheRealSizeOfAWideTextureInTheArchive()
     {
-        // 40 repeats across 4096 pixels is 1.25 texels; a default of 1024 would have said 0.31 and baked the face
+        // 40 repeats across 4096 pixels is 1.25 texels; a default of 1024 would have said 0.31 and merged the part
         MergeWriteResult r = Merge(Archive(Guid.NewGuid(), Jp2(4096, 4), 40, planar: false));
-        Assert.Equal(6, Assert.Single(r.Parts).UnbakedFaces);
+        Assert.Equal(4, Assert.Single(r.Parts).Members);
     }
 
     [Fact]
     public void ThePlanReadsTheRealSizeOfATinyTextureInTheArchive()
     {
-        // 5000 repeats across 8 pixels is 0.15 texel; a default of 1024 would have said 39 and left the face unbaked
+        // 5000 repeats across 8 pixels is 0.15 texel; a default of 1024 would have said 39 and kept the part out of the merge
         MergeWriteResult r = Merge(Archive(Guid.NewGuid(), Jp2(8, 8), 5000, planar: false));
         MergedPartReport part = Assert.Single(r.Parts);
-        Assert.Equal(0, part.UnbakedFaces);
+        Assert.Equal(5, part.Members);
         Assert.True(part.WorstUvTexels <= UvPrecision.MaxTexels);
     }
 
