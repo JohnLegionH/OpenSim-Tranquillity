@@ -105,6 +105,15 @@ namespace SLua.ScriptEngine
         /// <summary>Consecutive punished turns after which a script is killed.</summary>
         public int KillAfterPunishments { get; set; } = 20;
 
+        /// <summary>
+        /// How many recent run windows of a script are averaged to tell its own overrun from the system keeping the worker
+        /// off the processor; an overrun is punished as before until the script has run this many windows.
+        /// </summary>
+        public int OverrunWindows { get; set; } = 32;
+
+        /// <summary>The share of its wall time (averaged over <see cref="OverrunWindows"/>) a script must have used as CPU time for an overrun to be its own.</summary>
+        public double OverrunMinCpuShare { get; set; } = 0.5;
+
         /// <summary>Delay a script's own error report adds to the script, in seconds (the 15 ms chat pause).</summary>
         public double ErrorPauseSeconds { get; set; } = 0.015;
 

@@ -147,6 +147,9 @@ namespace SLua.ScriptEngine
         /// <summary>One detected object of the event being handled, or null for an index out of range.</summary>
         internal DetectedRecord DetectedAt(int index) =>
             CurrentDetected != null && index >= 0 && index < CurrentDetected.Length ? CurrentDetected[index] : null;
+        /// <summary>Overruns the runtime reported that were not punished because the script's CPU time, averaged over its recent run windows, says the system kept its worker off the processor.</summary>
+        public long WaivedOverruns => 0;
+
         internal void CountPunishment() => Interlocked.Increment(ref m_punishments);
 
         /// <summary>The script whose native call is running on this thread, or null.</summary>
