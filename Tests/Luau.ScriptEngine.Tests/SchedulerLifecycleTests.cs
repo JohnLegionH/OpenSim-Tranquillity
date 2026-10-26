@@ -53,9 +53,11 @@ public class SchedulerLifecycleTests
         SchedulerScript s = h.AddAndStart(Counter);
         h.Passes(3);
         h.Scheduler.SetRunning(s, false);
-        h.Passes(5);
+        h.Passes(1);
         int before = h.MarksOf(s).Length;
         Assert.True(before >= 2);
+        h.Passes(5);
+        Assert.Equal(before, h.MarksOf(s).Length); // nothing ran while it was stopped
 
         h.Scheduler.SetRunning(s, true);
         h.Passes(2);
