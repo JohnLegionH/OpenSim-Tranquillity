@@ -14,6 +14,7 @@ using OpenMetaverse;
 using OpenSim.Framework;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
+using OpenSim.Region.ScriptEngine.Interfaces;
 using OpenSim.Region.ScriptEngine.Shared;
 
 namespace Luau.ScriptEngine
@@ -69,7 +70,29 @@ namespace Luau.ScriptEngine
             public uint LocalID;
             public UUID AssetID;
             public SchedulerScript Script;
+            public StartInfo Start;
+            public bool StartupPending;
         }
+
+        /// <summary>What the rez that started a script asked for: its start parameter, whether it wants on_rez, and where its state came from.</summary>
+        private sealed class StartInfo
+        {
+            public int StartParam;
+            public bool PostOnRez;
+            public int StateSource;
+        }
+
+        private readonly Dictionary<UUID, StartInfo> m_starts = new Dictionary<UUID, StartInfo>();
+
+        /// <summary>Events held for items whose script has not finished loading, as Halcyon's DeferredEventManager does.</summary>
+        private sealed class DeferredList
+        {
+            public double Started;
+            public readonly List<(string Name, Value[] Args)> Events = new List<(string, Value[])>();
+        }
+
+        private readonly Dictionary<UUID, DeferredList> m_deferred = new Dictionary<UUID, DeferredList>();
+        private volatile bool m_disabled;
 
         private readonly Dictionary<UUID, ScriptRecord> m_records = new Dictionary<UUID, ScriptRecord>();
 
@@ -201,6 +224,8 @@ namespace Luau.ScriptEngine
             m_scene.EventManager.OnStartScript -= OnStartScript;
             m_scene.EventManager.OnStopScript -= OnStopScript;
             lock (m_tracked) m_tracked.Clear();
+            lock (m_starts) m_starts.Clear();
+            lock (m_deferred) m_deferred.Clear();
             m_loader?.Dispose();
             m_loader = null;
             m_scheduler?.Dispose();
@@ -223,7 +248,11 @@ namespace Luau.ScriptEngine
                 return;
             }
 
+            if (m_disabled)
+                return;
+
             lock (m_tracked) m_tracked[itemID] = localID;
+            lock (m_starts) m_starts[itemID] = new StartInfo { StartParam = startParam, PostOnRez = postOnRez, StateSource = stateSource };
             if (!m_warnedNoFunctions)
             {
                 m_warnedNoFunctions = true;
@@ -255,8 +284,15 @@ namespace Luau.ScriptEngine
         private void Disown(UUID itemID)
         {
             lock (m_tracked) m_tracked.Remove(itemID);
+            ForgetPending(itemID);
             m_loader?.Disown(itemID);
             DropRecord(itemID);
+        }
+
+        private void ForgetPending(UUID itemID)
+        {
+            lock (m_starts) m_starts.Remove(itemID);
+            lock (m_deferred) m_deferred.Remove(itemID);
         }
 
         // ---- the join: a ready script becomes a scheduler script ----
@@ -265,7 +301,7 @@ namespace Luau.ScriptEngine
         private void OnScriptReady(ReadyScript ready)
         {
             LuauScheduler scheduler = m_scheduler;
-            if (scheduler == null || !IsTracking(ready.ItemID))
+            if (scheduler == null || m_disabled || !IsTracking(ready.ItemID))
                 return;
 
             TaskInventoryItem item = m_scene?.GetSceneObjectPart(ready.LocalID)?.Inventory?.GetInventoryItem(ready.ItemID);
@@ -278,11 +314,14 @@ namespace Luau.ScriptEngine
             }
             catch (Exception e)
             {
-                m_log.Error($"Script {ready.ItemID} could not be given to a worker: {e.Message}");
+                if (!DisableIfEveryWorkerFailed())
+                    m_log.Error($"Script {ready.ItemID} could not be given to a worker: {e.Message}");
                 return;
             }
 
-            var record = new ScriptRecord { ItemID = ready.ItemID, LocalID = ready.LocalID, AssetID = ready.AssetID, Script = script };
+            StartInfo start;
+            lock (m_starts) m_starts.TryGetValue(ready.ItemID, out start);
+            var record = new ScriptRecord { ItemID = ready.ItemID, LocalID = ready.LocalID, AssetID = ready.AssetID, Script = script, Start = start, StartupPending = true };
             ScriptRecord replaced;
             lock (m_records)
             {
@@ -293,9 +332,67 @@ namespace Luau.ScriptEngine
                 scheduler.Remove(replaced.Script);
 
             if (running)
+            {
                 scheduler.Start(script);
+                BeginRunning(record);
+            }
             else
                 scheduler.SetRunning(script, false);
+        }
+
+        /// <summary>
+        /// The events a script's first start brings, after the state_entry the runtime runs itself, in the order Phlox
+        /// posts them: on_rez when the rez asked for it, attach for a worn object, changed for a region start or an
+        /// arrival; then whatever arrived while the script was loading. A script that starts stopped gets them when it is started.
+        /// </summary>
+        private void BeginRunning(ScriptRecord record)
+        {
+            lock (record)
+            {
+                if (!record.StartupPending)
+                    return;
+                record.StartupPending = false;
+            }
+            LuauScheduler scheduler = m_scheduler;
+            if (scheduler == null)
+                return;
+            StartInfo start = record.Start;
+            if (start != null)
+            {
+                SceneObjectPart part = m_scene?.GetSceneObjectPart(record.LocalID);
+                if (start.PostOnRez)
+                    scheduler.Post(record.Script, "on_rez", Value.Int(start.StartParam));
+                if (start.StateSource == (int)StateSource.AttachedRez && part?.ParentGroup != null && part.ParentGroup.AttachedAvatar != UUID.Zero)
+                    scheduler.Post(record.Script, "attach", Value.Key(part.ParentGroup.AttachedAvatar.ToString()));
+                int change = ArrivalChange(start.StateSource, part);
+                if (change != 0)
+                    scheduler.Post(record.Script, "changed", Value.Int(change));
+            }
+            FlushDeferred(record);
+        }
+
+        /// <summary>
+        /// The changed() bits a start brings: CHANGED_REGION_START for a region start (https://wiki.secondlife.com/wiki/CHANGED_REGION_START);
+        /// CHANGED_REGION for a crossing or a teleport, plus CHANGED_TELEPORT for a worn object that teleported
+        /// (https://wiki.secondlife.com/wiki/CHANGED_REGION, https://wiki.secondlife.com/wiki/CHANGED_TELEPORT), to a
+        /// root prim only. Phlox's rule (PhloxExecutionScheduler.ArrivalChange); the wait for a rider is not copied.
+        /// </summary>
+        private static int ArrivalChange(int stateSource, SceneObjectPart part)
+        {
+            const int ChangedRegion = 0x100, ChangedTeleport = 0x200, ChangedRegionStart = 0x400;
+            switch ((StateSource)stateSource)
+            {
+                case StateSource.RegionStart:
+                    return ChangedRegionStart;
+                case StateSource.PrimCrossing:
+                case StateSource.Teleporting:
+                    if (part == null || !part.IsRoot)
+                        return 0;
+                    bool worn = part.ParentGroup?.IsAttachment == true;
+                    return (StateSource)stateSource == StateSource.Teleporting && worn ? ChangedRegion | ChangedTeleport : ChangedRegion;
+                default:
+                    return 0;
+            }
         }
 
         private ScriptRecord RecordOf(UUID itemID)
@@ -327,6 +424,7 @@ namespace Luau.ScriptEngine
             if (!IsTracking(itemID) && RecordOf(itemID) == null)
                 return; // not ours
             lock (m_tracked) m_tracked.Remove(itemID);
+            ForgetPending(itemID);
             m_loader?.Disown(itemID);
             DropRecord(itemID);
             OnScriptRemoved?.Invoke(itemID);
@@ -349,6 +447,7 @@ namespace Luau.ScriptEngine
                 return;
             SetItemRunningFlag(record.LocalID, itemID, true);
             m_scheduler?.SetRunning(record.Script, true);
+            BeginRunning(record);
         }
 
         private void OnStopScript(uint localID, UUID itemID)
@@ -396,8 +495,30 @@ namespace Luau.ScriptEngine
                 TellOwner(record, text);
         }
 
-        private void OnWorkerStopped(int index, int crashes, string message) =>
+        private void OnWorkerStopped(int index, int crashes, string message)
+        {
             m_log.Error($"Script worker {index} stopped after {crashes} failures; its scripts no longer run. Last failure: {message}");
+            DisableIfEveryWorkerFailed();
+        }
+
+        /// <summary>
+        /// Phlox stops its engine the same way when its scheduler gives up: one log line, and the region and the other
+        /// engines carry on. True when the engine is (now) disabled.
+        /// </summary>
+        private bool DisableIfEveryWorkerFailed()
+        {
+            SchedulerStats stats = m_scheduler?.GetStats();
+            if (stats == null || stats.FailedWorkers < stats.Workers.Length)
+                return m_disabled;
+            lock (m_deferred)
+            {
+                if (m_disabled)
+                    return true;
+                m_disabled = true;
+            }
+            m_log.Error("The Luau script engine is disabled: every script worker has failed, so no script of this engine runs until the region restarts");
+            return true;
+        }
 
         private ScriptRecord FindRecord(SchedulerScript script)
         {
@@ -431,20 +552,106 @@ namespace Luau.ScriptEngine
 
         public string GetXMLState(UUID itemID) => string.Empty;
         public bool SetXMLState(UUID itemID, string xml) => false;
-        public bool PostScriptEvent(UUID itemID, string name, object[] args) => false;
-        public bool PostObjectEvent(UUID itemID, string name, object[] args) => false;
+        public bool PostScriptEvent(UUID itemID, string name, object[] args) =>
+            PostScriptEvent(itemID, new EventParams(name, args, null));
 
-        /// <summary>Posts an event to one script (the entry point other engines and the async plugins use).</summary>
-        public bool PostScriptEvent(UUID itemID, EventParams parms) => false;
+        public bool PostObjectEvent(UUID itemID, string name, object[] args)
+        {
+            uint localId;
+            lock (m_tracked)
+            {
+                if (!m_tracked.TryGetValue(itemID, out localId))
+                    return false;
+            }
+            return PostObjectEvent(localId, new EventParams(name, args, null));
+        }
 
-        /// <summary>Posts an event to every script of the prim that this engine holds.</summary>
-        public bool PostObjectEvent(uint localID, EventParams parms) => false;
+        /// <summary>
+        /// Posts an event to one script: the entry point other engines and the async plugins use. True when the script
+        /// is ours and the event is one the runtime knows. A script that is still loading keeps the event
+        /// (32 per item, for 60 seconds from the first) and gets it once it has started.
+        /// </summary>
+        public bool PostScriptEvent(UUID itemID, EventParams parms)
+        {
+            if (!TryConvert(parms, out string name, out Value[] args))
+                return false;
+            return PostToItem(itemID, name, args);
+        }
 
-        /// <summary>True once every worker has failed and the engine has switched itself off.</summary>
-        internal bool IsDisabled => false;
+        /// <summary>Posts an event to every script of the prim that this engine holds or is loading.</summary>
+        public bool PostObjectEvent(uint localID, EventParams parms)
+        {
+            if (!TryConvert(parms, out string name, out Value[] args))
+                return false;
+            var items = new List<UUID>();
+            lock (m_tracked)
+            {
+                foreach (KeyValuePair<UUID, uint> kv in m_tracked)
+                    if (kv.Value == localID)
+                        items.Add(kv.Key);
+            }
+            bool any = false;
+            foreach (UUID item in items)
+                any |= PostToItem(item, name, args);
+            return any;
+        }
+
+        private bool PostToItem(UUID itemID, string name, Value[] args)
+        {
+            LuauScheduler scheduler = m_scheduler;
+            if (scheduler == null || m_disabled)
+                return false;
+            ScriptRecord record = RecordOf(itemID);
+            if (record != null)
+            {
+                scheduler.Post(record.Script, name, args);
+                return true;
+            }
+            if (!IsTracking(itemID))
+                return false;
+            Defer(itemID, name, args);
+            return true;
+        }
+
+        private void Defer(UUID itemID, string name, Value[] args)
+        {
+            double now = Clock.Now;
+            lock (m_deferred)
+            {
+                if (m_deferred.TryGetValue(itemID, out DeferredList list) && now - list.Started >= DeferredEventLifetimeSeconds)
+                {
+                    m_deferred.Remove(itemID);
+                    list = null;
+                }
+                if (list == null)
+                    m_deferred[itemID] = list = new DeferredList { Started = now };
+                if (list.Events.Count < MaxDeferredEventsPerItem)
+                    list.Events.Add((name, args)); // the first 32 are kept
+            }
+        }
+
+        private void FlushDeferred(ScriptRecord record)
+        {
+            DeferredList list;
+            lock (m_deferred)
+            {
+                if (!m_deferred.Remove(record.ItemID, out list))
+                    return;
+            }
+            if (Clock.Now - list.Started >= DeferredEventLifetimeSeconds)
+                return; // a script that took more than a minute to load lost them
+            foreach ((string name, Value[] args) in list.Events)
+                m_scheduler?.Post(record.Script, name, args);
+        }
 
         /// <summary>Events held for an item whose script has not finished loading.</summary>
-        internal int DeferredEventCount(UUID itemID) => 0;
+        internal int DeferredEventCount(UUID itemID)
+        {
+            lock (m_deferred) return m_deferred.TryGetValue(itemID, out DeferredList list) ? list.Events.Count : 0;
+        }
+
+        /// <summary>True once every worker has failed and the engine has switched itself off.</summary>
+        internal bool IsDisabled => m_disabled;
 
         /// <summary>The clock the engine's deferred events expire by; tests replace it.</summary>
         internal ISchedulerClock Clock { get; set; } = new MonotonicClock();
@@ -454,6 +661,25 @@ namespace Luau.ScriptEngine
 
         /// <summary>How long they are kept from the first one (Halcyon DeferredEventManager.EXPIRATION_SECONDS).</summary>
         internal const double DeferredEventLifetimeSeconds = 60;
+
+        private static bool TryConvert(EventParams parms, out string name, out Value[] args)
+        {
+            name = null;
+            args = null;
+            if (parms == null || string.IsNullOrEmpty(parms.EventName))
+                return false;
+            try
+            {
+                Host.EventIndex(parms.EventName);
+            }
+            catch (SluaException)
+            {
+                return false; // not an event the runtime knows
+            }
+            name = parms.EventName;
+            args = EventArguments.Convert(name, parms.Params);
+            return true;
+        }
 
         public bool SuspendScript(UUID itemID)
         {

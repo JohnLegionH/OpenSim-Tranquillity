@@ -115,10 +115,10 @@ namespace Luau.ScriptEngine
         public Action<int, int, string> WorkerStopped { get; set; }
 
         /// <summary>Tests only: called on the worker's thread at the start of each pass with the worker's index and the pass number; it may throw to fail the pass.</summary>
-        public Action<int, long> BeforePass { get; set; }
+        internal Action<int, long> BeforePass { get; set; }
 
         /// <summary>Tests only: returns the result of a plain step in place of the runtime's, or null to run the step.</summary>
-        public Func<SchedulerScript, StepResult?> StepOverride { get; set; }
+        internal Func<SchedulerScript, StepResult?> StepOverride { get; set; }
     }
 
     /// <summary>A reading of one worker's counters.</summary>

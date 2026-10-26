@@ -19,7 +19,45 @@ namespace Luau.ScriptEngine
         {
             isLsl = false;
             stateMasks = null;
-            return false;
+            if (asset == null)
+                return false;
+
+            // Layout (the runtime's BytecodeHeader, little endian): tag "LUAU", major, minor, then a section of
+            // u32 length holding: u8 isLsl, u32 api version, u32 state count, one u64 mask per state, u32 charged size.
+            int pos = 0;
+            if (asset.Length < 12 || asset[0] != (byte)'L' || asset[1] != (byte)'U' || asset[2] != (byte)'A' || asset[3] != (byte)'U')
+                return false;
+            pos = 12;
+            if (!ReadU32(asset, ref pos, out uint sectionLength) || sectionLength > asset.Length - pos)
+                return false;
+            int end = pos + (int)sectionLength;
+            if (pos + 1 > end)
+                return false;
+            bool lsl = asset[pos++] != 0;
+            if (!ReadU32(asset, ref pos, out _) || !ReadU32(asset, ref pos, out uint states))
+                return false;
+            if (states > (uint)(end - pos) / 8)
+                return false;
+            var masks = new ulong[states];
+            for (int i = 0; i < masks.Length; i++)
+            {
+                ReadU32(asset, ref pos, out uint low);
+                ReadU32(asset, ref pos, out uint high);
+                masks[i] = low | ((ulong)high << 32);
+            }
+            isLsl = lsl;
+            stateMasks = masks;
+            return true;
+        }
+
+        private static bool ReadU32(byte[] data, ref int pos, out uint value)
+        {
+            value = 0;
+            if (data.Length - pos < 4)
+                return false;
+            value = data[pos] | ((uint)data[pos + 1] << 8) | ((uint)data[pos + 2] << 16) | ((uint)data[pos + 3] << 24);
+            pos += 4;
+            return true;
         }
     }
 }

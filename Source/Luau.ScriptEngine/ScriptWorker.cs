@@ -49,6 +49,11 @@ namespace Luau.ScriptEngine
         private SharedImages m_images;
         private readonly Dictionary<long, SchedulerScript> m_scripts = new Dictionary<long, SchedulerScript>();
         private readonly Queue<SchedulerScript> m_ring = new Queue<SchedulerScript>();
+
+        // Scripts an event has woken, run ahead of the ring in the next pass. A script gets this place at most once per
+        // ring cycle, so a flood of events cannot keep jumping the queue. A cycle is as many turns as the ring held when it began.
+        private readonly Queue<SchedulerScript> m_front = new Queue<SchedulerScript>();
+        private int m_cycleLeft;
         private readonly PriorityQueue<(SchedulerScript Script, long Gen), double> m_sleepers = new PriorityQueue<(SchedulerScript, long), double>();
         private readonly PriorityQueue<(SchedulerScript Script, long Gen), double> m_timers = new PriorityQueue<(SchedulerScript, long), double>();
         private double m_now;
@@ -215,10 +220,16 @@ namespace Luau.ScriptEngine
             // ones that did, so the next pass carries on in the same order.
             long budget = (long)(m_options.PassBudgetMs / 1000.0 * Stopwatch.Frequency);
             long passStart = Stopwatch.GetTimestamp();
-            int turns = m_ring.Count;
+            int turns = m_front.Count + m_ring.Count;
             for (int i = 0; i < turns; i++)
             {
-                SchedulerScript s = m_ring.Dequeue();
+                if (m_cycleLeft <= 0)
+                {
+                    Interlocked.Increment(ref m_cycles);
+                    m_cycleLeft = m_front.Count + m_ring.Count;
+                }
+                m_cycleLeft--;
+                SchedulerScript s = m_front.Count > 0 ? m_front.Dequeue() : m_ring.Dequeue();
                 s.InRing = false;
                 if (s.State == ScriptRunState.Runnable)
                 {
@@ -231,7 +242,7 @@ namespace Luau.ScriptEngine
                     break;
                 }
             }
-            return m_ring.Count > 0;
+            return m_ring.Count > 0 || m_front.Count > 0;
         }
 
         private double Now() => m_options.RunThreads ? m_options.Clock.Now : m_now;
@@ -314,17 +325,65 @@ namespace Luau.ScriptEngine
             Reschedule(s);
         }
 
+        /// <summary>The events a full queue still takes: losing one leaves a script half started or its timer dead (Halcyon, as Phlox's RuntimeState does).</summary>
+        private static bool PassesFullQueue(int eventIndex) =>
+            eventIndex == EventIndexOf("on_rez") || eventIndex == EventIndexOf("state_entry")
+            || eventIndex == EventIndexOf("state_exit") || eventIndex == TimerEvent();
+
+        private static readonly Dictionary<string, int> s_eventIndexes = new Dictionary<string, int>();
+
+        private static int EventIndexOf(string name)
+        {
+            lock (s_eventIndexes)
+            {
+                if (!s_eventIndexes.TryGetValue(name, out int index))
+                    s_eventIndexes[name] = index = Host.EventIndex(name);
+                return index;
+            }
+        }
+
+        private static ulong EventBit(int eventIndex) => eventIndex >= 1 && eventIndex <= 64 ? 1UL << (eventIndex - 1) : 0;
+
+        /// <summary>
+        /// True when the script has a handler for the event: an LSL script's current state, from the asset header; for
+        /// SLua, unless the runtime has just said it has none (handlers change only while the script runs, so that
+        /// finding stands until the script next runs something).
+        /// </summary>
+        private static bool Handles(SchedulerScript s, int eventIndex)
+        {
+            ulong bit = EventBit(eventIndex);
+            if (bit == 0)
+                return true;
+            if (s.StateMasks != null)
+                return s.CurrentState >= s.StateMasks.Length || (s.StateMasks[s.CurrentState] & bit) != 0;
+            return (s.NotHandled & bit) == 0;
+        }
+
         internal void PostEvent(SchedulerScript s, int eventIndex, Value[] args)
         {
-            if (s.Native == null || s.State == ScriptRunState.Removed || s.State == ScriptRunState.Faulted || !s.Running)
-                return; // a script that is not running hears nothing
-            if (s.Events.Count >= m_options.MaxEventQueue)
+            if (s.Native == null || s.State == ScriptRunState.Removed)
+                return;
+            if (!s.Running)
+            {
+                // Halcyon: killed and disabled scripts no longer respond to outside stimuli.
+                s.CountStoppedDrop();
+                Interlocked.Increment(ref m_droppedWhileStopped);
+                return;
+            }
+            if (!Handles(s, eventIndex))
+            {
+                s.CountUnhandledDrop();
+                Interlocked.Increment(ref m_droppedUnhandled);
+                return;
+            }
+            if (s.Events.Count >= m_options.MaxEventQueue && !PassesFullQueue(eventIndex))
             {
                 s.CountDrop();
+                Interlocked.Increment(ref m_droppedFull);
                 return;
             }
             s.Events.Enqueue(new QueuedEvent(eventIndex, args));
-            Reschedule(s);
+            Reschedule(s, front: s.State == ScriptRunState.Idle);
         }
 
         internal void CompleteWait(SchedulerScript s, Value[] result)
@@ -347,6 +406,11 @@ namespace Luau.ScriptEngine
                 return;
             if (!running)
             {
+                if (s.Events.Count > 0)
+                {
+                    s.CountStoppedDrop(s.Events.Count);
+                    Interlocked.Add(ref m_droppedWhileStopped, s.Events.Count);
+                }
                 s.Events.Clear();
                 s.TimerQueued = false;
                 HoldTimer(s);
@@ -401,6 +465,8 @@ namespace Luau.ScriptEngine
             if (s.State == ScriptRunState.Removed || s.State == ScriptRunState.Loading)
                 return;
             s.Events.Clear();
+            s.CurrentState = 0;
+            s.NotHandled = 0;
             s.TimerQueued = false;
             s.TimerInterval = 0;
             s.TimerGen++;
@@ -523,17 +589,13 @@ namespace Luau.ScriptEngine
         {
             if (!s.TimerQueued)
             {
-                if (s.Events.Count >= m_options.MaxEventQueue)
-                    s.CountDrop();
-                else
-                {
-                    s.Events.Enqueue(new QueuedEvent(TimerEvent(), Array.Empty<Value>()));
-                    s.TimerQueued = true;
-                }
+                // A tick passes a full queue (only one is ever queued), or the timer would stop for good.
+                s.Events.Enqueue(new QueuedEvent(TimerEvent(), Array.Empty<Value>()));
+                s.TimerQueued = true;
             }
             // The next tick is one interval from now: a long gap is one tick, not a burst.
             ArmTimer(s, now + s.TimerInterval);
-            Reschedule(s);
+            Reschedule(s, front: s.State == ScriptRunState.Idle);
         }
 
         /// <summary>SLua scripts ask for timers through LLTimers; the library keeps the interval and the host reads it back after a step.</summary>
@@ -599,6 +661,22 @@ namespace Luau.ScriptEngine
                 s.Events.Dequeue();
                 if (ev.EventIndex == TimerEvent())
                     s.TimerQueued = false;
+            }
+
+            if (s.Language == ScriptLanguage.Slua)
+            {
+                if (dispatching && r.Status == StepStatus.NotRun)
+                    s.NotHandled |= EventBit(ev.EventIndex);
+                else if (r.Status != StepStatus.NotRun && r.Status != StepStatus.Idle)
+                    s.NotHandled = 0;
+            }
+            if (r.Status == StepStatus.StateChange)
+            {
+                // SL clears the event queue on a state change (https://wiki.secondlife.com/wiki/Event); the new
+                // state's handlers decide what is heard from here. A tick that was waiting goes with it.
+                s.CurrentState = r.NewState;
+                s.Events.Clear();
+                s.TimerQueued = false;
             }
 
             switch (r.Status)
@@ -683,7 +761,7 @@ namespace Luau.ScriptEngine
         }
 
         /// <summary>Puts the script where its situation says: waiting, sleeping, in the ring, or idle.</summary>
-        private void Reschedule(SchedulerScript s)
+        private void Reschedule(SchedulerScript s, bool front = false)
         {
             switch (s.State)
             {
@@ -728,7 +806,14 @@ namespace Luau.ScriptEngine
                 if (!s.InRing)
                 {
                     s.InRing = true;
-                    m_ring.Enqueue(s);
+                    if (front && s.LastFrontCycle != Interlocked.Read(ref m_cycles))
+                    {
+                        s.LastFrontCycle = Interlocked.Read(ref m_cycles);
+                        s.CountFrontGrant();
+                        m_front.Enqueue(s);
+                    }
+                    else
+                        m_ring.Enqueue(s);
                 }
                 return;
             }
@@ -787,6 +872,7 @@ namespace Luau.ScriptEngine
             }
             m_scripts.Clear();
             m_ring.Clear();
+            m_front.Clear();
             m_images = null;
             try { m_vm?.Dispose(); }
             catch (Exception e) { m_log?.Error("the virtual machine could not be freed: " + e.Message); }

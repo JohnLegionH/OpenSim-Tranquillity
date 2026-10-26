@@ -43,6 +43,9 @@ namespace Luau.ScriptEngine
             WorkerIndex = workerIndex;
             Asset = asset;
             Language = language;
+            // An LSL asset says which events each state handles; the host keeps only events the current state handles.
+            if (language == ScriptLanguage.Lsl && AssetHeader.TryRead(asset, out bool isLsl, out ulong[] masks) && isLsl && masks.Length > 0)
+                StateMasks = masks;
         }
 
         public long Id { get; }
@@ -103,6 +106,10 @@ namespace Luau.ScriptEngine
         public double TimerInterval { get; internal set; }
 
         // ---- worker only ----
+        internal ulong[] StateMasks;
+        internal int CurrentState;
+        internal ulong NotHandled;
+        internal long LastFrontCycle = -1;
         internal Script Native;
         internal ImageLease Lease;
         internal bool Started;
