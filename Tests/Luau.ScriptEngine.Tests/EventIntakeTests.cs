@@ -109,12 +109,13 @@ public class EventQueueTests
             "default { state_entry() { llSetTimerEvent(1.0); } touch_start(integer n) { state other; } timer() { llOwnerSay(\"t1\"); } }\n" +
             "state other { timer() { llOwnerSay(\"t2\"); } }", lsl: true);
         h.Pump();
-        h.Advance(1.0); // a tick of the old state is queued ...
         h.Scheduler.Post(s, "touch_start", Value.Int(1));
+        h.Clock.Now += 1.0; // the tick falls due behind touch_start, which changes state and clears it ...
         h.Pump();
         h.Advance(1.0); // ... and the timer still ticks for the new state
         h.Advance(1.0);
 
+        Assert.DoesNotContain("say:t1", h.MarksOf(s));
         Assert.Contains("say:t2", h.MarksOf(s));
     }
 }
