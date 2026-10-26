@@ -30,8 +30,10 @@ internal static class LodKit
         for (int r = 0; r <= rings; r++)
             for (int s = 0; s <= segments; s++)
             {
-                double theta = Math.PI * r / rings, phi = 2 * Math.PI * s / segments;
-                Vector3 n = new Vector3((float)(Math.Sin(theta) * Math.Cos(phi)), (float)Math.Cos(theta), (float)(Math.Sin(theta) * Math.Sin(phi)));
+                // the last column is the first again, to the bit, with the coordinate 1 in place of 0
+                double theta = Math.PI * r / rings, phi = 2 * Math.PI * (s % segments) / segments;
+                double ring = r == 0 || r == rings ? 0 : Math.Sin(theta);
+                Vector3 n = new Vector3((float)(ring * Math.Cos(phi)), (float)Math.Cos(theta), (float)(ring * Math.Sin(phi)));
                 pos.Add(center + n * radius);
                 nor.Add(n);
                 uv.Add(new Vector2((float)s / segments, 1f - (float)r / rings));
@@ -40,8 +42,14 @@ internal static class LodKit
         for (int r = 0; r < rings; r++)
             for (int s = 0; s < segments; s++)
             {
-                if (r != rings - 1) { index.Add(At(r, s)); index.Add(At(r + 1, s)); index.Add(At(r + 1, s + 1)); }
-                if (r != 0) { index.Add(At(r, s)); index.Add(At(r + 1, s + 1)); index.Add(At(r, s + 1)); }
+                // one triangle in the rows at the poles (the other of the quad has no area), two elsewhere; every vertex is used
+                if (r == 0) { index.Add(At(0, s)); index.Add(At(1, s)); index.Add(At(1, s + 1)); }
+                else if (r == rings - 1) { index.Add(At(r, s)); index.Add(At(rings, s)); index.Add(At(r, s + 1)); }
+                else
+                {
+                    index.Add(At(r, s)); index.Add(At(r + 1, s)); index.Add(At(r + 1, s + 1));
+                    index.Add(At(r, s)); index.Add(At(r + 1, s + 1)); index.Add(At(r, s + 1));
+                }
             }
         return Build(pos, nor, uv, index);
     }
