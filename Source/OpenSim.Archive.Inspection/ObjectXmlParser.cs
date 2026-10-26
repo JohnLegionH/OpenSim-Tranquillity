@@ -66,6 +66,8 @@ public sealed class ParsedPart
     public byte[] ExtraParams = Array.Empty<byte>();
     /// <summary>The shape's per-face material override block as stored (empty when absent).</summary>
     public byte[] MaterialOverrides = Array.Empty<byte>();
+    /// <summary>The text of the Shape's Media element (an OSMedia XML document holding one entry for each face), empty when the part has none.</summary>
+    public string MediaXml = "";
     /// <summary>The part's texture animation block as stored (empty when absent).</summary>
     public byte[] TextureAnimation = Array.Empty<byte>();
     /// <summary>True when the part's Flags include Physics (the part is a physical object).</summary>
@@ -613,6 +615,9 @@ internal static class ObjectXmlParser
                         pp.Refs.Add(new RefInfo { Id = id, Kind = ReferenceKind.Sculpt, Certainty = Certainty.Certain, AssetType = (int)AssetType.Texture });
                     break;
                 }
+                case "Media":
+                    pp.MediaXml = XmlRead.Text(r);
+                    break;
                 case "MatOvrd":
                 {
                     byte[] data = TryBase64(XmlRead.Text(r));
