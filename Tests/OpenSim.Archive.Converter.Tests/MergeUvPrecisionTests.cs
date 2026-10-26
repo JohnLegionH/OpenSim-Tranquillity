@@ -181,4 +181,14 @@ public class MergeUvPrecisionTests
         Assert.True(part.MeasuredUvTexels <= part.WorstUvTexels + 1e-6, part.MeasuredUvTexels + " measured, bound " + part.WorstUvTexels);
         Assert.Contains("texels", r.ToText());
     }
+
+    [Fact]
+    public void ATextureThePlanCannotFindIsTakenAsTheLargestSizeOpenSimAllows()
+    {
+        Assert.Equal(2048, UvPrecision.UnknownResolution);
+        // 50 repeats are 0.39 texel at 1024 and 0.78 at 2048; the texture is not in the archive
+        MergeWriteResult r = Merge(Archive(Guid.NewGuid(), null, 50, planar: false));
+        Assert.Equal(4, Assert.Single(r.Parts).Members);
+        Assert.Contains(Assert.Single(r.Plan.Linksets[0].Kept).Rules, x => x.Code == "UV_PRECISION");
+    }
 }
