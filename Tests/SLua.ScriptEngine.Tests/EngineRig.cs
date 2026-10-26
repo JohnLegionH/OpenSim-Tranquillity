@@ -53,7 +53,7 @@ internal sealed class EngineRig : IDisposable
 
     private readonly List<string> m_marks = new();
 
-    public EngineRig(Dictionary<string, string> settings = null, Action<SchedulerOptions> tweak = null, double graceMs = 100, NativeCompile compile = null)
+    public EngineRig(Dictionary<string, string> settings = null, Action<SchedulerOptions> tweak = null, double graceMs = 100, NativeCompile compile = null, IPrimEventFlags primFlags = null)
     {
         RealLibrary.Load();
         Engine = new SLuaEngine(Log, (s, l) => true, null,
@@ -74,6 +74,8 @@ internal sealed class EngineRig : IDisposable
         if (settings != null)
             foreach (var kv in settings) config.Set(kv.Key, kv.Value);
         Engine.Initialise(source);
+        if (primFlags != null)
+            Engine.PrimFlags = primFlags;
         Object = SceneHelpers.AddSceneObject(Scene, "Example Object", Owner);
         Engine.AddRegion(Scene);
     }

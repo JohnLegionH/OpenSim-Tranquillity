@@ -118,6 +118,9 @@ namespace SLua.ScriptEngine
 
         internal SLuaSettings Settings => m_settings;
 
+        /// <summary>Where the engine sets each script's event flags on its prim; tests replace it before the region is added.</summary>
+        internal IPrimEventFlags PrimFlags { get; set; }
+
         public string Name => EngineIdentity.EngineName;
         public string ScriptEngineName => EngineIdentity.EngineName;
         public Type ReplaceableInterface => null;
@@ -139,6 +142,7 @@ namespace SLua.ScriptEngine
         {
             if (!m_enabled) return;
             m_scene = scene;
+            PrimFlags ??= new ScenePrimEventFlags(scene);
             m_scene.RegisterModuleInterface<IScriptModule>(this);
             m_scene.StackModuleInterface<IScriptModule>(this);
             m_messages ??= new SceneScriptMessages(scene);
