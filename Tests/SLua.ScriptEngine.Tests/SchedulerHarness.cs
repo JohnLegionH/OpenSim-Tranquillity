@@ -83,6 +83,8 @@ internal sealed class SchedulerHarness : IDisposable
         vm.Register("ossl", "Err", (tag, a) => { SchedulerScript.Current.ReportError(a[0].S); return null; });
         vm.Register("ossl", "Sleep", (tag, a) => { SchedulerScript.Current.AddSleep(Num(a[0])); return null; });
         vm.Register("ll", "Sleep", (tag, a) => { SchedulerScript.Current.AddSleep(Num(a[0])); return null; });
+        // A delayed call that returns values (a lookup with a delay): the delay is asked for and the script is not stopped by it.
+        vm.Register("ossl", "SleepRet", (tag, a) => { SchedulerScript.Current.AddSleep(Num(a[0])); return new[] { Value.Bool(true), Value.Int(7) }; });
         vm.Register("ll", "SetTimerEvent", (tag, a) => { SchedulerScript.Current.SetTimer(Num(a[0])); return null; });
         // Holds the thread for the given milliseconds inside a host call: an overrun the runtime cannot interrupt.
         vm.Register("ossl", "Burn", (tag, a) =>

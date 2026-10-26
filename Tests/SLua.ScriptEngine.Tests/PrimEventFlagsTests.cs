@@ -46,8 +46,8 @@ internal sealed class RecordingPrimFlags : IPrimEventFlags
 /// <summary>
 /// The region raises touch, collision, at_target and the like only for a prim whose script-event flags include them,
 /// so the engine sets each LSL script's flags from the handler masks in its compiled asset: when the script starts,
-/// on every state change, when it is stopped, reset or removed. An SLua script's flags wait for the runtime to
-/// export the handler set (API version 4).
+/// on every state change, when it is stopped, reset or removed. An SLua script's flags come from the runtime's handler
+/// set (SluaEventFlagsTests).
 /// </summary>
 [Collection("native-library")]
 public class PrimEventFlagsTests
@@ -189,19 +189,6 @@ public class PrimEventFlagsTests
         UUID b = rig.Rez(EngineRig.Lsl("default { collision_start(integer n) { } }"));
 
         Assert.True(SchedulerHarness.WaitFor(() => flags.HasLast(a, Of(scriptEvents.touch_start)) && flags.HasLast(b, Of(scriptEvents.collision_start))));
-    }
-
-    [RequiresNativeFact]
-    public void ASluaScriptLeavesTheFlagsAtZeroUntilTheRuntimeExportsItsHandlers()
-    {
-        var flags = new RecordingPrimFlags();
-        using var rig = new EngineRig(primFlags: flags);
-        UUID item = rig.Rez(EngineRig.Slua("LLEvents:on(\"touch_start\", function() end)"));
-        rig.WaitScheduled(item);
-
-        Assert.True(SchedulerHarness.WaitFor(() => flags.HasLast(item, 0)));
-        Thread.Sleep(300); // a window in which flags from a handler set would have arrived
-        Assert.All(flags.History(item), f => Assert.Equal(0UL, f));
     }
 
     // ---- with the region's own part ----
