@@ -58,7 +58,7 @@ as soon as the next triangle might not fit, so the plan counts a material's face
 inside a source face repeats; the writer still refuses a part that comes to more than eight.
 
 The mesh asset stores each texture coordinate in 16 bits over the range of its face, so a coordinate can be off by half a step,
-range / 131,070. The plan keeps that under half a texel of the face's real texture (read from the archive; 1024 pixels when the
+range / 131,070. The plan keeps that under half a texel of the face's real texture (read from the archive; 2048 pixels, the largest size OpenSim allows, when the
 archive does not hold the texture): faces of one material whose coordinates are too far apart to share a mesh face get one each, and
 a face that is too wide on its own (UV_PRECISION) keeps its part as a prim. The report gives the worst case and the measured error
 in texels.
@@ -82,7 +82,7 @@ the partly written file is kept beside it as `<output>.<id>.incomplete`.
 
 The per-part fields (sit target and text, touch text, click action, sale type and price, hover text and its colour, pay prices) are
 not carried by a merged part, so a part whose value differs from the default stays. The defaults are the ones a region writes: click
-action 0, sale type 0, sale price 0, empty texts, hover text colour opaque black, pay prices -2.
+action 0, sale type 0, empty texts, pay prices -2. A sale price counts only when the sale type is not 0 (not for sale), and a hover text colour only when there is hover text.
 
 A part can have several reasons; the plan lists all of them, and the totals count the first and every one.
 

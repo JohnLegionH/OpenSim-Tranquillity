@@ -95,8 +95,8 @@ public static class ArchiveMergePlanner
         p.TouchText = pp.TouchText.Length > 0;
         p.ClickAction = pp.ClickAction != 0;
         p.SaleType = pp.SaleType != 0;
-        p.SalePrice = pp.SalePrice != 0;
-        p.HoverTextColor = pp.HoverTextColor != 0xFF000000;
+        p.SalePrice = pp.SaleType != 0 && pp.SalePrice != 0; // the price is shown and charged only when the part is for sale
+        p.HoverTextColor = pp.HoverText && pp.HoverTextColor != 0xFF000000; // the colour is seen only with hover text
         p.PayPrice = pp.PayPriceChanged;
         p.Particles = pp.HasParticles;
         p.TextureAnimation = pp.TextureAnimation.Length > 0;

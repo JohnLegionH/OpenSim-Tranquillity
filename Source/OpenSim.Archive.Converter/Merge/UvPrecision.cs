@@ -23,7 +23,7 @@ public static class UvPrecision
     public const double MaxTexels = 0.5;
 
     /// <summary>The size assumed for a texture the archive does not hold.</summary>
-    public const int UnknownResolution = 1024;
+    public const int UnknownResolution = 2048;
 
     /// <summary>
     /// The most a coordinate of a face moves when the mesh asset stores it, in texels. The asset keeps each coordinate in 16 bits over the
