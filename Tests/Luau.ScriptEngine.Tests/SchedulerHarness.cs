@@ -32,14 +32,24 @@ internal sealed class SchedulerHarness : IDisposable
     public int VmsMade;
     public int FaultsSeen;
 
+    /// <summary>Scripts reported as faulted or killed, in order.</summary>
+    public readonly ConcurrentQueue<SchedulerScript> FaultedScripts = new();
+
+    /// <summary>Errors scripts reported through ReportError, as "scriptId:text".</summary>
+    public readonly ConcurrentQueue<string> ReportedErrors = new();
+
+    /// <summary>Workers that stopped for good: index, failures, last message.</summary>
+    public readonly ConcurrentQueue<(int Index, int Crashes, string Message)> StoppedWorkers = new();
+
     private readonly List<string> m_marks = new();
 
     public SchedulerHarness(int workers = 1, double quantaMs = 2.0, bool threads = false, int maxQueue = 64,
-        double passBudgetMs = 20.0, double minTimer = 0.1, int memoryLimit = 0, ISchedulerClock clock = null)
+        double passBudgetMs = 20.0, double minTimer = 0.1, int memoryLimit = 0, ISchedulerClock clock = null,
+        Action<SchedulerOptions> configure = null)
     {
         RuntimeLoadResult r = NativeRuntime.Load(new NativeRuntimeOptions());
         if (!r.Ok) throw new InvalidOperationException(r.Message);
-        Scheduler = new LuauScheduler(new SchedulerOptions
+        var options = new SchedulerOptions
         {
             WorkerThreads = workers,
             QuantaMs = quantaMs,
@@ -51,8 +61,12 @@ internal sealed class SchedulerHarness : IDisposable
             Clock = clock ?? Clock,
             Log = Log,
             VmFactory = MakeVm,
-            ScriptFaulted = _ => Interlocked.Increment(ref FaultsSeen),
-        });
+            ScriptFaulted = f => { FaultedScripts.Enqueue(f); Interlocked.Increment(ref FaultsSeen); },
+            ScriptError = (script, text) => ReportedErrors.Enqueue(script.Id + ":" + text),
+            WorkerStopped = (index, crashes, message) => StoppedWorkers.Enqueue((index, crashes, message)),
+        };
+        configure?.Invoke(options);
+        Scheduler = new LuauScheduler(options);
     }
 
     private Vm MakeVm()
@@ -66,6 +80,7 @@ internal sealed class SchedulerHarness : IDisposable
         }
         vm.Register("ossl", "Mark", (tag, a) => { Mark(tag, a[0].S, a.Length > 1 ? Format(a[1]) : ""); return null; });
         vm.Register("ll", "OwnerSay", (tag, a) => { Mark(tag, "say", a[0].S); return null; });
+        vm.Register("ossl", "Err", (tag, a) => { SchedulerScript.Current.ReportError(a[0].S); return null; });
         vm.Register("ossl", "Sleep", (tag, a) => { SchedulerScript.Current.AddSleep(Num(a[0])); return null; });
         vm.Register("ll", "Sleep", (tag, a) => { SchedulerScript.Current.AddSleep(Num(a[0])); return null; });
         vm.Register("ll", "SetTimerEvent", (tag, a) => { SchedulerScript.Current.SetTimer(Num(a[0])); return null; });
@@ -140,9 +155,13 @@ internal sealed class SchedulerHarness : IDisposable
         Pump();
     }
 
+    /// <summary>The longest a poll waits when the caller gives no cap; LUAU_TEST_WAIT_CAP_MS shortens it for a run where failures are expected.</summary>
+    private static readonly int DefaultWaitMs = int.TryParse(Environment.GetEnvironmentVariable("LUAU_TEST_WAIT_CAP_MS"), out int cap) ? cap : 30000;
+
     /// <summary>Polls until the condition holds or the cap passes; for threaded runs.</summary>
-    public static bool WaitFor(Func<bool> condition, int timeoutMs = 30000)
+    public static bool WaitFor(Func<bool> condition, int timeoutMs = -1)
     {
+        if (timeoutMs < 0) timeoutMs = DefaultWaitMs;
         var end = DateTime.UtcNow.AddMilliseconds(timeoutMs);
         while (DateTime.UtcNow < end)
         {
