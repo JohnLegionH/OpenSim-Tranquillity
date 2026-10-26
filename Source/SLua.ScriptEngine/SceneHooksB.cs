@@ -124,7 +124,7 @@ namespace SLua.ScriptEngine
 
         private readonly Scene m_scene;
         private readonly IPolicyHost m_host;
-        private readonly IScriptGrants m_grants;
+        private IScriptGrants m_grants;
         private readonly ISchedulerClock m_clock;
         private readonly object m_lock = new object();
         private bool m_subscribed;
@@ -153,6 +153,12 @@ namespace SLua.ScriptEngine
             m_host = host;
             m_grants = grants ?? NoGrants.Instance;
             m_clock = clock ?? new MonotonicClock();
+        }
+
+        /// <summary>What the engine's scripts hold from the region; replaced when the functions that make grants are bound.</summary>
+        public IScriptGrants Grants
+        {
+            set => m_grants = value ?? NoGrants.Instance;
         }
 
         public bool IsSubscribed

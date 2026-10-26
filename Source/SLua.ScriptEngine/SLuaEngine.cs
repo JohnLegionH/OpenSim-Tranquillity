@@ -180,7 +180,7 @@ namespace SLua.ScriptEngine
             m_scene.EventManager.OnStopScript += OnStopScript;
             m_hooks = new SceneHooksA(scene, this, m_settings.PhysicsThrottle, Clock);
             m_hooks.Subscribe();
-            m_policy = new SceneHooksB(scene, this, Grants, Clock);
+            m_policy = new SceneHooksB(scene, this, m_grants, new LiveClock(this));
             m_policy.Subscribe();
             m_log.Info("Added to region " + scene.RegionInfo.RegionName);
         }
@@ -442,7 +442,14 @@ namespace SLua.ScriptEngine
                     scheduler.Post(record.Script, "attach", Value.Key(part.ParentGroup.AttachedAvatar.ToString()));
                 int change = ArrivalChange(start.StateSource, part);
                 if (change != 0)
-                    scheduler.Post(record.Script, "changed", Value.Int(change));
+                {
+                    // A crossing object's changed waits for a rider still to come, as Phlox holds it (HeldArrival); a worn object, a teleport and a region start do not wait.
+                    SceneObjectGroup group = part?.ParentGroup;
+                    if (start.StateSource == (int)StateSource.PrimCrossing && group != null && !group.IsAttachment && m_policy != null && m_policy.AwaitsRider(group, null))
+                        m_policy.HoldArrival(record.ItemID, group, change);
+                    else
+                        scheduler.Post(record.Script, "changed", Value.Int(change));
+                }
             }
             FlushDeferred(record);
         }
@@ -485,6 +492,7 @@ namespace SLua.ScriptEngine
                     return;
             }
             m_scheduler?.Remove(record.Script);
+            m_policy?.ForgetHeldArrival(itemID);
             ForgetEventFlags(record);
         }
 
@@ -512,6 +520,7 @@ namespace SLua.ScriptEngine
             ScriptRecord record = RecordOf(itemID);
             if (record == null)
                 return;
+            m_policy?.ForgetHeldArrival(itemID); // what it waited to be told of its arrival goes with its state
             if (record.Script.Killed)
                 SetItemRunningFlag(record.LocalID, itemID, true); // a reset is what starts a script a fault stopped
             m_scheduler?.Reset(record.Script);
@@ -741,7 +750,28 @@ namespace SLua.ScriptEngine
         private SceneHooksB m_policy;
 
         /// <summary>What the engine's scripts hold from the region; replaced when the ll functions that make grants are bound. Set before the region is added.</summary>
-        internal IScriptGrants Grants { get; set; } = NoGrants.Instance;
+        internal IScriptGrants Grants
+        {
+            get => m_grants;
+            set
+            {
+                m_grants = value ?? NoGrants.Instance;
+                if (m_policy != null)
+                    m_policy.Grants = m_grants;
+            }
+        }
+
+        private IScriptGrants m_grants = NoGrants.Instance;
+
+        /// <summary>The engine's clock as the policy hooks read it, so a clock set after the region was added is the one they use.</summary>
+        private sealed class LiveClock : ISchedulerClock
+        {
+            private readonly SLuaEngine m_engine;
+
+            public LiveClock(SLuaEngine engine) { m_engine = engine; }
+
+            public double Now => m_engine.Clock.Now;
+        }
 
         /// <summary>The pauses the policy hooks made.</summary>
         internal PolicyStats PolicyStats { get; } = new PolicyStats();
@@ -858,12 +888,20 @@ namespace SLua.ScriptEngine
             return true;
         }
 
+        /// <summary>
+        /// Lifts the region's suspend. True also for a script still loading: it is not suspended, which is the same as
+        /// resumed, and the region posts changed(CHANGED_OWNER) after a resume only to an engine that answers yes (Phlox
+        /// answers the same). False for a script of another engine.
+        /// </summary>
         public bool ResumeScript(UUID itemID)
         {
             ScriptRecord record = RecordOf(itemID);
-            if (record == null || m_scheduler == null)
+            if (record == null)
+                return IsTracking(itemID);
+            if (m_scheduler == null)
                 return false;
             ((IPolicyHost)this).SetPaused(itemID, PauseReason.Core, false);
+            m_policy?.ProcessHeldArrivals(); // the region's release of an arrived object also ends the wait for its riders
             return true;
         }
 
