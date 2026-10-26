@@ -21,6 +21,12 @@ internal sealed class RecordingGrants : IScriptGrants
 
     public volatile bool RiderPending;
 
+    /// <summary>Forgets the calls so far (adding a test avatar already tells the arrival).</summary>
+    public void Clear()
+    {
+        lock (m_lock) m_calls.Clear();
+    }
+
     public string[] Calls
     {
         get { lock (m_lock) return m_calls.ToArray(); }

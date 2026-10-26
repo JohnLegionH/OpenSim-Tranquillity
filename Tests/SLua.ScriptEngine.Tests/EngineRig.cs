@@ -89,6 +89,7 @@ internal sealed class EngineRig : IDisposable
         var vm = new Vm(Watchdog.Default);
         vm.Register("ossl", "Count", (tag, _) => { Counts.AddOrUpdate(tag, 1, (_, n) => n + 1); return null; });
         vm.Register("ossl", "Mark", (tag, a) => { lock (m_marks) m_marks.Add($"{tag}:{a[0].S}"); return null; });
+        vm.Register("ossl", "PhySleep", (tag, _) => { Engine.PhySleep(); return null; });
         vm.Register("ll", "OwnerSay", (tag, a) => { lock (m_marks) m_marks.Add($"{tag}:{a[0].S}"); return null; });
         // What the Detected functions will read: the detected objects of the event being handled, by index.
         vm.Register("ossl", "DetectedCount", (tag, _) => new[] { Value.Int(SchedulerScript.Current.DetectedCount) });
