@@ -96,6 +96,8 @@ public sealed class MergeWriteResult
     /// <summary>The most a lower level of detail may differ from the full mesh, in screen pixels at the distance the viewer switches to it.</summary>
     public double LodPixelLimit { get; set; }
     public long OutputBytes { get; set; }
+    /// <summary>The viewer's streaming cost before and after merging, when the caller measured it (see <see cref="CostComparison"/>).</summary>
+    public CostComparison Cost { get; set; }
     public double Seconds { get; set; }
 
     /// <summary>The report: what was merged and how far each merged mesh is from the parts it replaces.</summary>
