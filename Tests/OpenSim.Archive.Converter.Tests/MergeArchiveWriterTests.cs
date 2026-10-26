@@ -100,7 +100,13 @@ public class MergeArchiveWriterTests
         Assert.NotNull(mesh);
         MeshAssetModel model = MeshCodec.Decode(mesh);
         Assert.Equal(merged.Slots.Count, model.High.Faces.Count);
-        Assert.Equal(merged.Slots.Count, new Primitive.TextureEntry(p.TextureEntry, 0, p.TextureEntry.Length).FaceTextures.Count(f => f != null));
+        Primitive.TextureEntry te = new Primitive.TextureEntry(p.TextureEntry, 0, p.TextureEntry.Length);
+        for (int slot = 0; slot < merged.Slots.Count; slot++)
+        {
+            Primitive.TextureEntryFace face = te.FaceTextures[slot] ?? te.DefaultTexture;
+            Assert.NotNull(face);
+            Assert.Equal(1f, face.RepeatU, 1e-4f); // baked into the coordinates
+        }
         Assert.Equal(r.Parts.Single(x => x.Id == merged.Id).MeshId.ToString(), p.Shape.SculptTexture.ToString());
     }
 

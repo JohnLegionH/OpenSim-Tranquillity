@@ -28,7 +28,11 @@ public static class ArchiveMergePlanner
         Plan(archivePath, options, convert, out _);
 
     /// <summary>Plans the merge and also returns the parts as the eligibility pass read them, which the merge itself builds its meshes from.</summary>
-    public static MergePlan Plan(string archivePath, MergeOptions options, ConvertOptions convert, out Dictionary<Guid, ParsedPart> parts)
+    public static MergePlan Plan(string archivePath, MergeOptions options, ConvertOptions convert, out Dictionary<Guid, ParsedPart> parts) =>
+        Plan(archivePath, options, convert, out parts, out _);
+
+    /// <summary>As above, and also returns the linksets as the planner read them, in the order of the plan's linksets.</summary>
+    internal static MergePlan Plan(string archivePath, MergeOptions options, ConvertOptions convert, out Dictionary<Guid, ParsedPart> parts, out List<MergeLinkset> linksetsRead)
     {
         options ??= new MergeOptions();
         Dictionary<Guid, ParsedPart> parsed = new Dictionary<Guid, ParsedPart>();
@@ -53,6 +57,7 @@ public static class ArchiveMergePlanner
             linksets.Add(ls);
         }
 
+        linksetsRead = linksets;
         MergePlan plan = MergePlanner.Plan(linksets, options, Path.GetFileName(archivePath));
         plan.ToolVersion = typeof(ArchiveMergePlanner).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
             ?? typeof(ArchiveMergePlanner).Assembly.GetName().Version?.ToString() ?? "unknown";
@@ -174,7 +179,7 @@ public static class ArchiveMergePlanner
         }
     }
 
-    private static Primitive.TextureEntry ReadTextureEntry(ParsedPart pp)
+    internal static Primitive.TextureEntry ReadTextureEntry(ParsedPart pp)
     {
         if (pp.TextureEntry.Length <= 16)
             return null;
