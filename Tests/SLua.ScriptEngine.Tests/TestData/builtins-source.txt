@@ -1,0 +1,9 @@
+builtins.txt in this folder is a byte-for-byte copy of the SLua runtime's builtins.txt.
+The runtime is pinned by the host project; the file is identical at the pinned commit and at the head of the runtime's ngc branch.
+
+pinned runtime commit: 4116d7f6a3
+runtime branch head checked: 100f9dff23b3beb0b0f544692b2648c87eb6d5bb
+
+To refresh after the pin moves: copy the runtime's builtins.txt over this file, run tools/slua-events/generate-event-signatures.py on it
+to rewrite Source/SLua.ScriptEngine/EventSignatures.cs, and update the commit above. With SLUA_BUILTINS_PATH set,
+BuiltinsCopyTests checks the copy against the runtime's file.
