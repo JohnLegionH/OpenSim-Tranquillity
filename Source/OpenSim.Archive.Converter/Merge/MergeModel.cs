@@ -30,6 +30,17 @@ public sealed class LegacyMaterialInfo
     public FaceTransform SpecularTransform { get; set; } = FaceTransform.Identity;
     /// <summary>0 none, 1 blend, 2 mask, 3 emissive.</summary>
     public int DiffuseAlphaMode { get; set; }
+    public Guid NormalMapId { get; set; }
+    public Guid SpecularMapId { get; set; }
+    /// <summary>True when a map the material has is drawn with a transform other than the identity.</summary>
+    public bool MapsTransformed =>
+        (HasNormalMap && !NormalTransform.SameAs(FaceTransform.Identity)) || (HasSpecularMap && !SpecularTransform.SameAs(FaceTransform.Identity));
+    /// <summary>
+    /// The same material with the repeats, offset and rotation of both maps taken out (identity), as the region encodes a legacy material,
+    /// and the id the region gives that encoding (the MD5 of its bytes). Empty when the material was not read from an archive.
+    /// </summary>
+    public Guid IdentityId { get; set; }
+    public byte[] IdentityBytes { get; set; }
 }
 
 /// <summary>One face of a part as the merge planner needs it: what makes two faces share a material slot, and how many vertices it has.</summary>
@@ -43,6 +54,22 @@ public sealed class MergeFace
     public bool Fullbright { get; set; }
     public int TexGen { get; set; }
     public string MaterialId { get; set; } = "";
+    /// <summary>
+    /// For a baked face whose legacy material has maps drawn with a transform: the material the merged face names instead (the same material
+    /// with the maps' transforms taken out, because the face's coordinates now carry them). Empty when the face keeps its own material.
+    /// </summary>
+    public string BakedMaterialId { get; set; } = "";
+    /// <summary>The bytes of the new material when the archive does not hold it yet (written once); null otherwise.</summary>
+    public byte[] NewMaterial { get; set; }
+    /// <summary>The transform of each map the material has and the face bakes, with the size in pixels of the map's texture (0 when unknown), for checking the merged face against the maps.</summary>
+    public bool NormalBaked { get; set; }
+    public bool SpecularBaked { get; set; }
+    public FaceTransform NormalTransform { get; set; } = FaceTransform.Identity;
+    public FaceTransform SpecularTransform { get; set; } = FaceTransform.Identity;
+    public int NormalWidth { get; set; }
+    public int NormalHeight { get; set; }
+    public int SpecularWidth { get; set; }
+    public int SpecularHeight { get; set; }
     public FaceTransform Transform { get; set; } = FaceTransform.Identity;
     /// <summary>True when the face's transform can be baked into the merged mesh's texture coordinates.</summary>
     public bool Bakeable { get; set; } = true;
@@ -70,7 +97,7 @@ public sealed class MergeFace
     /// a baked face carries its mapping, repeats, offset and rotation in its texture coordinates.
     /// </summary>
     public string SlotKey =>
-        string.Create(CultureInfo.InvariantCulture, $"{TextureId}|{Color}|g{Glow:0.###}|s{Shiny}|b{Bump}|f{(Fullbright ? 1 : 0)}|m{MaterialId}|a{(Alpha ? 1 : 0)}")
+        string.Create(CultureInfo.InvariantCulture, $"{TextureId}|{Color}|g{Glow:0.###}|s{Shiny}|b{Bump}|f{(Fullbright ? 1 : 0)}|m{(Bakeable && BakedMaterialId.Length > 0 ? BakedMaterialId : MaterialId)}|a{(Alpha ? 1 : 0)}")
         + (UvClass > 0 ? "|u" + UvClass.ToString(CultureInfo.InvariantCulture) : "")
         + (Bakeable ? "" : "|t" + TexGen.ToString(CultureInfo.InvariantCulture) + "|xf:" + Transform.Key);
 }

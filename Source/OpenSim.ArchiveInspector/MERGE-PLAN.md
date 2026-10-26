@@ -42,9 +42,23 @@ mapping, repeats, offset, rotation and flips are not part of it when the face ca
 coordinates; they are then written into the coordinates as the viewer computes them (`xform` and `planarProjection` in the
 viewer's `llface.cpp`) and the merged face is drawn with default mapping and no transform. A face cannot be baked when it is a
 PBR or media face, uses a mapping other than default or planar, names a legacy material that is not in the archive, or names
-one with normal or specular maps while the face or the maps are transformed (the viewer draws the maps with the material's own
-transform, so baking the face's would move them twice). Such a default-mapped face keeps its own slot, keyed with its
-transform, and its transform stays on the merged face.
+one with a normal or specular map that is drawn somewhere other than the diffuse texture is (see below). Such a default-mapped
+face keeps its own slot, keyed with its transform, and its transform stays on the merged face.
+
+### Legacy materials with normal and specular maps
+
+The viewer draws the diffuse texture with the face's transform and each map with the material's own transform for that map, all from
+the same base coordinates (projected first when the face is planar). A merged mesh has one set of coordinates, so a face with maps bakes
+only when its maps are drawn where its diffuse texture is: every corner is compared, in texels of the map's own texture, and the face
+bakes when no map is more than 0.25 texel away (a texture entry and a material keep the same figure in different steps, so equal figures
+differ by a little). The coordinates must also be stored to half a texel at the size of the largest texture the face shows (diffuse,
+normal or specular map; 2048 pixels for a texture the archive does not hold), or the part stays (UV_PRECISION). A face whose maps are drawn
+anywhere else keeps its own transform and material.
+
+When a baked face's material has a map drawn with a transform other than the identity, the merged face names a new material: the old one
+with both maps' repeats, offsets and rotations taken out, encoded the way the region encodes a legacy material, with the id the region
+derives (the MD5 of its bytes). It is written into the archive once however many faces name it; materials that differ only in their map
+transforms become one. A material whose maps are not transformed is kept as it is.
 
 ## The merged part
 

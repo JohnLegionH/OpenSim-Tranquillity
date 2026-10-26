@@ -43,7 +43,7 @@ public static class ArchiveMergePlanner
         }).Evaluate(archivePath);
         parts = parsed;
         Dictionary<Guid, LegacyMaterialInfo> materials = ArchiveMaterials.Read(archivePath);
-        Dictionary<Guid, TextureFacts> translucent = ArchiveTextureAlpha.Read(archivePath, TextureIds(parsed.Values));
+        Dictionary<Guid, TextureFacts> translucent = ArchiveTextureAlpha.Read(archivePath, TextureIds(parsed.Values, materials));
         ISculptMapSource maps = new ArchiveSculptMapSource(archivePath, elig.Parts
             .Where(r => r.Action == PartAction.Convert && r.Kind == "sculpt" && parsed.TryGetValue(r.PartId, out ParsedPart q) && q.Shape != null)
             .Select(r => parsed[r.PartId].Shape.SculptTexture.Guid));
@@ -184,10 +184,18 @@ public static class ArchiveMergePlanner
                 f.Alpha = FaceAlpha.IsAlpha(tef.RGBA.A, tef.Glow, texture, material);
                 f.TextureWidth = texture.Width;
                 f.TextureHeight = texture.Height;
+                f.Pbr = pbrFaces.Contains(i);
+                f.Media = tef.MediaFlags;
+                f.Bakeable = FaceBaking.Bakeable(f.Transform, f.TexGen, f.MaterialId, material, pbrFaces.Contains(i), tef.MediaFlags, out string why);
+                f.UnbakedReason = why;
                 // the coordinates the face will be drawn with from a mesh asset: baked into the mesh or applied by its texture entry, the same figures
-                if (!faces[i].IsEmpty)
+                System.Numerics.Vector3 size = new System.Numerics.Vector3(pp.Scale.X, pp.Scale.Y, pp.Scale.Z);
+                bool planar = f.TexGen == FaceBaking.PlanarMapping;
+                float[] shown = faces[i].IsEmpty ? null : FaceUv.Bake(faces[i].Positions, faces[i].Normals, faces[i].Uvs, f.Transform, planar, size);
+                if (f.Bakeable && material != null && (material.HasNormalMap || material.HasSpecularMap))
+                    BakeMaps(f, material, translucent, faces[i], shown, planar, size, materials);
+                if (shown != null)
                 {
-                    float[] shown = FaceUv.Bake(faces[i].Positions, faces[i].Normals, faces[i].Uvs, f.Transform, f.TexGen == FaceBaking.PlanarMapping, new System.Numerics.Vector3(pp.Scale.X, pp.Scale.Y, pp.Scale.Z));
                     float minU = float.MaxValue, maxU = float.MinValue, minV = float.MaxValue, maxV = float.MinValue;
                     for (int v = 0; v < shown.Length; v += 2)
                     {
@@ -197,14 +205,48 @@ public static class ArchiveMergePlanner
                     f.Uv = new UvBounds(minU, maxU, minV, maxV);
                     f.UvTooWide = UvPrecision.TooWide(f);
                 }
-                f.Pbr = pbrFaces.Contains(i);
-                f.Media = tef.MediaFlags;
-                f.Bakeable = FaceBaking.Bakeable(f.Transform, f.TexGen, f.MaterialId, material, pbrFaces.Contains(i), tef.MediaFlags, out string why);
-                f.UnbakedReason = why;
             }
             p.Faces.Add(f);
         }
     }
+
+    /// <summary>
+    /// A face whose legacy material has maps bakes only when the maps are drawn where the diffuse is: every corner is compared, in texels of
+    /// the map's own texture. When they agree, the merged face's coordinates must also be exact at the size of the largest of the textures it
+    /// shows, and a material whose maps carry a transform is replaced by one with the transforms taken out.
+    /// </summary>
+    private static void BakeMaps(MergeFace f, LegacyMaterialInfo material, Dictionary<Guid, TextureFacts> textures, EncoderFace face, float[] shown, bool planar, System.Numerics.Vector3 size, Dictionary<Guid, LegacyMaterialInfo> materials)
+    {
+        textures.TryGetValue(material.NormalMapId, out TextureFacts normal);
+        textures.TryGetValue(material.SpecularMapId, out TextureFacts specular);
+        if (shown != null)
+        {
+            if (material.HasNormalMap && FaceBaking.MapDeviationTexels(shown, face.Positions, face.Normals, face.Uvs, material.NormalTransform, planar, size, normal.Width, normal.Height) > FaceBaking.MapTolerance
+                || material.HasSpecularMap && FaceBaking.MapDeviationTexels(shown, face.Positions, face.Normals, face.Uvs, material.SpecularTransform, planar, size, specular.Width, specular.Height) > FaceBaking.MapTolerance)
+            {
+                f.Bakeable = false;
+                f.UnbakedReason = "legacy material maps are drawn too far from the diffuse";
+                return;
+            }
+        }
+        f.NormalBaked = material.HasNormalMap;
+        f.SpecularBaked = material.HasSpecularMap;
+        f.NormalTransform = material.NormalTransform;
+        f.SpecularTransform = material.SpecularTransform;
+        f.NormalWidth = normal.Width; f.NormalHeight = normal.Height;
+        f.SpecularWidth = specular.Width; f.SpecularHeight = specular.Height;
+        // the one set of coordinates drives every texture of the face, so the coarsest storage error is the largest texture's
+        f.TextureWidth = Math.Max(f.TextureWidth, Math.Max(material.HasNormalMap ? Size(normal.Width) : 0, material.HasSpecularMap ? Size(specular.Width) : 0));
+        f.TextureHeight = Math.Max(f.TextureHeight, Math.Max(material.HasNormalMap ? Size(normal.Height) : 0, material.HasSpecularMap ? Size(specular.Height) : 0));
+        if (material.MapsTransformed && material.IdentityBytes != null)
+        {
+            f.BakedMaterialId = material.IdentityId.ToString();
+            if (!materials.ContainsKey(material.IdentityId))
+                f.NewMaterial = material.IdentityBytes;
+        }
+    }
+
+    private static int Size(int pixels) => pixels > 0 ? pixels : UvPrecision.UnknownResolution;
 
     internal static Primitive.TextureEntry ReadTextureEntry(ParsedPart pp)
     {
@@ -214,10 +256,15 @@ public static class ArchiveMergePlanner
         catch (Exception) { return null; }
     }
 
-    /// <summary>The texture ids the faces of the convertible parts show, for the one pass over the archive that reads their alpha channels.</summary>
-    private static HashSet<Guid> TextureIds(IEnumerable<ParsedPart> parts)
+    /// <summary>The texture ids the faces of the convertible parts show, and the maps of the legacy materials, for the one pass over the archive that reads their alpha channels and sizes.</summary>
+    private static HashSet<Guid> TextureIds(IEnumerable<ParsedPart> parts, Dictionary<Guid, LegacyMaterialInfo> materials)
     {
         HashSet<Guid> ids = new HashSet<Guid>();
+        foreach (LegacyMaterialInfo m in materials.Values)
+        {
+            ids.Add(m.NormalMapId);
+            ids.Add(m.SpecularMapId);
+        }
         foreach (ParsedPart pp in parts)
         {
             Primitive.TextureEntry te = ReadTextureEntry(pp);
@@ -364,14 +411,18 @@ internal static class ArchiveMaterials
                 return null;
             const float scale = 0.0001f;
             float F(string key) => scale * (float)map[key].AsReal();
-            return new LegacyMaterialInfo
+            LegacyMaterialInfo info = new LegacyMaterialInfo
             {
+                NormalMapId = map["NormMap"].AsUUID().Guid,
+                SpecularMapId = map["SpecMap"].AsUUID().Guid,
                 HasNormalMap = map["NormMap"].AsUUID() != UUID.Zero,
                 NormalTransform = new FaceTransform(F("NormRepeatX"), F("NormRepeatY"), F("NormOffsetX"), F("NormOffsetY"), F("NormRotation")),
                 HasSpecularMap = map["SpecMap"].AsUUID() != UUID.Zero,
                 SpecularTransform = new FaceTransform(F("SpecRepeatX"), F("SpecRepeatY"), F("SpecOffsetX"), F("SpecOffsetY"), F("SpecRotation")),
                 DiffuseAlphaMode = (int)map["DiffuseAlphaMode"].AsUInteger()
             };
+            (info.IdentityId, info.IdentityBytes) = MaterialBaking.WithoutMapTransforms(map);
+            return info;
         }
         catch (Exception e) when (e is OSDException || e is FormatException || e is System.Xml.XmlException)
         {

@@ -36,7 +36,7 @@ internal static class MapsFixture
     public const int ObjectCount = 2, PartsPerObject = 8;
 
     public static readonly FaceTransform TransformA = AsStored(new FaceTransform(2f, 3f, 0.25f, -0.5f, 0.3f));
-    public static readonly FaceTransform TransformB = AsStored(new FaceTransform(4f, 0.5f, -0.125f, 0.0625f, 1.2f));
+    public static readonly FaceTransform TransformB = AsStored(new FaceTransform(2f, 0.5f, -0.125f, 0.0625f, 1.2f));
     public static readonly FaceTransform TransformA2 = AsStored(new FaceTransform(1.5f, 1.5f, 0.5f, 0.25f, 0f));
     public static readonly FaceTransform FaceM = AsStored(new FaceTransform(2f, 2f, 0.1f, 0.2f, 0.4f));
     public static readonly FaceTransform NormalM = AsStored(new FaceTransform(3f, 2f, 0.1f, 0.2f, 0.4f));

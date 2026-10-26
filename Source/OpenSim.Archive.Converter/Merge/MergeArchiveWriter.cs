@@ -47,6 +47,10 @@ public sealed class MergedPartReport
     /// <summary>The most a texture coordinate of the part can have moved when the mesh asset stores it (half a step of 65,535 over the range of its face), in texels of the face's texture; and the most that was measured after reading the asset back.</summary>
     public double WorstUvTexels { get; set; }
     public double MeasuredUvTexels { get; set; }
+    /// <summary>Faces whose legacy material maps were baked with the diffuse, the new materials the part names, and the most any map's coordinates moved from where the viewer draws them (in texels of the map's own texture, measured on the mesh as written).</summary>
+    public int MapFaces { get; set; }
+    public int NewMaterials { get; set; }
+    public double MeasuredMapTexels { get; set; }
 }
 
 /// <summary>A part that holds planar-mapped faces: which faces, and whether the part went into a merged part or stayed.</summary>
@@ -97,6 +101,8 @@ public sealed class MergeWriteResult
         sb.AppendLine("  worst texture coordinate difference " + Worst(p => p.WorstUv) + " before the mesh is encoded, " + Worst(p => p.WorstUvDecoded) + " as written");
         sb.AppendLine("  worst texture coordinate error after the mesh is stored (16 bits over each face's range): " + Worst(p => p.WorstUvTexels, "0.000") + " texels at most, "
             + Worst(p => p.MeasuredUvTexels, "0.000") + " texels measured (limit " + UvPrecision.MaxTexels.ToString(CultureInfo.InvariantCulture) + ")");
+        sb.AppendLine("  faces with normal or specular maps baked " + Parts.Sum(p => p.MapFaces) + ", new materials named " + Parts.Sum(p => p.NewMaterials) + ", worst map coordinate difference "
+            + Worst(p => p.MeasuredMapTexels, "0.000") + " texels of the map's own texture (limit " + FaceBaking.MapTolerance.ToString(CultureInfo.InvariantCulture) + " for the figures and " + UvPrecision.MaxTexels.ToString(CultureInfo.InvariantCulture) + " for storing them)");
         sb.AppendLine("  worst normal difference " + Worst(p => p.WorstNormal) + " before the mesh is encoded, " + Worst(p => p.WorstNormalDecoded) + " as written");
         sb.AppendLine("  face mapping of the convertible prims: " + Mapping.DefaultFaces + " default, " + Mapping.PlanarFaces + " planar, " + Mapping.OtherFaces + " other");
         foreach (PlanarPart pp in Mapping.PlanarParts.Take(200))
@@ -230,6 +236,26 @@ public static class MergeArchiveWriter
             });
         }
 
+        // a face that bakes with maps drawn with a transform names a new material with the transforms taken out; a new one is written once
+        int newMaterials = 0, mapFaces = 0;
+        HashSet<Guid> usedHere = new HashSet<Guid>();
+        foreach (MergeMember m in members)
+            for (int i = 0; i < m.Faces.Count; i++)
+            {
+                MergeFace info = m.FaceInfo[i];
+                if (m.Faces[i].IsEmpty || !info.Bakeable)
+                    continue;
+                if (info.NormalBaked || info.SpecularBaked)
+                    mapFaces++;
+                if (info.BakedMaterialId.Length == 0)
+                    continue;
+                Guid id = Guid.Parse(info.BakedMaterialId);
+                if (usedHere.Add(id))
+                    newMaterials++;
+                if (info.NewMaterial != null && assets.Add(id))
+                    rewriter.AddAsset(id, AssetType.OSMaterial, info.NewMaterial);
+            }
+
         bool carrierIsRoot = members[0].IsRoot;
         ParsedPart carrier = parsed[mp.Members[0].PartId];
         MergedGeometry g = MergeGeometry.Build(mp, members, carrierIsRoot, options);
@@ -267,7 +293,8 @@ public static class MergeArchiveWriter
         MergedPartReport report = new MergedPartReport
         {
             Id = mp.Id, MeshId = meshId, ManifestAssetId = noteAsset, Name = mp.Name, Linkset = lp.Name, Members = mp.Members.Count, Faces = faceCount,
-            Vertices = g.Faces.Sum(f => f.VertexCount), Triangles = g.Faces.Sum(f => f.TriangleCount), TookTheRoot = carrierIsRoot, MeshBytes = bytes.Length
+            Vertices = g.Faces.Sum(f => f.VertexCount), Triangles = g.Faces.Sum(f => f.TriangleCount), TookTheRoot = carrierIsRoot, MeshBytes = bytes.Length,
+            MapFaces = mapFaces, NewMaterials = newMaterials
         };
         foreach (MergeMember m in members)
             for (int i = 0; i < m.Faces.Count; i++)
@@ -317,6 +344,9 @@ public static class MergeArchiveWriter
                 to.Fullbright = from.Fullbright;
                 to.MaterialID = from.MaterialID;
             }
+            // maps drawn from the baked coordinates are drawn without a transform of their own
+            if (info.Bakeable && info.BakedMaterialId.Length > 0)
+                to.MaterialID = new UUID(info.BakedMaterialId);
             // a baked face is drawn with the identity transform and default mapping: both are in its coordinates now
             if (info.Bakeable)
             {
@@ -442,6 +472,11 @@ internal static class MeshCheck
                 FaceUv.Transform(ref shown[v], ref shown[v + 1], info.Transform);
             return shown;
         }).ToArray()).ToArray();
+        // the same for the maps of a baked face: where the viewer draws each map for the original face (the material's own transform)
+        float[][][] MapUv(Func<MergeFace, bool> has, Func<MergeFace, FaceTransform> transform) => members.Select(m => m.Faces.Select((f, i) =>
+            f.IsEmpty || !m.FaceInfo[i].Bakeable || !has(m.FaceInfo[i]) ? null
+                : FaceUv.Bake(f.Positions, f.Normals, f.Uvs, transform(m.FaceInfo[i]), m.FaceInfo[i].TexGen == FaceBaking.PlanarMapping, m.Scale)).ToArray()).ToArray();
+        float[][][] wantNormalUv = MapUv(i => i.NormalBaked, i => i.NormalTransform), wantSpecularUv = MapUv(i => i.SpecularBaked, i => i.SpecularTransform);
         // and what the viewer will draw the merged face with
         float[][] gotUv = g.Faces.Select((f, slot) =>
         {
@@ -510,10 +545,17 @@ internal static class MeshCheck
                 double texelsU = Math.Abs(wu - decUv[run.Slot][dv * 2]) * (shownFace.TextureWidth > 0 ? shownFace.TextureWidth : UvPrecision.UnknownResolution);
                 double texelsV = Math.Abs(wv - decUv[run.Slot][dv * 2 + 1]) * (shownFace.TextureHeight > 0 ? shownFace.TextureHeight : UvPrecision.UnknownResolution);
                 report.MeasuredUvTexels = Math.Max(report.MeasuredUvTexels, Math.Max(texelsU, texelsV));
+                float[] nu = wantNormalUv[run.Member][run.Face], su = wantSpecularUv[run.Member][run.Face];
+                if (nu != null)
+                    report.MeasuredMapTexels = Math.Max(report.MeasuredMapTexels, Math.Max(Math.Abs(nu[sv * 2] - decUv[run.Slot][dv * 2]) * Pixels(shownFace.NormalWidth), Math.Abs(nu[sv * 2 + 1] - decUv[run.Slot][dv * 2 + 1]) * Pixels(shownFace.NormalHeight)));
+                if (su != null)
+                    report.MeasuredMapTexels = Math.Max(report.MeasuredMapTexels, Math.Max(Math.Abs(su[sv * 2] - decUv[run.Slot][dv * 2]) * Pixels(shownFace.SpecularWidth), Math.Abs(su[sv * 2 + 1] - decUv[run.Slot][dv * 2 + 1]) * Pixels(shownFace.SpecularHeight)));
                 report.Corners++;
             }
         }
     }
+
+    private static double Pixels(int size) => size > 0 ? size : UvPrecision.UnknownResolution;
 
     private static double MaxComponent(SysVector3 v) => Math.Max(Math.Abs(v.X), Math.Max(Math.Abs(v.Y), Math.Abs(v.Z)));
 }
