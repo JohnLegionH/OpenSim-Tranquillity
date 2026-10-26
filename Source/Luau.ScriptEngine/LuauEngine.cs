@@ -8,6 +8,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using Luau.ScriptEngine.Bindings;
 using Nini.Config;
 using OpenMetaverse;
 using OpenSim.Region.Framework.Interfaces;
@@ -89,14 +90,51 @@ namespace Luau.ScriptEngine
             m_scene.RegisterModuleInterface<IScriptModule>(this);
             m_scene.StackModuleInterface<IScriptModule>(this);
             m_scene.EventManager.OnRezScript += OnRezScript;
+            try
+            {
+                m_loader = (m_loaderFactory ?? DefaultLoader)(m_settings, m_log, scene);
+            }
+            catch (Exception e)
+            {
+                // The engine stays registered but cannot load: the region and the other engines carry on.
+                m_log.Error("The script loader could not be started; scripts given to this engine will not load: " + e);
+            }
             m_log.Info("Added to region " + scene.RegionInfo.RegionName);
         }
+
+        /// <summary>
+        /// The bound-function list is empty until host functions are bound, so the stamp carries a fixed marker; it
+        /// changes with that list, which makes the cache entries of an earlier list unused.
+        /// </summary>
+        internal const string BoundFunctionHash = "none";
+
+        /// <summary>The loader the engine runs with: the compile cache in the engine's folder (unless switched off), the region's asset service for text, one VM.</summary>
+        private static IScriptLoader DefaultLoader(LuauSettings settings, IEngineLog log, Scene scene)
+        {
+            CompileCache cache = settings.CompileCache
+                ? new CompileCache(CompileCache.DirectoryFor(settings), CompileCache.MakeStamp(Host.Version(), BoundFunctionHash), log)
+                : null;
+            var compiler = new ScriptCompiler(null, null, log, cache);
+            Bindings.Watchdog watchdog = settings.Watchdog switch
+            {
+                "resident" => Bindings.Watchdog.Resident,
+                "threaded" => Bindings.Watchdog.Threaded,
+                _ => Bindings.Watchdog.Default,
+            };
+            return new ScriptLoader(compiler, new SceneTextSource(scene.AssetService), log, settings.MemoryLimitKiB * 1024,
+                () => new Vm(watchdog), ownsCompiler: true);
+        }
+
+        /// <summary>How long GetScriptErrors waits for a compile; the region's own wait for a save is the same 15 seconds.</summary>
+        internal static TimeSpan ErrorWaitTimeout = TimeSpan.FromSeconds(15);
 
         public void RemoveRegion(Scene scene)
         {
             if (m_scene == null) return;
             m_scene.EventManager.OnRezScript -= OnRezScript;
             lock (m_tracked) m_tracked.Clear();
+            m_loader?.Dispose();
+            m_loader = null;
             m_scene = null;
         }
 
@@ -118,8 +156,17 @@ namespace Luau.ScriptEngine
             if (!m_warnedNoLoader)
             {
                 m_warnedNoLoader = true;
-                m_log.Warn("A script was given to this engine, which cannot load or run scripts yet; the script will not run");
+                m_log.Warn("A script was given to this engine, which compiles and loads scripts but cannot run them yet; the script will not run");
             }
+
+            SceneObjectPart part = m_scene?.GetSceneObjectPart(localID);
+            m_loader?.Post(new LoadRequest
+            {
+                LocalID = localID,
+                ItemID = itemID,
+                AssetID = part?.Inventory?.GetInventoryItem(itemID)?.AssetID ?? UUID.Zero,
+                Source = script,
+            });
         }
 
         private IEnumerable<string> LoadedEngineNames()
@@ -136,6 +183,7 @@ namespace Luau.ScriptEngine
         private void Disown(UUID itemID)
         {
             lock (m_tracked) m_tracked.Remove(itemID);
+            m_loader?.Disown(itemID);
         }
 
         public bool HasSavedScriptState(UUID itemID, UUID assetID) => m_store.HasSavedState(itemID, assetID);
@@ -146,7 +194,21 @@ namespace Luau.ScriptEngine
         public bool PostObjectEvent(UUID itemID, string name, object[] args) => false;
         public bool SuspendScript(UUID itemID) => false;
         public bool ResumeScript(UUID itemID) => false;
-        public ArrayList GetScriptErrors(UUID itemID) => new ArrayList();
+        /// <summary>
+        /// The compile errors of the load that follows the viewer's save, in the editor's format; empty when it
+        /// compiled. Called on the caps thread that answers the save. A script this engine does not own gets an empty
+        /// answer, so the engine that owns it is the one that reports.
+        /// </summary>
+        public ArrayList GetScriptErrors(UUID itemID)
+        {
+            var list = new ArrayList();
+            if (m_loader == null || !IsTracking(itemID))
+                return list;
+            List<string> errors = m_loader.WaitForCompileErrors(itemID, ErrorWaitTimeout);
+            if (errors != null)
+                list.AddRange(errors);
+            return list;
+        }
         public bool HasScript(UUID itemID, out bool running) { running = false; return false; }
         public bool GetScriptState(UUID itemID) => false;
         public void SaveAllState() { }
