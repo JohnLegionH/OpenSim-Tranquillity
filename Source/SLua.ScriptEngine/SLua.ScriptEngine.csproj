@@ -17,6 +17,7 @@
     <ProjectReference Include="..\OpenSim.Framework\OpenSim.Framework.csproj" />
     <ProjectReference Include="..\OpenSim.Region.Framework\OpenSim.Region.Framework.csproj" />
     <ProjectReference Include="..\OpenSim.Region.ScriptEngine.Shared\OpenSim.Region.ScriptEngine.Shared.csproj" />
+    <ProjectReference Include="..\Phlox.ScriptEngine\Phlox.ScriptEngine.csproj" />
   </ItemGroup>
 
 </Project>
