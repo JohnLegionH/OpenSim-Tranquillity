@@ -30,7 +30,7 @@ namespace SLua.ScriptEngine
     /// The region's start, stop, reset and remove events drive the script; a script that faults is stopped and its
     /// owner is told.
     /// </summary>
-    public class SLuaEngine : INonSharedRegionModule, IScriptModule, IScriptStateProvider, IEventPoster
+    public class SLuaEngine : INonSharedRegionModule, IScriptModule, IScriptStateProvider, IParcelScriptPolicyEngine, IEventPoster, IPolicyHost
     {
         public event ScriptRemoved OnScriptRemoved;
 
@@ -72,6 +72,11 @@ namespace SLua.ScriptEngine
             public SchedulerScript Script;
             public StartInfo Start;
             public bool StartupPending;
+
+            /// <summary>Why the script is held back; the scheduler's Suspend is on while any reason is set. Guarded by <see cref="PauseLock"/>.</summary>
+            public PauseReason Pause;
+
+            public readonly object PauseLock = new object();
 
             /// <summary>Serializes the calls that set the item's flags on its prim.</summary>
             public readonly object FlagsLock = new object();
@@ -175,6 +180,8 @@ namespace SLua.ScriptEngine
             m_scene.EventManager.OnStopScript += OnStopScript;
             m_hooks = new SceneHooksA(scene, this, m_settings.PhysicsThrottle, Clock);
             m_hooks.Subscribe();
+            m_policy = new SceneHooksB(scene, this, Grants, Clock);
+            m_policy.Subscribe();
             m_log.Info("Added to region " + scene.RegionInfo.RegionName);
         }
 
@@ -236,6 +243,8 @@ namespace SLua.ScriptEngine
             m_scene.EventManager.OnStopScript -= OnStopScript;
             m_hooks?.Unsubscribe();
             m_hooks = null;
+            m_policy?.Unsubscribe();
+            m_policy = null;
             lock (m_tracked) m_tracked.Clear();
             lock (m_starts) m_starts.Clear();
             lock (m_deferred) m_deferred.Clear();
@@ -722,6 +731,40 @@ namespace SLua.ScriptEngine
         internal SceneHooksA Hooks => m_hooks;
 
         private SceneHooksA m_hooks;
+
+        /// <summary>The policy hooks (parcel rules, estate switch, crossings, grants) of the region the engine is in; null outside one.</summary>
+        internal SceneHooksB Policy => m_policy;
+
+        private SceneHooksB m_policy;
+
+        /// <summary>What the engine's scripts hold from the region; replaced when the ll functions that make grants are bound. Set before the region is added.</summary>
+        internal IScriptGrants Grants { get; set; } = NoGrants.Instance;
+
+        /// <summary>The pauses the policy hooks made.</summary>
+        internal PolicyStats PolicyStats { get; } = new PolicyStats();
+
+        /// <summary>The scripts the engine holds back, and why; none for an unknown item.</summary>
+        internal PauseReason PauseReasonsOf(UUID itemID)
+        {
+            ScriptRecord record = RecordOf(itemID);
+            if (record == null)
+                return PauseReason.None;
+            lock (record.PauseLock) return record.Pause;
+        }
+
+        /// <summary>The core leaves the parcel rule to this engine, which pauses and resumes its scripts live.</summary>
+        public bool EnforcesParcelScriptRules => false;
+
+        PolicyScript[] IPolicyHost.AllScripts() => Array.Empty<PolicyScript>();
+
+        void IPolicyHost.SetPaused(UUID itemID, PauseReason reason, bool paused) { }
+
+        /// <summary>
+        /// Called by a function that changes a physical property, as Phlox's PhySleep is: when the region's physics frame
+        /// time (average of the last ten) is over 30 ms, the calling script is delayed by that many milliseconds. Needs
+        /// the physics throttle; a no-op outside a script's call.
+        /// </summary>
+        internal void PhySleep() { }
 
         /// <summary>Average of the last ten physics frame times in milliseconds (for the physics slowdowns the function binding will apply); 0 when the throttle is off.</summary>
         internal int PhysicsFrameTimeAvg => m_hooks?.PhysicsFrameTimeAvg ?? 0;
