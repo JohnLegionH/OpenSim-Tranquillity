@@ -53,7 +53,7 @@ namespace Luau.ScriptEngine
         public int MaxEventQueue { get; private set; } = 64;
 
         /// <summary>Consecutive punished turns after which a script is killed.</summary>
-        public int KillAfterPunishments { get; private set; }
+        public int KillAfterPunishments { get; private set; } = 20;
         public int StateSaveIntervalMs { get; private set; } = 2500;
         public bool CompileCache { get; private set; } = true;
 
@@ -109,6 +109,7 @@ namespace Luau.ScriptEngine
             s.MemoryLimitKiB = ReadMemoryLimit(c, log);
             s.MinTimerInterval = Math.Max(0.0, c.GetDouble("MinTimerInterval", s.MinTimerInterval));
             s.MaxEventQueue = Math.Max(1, c.GetInt("MaxEventQueue", s.MaxEventQueue));
+            s.KillAfterPunishments = Math.Max(1, c.GetInt("KillAfterPunishments", s.KillAfterPunishments));
             s.StateSaveIntervalMs = Math.Max(1, c.GetInt("StateSaveIntervalMs", s.StateSaveIntervalMs));
             s.CompileCache = c.GetBoolean("CompileCache", s.CompileCache);
             s.ServiceCallDeferral = ReadChoice(c, "ServiceCallDeferral", s.ServiceCallDeferral, DeferralModes, log);
