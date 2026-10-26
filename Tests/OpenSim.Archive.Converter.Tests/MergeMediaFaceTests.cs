@@ -29,7 +29,14 @@ public class MergeMediaFaceTests
     private static List<MediaEntry> MediaOf(ParsedPart pp) =>
         pp.MediaXml.Length == 0 ? new List<MediaEntry>() : (PrimitiveBaseShape.MediaList.FromXml(pp.MediaXml) ?? new PrimitiveBaseShape.MediaList());
 
-    private static string Canon(MediaEntry e) => e == null ? null : OSDParser.SerializeJsonString(e.GetOSD());
+    // the region reads an empty place of a media list back as a default entry, so a default entry and no entry are the same thing
+    private static readonly string DefaultEntry = OSDParser.SerializeJsonString(new MediaEntry().GetOSD());
+
+    private static string Canon(MediaEntry e)
+    {
+        string text = e == null ? null : OSDParser.SerializeJsonString(e.GetOSD());
+        return text == DefaultEntry ? null : text;
+    }
 
     [Fact]
     public void TheFixtureStoresTheMediaEntriesAndFlagsItDescribes()

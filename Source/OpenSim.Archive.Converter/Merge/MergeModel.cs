@@ -77,10 +77,20 @@ public sealed class MergeFace
     public string UnbakedReason { get; set; } = "";
     /// <summary>True when the face is drawn alpha-blended (a colour alpha below 1, or a legacy material that blends).</summary>
     public bool Alpha { get; set; }
-    /// <summary>True when the face is drawn with a PBR material (held in its part's extra parameters, which a merge does not carry).</summary>
+    /// <summary>True when the face is drawn with a PBR material or has a PBR override; the part holds both by face number and the merged part carries them to the merged face.</summary>
     public bool Pbr { get; set; }
-    /// <summary>True when the face shows media (held in its part's media data, which a merge does not carry).</summary>
+    /// <summary>The PBR material asset the face names (empty for none) and its override text (empty for none). Part of the slot key: faces share a merged face only when both are equal.</summary>
+    public string PbrMaterial { get; set; } = "";
+    public string PbrOverride { get; set; } = "";
+    /// <summary>True when the face is marked as media in its texture entry.</summary>
     public bool Media { get; set; }
+    /// <summary>The face media entry as text that equal entries share (empty for none); part of the slot key.</summary>
+    public string MediaKey { get; set; } = "";
+    /// <summary>
+    /// The transform the viewer draws the face coordinates with: the face own, except for a PBR face, whose coordinates the viewer leaves
+    /// as the base ones (a PBR material has transforms of its own; llface.cpp getGeometryVolume applies the texture entry transform only to other faces).
+    /// </summary>
+    public FaceTransform DrawnTransform => Pbr ? FaceTransform.Identity : Transform;
     public int Vertices { get; set; }
     /// <summary>The size of the face's texture in pixels (0 when the archive does not hold it).</summary>
     public int TextureWidth { get; set; }
@@ -98,6 +108,8 @@ public sealed class MergeFace
     /// </summary>
     public string SlotKey =>
         string.Create(CultureInfo.InvariantCulture, $"{TextureId}|{Color}|g{Glow:0.###}|s{Shiny}|b{Bump}|f{(Fullbright ? 1 : 0)}|m{(Bakeable && BakedMaterialId.Length > 0 ? BakedMaterialId : MaterialId)}|a{(Alpha ? 1 : 0)}")
+        + (Pbr ? "|pbr:" + PbrMaterial + ":" + PbrOverride : "")
+        + (Media || MediaKey.Length > 0 ? "|media:" + (Media ? "1" : "0") + ":" + MediaKey : "")
         + (UvClass > 0 ? "|u" + UvClass.ToString(CultureInfo.InvariantCulture) : "")
         + (Bakeable ? "" : "|t" + TexGen.ToString(CultureInfo.InvariantCulture) + "|xf:" + Transform.Key);
 }

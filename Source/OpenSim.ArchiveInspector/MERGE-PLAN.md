@@ -40,10 +40,34 @@ the same bake, keep rules and guards as a prim's. A sculpt whose map is not in t
 A face's slot is set by its texture, colour, glow, shininess, bump, fullbright, legacy material and alpha. Its texture
 mapping, repeats, offset, rotation and flips are not part of it when the face can be baked into the merged texture
 coordinates; they are then written into the coordinates as the viewer computes them (`xform` and `planarProjection` in the
-viewer's `llface.cpp`) and the merged face is drawn with default mapping and no transform. A face cannot be baked when it is a
-PBR or media face, uses a mapping other than default or planar, names a legacy material that is not in the archive, or names
+viewer's `llface.cpp`) and the merged face is drawn with default mapping and no transform. A face cannot be baked when it uses a mapping other than default or planar, names a legacy material that is not in the archive, or names
 one with a normal or specular map that is drawn somewhere other than the diffuse texture is (see below). Such a default-mapped
 face keeps its own slot, keyed with its transform, and its transform stays on the merged face.
+
+### PBR faces
+
+A part holds the PBR (glTF) material of each such face by face number: in its extra parameters (a block of type 0x80, one material id for
+each face), and in its material overrides (the `MatOvrd` element, one JSON text for each face). A merged part writes both again for the
+faces it makes, renumbered to the merged face, with each override text unchanged. Faces share a merged face only when texture, colour,
+material, override and the rest of the slot key are equal, so two faces that differ in their override stay two faces.
+
+The viewer does not apply a PBR face's texture transform to its coordinates (the material has transforms of its own), and it ignores the
+legacy material on a PBR face; the merged coordinates are therefore the base ones (projected first when the face is planar) and the merged
+face carries no transform. A PBR face is alpha-blended when its effective alpha mode is blend: the override's `am` when it has one, else the
+material asset's `alphaMode`; a material the archive does not hold counts as blending. The textures of a PBR material are not known, so
+the precision guard assumes 2048 pixels, times the largest scale the material (`KHR_texture_transform`) or its override (`ti`) gives them.
+
+A part stays (PBR_DATA) when the region would not read its material data the same way: an assignment block too short for its count, an
+override that does not fit the data, an override or assignment for a face the part does not have, a face given twice, or override text that
+starts with `{"asset` (the region drops all overrides of such a part).
+
+### Media faces
+
+A part holds the media entries in its `Media` element (one entry, or an empty place, for each face, by face number) and marks the faces in its
+texture entry. A merged part writes the entries again for the faces it makes, renumbered, and marks the same faces; faces share a merged
+face only when their entries are equal. The viewer draws the coordinates of a media face as it draws any other face's, so the faces bake as
+usual. A part stays (MEDIA_DATA) when its media list cannot be read or holds an entry for a face the part does not have. A face that is
+marked as media and has no entry is carried as marked, with no entry.
 
 ### Legacy materials with normal and specular maps
 
@@ -102,7 +126,7 @@ the partly written file is kept beside it as `<output>.<id>.incomplete`.
 | 11 | ALREADY_MESH | an existing mesh keeps its makers' levels of detail |
 | 17 | SCRIPTED, ADDRESSED, PROTECTED_LINK_NUMBER, LINKSET_LOCKED | see below |
 | 18 | ALPHA_CAP | alpha-blended parts merge only within the alpha size cap |
-| part | CONTENTS, LIGHT, FLEXI, SIT_TARGET, SIT_TEXT, TOUCH_TEXT, CLICK_ACTION, SALE_TYPE, SALE_PRICE, HOVER_TEXT, HOVER_TEXT_COLOR, PAY_PRICE, PARTICLES, SOUND, PHYSICAL, VOLUME_DETECT, CONVEX_PHYSICS, ROOT_PHYSICS_NONE, TEXTURE_ANIMATION, PBR_FACE, MEDIA_FACE, UNBAKED_MAPPING, UV_PRECISION, NOT_PRIM, NOT_CONVERTED | per-part settings a merged mesh cannot carry |
+| part | CONTENTS, LIGHT, FLEXI, SIT_TARGET, SIT_TEXT, TOUCH_TEXT, CLICK_ACTION, SALE_TYPE, SALE_PRICE, HOVER_TEXT, HOVER_TEXT_COLOR, PAY_PRICE, PARTICLES, SOUND, PHYSICAL, VOLUME_DETECT, CONVEX_PHYSICS, ROOT_PHYSICS_NONE, TEXTURE_ANIMATION, PBR_DATA, MEDIA_DATA, UNBAKED_MAPPING, UV_PRECISION, NOT_PRIM, NOT_CONVERTED | per-part settings a merged mesh cannot carry |
 | group | SOLE_IN_CLASS | no other part that can merge shares its group |
 
 The per-part fields (sit target and text, touch text, click action, sale type and price, hover text and its colour, pay prices) are

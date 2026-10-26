@@ -12,6 +12,7 @@ using System.Text;
 using OpenMetaverse;
 using OpenSim.Archive.Inspection;
 using OpenSim.Archive.Rewrite;
+using OpenSim.Framework;
 using OpenSim.MeshAsset;
 using SysQuaternion = System.Numerics.Quaternion;
 using SysVector3 = System.Numerics.Vector3;
@@ -50,6 +51,9 @@ public sealed class MergedPartReport
     /// <summary>Faces whose legacy material maps were baked with the diffuse, the new materials the part names, and the most any map's coordinates moved from where the viewer draws them (in texels of the map's own texture, measured on the mesh as written).</summary>
     public int MapFaces { get; set; }
     public int NewMaterials { get; set; }
+    /// <summary>Merged faces that carry a PBR material or override, and merged faces that carry a media entry.</summary>
+    public int PbrFaces { get; set; }
+    public int MediaFaces { get; set; }
     public double MeasuredMapTexels { get; set; }
 }
 
@@ -103,6 +107,7 @@ public sealed class MergeWriteResult
             + Worst(p => p.MeasuredUvTexels, "0.000") + " texels measured (limit " + UvPrecision.MaxTexels.ToString(CultureInfo.InvariantCulture) + ")");
         sb.AppendLine("  faces with normal or specular maps baked " + Parts.Sum(p => p.MapFaces) + ", new materials named " + Parts.Sum(p => p.NewMaterials) + ", worst map coordinate difference "
             + Worst(p => p.MeasuredMapTexels, "0.000") + " texels of the map's own texture (limit " + FaceBaking.MapTolerance.ToString(CultureInfo.InvariantCulture) + " for the figures and " + UvPrecision.MaxTexels.ToString(CultureInfo.InvariantCulture) + " for storing them)");
+        sb.AppendLine("  merged faces with a PBR material or override " + Parts.Sum(p => p.PbrFaces) + ", with a media entry " + Parts.Sum(p => p.MediaFaces));
         sb.AppendLine("  worst normal difference " + Worst(p => p.WorstNormal) + " before the mesh is encoded, " + Worst(p => p.WorstNormalDecoded) + " as written");
         sb.AppendLine("  face mapping of the convertible prims: " + Mapping.DefaultFaces + " default, " + Mapping.PlanarFaces + " planar, " + Mapping.OtherFaces + " other");
         foreach (PlanarPart pp in Mapping.PlanarParts.Take(200))
@@ -129,6 +134,15 @@ public sealed class MergeWriteResult
 /// member rewritten in place, so it keeps that member's id, owner, permissions and place in the object; it gets a manifest notecard
 /// in its inventory. The source is only read. Nothing is written when any mesh fails its validity check.
 /// </summary>
+/// <summary>What a merged part holds for its faces besides the texture entry: PBR assignments and overrides, and media entries, all by merged face.</summary>
+internal sealed class FaceExtrasOut
+{
+    public List<(byte Face, Guid Id)> PbrEntries = new List<(byte, Guid)>();
+    public List<(byte Face, string Data)> PbrOverrides = new List<(byte, string)>();
+    public List<MediaEntry> Media = new List<MediaEntry>();
+    public int PbrFaces, MediaFaces;
+}
+
 public static class MergeArchiveWriter
 {
     public const string ManifestName = "Merge manifest";
@@ -279,6 +293,27 @@ public static class MergeArchiveWriter
         if (assets.Add(noteAsset))
             rewriter.AddAsset(noteAsset, AssetType.Notecard, notecardBytes);
 
+        // the PBR assignments and overrides and the media entries of the merged faces, renumbered to the merged face each source face became
+        FaceExtrasOut extras = new FaceExtrasOut();
+        for (int slot = 0; slot < g.Faces.Count; slot++)
+        {
+            (int mi, int fi) = g.Template[slot];
+            MergeFace info = members[mi].FaceInfo[fi];
+            if (info.Pbr)
+            {
+                if (info.PbrMaterial.Length > 0)
+                    extras.PbrEntries.Add(((byte)slot, Guid.Parse(info.PbrMaterial)));
+                if (info.PbrOverride.Length > 0)
+                    extras.PbrOverrides.Add(((byte)slot, info.PbrOverride));
+                extras.PbrFaces++;
+            }
+            List<MediaEntry> sourceMedia = MediaFaceData.Read(parsed[members[mi].PartId], members[mi].Faces.Count, out _);
+            MediaEntry entry = fi < sourceMedia.Count ? sourceMedia[fi] : null;
+            extras.Media.Add(entry);
+            if (entry != null)
+                extras.MediaFaces++;
+        }
+
         byte[] textureEntryBytes = TextureEntryOf(g, members, parsed).GetBytes();
         string textureEntry = Convert.ToBase64String(textureEntryBytes);
         int faceCount = g.Faces.Count;
@@ -286,7 +321,7 @@ public static class MergeArchiveWriter
         int physicsType = carrier.PhysicsShapeType;
         // a part alone in its object is link number 0, as the region writes it
         int linkNum = lp.PartsAfter == 1 ? 0 : mp.NewLinkNum;
-        rewriter.AddPatch(new PartPatch(mp.Id, (PartView view) => CarrierEdits(view, mp, g, faceCount, meshId, extra, textureEntry, carrierIsRoot, noteAsset, noteItem, physicsType, linkNum)));
+        rewriter.AddPatch(new PartPatch(mp.Id, (PartView view) => CarrierEdits(view, mp, g, faceCount, meshId, extra, textureEntry, carrierIsRoot, noteAsset, noteItem, physicsType, linkNum, extras)));
         foreach (MemberPlan x in mp.Members.Skip(1))
             rewriter.RemovePart(x.PartId);
 
@@ -294,7 +329,7 @@ public static class MergeArchiveWriter
         {
             Id = mp.Id, MeshId = meshId, ManifestAssetId = noteAsset, Name = mp.Name, Linkset = lp.Name, Members = mp.Members.Count, Faces = faceCount,
             Vertices = g.Faces.Sum(f => f.VertexCount), Triangles = g.Faces.Sum(f => f.TriangleCount), TookTheRoot = carrierIsRoot, MeshBytes = bytes.Length,
-            MapFaces = mapFaces, NewMaterials = newMaterials
+            MapFaces = mapFaces, NewMaterials = newMaterials, PbrFaces = extras.PbrFaces, MediaFaces = extras.MediaFaces
         };
         foreach (MergeMember m in members)
             for (int i = 0; i < m.Faces.Count; i++)
@@ -343,6 +378,7 @@ public static class MergeArchiveWriter
                 to.Bump = from.Bump;
                 to.Fullbright = from.Fullbright;
                 to.MaterialID = from.MaterialID;
+                to.MediaFlags = from.MediaFlags;
             }
             // maps drawn from the baked coordinates are drawn without a transform of their own
             if (info.Bakeable && info.BakedMaterialId.Length > 0)
@@ -355,11 +391,32 @@ public static class MergeArchiveWriter
             }
             else if (from != null)
             {
-                to.RepeatU = from.RepeatU; to.RepeatV = from.RepeatV; to.OffsetU = from.OffsetU; to.OffsetV = from.OffsetV; to.Rotation = from.Rotation;
+                // the viewer applies no texture transform to a PBR face, so the merged face carries none
+                if (info.Pbr)
+                {
+                    to.RepeatU = 1; to.RepeatV = 1; to.OffsetU = 0; to.OffsetV = 0; to.Rotation = 0;
+                }
+                else
+                {
+                    to.RepeatU = from.RepeatU; to.RepeatV = from.RepeatV; to.OffsetU = from.OffsetU; to.OffsetV = from.OffsetV; to.Rotation = from.Rotation;
+                }
                 to.TexMapType = from.TexMapType;
             }
             if (slot == 0)
                 te.DefaultTexture = te.FaceTextures[0];
+        }
+        // The library writes a face that is plainer than the default face (not marked as media, say) as if it were the default's. When the first
+        // face is marked as media, the default is a copy of it that is not, so each marked face is written as its own.
+        Primitive.TextureEntryFace first = te.FaceTextures[0];
+        if (first != null && first.MediaFlags)
+        {
+            Primitive.TextureEntryFace plain = new Primitive.TextureEntryFace(null)
+            {
+                TextureID = first.TextureID, RGBA = first.RGBA, Glow = first.Glow, Shiny = first.Shiny, Bump = first.Bump, Fullbright = first.Fullbright,
+                MaterialID = first.MaterialID, RepeatU = first.RepeatU, RepeatV = first.RepeatV, OffsetU = first.OffsetU, OffsetV = first.OffsetV,
+                Rotation = first.Rotation, TexMapType = first.TexMapType, MediaFlags = false
+            };
+            te.DefaultTexture = plain;
         }
         return te;
     }
@@ -367,7 +424,7 @@ public static class MergeArchiveWriter
     private static string F(float v) => v.ToString("R", CultureInfo.InvariantCulture);
 
     private static IReadOnlyList<ElementEdit> CarrierEdits(PartView view, MergedPartPlan mp, MergedGeometry g, int faceCount, Guid meshId, byte[] extra, string textureEntry,
-        bool carrierIsRoot, Guid noteAsset, Guid noteItem, int physicsType, int linkNum)
+        bool carrierIsRoot, Guid noteAsset, Guid noteItem, int physicsType, int linkNum, FaceExtrasOut extras)
     {
         List<ElementEdit> edits = new List<ElementEdit>();
         void Need(string path)
@@ -378,7 +435,26 @@ public static class MergeArchiveWriter
 
         edits.Add(ElementEdit.SetTextOrAdd("Name", mp.Name));
         edits.Add(ElementEdit.SetTextOrAdd("Description", mp.Description));
-        edits.AddRange(MeshShape.Edits(faceCount, meshId, extra, view.Present));
+        bool pbr = extras.PbrEntries.Count > 0 || extras.PbrOverrides.Count > 0;
+        byte[] extraParams = pbr ? MeshShape.WithRenderMaterials(extra, extras.PbrEntries) : extra;
+        edits.AddRange(MeshShape.Edits(faceCount, meshId, extraParams, view.Present));
+        if (pbr)
+        {
+            // a part with no ExtraParams element gets one, with the mesh block the loader would otherwise derive
+            if (!view.Present.Contains("Shape/ExtraParams"))
+                edits.Add(ElementEdit.SetTextOrAddInShape("Shape/ExtraParams", Convert.ToBase64String(MeshShape.WithSculptBlock(extraParams, meshId, PrimitiveBaseShape.CreateMesh(faceCount, new UUID(meshId)).SculptType))));
+            PrimitiveBaseShape holder = new PrimitiveBaseShape
+            {
+                RenderMaterials = new Primitive.RenderMaterials
+                {
+                    entries = extras.PbrEntries.Select(e => new Primitive.RenderMaterials.RenderMaterialEntry { te_index = e.Face, id = new UUID(e.Id) }).ToArray(),
+                    overrides = extras.PbrOverrides.Select(o => new Primitive.RenderMaterials.RenderMaterialOverrideEntry { te_index = o.Face, data = o.Data }).ToArray()
+                }
+            };
+            edits.Add(ElementEdit.SetTextOrAddInShape("Shape/MatOvrd", Convert.ToBase64String(holder.RenderMaterialsOvrToRawBin())));
+        }
+        if (extras.Media.Any(e => e != null))
+            edits.Add(ElementEdit.SetTextOrAddInShape("Shape/Media", new PrimitiveBaseShape.MediaList(extras.Media).ToXml()));
         Need("Shape/TextureEntry");
         edits.Add(ElementEdit.SetText("Shape/TextureEntry", textureEntry));
         foreach (string prefix in new[] { "Scale", "Shape/Scale" })
@@ -466,10 +542,10 @@ internal static class MeshCheck
                 return Array.Empty<float>();
             MergeFace info = m.FaceInfo[i];
             if (info.Bakeable)
-                return FaceUv.Bake(f.Positions, f.Normals, f.Uvs, info.Transform, info.TexGen == FaceBaking.PlanarMapping, m.Scale);
+                return FaceUv.Bake(f.Positions, f.Normals, f.Uvs, info.DrawnTransform, info.TexGen == FaceBaking.PlanarMapping, m.Scale);
             float[] shown = (float[])f.Uvs.Clone();
             for (int v = 0; v < shown.Length; v += 2)
-                FaceUv.Transform(ref shown[v], ref shown[v + 1], info.Transform);
+                FaceUv.Transform(ref shown[v], ref shown[v + 1], info.DrawnTransform);
             return shown;
         }).ToArray()).ToArray();
         // the same for the maps of a baked face: where the viewer draws each map for the original face (the material's own transform)

@@ -42,7 +42,7 @@ public static class ArchiveMergePlanner
             PartObserver = pp => parsed.TryAdd(pp.Part.PartId.Guid, pp)
         }).Evaluate(archivePath);
         parts = parsed;
-        Dictionary<Guid, LegacyMaterialInfo> materials = ArchiveMaterials.Read(archivePath);
+        Dictionary<Guid, LegacyMaterialInfo> materials = ArchiveMaterials.Read(archivePath, out Dictionary<Guid, PbrMaterialInfo> pbrMaterials);
         Dictionary<Guid, TextureFacts> translucent = ArchiveTextureAlpha.Read(archivePath, TextureIds(parsed.Values, materials));
         ISculptMapSource maps = new ArchiveSculptMapSource(archivePath, elig.Parts
             .Where(r => r.Action == PartAction.Convert && r.Kind == "sculpt" && parsed.TryGetValue(r.PartId, out ParsedPart q) && q.Shape != null)
@@ -55,7 +55,7 @@ public static class ArchiveMergePlanner
             List<EligibilityRow> rows = build.ToList();
             ls.Name = (rows.FirstOrDefault(r => r.IsRoot) ?? rows[0]).Name ?? "";
             foreach (EligibilityRow row in rows)
-                ls.Parts.Add(ReadPart(row, parsed.TryGetValue(row.PartId, out ParsedPart pp) ? pp : null, materials, translucent, maps, convert?.Clean ?? true));
+                ls.Parts.Add(ReadPart(row, parsed.TryGetValue(row.PartId, out ParsedPart pp) ? pp : null, materials, pbrMaterials, translucent, maps, convert?.Clean ?? true));
             ls.Links = LinkFactsFor(elig.Scan, ls.Id, rows.Select(r => r.PartId).ToHashSet());
             linksets.Add(ls);
         }
@@ -71,7 +71,7 @@ public static class ArchiveMergePlanner
 
     // ---------------------------------------------------------------- parts
 
-    private static MergePart ReadPart(EligibilityRow row, ParsedPart pp, Dictionary<Guid, LegacyMaterialInfo> materials, Dictionary<Guid, TextureFacts> translucent, ISculptMapSource maps, bool clean)
+    private static MergePart ReadPart(EligibilityRow row, ParsedPart pp, Dictionary<Guid, LegacyMaterialInfo> materials, Dictionary<Guid, PbrMaterialInfo> pbrMaterials, Dictionary<Guid, TextureFacts> translucent, ISculptMapSource maps, bool clean)
     {
         MergePart p = new MergePart
         {
@@ -132,7 +132,7 @@ public static class ArchiveMergePlanner
             return p;
         }
 
-        FillFaces(p, pp, faces, materials, translucent);
+        FillFaces(p, pp, faces, materials, pbrMaterials, translucent);
         return p;
     }
 
@@ -157,10 +157,13 @@ public static class ArchiveMergePlanner
         p.BoxMax = hi;
     }
 
-    private static void FillFaces(MergePart p, ParsedPart pp, List<EncoderFace> faces, Dictionary<Guid, LegacyMaterialInfo> materials, Dictionary<Guid, TextureFacts> translucent)
+    private static void FillFaces(MergePart p, ParsedPart pp, List<EncoderFace> faces, Dictionary<Guid, LegacyMaterialInfo> materials, Dictionary<Guid, PbrMaterialInfo> pbrMaterials, Dictionary<Guid, TextureFacts> translucent)
     {
         Primitive.TextureEntry te = ReadTextureEntry(pp);
-        HashSet<int> pbrFaces = PbrFaces(pp);
+        Dictionary<int, PbrFace> pbrFaces = PbrFaceData.Read(pp, faces.Count, out bool pbrUnreadable);
+        List<MediaEntry> media = MediaFaceData.Read(pp, faces.Count, out bool mediaUnreadable);
+        p.PbrDataUnreadable = pbrUnreadable;
+        p.MediaDataUnreadable = mediaUnreadable;
 
         for (int i = 0; i < faces.Count; i++)
         {
@@ -184,15 +187,27 @@ public static class ArchiveMergePlanner
                 f.Alpha = FaceAlpha.IsAlpha(tef.RGBA.A, tef.Glow, texture, material);
                 f.TextureWidth = texture.Width;
                 f.TextureHeight = texture.Height;
-                f.Pbr = pbrFaces.Contains(i);
+                f.Pbr = pbrFaces.TryGetValue(i, out PbrFace pbr);
+                if (f.Pbr)
+                {
+                    f.PbrMaterial = pbr.Material == Guid.Empty ? "" : pbr.Material.ToString();
+                    f.PbrOverride = pbr.Override;
+                    if (PbrFaceData.Blends(pbr, pbrMaterials))
+                        f.Alpha = true;
+                    // the textures of a PBR material are not known (2048 pixels are assumed), and the material own scale multiplies the mesh storage error
+                    int scaled = (int)Math.Min(1 << 20, Math.Ceiling(UvPrecision.UnknownResolution * (double)PbrFaceData.Scale(pbr, pbrMaterials)));
+                    f.TextureWidth = Math.Max(f.TextureWidth, scaled);
+                    f.TextureHeight = Math.Max(f.TextureHeight, scaled);
+                }
                 f.Media = tef.MediaFlags;
-                f.Bakeable = FaceBaking.Bakeable(f.Transform, f.TexGen, f.MaterialId, material, pbrFaces.Contains(i), tef.MediaFlags, out string why);
+                f.MediaKey = i < media.Count ? MediaFaceData.Key(media[i]) : "";
+                f.Bakeable = FaceBaking.Bakeable(f.Transform, f.TexGen, f.MaterialId, material, f.Pbr, tef.MediaFlags, out string why);
                 f.UnbakedReason = why;
                 // the coordinates the face will be drawn with from a mesh asset: baked into the mesh or applied by its texture entry, the same figures
                 System.Numerics.Vector3 size = new System.Numerics.Vector3(pp.Scale.X, pp.Scale.Y, pp.Scale.Z);
                 bool planar = f.TexGen == FaceBaking.PlanarMapping;
-                float[] shown = faces[i].IsEmpty ? null : FaceUv.Bake(faces[i].Positions, faces[i].Normals, faces[i].Uvs, f.Transform, planar, size);
-                if (f.Bakeable && material != null && (material.HasNormalMap || material.HasSpecularMap))
+                float[] shown = faces[i].IsEmpty ? null : FaceUv.Bake(faces[i].Positions, faces[i].Normals, faces[i].Uvs, f.DrawnTransform, planar, size);
+                if (f.Bakeable && !f.Pbr && material != null && (material.HasNormalMap || material.HasSpecularMap))
                     BakeMaps(f, material, translucent, faces[i], shown, planar, size, materials);
                 if (shown != null)
                 {
@@ -281,33 +296,6 @@ public static class ArchiveMergePlanner
         return ids;
     }
 
-    private static HashSet<int> PbrFaces(ParsedPart pp)
-    {
-        HashSet<int> faces = new HashSet<int>();
-        if (pp.ExtraParams.Length == 0 && pp.MaterialOverrides.Length == 0)
-            return faces;
-        try
-        {
-            PrimitiveBaseShape shape = new PrimitiveBaseShape();
-            if (pp.ExtraParams.Length > 0)
-                shape.ReadInExtraParamsBytes(pp.ExtraParams);
-            if (pp.MaterialOverrides.Length > 0)
-                shape.RenderMaterialsOvrFromRawBin(pp.MaterialOverrides);
-            if (shape.RenderMaterials?.entries != null)
-                foreach (var e in shape.RenderMaterials.entries)
-                    faces.Add(e.te_index);
-            if (shape.RenderMaterials?.overrides != null)
-                foreach (var o in shape.RenderMaterials.overrides)
-                    if (!string.IsNullOrEmpty(o.data))
-                        faces.Add(o.te_index);
-        }
-        catch (Exception)
-        {
-            // damaged material data: the faces are read as ordinary faces
-        }
-        return faces;
-    }
-
     // ---------------------------------------------------------------- what the scripts say
 
     private static LinkFacts LinkFactsFor(ScanResult scan, Guid linksetId, HashSet<Guid> partIds)
@@ -377,11 +365,15 @@ internal static class ArchiveTextureAlpha
 /// <summary>The legacy materials an archive holds, by asset id: whether each has normal and specular maps and how they are drawn.</summary>
 internal static class ArchiveMaterials
 {
-    private const string Suffix = "_material.xml";
+    private const string Suffix = "_material.xml", PbrSuffix = "_prmat.dat";
 
-    public static Dictionary<Guid, LegacyMaterialInfo> Read(string archivePath)
+    public static Dictionary<Guid, LegacyMaterialInfo> Read(string archivePath) => Read(archivePath, out _);
+
+    /// <summary>Reads the legacy materials and, in the same pass, the PBR (glTF) material assets (the files that end in _prmat.dat).</summary>
+    public static Dictionary<Guid, LegacyMaterialInfo> Read(string archivePath, out Dictionary<Guid, PbrMaterialInfo> pbr)
     {
         Dictionary<Guid, LegacyMaterialInfo> result = new Dictionary<Guid, LegacyMaterialInfo>();
+        pbr = new Dictionary<Guid, PbrMaterialInfo>();
         using FileStream fs = File.OpenRead(archivePath);
         int b0 = fs.ReadByte(), b1 = fs.ReadByte();
         fs.Seek(0, SeekOrigin.Begin);
@@ -390,7 +382,15 @@ internal static class ArchiveMaterials
         TarEntryHeader h;
         while ((h = tar.ReadNext()) != null)
         {
-            if (!h.IsFile || !h.Name.StartsWith("assets/", StringComparison.Ordinal) || !h.Name.EndsWith(Suffix, StringComparison.OrdinalIgnoreCase))
+            if (!h.IsFile || !h.Name.StartsWith("assets/", StringComparison.Ordinal))
+                continue;
+            if (h.Name.EndsWith(PbrSuffix, StringComparison.OrdinalIgnoreCase))
+            {
+                if (Guid.TryParse(h.Name.Substring("assets/".Length, h.Name.Length - "assets/".Length - PbrSuffix.Length), out Guid pbrId))
+                    pbr[pbrId] = PbrFaceData.ReadMaterial(tar.ReadBody());
+                continue;
+            }
+            if (!h.Name.EndsWith(Suffix, StringComparison.OrdinalIgnoreCase))
                 continue;
             string idText = h.Name.Substring("assets/".Length, h.Name.Length - "assets/".Length - Suffix.Length);
             if (!Guid.TryParse(idText, out Guid id))

@@ -146,8 +146,8 @@ public static class MergePlanner
         if (p.NotConvertible.Length > 0) Add("part", "NOT_CONVERTED", "the converter keeps the part as a prim (" + p.NotConvertible + ")");
         if (p.Light) Add("part", "LIGHT", "per-part light parameters");
         if (p.TextureAnimation) Add("part", "TEXTURE_ANIMATION", "a texture animation moves the textures of every face of the part");
-        if (p.Faces.Any(f => f.Pbr)) Add("part", "PBR_FACE", "a PBR material is held in the part's own extra parameters, which a merged part does not carry");
-        if (p.Faces.Any(f => f.Media)) Add("part", "MEDIA_FACE", "face media is held in the part's own media data, which a merged part does not carry");
+        if (p.PbrDataUnreadable) Add("part", "PBR_DATA", "the part's PBR material assignments or overrides cannot be read the way the region reads them, or name a face the part does not have");
+        if (p.MediaDataUnreadable) Add("part", "MEDIA_DATA", "the part's media list cannot be read, or holds an entry for a face the part does not have");
         if (p.Faces.Any(f => f.UvTooWide || UvPrecision.TooWide(f))) Add("part", "UV_PRECISION", "the texture coordinates of a face run so wide that a mesh asset would show them more than half a texel off");
         if (p.Faces.Any(f => !f.Bakeable && f.TexGen != 0)) Add("part", "UNBAKED_MAPPING", "a face with planar or other texture mapping that cannot be baked would be projected on the merged shape instead of its own");
         if (p.Flexible) Add("part", "FLEXI", "per-part flexible path");
@@ -429,8 +429,9 @@ public static class FaceBaking
     public const float MapTransformTolerance = 5e-4f;
 
     /// <summary>
-    /// A face bakes unless it is a PBR or media face, uses a texture mapping other than default or planar, names a legacy material that
-    /// is not in the archive, or names one with a normal or specular map drawn with a transform other than the face's. The viewer draws the
+    /// A face bakes unless it uses a texture mapping other than default or planar, names a legacy material that
+    /// is not in the archive (a PBR face does not use it), or names one with a normal or specular map drawn with a transform other than the face's.
+    /// A media face bakes like any other. The viewer draws the
     /// diffuse texture with the face's transform and each map with the material's own transform for that map, all from the same base
     /// coordinates, so a face whose maps are drawn as its diffuse is can have the one baked set of coordinates serve all three. The planner
     /// then checks the corners (see <see cref="MapDeviationTexels"/>).
@@ -438,10 +439,9 @@ public static class FaceBaking
     public static bool Bakeable(FaceTransform transform, int texGen, string materialId, LegacyMaterialInfo material, bool pbr, bool media, out string why)
     {
         why = "";
-        if (pbr) { why = "PBR material face"; return false; }
-        if (media) { why = "media face"; return false; }
         if (texGen != 0 && texGen != PlanarMapping) { why = "texture mapping other than default or planar"; return false; }
-        if (string.IsNullOrEmpty(materialId))
+        // a PBR face is drawn from its PBR material; the viewer ignores a legacy material on it (llvovolume.cpp: "ignore traditional material if GLTF material is present")
+        if (pbr || string.IsNullOrEmpty(materialId))
             return true;
         if (material == null) { why = "legacy material not in the archive"; return false; }
         // The viewer draws a material's normal and specular maps with the material's own transform, from the same base coordinates as the

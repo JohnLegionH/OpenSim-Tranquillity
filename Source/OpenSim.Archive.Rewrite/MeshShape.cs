@@ -80,6 +80,51 @@ public static class MeshShape
         return edits;
     }
 
+    private const ushort RenderMaterialBlockType = 0x80;
+
+    /// <summary>
+    /// A copy of the ExtraParams block with the PBR material assignment block (type 0x80: a count, then a face number and a material id
+    /// for each) replaced by one that holds <paramref name="entries"/>, or dropped when there are none. Every other block is copied unchanged.
+    /// </summary>
+    public static byte[] WithRenderMaterials(byte[] extraParams, IReadOnlyList<(byte Face, Guid Id)> entries)
+    {
+        List<byte[]> kept = new List<byte[]>();
+        if (extraParams != null && extraParams.Length > 1)
+        {
+            int count = extraParams[0], at = 1;
+            for (int k = 0; k < count; k++)
+            {
+                if (at + 6 > extraParams.Length)
+                    throw new InvalidDataException("the ExtraParams block is cut short");
+                long length = BitConverter.ToUInt32(extraParams, at + 2);
+                if (at + 6 + length > extraParams.Length)
+                    throw new InvalidDataException("the ExtraParams block is cut short");
+                int total = (int)(6 + length);
+                if (BitConverter.ToUInt16(extraParams, at) != RenderMaterialBlockType)
+                    kept.Add(extraParams.AsSpan(at, total).ToArray());
+                at += total;
+            }
+        }
+        if (entries.Count > 0)
+        {
+            byte[] block = new byte[6 + 1 + 17 * entries.Count];
+            BitConverter.GetBytes(RenderMaterialBlockType).CopyTo(block, 0);
+            BitConverter.GetBytes((uint)(1 + 17 * entries.Count)).CopyTo(block, 2);
+            block[6] = (byte)entries.Count;
+            for (int i = 0; i < entries.Count; i++)
+            {
+                block[7 + 17 * i] = entries[i].Face;
+                new UUID(entries[i].Id).GetBytes().CopyTo(block, 8 + 17 * i);
+            }
+            kept.Add(block);
+        }
+        using MemoryStream output = new MemoryStream();
+        output.WriteByte((byte)kept.Count);
+        foreach (byte[] block in kept)
+            output.Write(block);
+        return output.ToArray();
+    }
+
     private const byte SculptBlockType = 0x30;
     private const byte MeshBlockType = 0x60;   // an older spelling of the same block that the reader accepts
     private const int SculptBlockLength = 17;  // asset id (16 bytes) and sculpt type (1 byte)

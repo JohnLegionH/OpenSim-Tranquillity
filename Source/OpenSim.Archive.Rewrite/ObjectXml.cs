@@ -125,6 +125,13 @@ internal static class ObjectXml
                     cuts.Add((part.CloseAt, part.CloseAt, "<" + edit.Path + ">" + (edit.IsMarkup ? edit.Value : Escape(edit.Value)) + "</" + edit.Path + ">"));
                     continue;
                 }
+                if (edit.AddBelowShape && (!part.ByPath.TryGetValue(edit.Path, out spans) || spans.Count == 0)
+                    && part.ByPath.TryGetValue("Shape", out List<Span> shape) && shape.Count == 1 && !shape[0].SelfClosing)
+                {
+                    string name = edit.Path.Substring("Shape/".Length);
+                    cuts.Add((shape[0].InnerEnd, shape[0].InnerEnd, "<" + name + ">" + (edit.IsMarkup ? edit.Value : Escape(edit.Value)) + "</" + name + ">"));
+                    continue;
+                }
                 if (!part.ByPath.TryGetValue(edit.Path, out spans) || spans.Count == 0)
                     throw new InvalidDataException("part " + part.Id + " in '" + entryName + "' has no element '" + edit.Path + "'");
                 if (spans.Count > 1)
