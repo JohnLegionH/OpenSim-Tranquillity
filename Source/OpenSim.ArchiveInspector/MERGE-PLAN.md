@@ -32,6 +32,11 @@ mostly clear or opaque (the viewer sorts alpha into 16 steps, counting each 2 x 
 alpha is all 255 therefore does not blend. This library's decoder reads a constant alpha of 255 from a lossy file as 254; levels within
 one of 0 or 255 are taken as 0 or 255.
 
+A sculpt merges like a prim. Its faces are built from its sculpt map (read from the archive) by the sculpt mesher the converter uses for a
+sculpt on its own, cleaned the same way: texture seams stay split, and triangles with no area are dropped. Its faces then take part in
+the same bake, keep rules and guards as a prim's. A sculpt whose map is not in the archive, or cannot be read, stays as it is
+(NOT_CONVERTED). The sculpt maps stay in the output archive; a region saves only the assets a part still names.
+
 A face's slot is set by its texture, colour, glow, shininess, bump, fullbright, legacy material and alpha. Its texture
 mapping, repeats, offset, rotation and flips are not part of it when the face can be baked into the merged texture
 coordinates; they are then written into the coordinates as the viewer computes them (`xform` and `planarProjection` in the
@@ -85,7 +90,6 @@ the partly written file is kept beside it as `<output>.<id>.incomplete`.
 | 18 | ALPHA_CAP | alpha-blended parts merge only within the alpha size cap |
 | part | CONTENTS, LIGHT, FLEXI, SIT_TARGET, SIT_TEXT, TOUCH_TEXT, CLICK_ACTION, SALE_TYPE, SALE_PRICE, HOVER_TEXT, HOVER_TEXT_COLOR, PAY_PRICE, PARTICLES, SOUND, PHYSICAL, VOLUME_DETECT, CONVEX_PHYSICS, ROOT_PHYSICS_NONE, TEXTURE_ANIMATION, PBR_FACE, MEDIA_FACE, UNBAKED_MAPPING, UV_PRECISION, NOT_PRIM, NOT_CONVERTED | per-part settings a merged mesh cannot carry |
 | group | SOLE_IN_CLASS | no other part that can merge shares its group |
-| sculpt | SCULPT_NOT_PLANNED | sculpts are converted on their own |
 
 The per-part fields (sit target and text, touch text, click action, sale type and price, hover text and its colour, pay prices) are
 not carried by a merged part, so a part whose value differs from the default stays. The defaults are the ones a region writes: click
