@@ -507,6 +507,8 @@ namespace SLua.ScriptEngine
                 StartScript(s);
             else
                 Reschedule(s);
+            try { m_options.StateChanged?.Invoke(s); } // back in the first state
+            catch (Exception e) { m_log?.Error("the state-change callback failed: " + e.Message); }
         }
 
         /// <summary>A host function reported a script error: the host is told, and the script pays the error pause.</summary>
@@ -680,6 +682,8 @@ namespace SLua.ScriptEngine
                 s.CurrentDetected = null;
                 s.Events.Clear();
                 s.TimerQueued = false;
+                try { m_options.StateChanged?.Invoke(s); }
+                catch (Exception e) { m_log?.Error("the state-change callback failed: " + e.Message); }
             }
 
             switch (r.Status)

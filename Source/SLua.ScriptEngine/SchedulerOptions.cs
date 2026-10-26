@@ -99,6 +99,9 @@ namespace SLua.ScriptEngine
         /// <summary>Called on the worker's thread when a script ends in a fault or is killed.</summary>
         public Action<SchedulerScript> ScriptFaulted { get; set; }
 
+        /// <summary>Called on the worker's thread after a script has changed state, and after a reset has put it back in its first state;<see cref="SchedulerScript.CurrentState"/> is the new state.</summary>
+        public Action<SchedulerScript> StateChanged { get; set; }
+
         /// <summary>Consecutive punished turns after which a script is killed.</summary>
         public int KillAfterPunishments { get; set; } = 20;
 

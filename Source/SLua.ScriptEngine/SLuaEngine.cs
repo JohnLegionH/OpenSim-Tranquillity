@@ -72,6 +72,9 @@ namespace SLua.ScriptEngine
             public SchedulerScript Script;
             public StartInfo Start;
             public bool StartupPending;
+
+            /// <summary>Serializes the calls that set the item's flags on its prim.</summary>
+            public readonly object FlagsLock = new object();
         }
 
         /// <summary>What the rez that started a script asked for: its start parameter, whether it wants on_rez, and where its state came from.</summary>
@@ -214,6 +217,7 @@ namespace SLua.ScriptEngine
                 VmFactory = () => new Vm(watchdog),
                 Log = m_log,
                 ScriptFaulted = OnScriptFaulted,
+                StateChanged = OnStateChanged,
                 ScriptError = OnScriptError,
                 WorkerStopped = OnWorkerStopped,
             };
@@ -342,11 +346,62 @@ namespace SLua.ScriptEngine
 
             if (running)
             {
+                // The flags are set before the script can hear anything, so its first events are not lost.
+                ApplyEventFlags(record, 0, true);
                 scheduler.Start(script);
                 BeginRunning(record);
             }
             else
+            {
                 scheduler.SetRunning(script, false);
+                ApplyEventFlags(record, 0, false);
+            }
+        }
+
+        // ---- the events each script asks the region for ----
+
+        /// <summary>
+        /// Tells the region which events the script handles, so it raises touches, collisions and the like for the prim.
+        /// An LSL script's flags come from the handler mask of its state in the compiled asset (the union over the scripts
+        /// of a prim is the region's own, kept per script item); a stopped script asks for nothing. An SLua script's
+        /// handler set is known only to the runtime, which does not export it yet (API version 4): its flags are computed
+        /// here from that export once it exists, in place of the zero below. Serialized per script so a stop and a
+        /// state change cannot cross.
+        /// </summary>
+        private void ApplyEventFlags(ScriptRecord record, int state, bool running)
+        {
+            IPrimEventFlags sink = PrimFlags;
+            if (sink == null)
+                return;
+            lock (record.FlagsLock)
+            {
+                ulong flags = 0;
+                ulong[] masks = record.Script.StateMasks;
+                if (running && masks != null && masks.Length > 0)
+                    flags = EventFlagMap.ForMask(masks[Math.Min(state, masks.Length - 1)]);
+                try { sink.Set(record.LocalID, record.ItemID, flags); }
+                catch (Exception e) { m_log.Error($"The event flags of script {record.ItemID} could not be set: {e.Message}"); }
+            }
+        }
+
+        /// <summary>A script changed state (on its worker's thread): the new state's handlers decide what the region raises.</summary>
+        private void OnStateChanged(SchedulerScript script)
+        {
+            ScriptRecord record = FindRecord(script);
+            if (record != null)
+                ApplyEventFlags(record, script.CurrentState, script.Running);
+        }
+
+        private void ForgetEventFlags(ScriptRecord record)
+        {
+            IPrimEventFlags sink = PrimFlags;
+            if (sink == null)
+                return;
+            lock (record.FlagsLock)
+            {
+                try { sink.Remove(record.LocalID, record.ItemID); }
+                catch (Exception e) { m_log.Error($"The event flags of script {record.ItemID} could not be removed: {e.Message}"); }
+            }
         }
 
         /// <summary>
@@ -418,6 +473,7 @@ namespace SLua.ScriptEngine
                     return;
             }
             m_scheduler?.Remove(record.Script);
+            ForgetEventFlags(record);
         }
 
         /// <summary>The scheduler's record of the item's script, or null; for the status command and the tests.</summary>
@@ -456,6 +512,7 @@ namespace SLua.ScriptEngine
                 return;
             SetItemRunningFlag(record.LocalID, itemID, true);
             m_scheduler?.SetRunning(record.Script, true);
+            ApplyEventFlags(record, record.Script.CurrentState, true);
             BeginRunning(record);
         }
 
@@ -465,6 +522,7 @@ namespace SLua.ScriptEngine
             if (record == null)
                 return;
             m_scheduler?.SetRunning(record.Script, false);
+            ApplyEventFlags(record, record.Script.CurrentState, false);
         }
 
         /// <summary>The item's Running flag, as the viewer's checkbox and llSetScriptState persist it.</summary>
@@ -493,6 +551,7 @@ namespace SLua.ScriptEngine
                 return;
             m_log.Error($"Script {record.ItemID} (asset {record.AssetID}) was stopped: {script.FaultMessage}");
             SetItemRunningFlag(record.LocalID, record.ItemID, false);
+            ApplyEventFlags(record, script.CurrentState, false);
             TellOwner(record, $"Script {record.AssetID} encountered a problem and was stopped: {script.FaultMessage}");
         }
 
