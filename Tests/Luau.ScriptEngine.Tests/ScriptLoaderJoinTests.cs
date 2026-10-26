@@ -154,7 +154,7 @@ public class ScriptLoaderJoinTests
         using var rig = new Rig(graceMs: 100);
         UUID item = UUID.Random();
         rig.Post(item, GoodSlua);
-        Assert.Empty(rig.Loader.WaitForCompileErrors(item, Wait));
+        Assert.True(SchedulerHarness.WaitFor(() => rig.ReadySnapshot().Length == 1)); // no editor asks; the loader alone answers
 
         Thread.Sleep(400);
         Assert.Empty(rig.UnclaimedSnapshot());
