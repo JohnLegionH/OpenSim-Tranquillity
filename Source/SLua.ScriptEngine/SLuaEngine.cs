@@ -256,7 +256,7 @@ namespace SLua.ScriptEngine
             m_scene = null;
         }
 
-        public void RegionLoaded(Scene scene) { }
+        public void RegionLoaded(Scene scene) => m_policy?.SubscribeEstate();
 
         /// <summary>
         /// Every engine receives every rez with the engine name the region selected. The first-line header still takes
@@ -352,6 +352,9 @@ namespace SLua.ScriptEngine
             }
             if (replaced != null)
                 scheduler.Remove(replaced.Script);
+
+            // The estate switch and the parcel rule decide before the script starts: a script they hold back starts paused, never refused.
+            m_policy?.EvaluateNew(ready.ItemID);
 
             if (running)
             {
@@ -753,11 +756,52 @@ namespace SLua.ScriptEngine
         }
 
         /// <summary>The core leaves the parcel rule to this engine, which pauses and resumes its scripts live.</summary>
-        public bool EnforcesParcelScriptRules => false;
+        public bool EnforcesParcelScriptRules => true;
 
-        PolicyScript[] IPolicyHost.AllScripts() => Array.Empty<PolicyScript>();
+        PolicyScript[] IPolicyHost.AllScripts()
+        {
+            lock (m_records)
+            {
+                var all = new PolicyScript[m_records.Count];
+                int i = 0;
+                foreach (ScriptRecord r in m_records.Values)
+                    all[i++] = new PolicyScript(r.ItemID, r.LocalID);
+                return all;
+            }
+        }
 
-        void IPolicyHost.SetPaused(UUID itemID, PauseReason reason, bool paused) { }
+        bool IPolicyHost.TryGetScript(UUID itemID, out PolicyScript script)
+        {
+            ScriptRecord record = RecordOf(itemID);
+            script = record == null ? default : new PolicyScript(record.ItemID, record.LocalID);
+            return record != null;
+        }
+
+        /// <summary>
+        /// Sets or clears one reason a script is held back. The scheduler's suspend is on while any reason is set, so a
+        /// held script keeps its queued events and its prim's event flags, and the pause shows in the scheduler's counts.
+        /// Each reason is cleared only by its own cause: the parcel's resume does not lift a console suspend.
+        /// </summary>
+        void IPolicyHost.SetPaused(UUID itemID, PauseReason reason, bool paused)
+        {
+            ScriptRecord record = RecordOf(itemID);
+            SLuaScheduler scheduler = m_scheduler;
+            if (record == null || scheduler == null)
+                return;
+            lock (record.PauseLock)
+            {
+                PauseReason before = record.Pause;
+                PauseReason after = paused ? before | reason : before & ~reason;
+                if (after == before)
+                    return;
+                record.Pause = after;
+                PolicyStats.Count(reason, paused);
+                if (before == PauseReason.None)
+                    scheduler.Suspend(record.Script);
+                else if (after == PauseReason.None)
+                    scheduler.Resume(record.Script);
+            }
+        }
 
         /// <summary>
         /// Called by a function that changes a physical property, as Phlox's PhySleep is: when the region's physics frame
@@ -767,7 +811,7 @@ namespace SLua.ScriptEngine
         internal void PhySleep() { }
 
         /// <summary>A script took or released controls: whether the parcel lets it run is asked again.</summary>
-        internal void RecheckParcel(UUID itemID) { }
+        internal void RecheckParcel(UUID itemID) => m_policy?.EvaluateItem(itemID);
 
         /// <summary>Average of the last ten physics frame times in milliseconds (for the physics slowdowns the function binding will apply); 0 when the throttle is off.</summary>
         internal int PhysicsFrameTimeAvg => m_hooks?.PhysicsFrameTimeAvg ?? 0;
@@ -810,7 +854,7 @@ namespace SLua.ScriptEngine
             ScriptRecord record = RecordOf(itemID);
             if (record == null || m_scheduler == null)
                 return false;
-            m_scheduler.Suspend(record.Script);
+            ((IPolicyHost)this).SetPaused(itemID, PauseReason.Core, true);
             return true;
         }
 
@@ -819,7 +863,7 @@ namespace SLua.ScriptEngine
             ScriptRecord record = RecordOf(itemID);
             if (record == null || m_scheduler == null)
                 return false;
-            m_scheduler.Resume(record.Script);
+            ((IPolicyHost)this).SetPaused(itemID, PauseReason.Core, false);
             return true;
         }
 
@@ -856,7 +900,15 @@ namespace SLua.ScriptEngine
         }
 
         /// <summary>True when the script is running: its Running flag is on, it is not suspended and no fault has stopped it.</summary>
-        public bool GetScriptState(UUID itemID) => RecordOf(itemID)?.Script.IsRunning ?? false;
+        public bool GetScriptState(UUID itemID)
+        {
+            ScriptRecord record = RecordOf(itemID);
+            if (record == null)
+                return false;
+            SchedulerScript script = record.Script;
+            lock (record.PauseLock)
+                return script.Running && !script.Killed && script.State != ScriptRunState.Removed && (record.Pause & PauseReason.Core) == 0;
+        }
 
         public void SaveAllState() { }
         public void StartProcessing() { }

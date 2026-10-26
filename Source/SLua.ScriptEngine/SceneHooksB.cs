@@ -8,6 +8,8 @@
 using System;
 using System.Collections.Generic;
 using OpenMetaverse;
+using OpenSim.Framework;
+using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
 using OpenSim.Region.ScriptEngine.Shared;
 
@@ -31,17 +33,14 @@ namespace SLua.ScriptEngine
     /// <summary>Counts of the pauses the policy hooks made, for the status command and the tests.</summary>
     internal sealed class PolicyStats
     {
-        private long m_parcelEvaluated, m_parcelPaused, m_parcelResumed, m_estatePaused, m_estateResumed, m_crossingHeld, m_crossingReleased;
+        private long m_parcelPaused, m_parcelResumed, m_estatePaused, m_estateResumed, m_crossingHeld, m_crossingReleased;
 
-        public long ParcelEvaluated => System.Threading.Interlocked.Read(ref m_parcelEvaluated);
         public long ParcelPaused => System.Threading.Interlocked.Read(ref m_parcelPaused);
         public long ParcelResumed => System.Threading.Interlocked.Read(ref m_parcelResumed);
         public long EstatePaused => System.Threading.Interlocked.Read(ref m_estatePaused);
         public long EstateResumed => System.Threading.Interlocked.Read(ref m_estateResumed);
         public long CrossingHeld => System.Threading.Interlocked.Read(ref m_crossingHeld);
         public long CrossingReleased => System.Threading.Interlocked.Read(ref m_crossingReleased);
-
-        internal void Evaluated() => System.Threading.Interlocked.Increment(ref m_parcelEvaluated);
 
         internal void Count(PauseReason reason, bool paused)
         {
@@ -61,6 +60,8 @@ namespace SLua.ScriptEngine
     internal interface IPolicyHost
     {
         PolicyScript[] AllScripts();
+
+        bool TryGetScript(UUID itemID, out PolicyScript script);
 
         /// <summary>Sets or clears one reason a script is held back. Unknown items are ignored.</summary>
         void SetPaused(UUID itemID, PauseReason reason, bool paused);
@@ -111,17 +112,40 @@ namespace SLua.ScriptEngine
 
     /// <summary>
     /// The region's policy events (parcel script rules, estate script switch, crossings, owner changes, controls,
-    /// Experience and permission removal, bots) as holds on the engine's scripts and calls to their grants.
+    /// Experience and permission removal, bots) as holds on the engine's scripts and calls to their grants. Each handler
+    /// follows what the Phlox engine does with the same event.
     /// </summary>
     internal sealed class SceneHooksB
     {
-        /// <summary>How long a crossing object's changed(CHANGED_REGION) waits for riders still to come, in seconds.</summary>
+        /// <summary>How long a crossing object's changed(CHANGED_REGION) waits for riders still to come, in seconds (Phlox: 10 000 ms).</summary>
         internal const double ArrivalRiderWaitSeconds = 10;
+
+        private static readonly DetectParams[] s_noDetected = Array.Empty<DetectParams>();
 
         private readonly Scene m_scene;
         private readonly IPolicyHost m_host;
         private readonly IScriptGrants m_grants;
         private readonly ISchedulerClock m_clock;
+        private readonly object m_lock = new object();
+        private bool m_subscribed;
+        private IEstateModule m_estate;
+        private bool m_frameSubscribed;
+
+        // Scripts that run on a no-scripts parcel only because their avatar holds the controls they took.
+        private readonly HashSet<UUID> m_controlsExempt = new HashSet<UUID>();
+
+        private sealed class HeldArrival
+        {
+            public UUID ItemID;
+            public SceneObjectGroup Group;
+            public int Change;
+            public double Deadline;
+            public readonly HashSet<UUID> Arrived = new HashSet<UUID>();
+        }
+
+        private readonly List<HeldArrival> m_held = new List<HeldArrival>();
+
+        [ThreadStatic] private static int t_ownControlChange;
 
         public SceneHooksB(Scene scene, IPolicyHost host, IScriptGrants grants, ISchedulerClock clock = null)
         {
@@ -131,43 +155,418 @@ namespace SLua.ScriptEngine
             m_clock = clock ?? new MonotonicClock();
         }
 
-        public bool IsSubscribed { get; private set; }
+        public bool IsSubscribed
+        {
+            get { lock (m_lock) return m_subscribed; }
+        }
 
-        public void Subscribe() { }
+        public void Subscribe()
+        {
+            lock (m_lock)
+            {
+                if (m_subscribed)
+                    return;
+                m_subscribed = true;
+            }
+            EventManager e = m_scene.EventManager;
+            e.OnObjectBeingRemovedFromScene += OnObjectBeingRemovedFromScene;
+            e.OnGroupBeginInTransit += OnGroupBeginInTransit;
+            e.OnGroupEndInTransit += OnGroupEndInTransit;
+            e.OnGroupCrossedToNewParcel += OnGroupCrossedToNewParcel;
+            e.OnObjectOwnerOrGroupChanged += OnObjectOwnerOrGroupChanged;
+            e.OnLandObjectAdded += OnLandObjectAdded;
+            e.OnScriptControlsReleased += OnScriptControlsReleased;
+            e.OnRemovePresence += OnRemovePresence;
+            e.OnMakeRootAgent += OnMakeRootAgent;
+            e.OnAvatarEnteringNewParcel += OnAvatarEnteringNewParcel;
+            e.OnExperiencePermissionsRevoked += OnExperiencePermissionsRevoked;
+            e.OnScriptPermissionsRemoved += OnScriptPermissionsRemoved;
+            e.OnAttach += OnAttach;
+        }
 
-        public void Unsubscribe() { }
+        /// <summary>
+        /// Follows the estate module's region-settings event, which is where "disable scripts" changes arrive. The estate
+        /// module may load after the engine, so the engine calls this once the region has loaded.
+        /// </summary>
+        public void SubscribeEstate()
+        {
+            IEstateModule estate;
+            lock (m_lock)
+            {
+                if (m_estate != null)
+                    return;
+                estate = m_scene.RequestModuleInterface<IEstateModule>();
+                if (estate == null)
+                    return;
+                m_estate = estate;
+            }
+            estate.OnRegionInfoChange += OnRegionInfoChange;
+        }
 
-        /// <summary>A script has just been made: the estate switch and the parcel rule are applied before it starts.</summary>
-        public void EvaluateNew(UUID itemID) { }
+        public void Unsubscribe()
+        {
+            IEstateModule estate;
+            lock (m_lock)
+            {
+                if (!m_subscribed)
+                    return;
+                m_subscribed = false;
+                estate = m_estate;
+                m_estate = null;
+                m_frameSubscribed = false;
+                m_held.Clear();
+                m_controlsExempt.Clear();
+            }
+            if (estate != null)
+                estate.OnRegionInfoChange -= OnRegionInfoChange;
+            EventManager e = m_scene.EventManager;
+            e.OnObjectBeingRemovedFromScene -= OnObjectBeingRemovedFromScene;
+            e.OnGroupBeginInTransit -= OnGroupBeginInTransit;
+            e.OnGroupEndInTransit -= OnGroupEndInTransit;
+            e.OnGroupCrossedToNewParcel -= OnGroupCrossedToNewParcel;
+            e.OnObjectOwnerOrGroupChanged -= OnObjectOwnerOrGroupChanged;
+            e.OnLandObjectAdded -= OnLandObjectAdded;
+            e.OnScriptControlsReleased -= OnScriptControlsReleased;
+            e.OnRemovePresence -= OnRemovePresence;
+            e.OnMakeRootAgent -= OnMakeRootAgent;
+            e.OnAvatarEnteringNewParcel -= OnAvatarEnteringNewParcel;
+            e.OnExperiencePermissionsRevoked -= OnExperiencePermissionsRevoked;
+            e.OnScriptPermissionsRemoved -= OnScriptPermissionsRemoved;
+            e.OnAttach -= OnAttach;
+            e.OnFrame -= OnFrame;
+        }
 
-        /// <summary>Re-asks the parcel rule of every script of the object.</summary>
-        public void EvaluateGroup(SceneObjectGroup group) { }
+        // ---- the parcel rule (hooks 35, 36, 37, 38, 39 and attach) ----
 
         /// <summary>
         /// Halcyon's rule (EngineInterface.ScriptsCanRun): the object's owner owns the parcel, or the parcel allows other
-        /// scripts, or it allows group scripts and the object's group is the parcel's group. No parcel: not allowed.
+        /// scripts, or it allows group scripts and the object's group is the parcel's group. No parcel: not allowed. The
+        /// group test needs the parcel to have a group, as the region's own start-time check does.
         /// </summary>
-        internal static bool ParcelAllowsScripts(OpenSim.Framework.LandData land, UUID objectOwner, UUID objectGroup) => true;
+        internal static bool ParcelAllowsScripts(LandData land, UUID objectOwner, UUID objectGroup)
+        {
+            if (land == null)
+                return false;
+            if (land.OwnerID == objectOwner)
+                return true;
+            if ((land.Flags & (uint)ParcelFlags.AllowOtherScripts) != 0)
+                return true;
+            return (land.Flags & (uint)ParcelFlags.AllowGroupScripts) != 0 && land.GroupID.IsNotZero() && land.GroupID == objectGroup;
+        }
 
-        public bool AwaitsRider(SceneObjectGroup group, ISet<UUID> arrived) => false;
+        /// <summary>
+        /// "May this script run here": an attachment may; a script the parcel allows may; a script holding taken controls on
+        /// an avatar right now may (<paramref name="onlyByControls"/>); nothing else. No estate-manager or god exemption.
+        /// A region with no land module has no parcel rules.
+        /// </summary>
+        private bool ScriptMayRunHere(SceneObjectPart part, UUID itemID, out bool onlyByControls)
+        {
+            onlyByControls = false;
+            SceneObjectGroup group = part?.ParentGroup;
+            if (group == null || group.IsAttachment)
+                return true;
+            ILandChannel landChannel = m_scene.LandChannel;
+            if (landChannel == null)
+                return true;
 
-        /// <summary>Holds a crossing object's changed event until its riders have arrived.</summary>
-        public void HoldArrival(UUID itemID, SceneObjectGroup group, int change) { }
+            Vector3 pos = group.AbsolutePosition;
+            ILandObject parcel = landChannel.GetLandObjectClippedXY(pos.X, pos.Y);
+            if (ParcelAllowsScripts(parcel?.LandData, part.OwnerID, part.GroupID))
+                return true;
 
-        public int HeldArrivalCount => 0;
+            if (HoldsControls(part, itemID))
+            {
+                onlyByControls = true;
+                return true;
+            }
+            return false;
+        }
 
-        /// <summary>Posts the held changed events whose riders have arrived or whose wait is over.</summary>
-        public void ProcessHeldArrivals() { }
+        // Asks the avatar the script's controls were taken on (the permission granter), never a record of the engine's own.
+        private bool HoldsControls(SceneObjectPart part, UUID itemID)
+        {
+            TaskInventoryItem item = part.Inventory.GetInventoryItem(itemID);
+            if (item == null || item.PermsGranter.IsZero())
+                return false;
+            ScenePresence presence = m_scene.GetScenePresence(item.PermsGranter);
+            return presence != null && presence.HasScriptControls(itemID);
+        }
 
-        /// <summary>The region's settings changed: the estate switch is read again.</summary>
-        public void RegionSettingsChanged() { }
+        private int ParcelLocalIdAt(SceneObjectGroup group)
+        {
+            Vector3 pos = group.AbsolutePosition;
+            return m_scene.LandChannel?.GetLandObjectClippedXY(pos.X, pos.Y)?.LandData?.LocalID ?? -1;
+        }
+
+        /// <summary>A script has just been made: the estate switch and the parcel rule are applied before it starts, so it starts paused and is never refused.</summary>
+        public void EvaluateNew(UUID itemID)
+        {
+            if (m_scene.RegionInfo.RegionSettings.DisableScripts)
+                m_host.SetPaused(itemID, PauseReason.Estate, true);
+            EvaluateItem(itemID);
+        }
+
+        /// <summary>Asks the parcel rule again of one script and pauses or resumes it.</summary>
+        public void EvaluateItem(UUID itemID)
+        {
+            if (!m_host.TryGetScript(itemID, out PolicyScript script))
+                return;
+            SceneObjectPart part = m_scene.GetSceneObjectPart(script.LocalID);
+            if (part?.ParentGroup == null || part.ParentGroup.IsDeleted)
+                return;
+            bool allowed = ScriptMayRunHere(part, itemID, out bool onlyByControls);
+            lock (m_lock)
+            {
+                if (onlyByControls) m_controlsExempt.Add(itemID); else m_controlsExempt.Remove(itemID);
+            }
+            m_host.SetPaused(itemID, PauseReason.Parcel, !allowed);
+        }
+
+        /// <summary>Re-asks the parcel rule of every script of the object.</summary>
+        public void EvaluateGroup(SceneObjectGroup group)
+        {
+            if (group == null || group.IsDeleted)
+                return;
+            foreach (UUID item in ItemsOf(group))
+                EvaluateItem(item);
+        }
+
+        private List<UUID> ItemsOf(SceneObjectGroup group)
+        {
+            var items = new List<UUID>();
+            foreach (PolicyScript script in m_host.AllScripts())
+            {
+                SceneObjectPart part = m_scene.GetSceneObjectPart(script.LocalID);
+                if (part?.ParentGroup != null && ReferenceEquals(part.ParentGroup, group))
+                    items.Add(script.ItemID);
+            }
+            return items;
+        }
+
+        // Hook 35: the object moved onto another parcel.
+        private void OnGroupCrossedToNewParcel(SceneObjectGroup group, ILandObject oldParcel, ILandObject newParcel) => EvaluateGroup(group);
+
+        // Hook 36: a new owner ends every grant in the object, and the controls the old grants took; the parcel decides again.
+        private void OnObjectOwnerOrGroupChanged(SceneObjectGroup group, UUID oldOwner, UUID newOwner, UUID oldGroup, UUID newGroup)
+        {
+            if (oldOwner != newOwner)
+                m_grants.OwnerChanged(group);
+            EvaluateGroup(group);
+        }
+
+        // Hook 37: a parcel's flags, owner, group or shape changed (the parcel dialog, a join, a subdivide).
+        private void OnLandObjectAdded(ILandObject parcel)
+        {
+            if (parcel?.LandData == null)
+                return;
+            int parcelId = parcel.LandData.LocalID;
+            var onParcel = new Dictionary<UUID, bool>();
+            foreach (PolicyScript script in m_host.AllScripts())
+            {
+                SceneObjectGroup group = m_scene.GetSceneObjectPart(script.LocalID)?.ParentGroup;
+                if (group == null || group.IsDeleted || group.IsAttachment)
+                    continue;
+                if (!onParcel.TryGetValue(group.UUID, out bool on))
+                    onParcel[group.UUID] = on = ParcelLocalIdAt(group) == parcelId;
+                if (on)
+                    EvaluateItem(script.ItemID);
+            }
+        }
+
+        // Hook 38: the region raises this whenever a registration goes away, the script's own release or the region's
+        // (the viewer's release keys, a stand-up, a permission revoke, the avatar leaving). Exactly those scripts are asked
+        // again. A release the engine did not ask for, on an avatar still here (not a child, not crossing), is the region's:
+        // the grants are told so, to take TAKE_CONTROLS and CONTROL_CAMERA from the script as Halcyon does (handleMustReleaseControls).
+        private void OnScriptControlsReleased(UUID agentId, UUID[] scriptItemIds)
+        {
+            bool byRegion = false;
+            if (t_ownControlChange == 0)
+            {
+                ScenePresence sp = m_scene.GetScenePresence(agentId);
+                byRegion = sp != null && !sp.IsDeleted && !sp.IsChildAgent && !sp.IsInTransit;
+            }
+            m_grants.ControlsReleased(agentId, scriptItemIds, byRegion);
+            foreach (UUID item in scriptItemIds)
+                EvaluateItem(item);
+        }
 
         /// <summary>Marks a controls change the engine made itself on this thread, so the region's release event is not taken for the region's own.</summary>
-        public static IDisposable OwnControlChange() => new Scope();
+        public static IDisposable OwnControlChange()
+        {
+            t_ownControlChange++;
+            return new Scope();
+        }
 
         private sealed class Scope : IDisposable
         {
-            public void Dispose() { }
+            public void Dispose() => t_ownControlChange--;
+        }
+
+        // Hook 39: a backstop for a presence that goes before its release event; every script that runs only by controls is asked again.
+        private void OnRemovePresence(UUID agentId)
+        {
+            UUID[] exempt;
+            lock (m_lock) exempt = new List<UUID>(m_controlsExempt).ToArray();
+            foreach (UUID item in exempt)
+                EvaluateItem(item);
+        }
+
+        // Worn, an object's scripts always run; dropped, the parcel under it decides.
+        private void OnAttach(uint localID, UUID itemID, UUID avatarID) => EvaluateGroup(m_scene.GetGroupByPrim(localID));
+
+        // ---- the estate switch ----
+
+        private void OnRegionInfoChange(UUID regionID) => RegionSettingsChanged();
+
+        /// <summary>The region's settings changed: the estate switch ("disable scripts") is read again and every script is paused or resumed to match.</summary>
+        public void RegionSettingsChanged()
+        {
+            bool disabled = m_scene.RegionInfo.RegionSettings.DisableScripts;
+            foreach (PolicyScript script in m_host.AllScripts())
+                m_host.SetPaused(script.ItemID, PauseReason.Estate, disabled);
+        }
+
+        // ---- crossings (hooks 33, 34, 40) ----
+
+        // Hook 33: an object starts to cross into another region: its scripts are held until the crossing ends, keeping the
+        // events that reach them. A worn object crosses with its avatar and is not held.
+        private void OnGroupBeginInTransit(SceneObjectGroup group)
+        {
+            if (group == null || group.IsAttachment)
+                return;
+            foreach (UUID item in ItemsOf(group))
+                m_host.SetPaused(item, PauseReason.Crossing, true);
+        }
+
+        // Hook 34: a crossing ended. When the object stayed here its scripts carry on with what they kept while held. When
+        // it left, the region removes its scripts with it; they stay held until then and are not resumed here.
+        private void OnGroupEndInTransit(SceneObjectGroup group, bool crossed)
+        {
+            if (crossed || group == null || group.IsDeleted || group.IsAttachment)
+                return;
+            foreach (UUID item in ItemsOf(group))
+                m_host.SetPaused(item, PauseReason.Crossing, false);
+        }
+
+        // Hook 40: an avatar became a root agent here (a crossing, a teleport, a login): riders waited for count as arrived.
+        private void OnMakeRootAgent(ScenePresence sp)
+        {
+            if (sp == null)
+                return;
+            lock (m_lock)
+            {
+                foreach (HeldArrival held in m_held)
+                    held.Arrived.Add(sp.UUID);
+            }
+            m_grants.AvatarArrived(sp.UUID);
+            ProcessHeldArrivals();
+        }
+
+        /// <summary>
+        /// A script of the object waits for a rider: the region holds the arrived object for riders still to come, or a
+        /// script holds a grant from an avatar that has not arrived.
+        /// </summary>
+        public bool AwaitsRider(SceneObjectGroup group, ISet<UUID> arrived) =>
+            group != null && (m_scene.HoldsArrival(group.UUID) || m_grants.AwaitsRider(group, arrived));
+
+        /// <summary>
+        /// Holds a crossing object's changed(CHANGED_REGION) until its riders have arrived and their grants are decided,
+        /// so the script sees them inside the event (Halcyon posts it once the last rider is seated). The wait ends after
+        /// <see cref="ArrivalRiderWaitSeconds"/> whatever has arrived; the event is posted once. The script runs its other events meanwhile.
+        /// </summary>
+        public void HoldArrival(UUID itemID, SceneObjectGroup group, int change)
+        {
+            bool subscribe;
+            lock (m_lock)
+            {
+                m_held.Add(new HeldArrival { ItemID = itemID, Group = group, Change = change, Deadline = m_clock.Now + ArrivalRiderWaitSeconds });
+                subscribe = !m_frameSubscribed && m_subscribed;
+                if (subscribe)
+                    m_frameSubscribed = true;
+            }
+            if (subscribe)
+                m_scene.EventManager.OnFrame += OnFrame;
+        }
+
+        public int HeldArrivalCount
+        {
+            get { lock (m_lock) return m_held.Count; }
+        }
+
+        /// <summary>A script was reset or removed: what it waited to be told of its arrival is dropped with its state.</summary>
+        public void ForgetHeldArrival(UUID itemID)
+        {
+            lock (m_lock) m_held.RemoveAll(h => h.ItemID == itemID);
+        }
+
+        private void OnFrame() => ProcessHeldArrivals();
+
+        /// <summary>Posts the held changed events whose riders have arrived or whose wait is over.</summary>
+        public void ProcessHeldArrivals()
+        {
+            List<HeldArrival> due = null;
+            bool unsubscribe = false;
+            double now = m_clock.Now;
+            lock (m_lock)
+            {
+                for (int i = m_held.Count - 1; i >= 0; i--)
+                {
+                    HeldArrival held = m_held[i];
+                    if (!m_host.TryGetScript(held.ItemID, out _) || held.Group.IsDeleted)
+                    {
+                        m_held.RemoveAt(i);
+                        continue;
+                    }
+                    if (now < held.Deadline && AwaitsRider(held.Group, held.Arrived))
+                        continue;
+                    m_held.RemoveAt(i);
+                    (due ??= new List<HeldArrival>()).Add(held);
+                }
+                if (m_held.Count == 0 && m_frameSubscribed)
+                {
+                    m_frameSubscribed = false;
+                    unsubscribe = true;
+                }
+            }
+            if (unsubscribe)
+                m_scene.EventManager.OnFrame -= OnFrame;
+            if (due == null)
+                return;
+            due.Reverse(); // the oldest hold first
+            foreach (HeldArrival held in due)
+                m_host.PostScriptEvent(held.ItemID, new EventParams("changed", new object[] { held.Change }, s_noDetected));
+        }
+
+        // ---- grants, bots, Experiences (hooks 32, 41, 42, 43) ----
+
+        // Hook 32: bots the object owned are cleaned up when it leaves the scene.
+        private void OnObjectBeingRemovedFromScene(SceneObjectGroup group)
+        {
+            if (group != null)
+                m_grants.ObjectRemoved(group);
+        }
+
+        // Hook 41: an avatar entered a parcel: a grant it gave from an Experience ends where the Experience cannot run
+        // (https://wiki.secondlife.com/wiki/Experience_permissions_denied).
+        private void OnAvatarEnteringNewParcel(ScenePresence sp, int localLandID, UUID regionID)
+        {
+            if (sp != null && !sp.IsChildAgent)
+                m_grants.ExperienceLandCheck(sp.UUID);
+        }
+
+        // Hook 42: the region ended a script's Experience grant (the avatar blocked it, or it entered a parcel it cannot run on).
+        private void OnExperiencePermissionsRevoked(UUID partId, UUID itemId, UUID granterId, UUID experienceId, int revokedMask, int reason)
+        {
+            if (m_host.TryGetScript(itemId, out _))
+                m_grants.ExperienceGrantEnded(itemId, granterId, experienceId);
+        }
+
+        // Hook 43: the region took permissions from a script's item without the script asking (a stand-up, a detach,
+        // Release Keys, the viewer's revoke). Nothing is posted to the script.
+        private void OnScriptPermissionsRemoved(UUID partId, UUID itemId, UUID granterId, int removedMask)
+        {
+            if (m_host.TryGetScript(itemId, out _))
+                m_grants.PermissionsRemoved(itemId);
         }
     }
 }
