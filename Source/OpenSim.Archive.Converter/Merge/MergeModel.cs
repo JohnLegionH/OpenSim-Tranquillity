@@ -134,6 +134,8 @@ public sealed class MergePart
     /// <summary>The eligibility code that keeps the part as it is (empty when the converter converts it).</summary>
     public string NotConvertible { get; set; } = "";
     public bool Scripted { get; set; }
+    /// <summary>True for a part an earlier merge made (its description starts with <see cref="MergedPartPlan.DescriptionPrefix"/>).</summary>
+    public bool AlreadyMerged { get; set; }
     public bool HasContents { get; set; }
     public bool Light { get; set; }
     public bool Flexible { get; set; }
@@ -243,6 +245,8 @@ public sealed class MergedPartPlan
     public Guid Id { get; set; }
     public int NewLinkNum { get; set; }
     public string Name { get; set; }
+    /// <summary>The start of the description of every merged part; the rest is a short hash of the members and their count.</summary>
+    public const string DescriptionPrefix = "oarx-merge ";
     public string Description { get; set; }
     public bool Alpha { get; set; }
     public double ExtentMeters { get; set; }
@@ -271,6 +275,8 @@ public sealed class MergePlan
     public int Version { get; set; } = 1;
     public string Archive { get; set; }
     public string ToolVersion { get; set; }
+    /// <summary>The pixel limit the levels of detail of the merged parts were made at; set when the plan is carried out, not when it only plans.</summary>
+    public double? LodPixelLimit { get; set; }
     public List<string> Warnings { get; } = new List<string>();
     public List<LinksetPlan> Linksets { get; } = new List<LinksetPlan>();
     public int PartsBefore => Linksets.Sum(l => l.PartsBefore);

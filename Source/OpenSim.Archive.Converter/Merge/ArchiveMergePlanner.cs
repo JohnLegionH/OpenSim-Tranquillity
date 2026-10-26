@@ -64,6 +64,10 @@ public static class ArchiveMergePlanner
         MergePlan plan = MergePlanner.Plan(linksets, options, Path.GetFileName(archivePath));
         plan.ToolVersion = typeof(ArchiveMergePlanner).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
             ?? typeof(ArchiveMergePlanner).Assembly.GetName().Version?.ToString() ?? "unknown";
+        if (parsed.Values.Any(q => q.Description != null && q.Description.StartsWith(MergedPartPlan.DescriptionPrefix, StringComparison.Ordinal)))
+            foreach (double made in ArchiveMergeNotes.Limits(archivePath).Where(x => x != options.Lod.PixelLimit).OrderBy(x => x))
+                plan.Warnings.Add("The archive holds parts merged at a limit of " + made.ToString("0.##", CultureInfo.InvariantCulture) + " pixels; their levels of detail stay as they are and are not made again at a limit of "
+                    + options.Lod.PixelLimit.ToString("0.##", CultureInfo.InvariantCulture) + " pixels.");
         if (elig.ReadStatus == "Partial")
             plan.Warnings.Add("The archive was read only in part (" + elig.ReadNote + "); the plan covers what was read.");
         return plan;
@@ -108,6 +112,7 @@ public static class ArchiveMergePlanner
         p.VolumeDetect = pp.VolumeDetect;
         p.Phantom = pp.Phantom;
         p.PhysicsShapeType = pp.PhysicsShapeType;
+        p.AlreadyMerged = pp.Description != null && pp.Description.StartsWith(MergedPartPlan.DescriptionPrefix, StringComparison.Ordinal);
         SetBox(p, pp, row.IsRoot);
 
         if (row.Action != PartAction.Convert || (row.Kind != "prim" && row.Kind != "sculpt") || pp.Shape == null)
@@ -348,6 +353,41 @@ public static class ArchiveMergePlanner
     }
 }
 
+/// <summary>
+/// What an earlier merge left in an archive for a later one to read: the pixel limit named in the manifest notecard of each merged part
+/// (see <see cref="MergeArchiveWriter.LimitLine"/>). An archive made before the limit was recorded gives none.
+/// </summary>
+internal static class ArchiveMergeNotes
+{
+    private const string Suffix = "_notecard.txt", Marker = "Levels of detail made at a limit of ";
+
+    public static HashSet<double> Limits(string archivePath)
+    {
+        HashSet<double> limits = new HashSet<double>();
+        using FileStream fs = File.OpenRead(archivePath);
+        int b0 = fs.ReadByte(), b1 = fs.ReadByte();
+        fs.Seek(0, SeekOrigin.Begin);
+        Stream tarStream = b0 == 0x1f && b1 == 0x8b ? new GZipStream(new BufferedStream(fs, 1 << 16), CompressionMode.Decompress) : fs;
+        TarStreamReader tar = new TarStreamReader(tarStream);
+        TarEntryHeader h;
+        while ((h = tar.ReadNext()) != null)
+        {
+            if (!h.IsFile || !h.Name.StartsWith("assets/", StringComparison.Ordinal) || !h.Name.EndsWith(Suffix, StringComparison.OrdinalIgnoreCase))
+                continue;
+            string text = Encoding.UTF8.GetString(tar.ReadBody());
+            if (!text.Contains("Merged part ", StringComparison.Ordinal))
+                continue;
+            for (int at = text.IndexOf(Marker, StringComparison.Ordinal); at >= 0; at = text.IndexOf(Marker, at + Marker.Length, StringComparison.Ordinal))
+            {
+                int start = at + Marker.Length, end = text.IndexOf(" pixels.", start, StringComparison.Ordinal);
+                if (end > start && double.TryParse(text.AsSpan(start, end - start), NumberStyles.Float, CultureInfo.InvariantCulture, out double pixels))
+                    limits.Add(pixels);
+            }
+        }
+        return limits;
+    }
+}
+
 /// <summary>Which of the wanted textures of an archive have an alpha channel that is not fully opaque, read in one pass.</summary>
 internal static class ArchiveTextureAlpha
 {
@@ -457,6 +497,8 @@ public static class MergePlanFiles
             w.WriteStartObject();
             w.WriteNumber("version", plan.Version);
             w.WriteString("tool", plan.ToolVersion);
+            if (plan.LodPixelLimit.HasValue)
+                w.WriteNumber("lodPixelLimit", plan.LodPixelLimit.Value);
             w.WriteString("archive", plan.Archive);
             w.WriteStartArray("warnings");
             foreach (string s in plan.Warnings) w.WriteStringValue(s);

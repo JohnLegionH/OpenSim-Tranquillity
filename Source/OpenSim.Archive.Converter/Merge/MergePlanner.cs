@@ -141,6 +141,7 @@ public static class MergePlanner
         else if (partCount > 1 && number <= protectedUpTo)
             Add("17", "PROTECTED_LINK_NUMBER", "a script addresses link number " + protectedUpTo + ", so numbers up to it do not change");
         if (p.HasContents) Add("part", "CONTENTS", "the part holds items other than scripts");
+        if (p.AlreadyMerged) Add("11", "ALREADY_MERGED", "made by an earlier oar-convert --merge; its Merge manifest notecard lists the parts it replaced");
         if (p.Kind == "mesh") Add("11", "ALREADY_MESH", "an existing mesh keeps its makers' levels of detail");
         else if (p.Kind != "prim" && p.Kind != "sculpt") Add("part", "NOT_PRIM", "the part is not a prim");
         if (p.NotConvertible.Length > 0) Add("part", "NOT_CONVERTED", "the converter keeps the part as a prim (" + p.NotConvertible + ")");
@@ -398,7 +399,7 @@ public static class MergePlanner
         string hash = Convert.ToHexString(ManagedDigest.Sha256(Encoding.UTF8.GetBytes(string.Join(",", cluster.Select(c => c.Part.PartId.ToString("N")))))).ToLowerInvariant();
         // the lowest-numbered member (the root, when it is a member) is the part that is rewritten into the merged part, so the id stays its own
         m.Id = cluster.OrderBy(c => c.Number).First().Part.PartId;
-        m.Description = "oarx-merge " + hash.Substring(0, 8) + " " + m.Members.Count + " parts";
+        m.Description = MergedPartPlan.DescriptionPrefix + hash.Substring(0, 8) + " " + m.Members.Count + " parts";
         return m;
     }
 

@@ -184,6 +184,7 @@ public static class MergeArchiveWriter
             throw new ConvertException("merging writes real meshes; the encoder in use does not");
 
         MergePlan plan = ArchiveMergePlanner.Plan(sourcePath, options, convert, out Dictionary<Guid, ParsedPart> parsed, out List<MergeLinkset> linksets);
+        plan.LodPixelLimit = options.Lod.PixelLimit;
         MergeWriteResult result = new MergeWriteResult { Plan = plan, Output = outputPath, SourceBytes = new FileInfo(sourcePath).Length, LodPixelLimit = options.Lod.PixelLimit };
         ArchiveRewriter rewriter = new ArchiveRewriter();
         HashSet<Guid> assets = new HashSet<Guid>();
@@ -319,7 +320,7 @@ public static class MergeArchiveWriter
         if (assets.Add(meshId))
             rewriter.AddAsset(meshId, AssetType.Mesh, bytes);
 
-        byte[] notecardBytes = new UTF8Encoding(false).GetBytes(Notecard(mp.Manifest));
+        byte[] notecardBytes = new UTF8Encoding(false).GetBytes(Notecard(mp.Manifest, options.Lod.PixelLimit));
         Guid noteAsset = MeshId.FromBytes(notecardBytes);
         Guid noteItem = MeshId.FromBytes(Encoding.UTF8.GetBytes("oarx-merge-manifest-item " + mp.Id));
         if (assets.Add(noteAsset))
@@ -406,9 +407,13 @@ public static class MergeArchiveWriter
         return hulls;
     }
 
-    private static string Notecard(string manifest)
+    /// <summary>The line of a manifest that says which pixel limit the levels of detail were made at; a second pass reads it (see <see cref="ArchiveMergeNotes"/>).</summary>
+    internal static string LimitLine(double pixels) => "Levels of detail made at a limit of " + pixels.ToString("0.##", CultureInfo.InvariantCulture) + " pixels.";
+
+    private static string Notecard(string manifest, double pixelLimit)
     {
         string text = manifest.Length > MaxNotecardChars ? manifest.Substring(0, MaxNotecardChars) + "\n(the list is cut here; the plan file has all of it)\n" : manifest;
+        text += "\n" + LimitLine(pixelLimit) + "\n";
         int length = new UTF8Encoding(false).GetByteCount(text);
         return "Linden text version 2\n{\nLLEmbeddedItems version 1\n{\ncount 0\n}\nText length " + length.ToString(CultureInfo.InvariantCulture) + "\n" + text + "}\n";
     }
