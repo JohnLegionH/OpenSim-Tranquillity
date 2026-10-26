@@ -91,9 +91,13 @@ namespace Luau.ScriptEngine
             if (text.Length == 0)
                 return Failed(language, new CompileError(1, "the script is empty"));
 
+            if (m_cache != null && m_cache.TryGet(text, language, out byte[] cached))
+                return new CompileResult { Asset = cached, Language = language, FromCache = true };
+
             try
             {
                 byte[] asset = RunOnCompileThread(text, language == ScriptLanguage.Lsl);
+                m_cache?.Put(text, language, asset);
                 return new CompileResult { Asset = asset, Language = language };
             }
             catch (SluaException e)
