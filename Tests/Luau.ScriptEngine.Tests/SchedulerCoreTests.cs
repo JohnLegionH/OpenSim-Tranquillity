@@ -21,6 +21,9 @@ namespace Luau.ScriptEngine.Tests;
 public class SchedulerCoreTests
 {
     private const string Yielder = "while true do ossl.Count() coroutine.yield() end";
+    /// <summary>A loop gives the runtime a safe point to pause the script at after it has asked for a delay.</summary>
+    private const string Safepoint = "for _ = 1, 2 do end";
+    private const string LslSafepoint = "integer i; for (i = 0; i < 2; ++i) { }";
     private const string LslTimer = "default { state_entry() { llSetTimerEvent(1.0); } timer() { llOwnerSay(\"t\"); } }";
 
     [RequiresNativeFact]
@@ -91,7 +94,7 @@ public class SchedulerCoreTests
     public void AForcedDelayParksTheScriptUntilItIsDue()
     {
         using var h = new SchedulerHarness();
-        SchedulerScript s = h.AddAndStart("ossl.Count() ossl.Sleep(1.0) ossl.Count()");
+        SchedulerScript s = h.AddAndStart("ossl.Count() ossl.Sleep(1.0) " + Safepoint + " ossl.Count()");
         h.Pump();
 
         Assert.Equal(1, h.CountOf(s));
@@ -110,7 +113,7 @@ public class SchedulerCoreTests
     public void ASleepingScriptDoesNotHoldUpTheOthers()
     {
         using var h = new SchedulerHarness();
-        SchedulerScript sleeper = h.AddAndStart("ossl.Sleep(60.0) ossl.Count()");
+        SchedulerScript sleeper = h.AddAndStart("ossl.Sleep(60.0) " + Safepoint + " ossl.Count()");
         SchedulerScript worker = h.AddAndStart(Yielder);
         h.Passes(1);
         long before = h.CountOf(worker);
@@ -126,7 +129,7 @@ public class SchedulerCoreTests
     public void ALslSleepAndTheCallsAfterItRunInOrder()
     {
         using var h = new SchedulerHarness();
-        SchedulerScript s = h.AddAndStart("default { state_entry() { llOwnerSay(\"a\"); llSleep(2.0); llOwnerSay(\"b\"); } }", lsl: true);
+        SchedulerScript s = h.AddAndStart("default { state_entry() { llOwnerSay(\"a\"); llSleep(2.0); " + LslSafepoint + " llOwnerSay(\"b\"); } }", lsl: true);
         h.Pump();
         Assert.Equal(new[] { "say:a" }, h.MarksOf(s));
 
@@ -228,15 +231,15 @@ public class SchedulerCoreTests
     public void EventsAreQueuedAndDispatchedInTheOrderTheyArrived()
     {
         using var h = new SchedulerHarness();
-        SchedulerScript s = h.AddAndStart("LLEvents:on(\"touch_start\", function(n) ossl.Mark(\"touch\", n) end)");
+        SchedulerScript s = h.AddAndStart("LLEvents:on(\"dataserver\", function(q, d) ossl.Mark(\"data\", d) end)");
         h.Pump();
 
-        h.Scheduler.Post(s, "touch_start", Value.Int(1));
-        h.Scheduler.Post(s, "touch_start", Value.Int(2));
-        h.Scheduler.Post(s, "touch_start", Value.Int(3));
+        h.Scheduler.Post(s, "dataserver", Value.Key("k"), Value.Str("1"));
+        h.Scheduler.Post(s, "dataserver", Value.Key("k"), Value.Str("2"));
+        h.Scheduler.Post(s, "dataserver", Value.Key("k"), Value.Str("3"));
         h.Pump();
 
-        Assert.Equal(new[] { "touch:1", "touch:2", "touch:3" }, h.MarksOf(s));
+        Assert.Equal(new[] { "data:1", "data:2", "data:3" }, h.MarksOf(s));
         Assert.Equal(ScriptRunState.Idle, s.State);
     }
 
@@ -244,29 +247,29 @@ public class SchedulerCoreTests
     public void EventsPostedBeforeStartRunAfterTheMainFunction()
     {
         using var h = new SchedulerHarness();
-        SchedulerScript s = h.Add("ossl.Mark(\"main\", 0) LLEvents:on(\"touch_start\", function(n) ossl.Mark(\"touch\", n) end)");
+        SchedulerScript s = h.Add("ossl.Mark(\"main\", 0) LLEvents:on(\"dataserver\", function(q, d) ossl.Mark(\"data\", d) end)");
         h.Pump();
-        h.Scheduler.Post(s, "touch_start", Value.Int(7));
+        h.Scheduler.Post(s, "dataserver", Value.Key("k"), Value.Str("7"));
         h.Scheduler.Start(s);
         h.Pump();
 
-        Assert.Equal(new[] { "main:0", "touch:7" }, h.MarksOf(s));
+        Assert.Equal(new[] { "main:0", "data:7" }, h.MarksOf(s));
     }
 
     [RequiresNativeFact]
     public void AFullEventQueueDropsTheExtraEventsAndCountsThem()
     {
         using var h = new SchedulerHarness(maxQueue: 4);
-        SchedulerScript s = h.AddAndStart("LLEvents:on(\"touch_start\", function(n) ossl.Mark(\"touch\", n) end) ossl.Sleep(5.0)");
+        SchedulerScript s = h.AddAndStart("LLEvents:on(\"dataserver\", function(q, d) ossl.Mark(\"data\", d) end) ossl.Sleep(5.0)");
         h.Pump();
         Assert.Equal(ScriptRunState.Sleeping, s.State);
 
-        for (int i = 1; i <= 10; i++) h.Scheduler.Post(s, "touch_start", Value.Int(i));
+        for (int i = 1; i <= 10; i++) h.Scheduler.Post(s, "dataserver", Value.Key("k"), Value.Str(i.ToString()));
         h.Pump();
         h.Advance(6.0);
 
         Assert.Equal(6, s.DroppedEvents);
-        Assert.Equal(new[] { "touch:1", "touch:2", "touch:3", "touch:4" }, h.MarksOf(s));
+        Assert.Equal(new[] { "data:1", "data:2", "data:3", "data:4" }, h.MarksOf(s));
     }
 
     [RequiresNativeFact]
