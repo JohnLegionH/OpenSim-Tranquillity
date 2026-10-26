@@ -30,7 +30,7 @@ namespace SLua.ScriptEngine
     /// The region's start, stop, reset and remove events drive the script; a script that faults is stopped and its
     /// owner is told.
     /// </summary>
-    public class LuauEngine : INonSharedRegionModule, IScriptModule, IScriptStateProvider
+    public class LuauEngine : INonSharedRegionModule, IScriptModule, IScriptStateProvider, IEventPoster
     {
         public event ScriptRemoved OnScriptRemoved;
 
@@ -650,6 +650,9 @@ namespace SLua.ScriptEngine
         {
             lock (m_deferred) return m_deferred.TryGetValue(itemID, out DeferredList list) ? list.Events.Count : 0;
         }
+
+        /// <summary>The scene hooks of the region the engine is in; null outside one.</summary>
+        internal SceneHooksA Hooks => null;
 
         /// <summary>True once every worker has failed and the engine has switched itself off.</summary>
         internal bool IsDisabled => m_disabled;

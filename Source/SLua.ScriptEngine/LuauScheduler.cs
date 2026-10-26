@@ -70,6 +70,10 @@ namespace SLua.ScriptEngine
             script.Worker.Enqueue(() => script.Worker.PostEvent(script, index, args));
         }
 
+        /// <summary>Queues an event with the detected objects its handler reads through the Detected functions.</summary>
+        public void Post(SchedulerScript script, string eventName, Value[] args, DetectedRecord[] detected)
+            => Post(script, eventName, args);
+
         /// <summary>Sets the Running flag. Off: the script is not run, its events are dropped and its timer is held. On: it continues where it stopped; a script stopped by a fault starts over.</summary>
         public void SetRunning(SchedulerScript script, bool running)
         {

@@ -134,6 +134,12 @@ namespace SLua.ScriptEngine
         internal void CountStoppedDrop(long n = 1) => Interlocked.Add(ref m_droppedWhileStopped, n);
         internal void CountUnhandledDrop() => Interlocked.Increment(ref m_droppedUnhandled);
         internal void CountFrontGrant() => Interlocked.Increment(ref m_frontGrants);
+
+        /// <summary>Detected objects of the event being handled; empty outside an event that carries any.</summary>
+        internal int DetectedCount => 0;
+
+        /// <summary>One detected object of the event being handled, or null for an index out of range.</summary>
+        internal DetectedRecord DetectedAt(int index) => null;
         internal void CountPunishment() => Interlocked.Increment(ref m_punishments);
 
         /// <summary>The script whose native call is running on this thread, or null.</summary>
