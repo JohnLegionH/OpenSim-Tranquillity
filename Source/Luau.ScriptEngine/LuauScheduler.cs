@@ -46,10 +46,12 @@ namespace Luau.ScriptEngine
             {
                 if (m_disposed)
                     throw new ObjectDisposedException(nameof(LuauScheduler));
-                worker = m_workers[0];
+                worker = null;
                 foreach (ScriptWorker w in m_workers)
-                    if (w.ScriptCount < worker.ScriptCount)
+                    if (!w.Failed && (worker == null || w.ScriptCount < worker.ScriptCount))
                         worker = w;
+                if (worker == null)
+                    throw new InvalidOperationException("no script worker is running");
                 worker.ReserveScript();
                 script = new SchedulerScript(++m_nextId, worker.Index, asset, language) { Worker = worker };
             }
@@ -71,22 +73,26 @@ namespace Luau.ScriptEngine
         /// <summary>Sets the Running flag. Off: the script is not run, its events are dropped and its timer is held. On: it continues where it stopped; a script stopped by a fault starts over.</summary>
         public void SetRunning(SchedulerScript script, bool running)
         {
+            script.Running = running; // visible at once; the worker applies it
+            script.Worker.Enqueue(() => script.Worker.ApplyRunning(script, running));
         }
 
         /// <summary>Holds the script without dropping its events (the console's suspend).</summary>
         public void Suspend(SchedulerScript script)
         {
+            script.Suspended = true;
+            script.Worker.Enqueue(() => script.Worker.ApplySuspended(script, true));
         }
 
         /// <summary>Lets a suspended script go on.</summary>
         public void Resume(SchedulerScript script)
         {
+            script.Suspended = false;
+            script.Worker.Enqueue(() => script.Worker.ApplySuspended(script, false));
         }
 
         /// <summary>Starts the script over from a fresh script object: events, timer, sleep and a pending call are dropped, and a fault or kill is cleared.</summary>
-        public void Reset(SchedulerScript script)
-        {
-        }
+        public void Reset(SchedulerScript script) => script.Worker.Enqueue(() => script.Worker.ResetScript(script));
 
         /// <summary>Frees the script's native objects on its worker and forgets it.</summary>
         public void Remove(SchedulerScript script) => script.Worker.Enqueue(() => script.Worker.RemoveScript(script));

@@ -27,6 +27,12 @@ namespace Luau.ScriptEngine
 
         private static readonly int StateCount = Enum.GetValues(typeof(ScriptRunState)).Length;
         private const double SleepTolerance = 0.0005;
+
+        // A plain step the runtime refuses is tried again at once this many times; after that the script waits,
+        // starting at the first back-off and doubling up to the longest.
+        private const int RefusedFreeRetries = 2;
+        private const double RefusedBackoffFirst = 0.05;
+        private const double RefusedBackoffLongest = 1.0;
         private static int s_timerEvent = -1;
 
         private readonly int m_index;
@@ -34,6 +40,7 @@ namespace Luau.ScriptEngine
         private readonly IEngineLog m_log;
         private readonly ConcurrentQueue<Action> m_commands = new ConcurrentQueue<Action>();
         private readonly ManualResetEventSlim m_signal = new ManualResetEventSlim(false);
+        private readonly ManualResetEventSlim m_stopSignal = new ManualResetEventSlim(false);
         private readonly Thread m_thread;
         private volatile bool m_stop;
 
@@ -53,6 +60,11 @@ namespace Luau.ScriptEngine
         private long m_steps;
         private long m_wakeups;
         private long m_budgetCutoffs;
+        private long m_kills;
+        private long m_punishments;
+        private long m_refusedCaps;
+        private long m_crashes;
+        private volatile bool m_failed;
 
         internal ScriptWorker(int index, SchedulerOptions options)
         {
@@ -73,6 +85,9 @@ namespace Luau.ScriptEngine
 
         public int Index => m_index;
 
+        /// <summary>True once the worker has stopped for good after too many failed passes; it takes no more scripts.</summary>
+        public bool Failed => m_failed;
+
         /// <summary>Scripts assigned to this worker and not removed; the scheduler picks the worker with the fewest.</summary>
         public int ScriptCount => Volatile.Read(ref m_scriptCount);
 
@@ -88,7 +103,15 @@ namespace Luau.ScriptEngine
             Interlocked.Read(ref m_passes),
             Interlocked.Read(ref m_steps),
             Interlocked.Read(ref m_wakeups),
-            Interlocked.Read(ref m_budgetCutoffs));
+            Interlocked.Read(ref m_budgetCutoffs),
+            Volatile.Read(ref m_stateCounts[(int)ScriptRunState.Stopped]),
+            Volatile.Read(ref m_stateCounts[(int)ScriptRunState.Suspended]),
+            Volatile.Read(ref m_stateCounts[(int)ScriptRunState.Faulted]),
+            Interlocked.Read(ref m_kills),
+            Interlocked.Read(ref m_punishments),
+            Interlocked.Read(ref m_refusedCaps),
+            Interlocked.Read(ref m_crashes),
+            m_failed);
 
         /// <summary>Hands the worker something to do on its own thread, and wakes it.</summary>
         internal void Enqueue(Action command)
@@ -99,16 +122,42 @@ namespace Luau.ScriptEngine
 
         // ---- the loop ----
 
+        /// <summary>
+        /// Runs passes. A pass that throws is a crash: the worker waits the restart delay and carries on, and after
+        /// the allowed number of crashes it stops for good and reports once. This is the rule of Phlox's master
+        /// scheduler (a restart after one second, at most ten times).
+        /// </summary>
         private void Loop()
         {
+            int crashes = 0;
+            int allowed = Math.Max(1, m_options.MaxWorkerCrashes);
             try
             {
                 while (!m_stop)
                 {
                     m_signal.Reset();
                     bool more = false;
-                    try { more = DoWork(m_options.Clock.Now); }
-                    catch (Exception e) { m_log?.Error("a scheduler pass failed: " + e); }
+                    try
+                    {
+                        m_options.BeforePass?.Invoke(m_index, Interlocked.Read(ref m_passes) + 1);
+                        more = DoWork(m_options.Clock.Now);
+                    }
+                    catch (Exception e)
+                    {
+                        crashes++;
+                        Interlocked.Increment(ref m_crashes);
+                        if (crashes >= allowed)
+                        {
+                            m_failed = true;
+                            m_log?.Error($"worker {m_index} failed {crashes} times and is stopped; its scripts no longer run: {e}");
+                            try { m_options.WorkerStopped?.Invoke(m_index, crashes, e.Message); }
+                            catch (Exception callback) { m_log?.Error("the worker-stopped callback failed: " + callback.Message); }
+                            break;
+                        }
+                        m_log?.Error($"worker {m_index} failed (failure {crashes} of {allowed}), carrying on in {m_options.WorkerRestartDelayMs} ms: {e}");
+                        m_stopSignal.Wait(Math.Max(0, m_options.WorkerRestartDelayMs));
+                        continue;
+                    }
                     if (more)
                         continue;
                     Interlocked.Increment(ref m_wakeups);
@@ -216,10 +265,7 @@ namespace Luau.ScriptEngine
                 return;
             try
             {
-                m_vm ??= m_options.VmFactory();
-                m_images ??= new SharedImages(m_vm);
-                s.Lease = m_images.Acquire(s.Asset);
-                s.Native = s.Lease.NewScript(m_options.MemoryLimitBytes, s.Id);
+                MakeNative(s);
                 m_scripts[s.Id] = s;
                 SetState(s, ScriptRunState.Created);
             }
@@ -231,6 +277,15 @@ namespace Luau.ScriptEngine
                 m_scripts[s.Id] = s;
                 Fault(s, FaultKind.Unknown, "script could not be made: " + e.Message);
             }
+        }
+
+        /// <summary>Makes the script object from the compiled asset on this worker's VM, sharing the asset's image with the others.</summary>
+        private void MakeNative(SchedulerScript s)
+        {
+            m_vm ??= m_options.VmFactory();
+            m_images ??= new SharedImages(m_vm);
+            s.Lease ??= m_images.Acquire(s.Asset);
+            s.Native = s.Lease.NewScript(m_options.MemoryLimitBytes, s.Id);
         }
 
         internal void StartScript(SchedulerScript s)
@@ -253,8 +308,8 @@ namespace Luau.ScriptEngine
 
         internal void PostEvent(SchedulerScript s, int eventIndex, Value[] args)
         {
-            if (s.Native == null || s.State == ScriptRunState.Removed || s.State == ScriptRunState.Faulted)
-                return;
+            if (s.Native == null || s.State == ScriptRunState.Removed || s.State == ScriptRunState.Faulted || !s.Running)
+                return; // a script that is not running hears nothing
             if (s.Events.Count >= m_options.MaxEventQueue)
             {
                 s.CountDrop();
@@ -271,6 +326,121 @@ namespace Luau.ScriptEngine
             s.WaitResult = result;
             s.Waiting = false;
             Reschedule(s);
+        }
+
+        /// <summary>
+        /// The Running flag changed (it is already set on the script). Off: queued events are dropped and the timer
+        /// is held; the script keeps its place in its handler. On: it carries on; a script that was never started
+        /// starts, and one stopped by a fault starts over.
+        /// </summary>
+        internal void ApplyRunning(SchedulerScript s, bool running)
+        {
+            if (s.State == ScriptRunState.Removed || s.State == ScriptRunState.Loading)
+                return;
+            if (!running)
+            {
+                s.Events.Clear();
+                s.TimerQueued = false;
+                HoldTimer(s);
+                Reschedule(s);
+                return;
+            }
+            if (s.Killed || s.Native == null)
+            {
+                ResetScript(s);
+                return;
+            }
+            if (!s.Started)
+            {
+                StartScript(s);
+                return;
+            }
+            RearmTimer(s);
+            Reschedule(s);
+        }
+
+        /// <summary>Suspend or resume (the flag is already set on the script). Events keep queueing while it is suspended.</summary>
+        internal void ApplySuspended(SchedulerScript s, bool suspended)
+        {
+            if (s.State == ScriptRunState.Removed || s.State == ScriptRunState.Loading)
+                return;
+            if (suspended)
+                HoldTimer(s);
+            else
+                RearmTimer(s);
+            Reschedule(s);
+        }
+
+        /// <summary>A timer that is held keeps its interval and fires no tick; <see cref="RearmTimer"/> counts it again from now.</summary>
+        private void HoldTimer(SchedulerScript s)
+        {
+            s.TimerGen++;
+        }
+
+        private void RearmTimer(SchedulerScript s)
+        {
+            if (s.TimerInterval > 0 && s.Running && !s.Suspended)
+                ArmTimer(s, Now() + s.TimerInterval);
+        }
+
+        /// <summary>
+        /// Starts the script over from a fresh script object: variables, events, timer, sleep, a pending call and any
+        /// fault or kill are dropped. A script that was stopped by a fault runs again; one the Running flag stopped
+        /// stays stopped until the flag is set.
+        /// </summary>
+        internal void ResetScript(SchedulerScript s)
+        {
+            if (s.State == ScriptRunState.Removed || s.State == ScriptRunState.Loading)
+                return;
+            s.Events.Clear();
+            s.TimerQueued = false;
+            s.TimerInterval = 0;
+            s.TimerGen++;
+            s.SleepUntil = 0;
+            s.SleepGen++;
+            s.Waiting = false;
+            s.WaitResult = null;
+            s.Owed = 0;
+            s.AskedSeconds = 0;
+            s.SluaTimer = 0;
+            s.NeedsStep = false;
+            s.Started = false;
+            s.ConsecutivePunishments = 0;
+            s.ConsecutiveRefusals = 0;
+            s.Fault = FaultKind.None;
+            s.FaultMessage = null;
+            if (s.Killed)
+            {
+                s.Killed = false;
+                s.Running = true;
+            }
+            try
+            {
+                try { s.Native?.Dispose(); }
+                finally { s.Native = null; }
+                MakeNative(s);
+            }
+            catch (Exception e)
+            {
+                m_log?.Error($"script {s.Id} could not be reset: {e.Message}");
+                Fault(s, FaultKind.Unknown, "script could not be reset: " + e.Message);
+                return;
+            }
+            m_scripts[s.Id] = s;
+            SetState(s, ScriptRunState.Created);
+            if (s.Running)
+                StartScript(s);
+            else
+                Reschedule(s);
+        }
+
+        /// <summary>A host function reported a script error: the host is told, and the script pays the error pause.</summary>
+        internal void ReportScriptError(SchedulerScript s, string text)
+        {
+            try { m_options.ScriptError?.Invoke(s, text); }
+            catch (Exception e) { m_log?.Error("the script-error callback failed: " + e.Message); }
+            if (m_options.ErrorPauseSeconds > 0)
+                s.AddSleep(m_options.ErrorPauseSeconds);
         }
 
         internal void RemoveScript(SchedulerScript s)
@@ -387,6 +557,10 @@ namespace Luau.ScriptEngine
                     ev = s.Events.Peek();
                     r = s.Native.Dispatch(ev.EventIndex, ev.Args, quanta);
                 }
+                else if (m_options.StepOverride?.Invoke(s) is StepResult forced)
+                {
+                    r = forced;
+                }
                 else
                 {
                     r = s.Native.Step(quanta);
@@ -445,17 +619,50 @@ namespace Luau.ScriptEngine
             // runs the script. So the delays the script asked for in this turn are served here, before the next
             // step; what the runtime reports beyond what was already served is its own punishment for an overrun.
             double extra = 0;
+            bool punished = false;
             if (r.SleepServed > 0)
             {
                 extra = r.SleepServed - s.Owed;
                 s.Owed = 0;
                 if (extra > SleepTolerance)
+                {
                     s.CountPunishment();
+                    Interlocked.Increment(ref m_punishments);
+                    punished = true;
+                }
                 else
                     extra = 0;
             }
+
+            // A script the runtime punishes turn after turn is killed; a turn without a punishment starts the count over.
+            s.ConsecutivePunishments = punished ? s.ConsecutivePunishments + 1 : 0;
+            int killAfter = m_options.KillAfterPunishments;
+            if (killAfter > 0 && s.ConsecutivePunishments >= killAfter)
+            {
+                Interlocked.Increment(ref m_kills);
+                Fault(s, FaultKind.Timeout, $"it used more run time than it is allowed in {s.ConsecutivePunishments} turns in a row");
+                return;
+            }
+
+            // A plain step the runtime keeps refusing is not repeated every pass: after a few tries the script waits.
+            double backoff = 0;
+            if (!dispatching)
+            {
+                if (r.Status == StepStatus.Refused)
+                {
+                    s.ConsecutiveRefusals++;
+                    if (s.ConsecutiveRefusals > RefusedFreeRetries)
+                    {
+                        backoff = Math.Min(RefusedBackoffFirst * Math.Pow(2, s.ConsecutiveRefusals - RefusedFreeRetries - 1), RefusedBackoffLongest);
+                        Interlocked.Increment(ref m_refusedCaps);
+                    }
+                }
+                else
+                    s.ConsecutiveRefusals = 0;
+            }
+
             s.Owed += s.AskedSeconds;
-            double sleep = s.AskedSeconds + extra;
+            double sleep = Math.Max(s.AskedSeconds + extra, backoff);
             if (sleep > 0)
                 s.SleepUntil = Now() + sleep;
             if (s.WaitRequested)
@@ -480,6 +687,16 @@ namespace Luau.ScriptEngine
             if (!s.Started)
             {
                 SetState(s, ScriptRunState.Created);
+                return;
+            }
+            if (!s.Running)
+            {
+                SetState(s, ScriptRunState.Stopped);
+                return;
+            }
+            if (s.Suspended)
+            {
+                SetState(s, ScriptRunState.Suspended);
                 return;
             }
             if (s.Waiting)
@@ -524,6 +741,8 @@ namespace Luau.ScriptEngine
         {
             s.Fault = kind;
             s.FaultMessage = message;
+            s.Killed = true; // stays stopped until reset or its Running flag is set again
+            s.Running = false;
             s.Events.Clear();
             s.TimerGen++;
             s.SleepGen++;
@@ -540,6 +759,7 @@ namespace Luau.ScriptEngine
         {
             m_stop = true;
             m_signal.Set();
+            m_stopSignal.Set();
             if (m_thread == null)
             {
                 Cleanup();

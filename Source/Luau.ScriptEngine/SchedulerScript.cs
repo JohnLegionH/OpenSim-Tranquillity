@@ -25,6 +25,9 @@ namespace Luau.ScriptEngine
         [ThreadStatic] private static SchedulerScript t_current;
 
         private int m_state;
+        private int m_running = 1;
+        private int m_suspended;
+        private int m_killed;
         private long m_steps;
         private long m_dispatches;
         private long m_runTicks;
@@ -64,13 +67,16 @@ namespace Luau.ScriptEngine
         public long Punishments => Interlocked.Read(ref m_punishments);
 
         /// <summary>The Running flag: false while the script is stopped, and after a fault or a kill, until reset or set again.</summary>
-        public bool Running { get; internal set; } = true;
+        public bool Running { get => Volatile.Read(ref m_running) != 0; internal set => Volatile.Write(ref m_running, value ? 1 : 0); }
+
+        /// <summary>True when the script would run if it had work: its Running flag is on, it is not suspended and not stopped by a fault.</summary>
+        public bool IsRunning => Running && !Suspended && !Killed && State != ScriptRunState.Removed;
 
         /// <summary>Held by suspend; events keep queueing.</summary>
-        public bool Suspended { get; internal set; }
+        public bool Suspended { get => Volatile.Read(ref m_suspended) != 0; internal set => Volatile.Write(ref m_suspended, value ? 1 : 0); }
 
         /// <summary>The script was stopped by a fault or a kill and has not been reset or set running since.</summary>
-        public bool Killed { get; internal set; }
+        public bool Killed { get => Volatile.Read(ref m_killed) != 0; internal set => Volatile.Write(ref m_killed, value ? 1 : 0); }
 
         /// <summary>Consecutive turns the runtime punished; a turn without a punishment sets it back to 0.</summary>
         public int ConsecutivePunishments { get; internal set; }
@@ -127,6 +133,7 @@ namespace Luau.ScriptEngine
         public void ReportError(string text)
         {
             RequireCurrent();
+            Worker.ReportScriptError(this, text);
         }
 
         /// <summary>For a host function: sets or clears (0 or less) this script's timer, as llSetTimerEvent does. The interval is raised to the floor.</summary>

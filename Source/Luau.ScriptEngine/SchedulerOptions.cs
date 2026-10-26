@@ -97,19 +97,19 @@ namespace Luau.ScriptEngine
         public Action<SchedulerScript> ScriptFaulted { get; set; }
 
         /// <summary>Consecutive punished turns after which a script is killed.</summary>
-        public int KillAfterPunishments { get; set; }
+        public int KillAfterPunishments { get; set; } = 20;
 
         /// <summary>Delay a script's own error report adds to the script, in seconds (the 15 ms chat pause).</summary>
-        public double ErrorPauseSeconds { get; set; }
+        public double ErrorPauseSeconds { get; set; } = 0.015;
 
         /// <summary>Called on the worker's thread when a host function reports a script error (<see cref="SchedulerScript.ReportError"/>).</summary>
         public Action<SchedulerScript, string> ScriptError { get; set; }
 
         /// <summary>Wait before a worker whose pass failed carries on, in milliseconds.</summary>
-        public int WorkerRestartDelayMs { get; set; }
+        public int WorkerRestartDelayMs { get; set; } = 1000;
 
         /// <summary>Failed passes after which a worker stops for good.</summary>
-        public int MaxWorkerCrashes { get; set; }
+        public int MaxWorkerCrashes { get; set; } = 10;
 
         /// <summary>Called once, on the worker's thread, when a worker has stopped for good after too many failed passes: its index, the failures, the last one's message.</summary>
         public Action<int, int, string> WorkerStopped { get; set; }
