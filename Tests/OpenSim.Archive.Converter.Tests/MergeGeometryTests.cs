@@ -224,7 +224,8 @@ public class MergeGeometryTests
     {
         var (plan, members, _) = Make(null, Three());
         MergedGeometry g = MergeGeometry.Build(plan, members, carrierIsRoot: false);
-        float[] all = g.Faces.SelectMany(f => f.Positions).ToArray();
+        // the box holds the collision triangles as well as the display faces
+        float[] all = g.Faces.SelectMany(f => f.Positions).Concat(g.Physics.Positions).ToArray();
         for (int axis = 0; axis < 3; axis++)
         {
             float min = float.MaxValue, max = float.MinValue;
@@ -270,13 +271,14 @@ public class MergeGeometryTests
     }
 
     [Fact]
-    public void AMaterialPastTheVertexLimitIsSplitIntoTheFacesThePlanHas()
+    public void AMaterialPastTheVertexLimitIsSplitIntoFacesWithinTheLimit()
     {
         MergeOptions o = new MergeOptions { MaxFaceVertices = 40 };
         var (plan, members, _) = Make(o, Three());
         MergedGeometry g = MergeGeometry.Build(plan, members, carrierIsRoot: false, o);
         Assert.True(plan.Slots.Count > 1);
-        Assert.Equal(plan.Slots.Count, g.Faces.Count);
+        Assert.True(g.Faces.Count >= plan.Slots.Count);
+        Assert.Equal(g.Faces.Count, g.Template.Count);
         Assert.All(g.Faces, f => Assert.True(f.VertexCount <= 40, f.VertexCount + " vertices"));
         Assert.Equal(members.Sum(m => m.Faces.Sum(f => f.Indices.Length)), g.Faces.Sum(f => f.Indices.Length));
     }
