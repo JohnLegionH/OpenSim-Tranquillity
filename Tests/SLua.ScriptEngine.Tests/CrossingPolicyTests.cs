@@ -120,7 +120,6 @@ public class CrossingPolicyTests
         Assert.Equal(1, rig.Engine.Policy.HeldArrivalCount);
         Assert.True(rig.StaysSilent(item, 256));
 
-        grants.RiderPending = false;
         ScenePresence rider = SceneHelpers.AddScenePresence(rig.Scene, grants.Rider);
         rig.Scene.EventManager.TriggerOnMakeRootAgent(rider);
 
