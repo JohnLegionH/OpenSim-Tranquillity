@@ -239,12 +239,12 @@ public class MergePlannerTests
     }
 
     [Fact]
-    public void Rule12_AFaceWhoseMapsRepeatLikeTheDiffuseStaysUnbakedBecauseTheViewerWouldTransformTheMapsTwice()
+    public void Rule12_AFaceWhoseMapsAreDrawnLikeTheDiffuseBakesAndTheMergedFaceTakesAMaterialWithIdentityMaps()
     {
         FaceTransform xf = new FaceTransform(4, 2, 0.5f, 0, 0);
         LegacyMaterialInfo m = new LegacyMaterialInfo { HasNormalMap = true, NormalTransform = xf, HasSpecularMap = true, SpecularTransform = xf };
-        Assert.False(FaceBaking.Bakeable(xf, 0, "mat-1", m, false, false, out string why));
-        Assert.Contains("maps", why);
+        Assert.True(FaceBaking.Bakeable(xf, 0, "mat-1", m, false, false, out string why));
+        Assert.Equal("", why);
     }
 
     [Fact]

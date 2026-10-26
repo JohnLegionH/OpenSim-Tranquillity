@@ -72,13 +72,30 @@ public class MergePlannerBakeRuleTests
     }
 
     [Fact]
-    public void AFaceWithMapsDrawnWithItsOwnNonIdentityTransformDoesNotBake()
+    public void AFaceWithMapsDrawnWithTheFacesOwnTransformBakes()
     {
-        // baking would move the diffuse transform into the coordinates, and the viewer would then apply the maps' transform on top of it
+        // the maps are drawn from the same base coordinates with the material's own transform, so the baked coordinates serve them as well
         FaceTransform xf = new FaceTransform(2, 2, 0, 0, 0);
         LegacyMaterialInfo same = new LegacyMaterialInfo { HasNormalMap = true, NormalTransform = xf };
-        Assert.False(FaceBaking.Bakeable(xf, 0, "m1", same, false, false, out string why));
+        Assert.True(FaceBaking.Bakeable(xf, 0, "m1", same, false, false, out string why));
+        Assert.Equal("", why);
+    }
+
+    [Fact]
+    public void AFaceWithMapsDrawnWithAnotherTransformDoesNotBake()
+    {
+        FaceTransform xf = new FaceTransform(2, 2, 0, 0, 0);
+        LegacyMaterialInfo other = new LegacyMaterialInfo { HasNormalMap = true, NormalTransform = new FaceTransform(2, 3, 0, 0, 0), HasSpecularMap = true, SpecularTransform = xf };
+        Assert.False(FaceBaking.Bakeable(xf, 0, "m1", other, false, false, out string why));
         Assert.Contains("map", why);
+    }
+
+    [Fact]
+    public void AMapThatIsNotThereIsNotComparedWithTheFace()
+    {
+        // a transform left on a map the material does not have changes nothing the viewer draws
+        LegacyMaterialInfo noMaps = new LegacyMaterialInfo { NormalTransform = new FaceTransform(9, 9, 0, 0, 0) };
+        Assert.True(FaceBaking.Bakeable(new FaceTransform(2, 2, 0, 0, 0), 0, "m1", noMaps, false, false, out _));
     }
 
     // ---------------------------------------------------------------- what a merge cannot carry
