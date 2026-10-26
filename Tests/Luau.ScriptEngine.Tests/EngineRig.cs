@@ -53,11 +53,11 @@ internal sealed class EngineRig : IDisposable
 
     private readonly List<string> m_marks = new();
 
-    public EngineRig(Dictionary<string, string> settings = null, Action<SchedulerOptions> tweak = null, double graceMs = 100)
+    public EngineRig(Dictionary<string, string> settings = null, Action<SchedulerOptions> tweak = null, double graceMs = 100, NativeCompile compile = null)
     {
         RealLibrary.Load();
         Engine = new LuauEngine(Log, (s, l) => true, null,
-            (s, l, scene) => Loader = new ScriptLoader(new ScriptCompiler(), new FakeAssets(), l, ownsCompiler: true)
+            (s, l, scene) => Loader = new ScriptLoader(new ScriptCompiler(null, compile ?? Host.Compile, l, null), new FakeAssets(), l, ownsCompiler: true)
             {
                 UnclaimedGrace = TimeSpan.FromMilliseconds(graceMs),
             },
@@ -85,6 +85,7 @@ internal sealed class EngineRig : IDisposable
         var vm = new Vm(Watchdog.Default);
         vm.Register("ossl", "Count", (tag, _) => { Counts.AddOrUpdate(tag, 1, (_, n) => n + 1); return null; });
         vm.Register("ossl", "Mark", (tag, a) => { lock (m_marks) m_marks.Add($"{tag}:{a[0].S}"); return null; });
+        vm.Register("ll", "OwnerSay", (tag, a) => { lock (m_marks) m_marks.Add($"{tag}:{a[0].S}"); return null; });
         vm.Register("ossl", "Burn", (tag, a) =>
         {
             long end = System.Diagnostics.Stopwatch.GetTimestamp() + (long)(a[0].N / 1000.0 * System.Diagnostics.Stopwatch.Frequency);
@@ -111,7 +112,7 @@ internal sealed class EngineRig : IDisposable
     public static string Slua(string body) => "//NGC.Luau:slua\n" + body;
 
     /// <summary>Adds a script item to the object and tells the region it was rezzed; the Running flag is the item's.</summary>
-    public UUID Rez(string source, bool running = true, UUID? item = null)
+    public UUID Rez(string source, bool running = true, UUID? item = null, int startParam = 0, bool postOnRez = false, int stateSource = 0)
     {
         UUID id = item ?? UUID.Random();
         TaskInventoryItem existing = Object.RootPart.Inventory.GetInventoryItem(id);
@@ -128,7 +129,7 @@ internal sealed class EngineRig : IDisposable
                 ScriptRunning = running,
             }, false);
         }
-        Scene.EventManager.TriggerRezScript(LocalId, id, source, 0, false, "InWorldz.Phlox", 0);
+        Scene.EventManager.TriggerRezScript(LocalId, id, source, startParam, postOnRez, "InWorldz.Phlox", stateSource);
         return id;
     }
 
