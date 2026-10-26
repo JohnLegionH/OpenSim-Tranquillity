@@ -111,6 +111,8 @@ internal sealed class EngineRig : IDisposable
 
     public static string Slua(string body) => "//NGC.Luau:slua\n" + body;
 
+    public static string Lsl(string body) => "//NGC.Luau:lsl\n" + body;
+
     /// <summary>Adds a script item to the object and tells the region it was rezzed; the Running flag is the item's.</summary>
     public UUID Rez(string source, bool running = true, UUID? item = null, int startParam = 0, bool postOnRez = false, int stateSource = 0)
     {

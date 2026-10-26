@@ -38,7 +38,7 @@ public class StartupEventTests
     public void ANewRezThatAsksForOnRezGetsStateEntryThenOnRezWithItsParameter()
     {
         using var rig = new EngineRig();
-        UUID item = rig.Rez(AllStartup, startParam: 42, postOnRez: true, stateSource: (int)StateSource.NewRez);
+        UUID item = rig.Rez(EngineRig.Lsl(AllStartup), startParam: 42, postOnRez: true, stateSource: (int)StateSource.NewRez);
 
         Assert.Equal(new[] { "entry", "rez42" }, Settled(rig, item, 2));
     }
@@ -47,7 +47,7 @@ public class StartupEventTests
     public void ARezThatDoesNotAskForOnRezGetsOnlyStateEntry()
     {
         using var rig = new EngineRig();
-        UUID item = rig.Rez(AllStartup, startParam: 42, postOnRez: false, stateSource: (int)StateSource.NewRez);
+        UUID item = rig.Rez(EngineRig.Lsl(AllStartup), startParam: 42, postOnRez: false, stateSource: (int)StateSource.NewRez);
 
         Assert.Equal(new[] { "entry" }, Settled(rig, item, 1));
     }
@@ -56,7 +56,7 @@ public class StartupEventTests
     public void ARegionStartGetsChangedWithTheRegionStartBitAfterOnRez()
     {
         using var rig = new EngineRig();
-        UUID item = rig.Rez(AllStartup, postOnRez: true, stateSource: (int)StateSource.RegionStart);
+        UUID item = rig.Rez(EngineRig.Lsl(AllStartup), postOnRez: true, stateSource: (int)StateSource.RegionStart);
 
         Assert.Equal(new[] { "entry", "rez0", "changed1024" }, Settled(rig, item, 3));
     }
@@ -65,7 +65,7 @@ public class StartupEventTests
     public void ACrossingGetsChangedRegionForTheRootPrimOnly()
     {
         using var rig = new EngineRig();
-        UUID item = rig.Rez(AllStartup, stateSource: (int)StateSource.PrimCrossing);
+        UUID item = rig.Rez(EngineRig.Lsl(AllStartup), stateSource: (int)StateSource.PrimCrossing);
 
         Assert.Equal(new[] { "entry", "changed256" }, Settled(rig, item, 2));
     }
@@ -76,7 +76,7 @@ public class StartupEventTests
         using var rig = new EngineRig();
         rig.Object.AttachedAvatar = UUID.Random();
         rig.Object.AttachmentPoint = 1;
-        UUID item = rig.Rez(AllStartup, stateSource: (int)StateSource.Teleporting);
+        UUID item = rig.Rez(EngineRig.Lsl(AllStartup), stateSource: (int)StateSource.Teleporting);
 
         Assert.Equal(new[] { "entry", "changed768" }, Settled(rig, item, 2));
     }
@@ -86,7 +86,7 @@ public class StartupEventTests
     {
         using var rig = new EngineRig();
         rig.Object.AttachedAvatar = UUID.Random();
-        UUID item = rig.Rez(AllStartup, postOnRez: true, stateSource: (int)StateSource.AttachedRez);
+        UUID item = rig.Rez(EngineRig.Lsl(AllStartup), postOnRez: true, stateSource: (int)StateSource.AttachedRez);
 
         Assert.Equal(new[] { "entry", "rez0", "attach" }, Settled(rig, item, 3));
     }
@@ -95,7 +95,7 @@ public class StartupEventTests
     public void AScriptWithoutTheHandlersGetsNoneOfTheStartupEventsQueued()
     {
         using var rig = new EngineRig();
-        UUID item = rig.Rez("default { state_entry() { llOwnerSay(\"entry\"); } }", postOnRez: true, stateSource: (int)StateSource.RegionStart);
+        UUID item = rig.Rez(EngineRig.Lsl("default { state_entry() { llOwnerSay(\"entry\"); } }"), postOnRez: true, stateSource: (int)StateSource.RegionStart);
 
         Assert.Equal(new[] { "entry" }, Settled(rig, item, 1));
         Assert.Equal(2, rig.Engine.SchedulerScriptFor(item).DroppedUnhandled); // on_rez and changed
@@ -116,7 +116,7 @@ public class StartupEventTests
     public void AScriptThatStartsStoppedGetsItsStartupEventsWhenItIsStarted()
     {
         using var rig = new EngineRig();
-        UUID item = rig.Rez(AllStartup, running: false, startParam: 3, postOnRez: true, stateSource: (int)StateSource.NewRez);
+        UUID item = rig.Rez(EngineRig.Lsl(AllStartup), running: false, startParam: 3, postOnRez: true, stateSource: (int)StateSource.NewRez);
         rig.WaitScheduled(item);
         Thread.Sleep(300); // proves nothing runs while it is stopped: a real wait
         Assert.Empty(rig.MarksOf(item));
@@ -130,7 +130,7 @@ public class StartupEventTests
     public void AResetRunsStateEntryAgainAndPostsNoOnRez()
     {
         using var rig = new EngineRig();
-        UUID item = rig.Rez(AllStartup, postOnRez: true, stateSource: (int)StateSource.NewRez);
+        UUID item = rig.Rez(EngineRig.Lsl(AllStartup), postOnRez: true, stateSource: (int)StateSource.NewRez);
         Settled(rig, item, 2);
 
         rig.Scene.EventManager.TriggerScriptReset(rig.LocalId, item);

@@ -203,9 +203,9 @@ public class EngineEventIntakeTests
     public void ArgumentsArriveAsTheTypesTheEventDeclares()
     {
         using var rig = new EngineRig();
-        UUID item = rig.Rez(
+        UUID item = rig.Rez(EngineRig.Lsl(
             "default { listen(integer c, string n, key id, string m) { llOwnerSay((string)c + \"|\" + n + \"|\" + (string)id + \"|\" + m); }\n" +
-            "  at_target(integer t, vector p, vector o) { llOwnerSay(\"at\" + (string)t + (string)p); } }");
+            "  at_target(integer t, vector p, vector o) { llOwnerSay(\"at\" + (string)t + (string)p); } }"));
         rig.WaitScheduled(item);
         UUID speaker = UUID.Random();
 
