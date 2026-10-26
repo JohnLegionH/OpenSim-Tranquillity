@@ -9,13 +9,22 @@ using Phlox.ScriptEngine;
 
 namespace SLua.ScriptEngine
 {
-    /// <summary>Stub: the receiver of the function trampolines.</summary>
+    /// <summary>
+    /// What a script's function calls are made through: the script, and the script functions as ILSLSystemAPI, the
+    /// interface Phlox's LSLSystemAPI implements. A generated trampoline for llSay calls <c>context.Api.llSay(...)</c>
+    /// and so reaches the implementation Phlox uses. The context holds the interface only, never Phlox's engine or its
+    /// interpreter.
+    /// </summary>
     internal sealed class ScriptContext
     {
-        public ScriptContext(SchedulerScript script, ILSLSystemAPI api) { }
+        public ScriptContext(SchedulerScript script, ILSLSystemAPI api)
+        {
+            Script = script;
+            Api = api;
+        }
 
-        public SchedulerScript Script => null;
+        public SchedulerScript Script { get; }
 
-        public ILSLSystemAPI Api => null;
+        public ILSLSystemAPI Api { get; }
     }
 }
