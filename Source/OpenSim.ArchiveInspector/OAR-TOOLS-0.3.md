@@ -90,6 +90,9 @@ limit, still merges nothing more, and says nothing about it.
 - Viewers were not measured: the viewer cost is the viewer's formula applied by the tool, not a measurement in a running viewer.
 - A script that builds a link number or a parameter list in a way the scan cannot follow locks its linkset, so such linksets keep every part. On
   the test archives this cost one single-part linkset and no parts; an archive full of such scripts would keep more parts.
+- A merge gives the same plan and the same mesh assets on Windows and on Linux, but the manifest notecards of the merged parts use the line
+  ending of the platform the tool runs on, so the two archives are not byte-identical (a repeated run on one platform is). It was checked on the 464-prim
+  test archive: 34 notecards differ, all 34 are equal once the line endings and the notecard's length field are ignored, and all 34 mesh assets are equal.
 - The front door of the walk-test shop is closed in the original archive as well, so the walk through a door was proved for the back door only.
 
 ## Packages
