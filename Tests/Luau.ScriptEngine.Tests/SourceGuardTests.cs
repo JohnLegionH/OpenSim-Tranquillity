@@ -70,7 +70,7 @@ public class SourceGuardTests
     [Fact]
     public void AnOperatorChainPastTheLimitIsRefusedBeforeTheCompilerSeesIt()
     {
-        // A long member-access sum was the one shape that overflowed a 1 MB native stack and took quadratic time.
+        // A long member-access sum was the one shape that overflowed the native stack of a default-sized thread and took quadratic time.
         string source = Lsl("        vector v;\n        float f = " + string.Concat(Enumerable.Repeat("v.x + ", 1001)) + "1.0;");
         CompileResult r = Compile(source);
         Assert.False(r.Success);
