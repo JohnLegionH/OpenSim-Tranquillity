@@ -114,4 +114,27 @@ public class MergeLodSettingTests
         Assert.Contains("viewer streaming cost", r.ToText());
         Assert.Contains("251.02", r.ToText());
     }
+
+    [Theory]
+    [InlineData("1")]
+    [InlineData("4")]
+    public void ThePixelLimitOptionWithoutMergeIsRefusedAndNothingIsWritten(string value)
+    {
+        string source = MapsFixture.Write(), output = Output();
+        Directory.CreateDirectory(Path.GetDirectoryName(output));
+        Assert.Equal(2, ConvertCommand.Run(new[] { source, "--lod-pixel-limit", value, "--out", output }));
+        Assert.False(File.Exists(output));
+    }
+
+    [Fact]
+    public void TheReportPutsThePartCountAndTheViewerCostBeforeAndAfterSideBySide()
+    {
+        string source = MapsFixture.Write(), output = Output();
+        Directory.CreateDirectory(Path.GetDirectoryName(output));
+        MergeWriteResult r = MergeArchiveWriter.Write(source, output);
+        r.Cost = new CostComparison(29.18, 251.02);
+        string line = r.ToText().Split((char)10).Single(l => l.TrimStart().StartsWith("before -> after:", StringComparison.Ordinal));
+        Assert.Contains("region part count " + r.Plan.PartsBefore + " -> " + r.Plan.PartsAfter, line);
+        Assert.Contains("viewer streaming cost 29.18 -> 251.02", line);
+    }
 }
