@@ -83,6 +83,10 @@ namespace Luau.ScriptEngine
         internal bool WaitRequested;
         internal bool Waiting;
         internal Value[] WaitResult;
+        internal double AskedSeconds;
+        internal double Owed;
+        internal double SluaTimer;
+        internal ScriptWorker Worker;
 
         internal void CountStep(long ticks) { Interlocked.Increment(ref m_steps); Interlocked.Add(ref m_runTicks, ticks); }
         internal void CountDispatch(long ticks) { Interlocked.Increment(ref m_dispatches); Interlocked.Add(ref m_runTicks, ticks); }
@@ -97,15 +101,40 @@ namespace Luau.ScriptEngine
         }
 
         /// <summary>For a host function: adds a forced delay to this script (the call-delay of the Second Life wiki; llSleep).</summary>
-        public void AddSleep(double seconds) => throw new NotImplementedException();
+        public void AddSleep(double seconds)
+        {
+            RequireCurrent();
+            Native.AddSleep(seconds);
+            AskedSeconds += seconds;
+        }
 
         /// <summary>For a host function: sets or clears (0 or less) this script's timer, as llSetTimerEvent does. The interval is raised to the floor.</summary>
-        public void SetTimer(double seconds) => throw new NotImplementedException();
+        public void SetTimer(double seconds)
+        {
+            RequireCurrent();
+            Worker.SetTimerFor(this, seconds);
+        }
 
         /// <summary>For a pausing call's start function: the script is parked after this step until <see cref="LuauScheduler.CompleteWait"/>.</summary>
-        public void BeginWait() => throw new NotImplementedException();
+        public void BeginWait()
+        {
+            RequireCurrent();
+            WaitRequested = true;
+        }
 
         /// <summary>For a pausing call's take function: the values the call was completed with, or none.</summary>
-        public Value[] TakeResult() => throw new NotImplementedException();
+        public Value[] TakeResult()
+        {
+            RequireCurrent();
+            Value[] result = WaitResult ?? Array.Empty<Value>();
+            WaitResult = null;
+            return result;
+        }
+
+        private void RequireCurrent()
+        {
+            if (!ReferenceEquals(t_current, this))
+                throw new InvalidOperationException("this call is valid only inside a host function that this script called");
+        }
     }
 }

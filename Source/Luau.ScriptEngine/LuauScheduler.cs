@@ -17,33 +17,97 @@ namespace Luau.ScriptEngine
     /// </summary>
     internal sealed class LuauScheduler : IDisposable
     {
-        public LuauScheduler(SchedulerOptions options) => throw new NotImplementedException();
+        private static readonly TimeSpan StopWait = TimeSpan.FromSeconds(5);
 
-        public int WorkerCount => throw new NotImplementedException();
+        private readonly SchedulerOptions m_options;
+        private readonly ScriptWorker[] m_workers;
+        private readonly object m_lock = new object();
+        private long m_nextId;
+        private bool m_disposed;
+
+        public LuauScheduler(SchedulerOptions options)
+        {
+            if (options.VmFactory == null)
+                throw new ArgumentException("a VM factory is required", nameof(options));
+            m_options = options;
+            m_workers = new ScriptWorker[Math.Max(1, options.WorkerThreads)];
+            for (int i = 0; i < m_workers.Length; i++)
+                m_workers[i] = new ScriptWorker(i, options);
+        }
+
+        public int WorkerCount => m_workers.Length;
 
         /// <summary>Makes a script from a compiled asset on the least-loaded worker. Returns at once; the script is <see cref="ScriptRunState.Created"/> when its worker has made it.</summary>
-        public SchedulerScript Add(byte[] asset, ScriptLanguage language) => throw new NotImplementedException();
+        public SchedulerScript Add(byte[] asset, ScriptLanguage language)
+        {
+            SchedulerScript script;
+            ScriptWorker worker;
+            lock (m_lock)
+            {
+                if (m_disposed)
+                    throw new ObjectDisposedException(nameof(LuauScheduler));
+                worker = m_workers[0];
+                foreach (ScriptWorker w in m_workers)
+                    if (w.ScriptCount < worker.ScriptCount)
+                        worker = w;
+                worker.ReserveScript();
+                script = new SchedulerScript(++m_nextId, worker.Index, asset, language) { Worker = worker };
+            }
+            worker.CountLoading();
+            worker.Enqueue(() => worker.Make(script));
+            return script;
+        }
 
         /// <summary>Starts a made script: its main function (SLua) or first state (LSL) becomes runnable.</summary>
-        public void Start(SchedulerScript script) => throw new NotImplementedException();
+        public void Start(SchedulerScript script) => script.Worker.Enqueue(() => script.Worker.StartScript(script));
 
         /// <summary>Queues an event for the script; dropped and counted when its queue is full.</summary>
-        public void Post(SchedulerScript script, string eventName, params Value[] args) => throw new NotImplementedException();
+        public void Post(SchedulerScript script, string eventName, params Value[] args)
+        {
+            int index = Host.EventIndex(eventName);
+            script.Worker.Enqueue(() => script.Worker.PostEvent(script, index, args));
+        }
 
         /// <summary>Frees the script's native objects on its worker and forgets it.</summary>
-        public void Remove(SchedulerScript script) => throw new NotImplementedException();
+        public void Remove(SchedulerScript script) => script.Worker.Enqueue(() => script.Worker.RemoveScript(script));
 
         /// <summary>Delivers the result of a pausing call; the script runs again.</summary>
-        public void CompleteWait(SchedulerScript script, params Value[] result) => throw new NotImplementedException();
+        public void CompleteWait(SchedulerScript script, params Value[] result) =>
+            script.Worker.Enqueue(() => script.Worker.CompleteWait(script, result));
 
         /// <summary>
         /// Does the pending work of every worker once, as of <paramref name="now"/>, on the calling thread. For a
         /// scheduler built with RunThreads off. True when some worker still has runnable scripts.
         /// </summary>
-        public bool DoWork(double now) => throw new NotImplementedException();
+        public bool DoWork(double now)
+        {
+            if (m_options.RunThreads)
+                throw new InvalidOperationException("this scheduler runs its own threads");
+            bool more = false;
+            foreach (ScriptWorker w in m_workers)
+                more |= w.DoWork(now);
+            return more;
+        }
 
-        public SchedulerStats GetStats() => throw new NotImplementedException();
+        public SchedulerStats GetStats()
+        {
+            var workers = new WorkerStats[m_workers.Length];
+            for (int i = 0; i < workers.Length; i++)
+                workers[i] = m_workers[i].GetStats();
+            return new SchedulerStats { Workers = workers };
+        }
 
-        public void Dispose() => throw new NotImplementedException();
+        /// <summary>Stops every worker, waiting up to five seconds for each, and frees the scripts, images and VMs.</summary>
+        public void Dispose()
+        {
+            lock (m_lock)
+            {
+                if (m_disposed)
+                    return;
+                m_disposed = true;
+            }
+            foreach (ScriptWorker w in m_workers)
+                w.Stop(StopWait);
+        }
     }
 }

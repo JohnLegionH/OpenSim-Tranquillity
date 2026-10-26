@@ -209,7 +209,15 @@ namespace Luau.ScriptEngine
                 list.AddRange(errors);
             return list;
         }
-        public bool HasScript(UUID itemID, out bool running) { running = false; return false; }
+        /// <summary>
+        /// True when this engine holds the script: compiled and ready, or (once scripts are started) loaded. A ready script
+        /// has not been started, so it is not running.
+        /// </summary>
+        public bool HasScript(UUID itemID, out bool running)
+        {
+            running = false;
+            return m_loader != null && IsTracking(itemID) && m_loader.IsReady(itemID);
+        }
         public bool GetScriptState(UUID itemID) => false;
         public void SaveAllState() { }
         public void StartProcessing() { }
