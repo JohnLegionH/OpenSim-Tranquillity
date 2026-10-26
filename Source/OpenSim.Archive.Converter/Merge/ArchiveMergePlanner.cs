@@ -177,7 +177,7 @@ public static class ArchiveMergePlanner
                 if (tef.MaterialID != UUID.Zero)
                     materials.TryGetValue(tef.MaterialID.Guid, out material);
                 translucent.TryGetValue(tef.TextureID.Guid, out TextureFacts texture);
-                f.Alpha = FaceAlpha.IsAlpha(tef.RGBA.A, texture.Translucent, material);
+                f.Alpha = FaceAlpha.IsAlpha(tef.RGBA.A, tef.Glow, texture, material);
                 f.TextureWidth = texture.Width;
                 f.TextureHeight = texture.Height;
                 // the coordinates the face will be drawn with from a mesh asset: baked into the mesh or applied by its texture entry, the same figures
