@@ -85,7 +85,7 @@ namespace SLua.ScriptEngine
                 return Failed(language, refused);
 
             // A header line is blanked for SLua, its newline kept, so the compiler's line numbers match the source.
-            string text = language == ScriptLanguage.Slua && EngineHeader.NamedEngine(source) == EngineIdentity.EngineName
+            string text = language == ScriptLanguage.Slua && string.Equals(EngineHeader.NamedEngine(source), EngineIdentity.EngineName, System.StringComparison.OrdinalIgnoreCase)
                 ? source[source.IndexOf('\n')..]
                 : source;
             if (text.Length == 0)
