@@ -174,6 +174,25 @@ public class RewriteTests
         Assert.Throws<InvalidDataException>(() => Patch(Utf8(text), new PartPatch(PartB, new[] { ElementEdit.SetTextOrAdd("Shape/NoSuchThing", "1") })));
     }
 
+    [Fact]
+    public void AnEditCanAddAMarkupElementThePartLacks_AndReplacesOneItHas()
+    {
+        string text = ObjectText();
+        byte[] added = Patch(Utf8(text), new PartPatch(PartB, new[] { ElementEdit.SetInnerXmlOrAdd("Notes", "<Item>first</Item>") }));
+        string after = new UTF8Encoding(false).GetString(added);
+        Assert.Contains("<Notes><Item>first</Item></Notes></SceneObjectPart>", after);
+        Assert.Equal(1, System.Xml.Linq.XDocument.Parse(after).Descendants("Item").Count());
+
+        byte[] replaced = Patch(added, new PartPatch(PartB, new[] { ElementEdit.SetInnerXmlOrAdd("Notes", "<Item>second</Item>") }));
+        string again = new UTF8Encoding(false).GetString(replaced);
+        Assert.Contains("<Notes><Item>second</Item></Notes>", again);
+        Assert.DoesNotContain("first", again);
+        Assert.Equal(1, System.Xml.Linq.XDocument.Parse(again).Descendants("Notes").Count());
+
+        Assert.Throws<InvalidDataException>(() => Patch(Utf8(text), new PartPatch(PartB, new[] { ElementEdit.SetInnerXmlOrAdd("Shape/NoSuchThing", "<a/>") })));
+        Assert.Throws<ArgumentException>(() => ElementEdit.SetInnerXmlOrAdd("Notes", "<open>"));
+    }
+
     [Theory]
     [InlineData("\n")]
     [InlineData("\r\n")]
