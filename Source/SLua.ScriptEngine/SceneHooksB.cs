@@ -304,11 +304,33 @@ namespace SLua.ScriptEngine
             return m_scene.LandChannel?.GetLandObjectClippedXY(pos.X, pos.Y)?.LandData?.LocalID ?? -1;
         }
 
-        /// <summary>A script has just been made: the estate switch and the parcel rule are applied before it starts, so it starts paused and is never refused.</summary>
-        public void EvaluateNew(UUID itemID)
+        /// <summary>
+        /// The reasons a script that has just been made starts held back: the estate switch and the parcel rule. The engine sets
+        /// them before the script is visible or started, so it starts paused and is never refused.
+        /// </summary>
+        public PauseReason ReasonsFor(UUID itemID, uint localID)
         {
+            PauseReason reasons = PauseReason.None;
             if (m_scene.RegionInfo.RegionSettings.DisableScripts)
-                m_host.SetPaused(itemID, PauseReason.Estate, true);
+                reasons |= PauseReason.Estate;
+            SceneObjectPart part = m_scene.GetSceneObjectPart(localID);
+            if (part?.ParentGroup != null && !part.ParentGroup.IsDeleted)
+            {
+                bool allowed = ScriptMayRunHere(part, itemID, out bool onlyByControls);
+                lock (m_lock)
+                {
+                    if (onlyByControls) m_controlsExempt.Add(itemID); else m_controlsExempt.Remove(itemID);
+                }
+                if (!allowed)
+                    reasons |= PauseReason.Parcel;
+            }
+            return reasons;
+        }
+
+        /// <summary>A script was made while the settings or the land may have changed under <see cref="ReasonsFor"/>: both are asked again.</summary>
+        public void Resync(UUID itemID)
+        {
+            m_host.SetPaused(itemID, PauseReason.Estate, m_scene.RegionInfo.RegionSettings.DisableScripts);
             EvaluateItem(itemID);
         }
 

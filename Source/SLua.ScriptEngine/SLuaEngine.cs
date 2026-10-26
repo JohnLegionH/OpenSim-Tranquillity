@@ -344,6 +344,15 @@ namespace SLua.ScriptEngine
             StartInfo start;
             lock (m_starts) m_starts.TryGetValue(ready.ItemID, out start);
             var record = new ScriptRecord { ItemID = ready.ItemID, LocalID = ready.LocalID, AssetID = ready.AssetID, Script = script, Start = start, StartupPending = true };
+            // The estate switch and the parcel rule decide before the script is visible or started: a script they hold back starts paused, never refused.
+            record.Pause = m_policy?.ReasonsFor(ready.ItemID, ready.LocalID) ?? PauseReason.None;
+            if (record.Pause != PauseReason.None)
+            {
+                foreach (PauseReason reason in new[] { PauseReason.Estate, PauseReason.Parcel })
+                    if ((record.Pause & reason) != 0)
+                        PolicyStats.Count(reason, true);
+                scheduler.Suspend(script);
+            }
             ScriptRecord replaced;
             lock (m_records)
             {
@@ -353,8 +362,7 @@ namespace SLua.ScriptEngine
             if (replaced != null)
                 scheduler.Remove(replaced.Script);
 
-            // The estate switch and the parcel rule decide before the script starts: a script they hold back starts paused, never refused.
-            m_policy?.EvaluateNew(ready.ItemID);
+            m_policy?.Resync(ready.ItemID); // closes the window between the decision above and the record being visible
 
             if (running)
             {
