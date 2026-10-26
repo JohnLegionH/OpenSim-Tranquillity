@@ -29,7 +29,7 @@ public class MergeSculptTests
     private static readonly SculptKit.Shape[] Shapes = { SculptKit.Shape.Sphere, SculptKit.Shape.Torus, SculptKit.Shape.Plane, SculptKit.Shape.Cylinder };
 
     /// <summary>A linkset of four sculpts and two boxes, all with the same texture entry (repeats 1, no offset, no rotation).</summary>
-    private static string Archive(out List<KitPart> parts)
+    private static string Archive(out List<KitPart> parts, byte[] terrain = null)
     {
         string te = Convert.ToBase64String(new Primitive.TextureEntry(new UUID(Guid.NewGuid())).GetBytes());
         parts = new List<KitPart>();
@@ -42,7 +42,17 @@ public class MergeSculptTests
         }
         for (int i = 0; i < 2; i++)
             parts.Add(new KitPart("Box " + (i + 1), Shapes.Length + i + 1) { Offset = ((Shapes.Length + i) * 2) + ",0,0", Scale = "1,1,1", TextureEntry = te });
-        return EligibilityKit.WriteArchive(new List<List<KitPart>> { parts }, assets);
+        return EligibilityKit.WriteArchive(new List<List<KitPart>> { parts }, assets, terrain);
+    }
+
+    /// <summary>Set OARX_SCULPT_OUT to a path to write the mixed archive there, with a terrain a region can load.</summary>
+    [Fact]
+    public void TheMixedArchiveCanBeWrittenToAFileForALoadIntoARegion()
+    {
+        string outPath = Environment.GetEnvironmentVariable("OARX_SCULPT_OUT");
+        if (string.IsNullOrEmpty(outPath))
+            return;
+        File.Copy(Archive(out _, PlanarFixture.FlatTerrain()), outPath, false);
     }
 
     [Fact]
