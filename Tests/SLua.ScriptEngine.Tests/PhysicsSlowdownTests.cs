@@ -8,6 +8,7 @@
 using System.Reflection;
 using OpenMetaverse;
 using OpenSim.Region.Framework.Scenes;
+using OpenSim.Region.ScriptEngine.Interfaces;
 using Xunit;
 
 namespace SLua.ScriptEngine.Tests;
@@ -36,14 +37,14 @@ public class PhysicsSlowdownTests
     {
         rig.PostProbe(item, 1);
         Assert.True(SchedulerHarness.WaitFor(() => rig.MarksOf(item).Contains("done")), "the handler ran");
-        return rig.Engine.SchedulerScriptFor(item).AskedSeconds;
+        return Assert.Single(rig.PhySleeps);
     }
 
     [RequiresNativeFact]
     public void AFunctionThatChangesPhysicsDelaysTheScriptByTheAverageFrameTimeWhenItIsOverThirtyMilliseconds()
     {
         using var rig = new EngineRig();
-        UUID item = rig.Rez(EngineRig.Slua(Slows));
+        UUID item = rig.Rez(EngineRig.Slua(Slows), stateSource: (int)StateSource.NewRez);
         rig.WaitScheduled(item);
         Frames(rig.Scene, 38f, 2f); // 40 ms a frame
 
@@ -54,7 +55,7 @@ public class PhysicsSlowdownTests
     public void AtThirtyMillisecondsOrLessThereIsNoDelay()
     {
         using var rig = new EngineRig();
-        UUID item = rig.Rez(EngineRig.Slua(Slows));
+        UUID item = rig.Rez(EngineRig.Slua(Slows), stateSource: (int)StateSource.NewRez);
         rig.WaitScheduled(item);
         Frames(rig.Scene, 28f, 2f); // exactly 30 ms
 
@@ -65,7 +66,7 @@ public class PhysicsSlowdownTests
     public void WithThePhysicsThrottleOffThereIsNoDelayHoweverSlowThePhysics()
     {
         using var rig = new EngineRig(new Dictionary<string, string> { ["PhysicsThrottle"] = "false" });
-        UUID item = rig.Rez(EngineRig.Slua(Slows));
+        UUID item = rig.Rez(EngineRig.Slua(Slows), stateSource: (int)StateSource.NewRez);
         rig.WaitScheduled(item);
         Frames(rig.Scene, 80f, 20f);
 
@@ -76,7 +77,7 @@ public class PhysicsSlowdownTests
     public void TheDelayFollowsTheAverageOfTheLastTenFramesNotTheLastOne()
     {
         using var rig = new EngineRig();
-        UUID item = rig.Rez(EngineRig.Slua(Slows));
+        UUID item = rig.Rez(EngineRig.Slua(Slows), stateSource: (int)StateSource.NewRez);
         rig.WaitScheduled(item);
         Frames(rig.Scene, 58f, 2f, 5); // five frames of 60 ms
         Frames(rig.Scene, 8f, 2f, 5);  // then five of 10 ms: the average is 35 ms

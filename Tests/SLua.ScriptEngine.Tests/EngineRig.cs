@@ -54,6 +54,10 @@ internal sealed class EngineRig : IDisposable
     public SLuaScheduler Scheduler;
 
     private readonly List<string> m_marks = new();
+    private readonly List<double> m_phySleeps = new();
+
+    /// <summary>The delay, in seconds, each ossl.PhySleep call asked for.</summary>
+    public double[] PhySleeps { get { lock (m_marks) return m_phySleeps.ToArray(); } }
 
     public EngineRig(Dictionary<string, string> settings = null, Action<SchedulerOptions> tweak = null, double graceMs = 100, NativeCompile compile = null, IPrimEventFlags primFlags = null)
     {
@@ -89,7 +93,14 @@ internal sealed class EngineRig : IDisposable
         var vm = new Vm(Watchdog.Default);
         vm.Register("ossl", "Count", (tag, _) => { Counts.AddOrUpdate(tag, 1, (_, n) => n + 1); return null; });
         vm.Register("ossl", "Mark", (tag, a) => { lock (m_marks) m_marks.Add($"{tag}:{a[0].S}"); return null; });
-        vm.Register("ossl", "PhySleep", (tag, _) => { Engine.PhySleep(); return null; });
+        vm.Register("ossl", "PhySleep", (tag, _) =>
+        {
+            SchedulerScript caller = SchedulerScript.Current;
+            double before = caller.AskedSeconds;
+            Engine.PhySleep();
+            lock (m_marks) m_phySleeps.Add(caller.AskedSeconds - before);
+            return null;
+        });
         vm.Register("ll", "OwnerSay", (tag, a) => { lock (m_marks) m_marks.Add($"{tag}:{a[0].S}"); return null; });
         // What the Detected functions will read: the detected objects of the event being handled, by index.
         vm.Register("ossl", "DetectedCount", (tag, _) => new[] { Value.Int(SchedulerScript.Current.DetectedCount) });
