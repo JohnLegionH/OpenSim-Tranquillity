@@ -206,9 +206,15 @@ public class MergePlanArchiveTests
     }
 
     [Fact]
-    public void ALegacyMaterialWhoseNormalMapRepeatsDifferentlyOrIsMissingStaysUnbaked()
+    public void ALegacyMaterialWhoseNormalMapRepeatsDifferentlyStillBakesBecauseTheMergedMaterialStatesTheDifference()
     {
-        Assert.False(FirstSlotBaked(true, true, 40000));
+        // the face is not scaled (1 by 1) and the map repeats four times: the merged face's material draws the map four times over the baked coordinates
+        Assert.True(FirstSlotBaked(true, true, 40000));
+    }
+
+    [Fact]
+    public void ALegacyMaterialThatIsMissingFromTheArchiveStaysUnbaked()
+    {
         Assert.False(FirstSlotBaked(false, false, 0));
     }
 
