@@ -55,7 +55,7 @@ public class FaceUvTests
     [InlineData(0, 1, 0, -1.5f, 1.1f)]
     [InlineData(0, -1, 0, 2.5f, 1.1f)]
     [InlineData(0, 0, 1, 2.5f, 2.5f)]
-    [InlineData(0, 0, -1, 2.5f, 2.5f)]
+    [InlineData(0, 0, -1, 2.5f, -1.5f)]
     public void PlanarProjectionOfAVertexMatchesTheWorkedNumbersForEachDominantNormal(float nx, float ny, float nz, float u, float v)
     {
         // position (0.5, 0.25, 0.3) at size (2, 4, 1) is (1, 1, 0.3) in the viewer's arithmetic

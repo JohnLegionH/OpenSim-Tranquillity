@@ -5,6 +5,9 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+using OpenSim.Framework;
+using SkiaSharp;
+
 namespace OpenSim.Archive.Converter.Merge;
 
 /// <summary>Decides whether a face is drawn alpha-blended.</summary>
@@ -15,12 +18,40 @@ public static class FaceAlpha
     /// fully opaque and the face's legacy material does not say otherwise (alpha mode none or mask).
     /// </summary>
     /// <param name="material">The face's legacy material, or null when it has none.</param>
-    public static bool IsAlpha(float colorAlpha, bool textureTranslucent, LegacyMaterialInfo material) => throw new NotImplementedException();
+    public static bool IsAlpha(float colorAlpha, bool textureTranslucent, LegacyMaterialInfo material)
+    {
+        if (colorAlpha < 0.999f)
+            return true;
+        int mode = material?.DiffuseAlphaMode ?? -1;
+        if (mode == 1)
+            return true;
+        return textureTranslucent && mode != 0 && mode != 2;
+    }
 }
 
 /// <summary>Reads the alpha channel of a texture.</summary>
 public static class TextureAlpha
 {
     /// <summary>True when the JPEG 2000 texture decodes and has at least one pixel that is not fully opaque; false when it is opaque or cannot be decoded.</summary>
-    public static bool IsTranslucent(byte[] jpeg2000) => throw new NotImplementedException();
+    public static bool IsTranslucent(byte[] jpeg2000)
+    {
+        if (!SkiaImageUtils.TryDecodeFromJ2K(jpeg2000, out SKBitmap bitmap) || bitmap == null)
+            return false;
+        using (bitmap)
+        {
+            if (bitmap.AlphaType == SKAlphaType.Opaque || bitmap.ColorType == SKColorType.Rgb888x)
+                return false;
+            using SKBitmap rgba = bitmap.ColorType == SKColorType.Rgba8888 || bitmap.ColorType == SKColorType.Bgra8888 ? null : bitmap.Copy(SKColorType.Rgba8888);
+            SKBitmap source = rgba ?? bitmap;
+            if (source == null)
+                return false;
+            ReadOnlySpan<byte> px = source.GetPixelSpan();
+            int stride = source.RowBytes;
+            for (int y = 0; y < source.Height; y++)
+                for (int x = 0; x < source.Width; x++)
+                    if (px[y * stride + x * 4 + 3] != 255)
+                        return true;
+            return false;
+        }
+    }
 }
