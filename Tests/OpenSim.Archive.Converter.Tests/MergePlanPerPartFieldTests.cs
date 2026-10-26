@@ -36,6 +36,7 @@ public class MergePlanPerPartFieldTests
         new object[] { "sale price", "<SalePrice>50</SalePrice>", "SALE_PRICE" },
         new object[] { "hover text", "<Text>Open</Text>", "HOVER_TEXT" },
         new object[] { "hover text colour", "<Color><R>255</R><G>0</G><B>0</B><A>255</A></Color>", "HOVER_TEXT_COLOR" },
+        new object[] { "hover text transparency", "<Color><R>0</R><G>0</G><B>0</B><A>0</A></Color>", "HOVER_TEXT_COLOR" },
         new object[] { "touch text", "<TouchName>Open the door</TouchName>", "TOUCH_TEXT" },
         new object[] { "pay price", "<PayPrice0>10</PayPrice0>", "PAY_PRICE" },
     };
@@ -52,10 +53,10 @@ public class MergePlanPerPartFieldTests
     }
 
     [Fact]
-    public void ThePlainDefaultsAPartIsWrittenWithDoNotKeepIt()
+    public void TheDefaultsTheRegionWritesForAPartDoNotKeepIt()
     {
         string defaults = "<ClickAction>0</ClickAction><ObjectSaleType>0</ObjectSaleType><SalePrice>0</SalePrice><SitName></SitName><TouchName></TouchName>"
-            + "<Text></Text><Color><R>0</R><G>0</G><B>0</B><A>0</A></Color>"
+            + "<Text></Text><Color><R>0</R><G>0</G><B>0</B><A>255</A></Color>"
             + "<PayPrice0>-2</PayPrice0><PayPrice1>-2</PayPrice1><PayPrice2>-2</PayPrice2><PayPrice3>-2</PayPrice3><PayPrice4>-2</PayPrice4>";
         MergePlan plan = Plan(Linkset(defaults));
         Assert.Empty(plan.Linksets[0].Kept);
