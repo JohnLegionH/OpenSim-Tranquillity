@@ -225,6 +225,7 @@ namespace SLua.ScriptEngine
                 Log = m_log,
                 ScriptFaulted = OnScriptFaulted,
                 StateChanged = OnStateChanged,
+                HandlersChanged = OnHandlersChanged,
                 ScriptError = OnScriptError,
                 WorkerStopped = OnWorkerStopped,
             };
@@ -383,10 +384,9 @@ namespace SLua.ScriptEngine
         /// <summary>
         /// Tells the region which events the script handles, so it raises touches, collisions and the like for the prim.
         /// An LSL script's flags come from the handler mask of its state in the compiled asset (the union over the scripts
-        /// of a prim is the region's own, kept per script item); a stopped script asks for nothing. An SLua script's
-        /// handler set is known only to the runtime, which does not export it yet (API version 4): its flags are computed
-        /// here from that export once it exists, in place of the zero below. Serialized per script so a stop and a
-        /// state change cannot cross.
+        /// of a prim is the region's own, kept per script item); a stopped script asks for nothing. An SLua script registers
+        /// its handlers while it runs, so its flags come from the handler set the runtime reports, and are set again each
+        /// time the runtime reports a change. Serialized per script so a stop and a state change cannot cross.
         /// </summary>
         private void ApplyEventFlags(ScriptRecord record, int state, bool running)
         {
@@ -399,9 +399,19 @@ namespace SLua.ScriptEngine
                 ulong[] masks = record.Script.StateMasks;
                 if (running && masks != null && masks.Length > 0)
                     flags = EventFlagMap.ForMask(masks[Math.Min(state, masks.Length - 1)]);
+                else if (running && record.Script.Language == ScriptLanguage.Slua)
+                    flags = EventFlagMap.ForMask(record.Script.HandlerMask);
                 try { sink.Set(record.LocalID, record.ItemID, flags); }
                 catch (Exception e) { m_log.Error($"The event flags of script {record.ItemID} could not be set: {e.Message}"); }
             }
+        }
+
+        /// <summary>An SLua script's handler set changed (on its worker's thread): the region is told the events it handles now.</summary>
+        private void OnHandlersChanged(SchedulerScript script)
+        {
+            ScriptRecord record = FindRecord(script);
+            if (record != null)
+                ApplyEventFlags(record, script.CurrentState, script.Running);
         }
 
         /// <summary>A script changed state (on its worker's thread): the new state's handlers decide what the region raises.</summary>

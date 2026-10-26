@@ -476,6 +476,8 @@ namespace SLua.ScriptEngine
             s.Waiting = false;
             s.WaitResult = null;
             s.AskedSeconds = 0;
+            s.SetHandlers(0, false);
+            s.Windows = null;
             s.SluaTimer = 0;
             s.NeedsStep = false;
             s.Started = false;
@@ -619,6 +621,7 @@ namespace SLua.ScriptEngine
             QueuedEvent ev = default;
             StepResult r;
             long start = Stopwatch.GetTimestamp();
+            long runTicks = 0;
             SchedulerScript.Current = s;
             s.WaitRequested = false;
             s.AskedSeconds = 0;
@@ -654,7 +657,7 @@ namespace SLua.ScriptEngine
             finally
             {
                 SchedulerScript.Current = null;
-                long ticks = Stopwatch.GetTimestamp() - start;
+                long ticks = runTicks = Stopwatch.GetTimestamp() - start;
                 if (dispatching) s.CountDispatch(ticks); else s.CountStep(ticks);
                 Interlocked.Increment(ref m_steps);
             }
@@ -707,6 +710,13 @@ namespace SLua.ScriptEngine
                     break;
             }
 
+            // An SLua script registers handlers while it runs; the runtime says when the set changed, and the host is told.
+            if (s.Language == ScriptLanguage.Slua && r.HandlersChanged)
+                ReadHandlers(s);
+
+            if (r.Status != StepStatus.Idle && r.Status != StepStatus.NotRun)
+                RecordWindow(s, runTicks / (double)Stopwatch.Frequency, r.CpuSeconds);
+
             // The runtime reports, in the step that is running, the delay the script owes after it: what its host calls
             // asked for (AskedSeconds, served below) plus, when the step overran its window, a punishment. What it
             // reports beyond what was asked is the punishment.
@@ -715,7 +725,13 @@ namespace SLua.ScriptEngine
             if (r.SleepServed > 0)
             {
                 extra = r.SleepServed - s.AskedSeconds;
-                if (extra > SleepTolerance)
+                if (extra > SleepTolerance && !IsOwnOverrun(s))
+                {
+                    // The windows' CPU time says the system kept this worker off the processor: not the script's doing.
+                    s.CountWaivedOverrun();
+                    extra = 0;
+                }
+                else if (extra > SleepTolerance)
                 {
                     s.CountPunishment();
                     Interlocked.Increment(ref m_punishments);
@@ -762,6 +778,45 @@ namespace SLua.ScriptEngine
             }
             if (s.Language == ScriptLanguage.Slua)
                 SyncSluaTimer(s);
+        }
+
+        /// <summary>Reads the handler set the runtime reports changed and tells the host (worker thread).</summary>
+        private void ReadHandlers(SchedulerScript s)
+        {
+            try
+            {
+                (ulong mask, bool known) = s.Native.Handlers();
+                s.SetHandlers(mask, known);
+                m_options.HandlersChanged?.Invoke(s);
+            }
+            catch (Exception e)
+            {
+                m_log?.Error($"script {s.Id}: its handler set could not be read: {e.Message}");
+            }
+        }
+
+        private void RecordWindow(SchedulerScript s, double wallSeconds, double cpuSeconds)
+        {
+            int windows = m_options.OverrunWindows;
+            if (windows <= 0)
+                return;
+            if (s.Windows == null || s.Windows.Capacity != windows)
+                s.Windows = new RunWindowAverage(windows);
+            s.Windows.Add(wallSeconds, cpuSeconds);
+        }
+
+        /// <summary>
+        /// Whether an overrun the runtime reported is the script's own. Run windows are measured in wall time, so a worker
+        /// the system kept off the processor overruns too; the script's CPU time over its recent windows tells the two
+        /// apart. With fewer windows than <see cref="SchedulerOptions.OverrunWindows"/> there is nothing to average and the
+        /// overrun is the script's, as it was before the runtime reported CPU time.
+        /// </summary>
+        private bool IsOwnOverrun(SchedulerScript s)
+        {
+            RunWindowAverage w = s.Windows;
+            if (w == null || w.Count < m_options.OverrunWindows)
+                return true;
+            return w.CpuShare >= m_options.OverrunMinCpuShare;
         }
 
         /// <summary>Puts the script where its situation says: waiting, sleeping, in the ring, or idle.</summary>

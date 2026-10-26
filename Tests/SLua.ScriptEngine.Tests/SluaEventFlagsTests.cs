@@ -70,7 +70,8 @@ public class SluaEventFlagsTests
 
         Assert.True(Touched(rig, item));
         Assert.True(SchedulerHarness.WaitFor(() => flags.HasLast(item, Of(scriptEvents.collision_start))));
-        Assert.Equal(new[] { Touch, TouchAndCollision, Of(scriptEvents.collision_start) }, flags.History(item).Distinct().ToArray());
+        // the first call is the start, before the script has run its main chunk and registered anything
+        Assert.Equal(new[] { 0UL, Touch, TouchAndCollision, Of(scriptEvents.collision_start) }, flags.History(item).Distinct().ToArray());
     }
 
     [RequiresNativeFact]

@@ -148,7 +148,28 @@ namespace SLua.ScriptEngine
         internal DetectedRecord DetectedAt(int index) =>
             CurrentDetected != null && index >= 0 && index < CurrentDetected.Length ? CurrentDetected[index] : null;
         /// <summary>Overruns the runtime reported that were not punished because the script's CPU time, averaged over its recent run windows, says the system kept its worker off the processor.</summary>
-        public long WaivedOverruns => 0;
+        public long WaivedOverruns => Interlocked.Read(ref m_waivedOverruns);
+        private long m_waivedOverruns;
+        internal void CountWaivedOverrun() => Interlocked.Increment(ref m_waivedOverruns);
+
+        /// <summary>The run windows (wall time and CPU time) the overrun decision averages; worker thread only.</summary>
+        internal RunWindowAverage Windows;
+
+        private long m_handlerMask;
+        private int m_handlersKnown;
+
+        /// <summary>
+        /// The events an SLua script handles now, one bit each as the runtime counts them, and whether the set is complete.
+        /// Read from the runtime on the worker after a step that changed it; an LSL script's come from its asset header.
+        /// </summary>
+        internal ulong HandlerMask => (ulong)Interlocked.Read(ref m_handlerMask);
+        internal bool HandlersKnown => Volatile.Read(ref m_handlersKnown) != 0;
+
+        internal void SetHandlers(ulong mask, bool known)
+        {
+            Interlocked.Exchange(ref m_handlerMask, (long)mask);
+            Volatile.Write(ref m_handlersKnown, known ? 1 : 0);
+        }
 
         internal void CountPunishment() => Interlocked.Increment(ref m_punishments);
 

@@ -35,11 +35,14 @@ public class DelayAndOverrunTests
         Assert.Equal(0, h.CountOf(s));
         Assert.Equal(ScriptRunState.Sleeping, s.State);
 
-        h.Advance(1.5); // one delay served is not enough: the two add up to two seconds
-        Assert.Equal(0, h.CountOf(s));
-
-        h.Advance(0.6);
-        Assert.Equal(1, h.CountOf(s));
+        // in small steps, so that a second delay starts when the first ends: the two add up to two seconds
+        double elapsed = 0;
+        while (elapsed < 5 && h.CountOf(s) == 0)
+        {
+            h.Advance(0.05);
+            elapsed += 0.05;
+        }
+        Assert.InRange(elapsed, 1.99, 2.2);
         Assert.Equal(0, s.Punishments);
     }
 
