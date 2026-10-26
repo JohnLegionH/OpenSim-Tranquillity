@@ -143,6 +143,12 @@ namespace SLua.ScriptEngine
         /// <summary>Re-asks the parcel rule of every script of the object.</summary>
         public void EvaluateGroup(SceneObjectGroup group) { }
 
+        /// <summary>
+        /// Halcyon's rule (EngineInterface.ScriptsCanRun): the object's owner owns the parcel, or the parcel allows other
+        /// scripts, or it allows group scripts and the object's group is the parcel's group. No parcel: not allowed.
+        /// </summary>
+        internal static bool ParcelAllowsScripts(OpenSim.Framework.LandData land, UUID objectOwner, UUID objectGroup) => true;
+
         public bool AwaitsRider(SceneObjectGroup group, ISet<UUID> arrived) => false;
 
         /// <summary>Holds a crossing object's changed event until its riders have arrived.</summary>

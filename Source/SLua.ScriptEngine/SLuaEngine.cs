@@ -766,6 +766,9 @@ namespace SLua.ScriptEngine
         /// </summary>
         internal void PhySleep() { }
 
+        /// <summary>A script took or released controls: whether the parcel lets it run is asked again.</summary>
+        internal void RecheckParcel(UUID itemID) { }
+
         /// <summary>Average of the last ten physics frame times in milliseconds (for the physics slowdowns the function binding will apply); 0 when the throttle is off.</summary>
         internal int PhysicsFrameTimeAvg => m_hooks?.PhysicsFrameTimeAvg ?? 0;
 
