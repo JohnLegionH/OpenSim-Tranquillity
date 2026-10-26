@@ -19,7 +19,7 @@ internal static class ConvertCommand
 {
     public const string Usage =
 @"Usage: OpenSim.ArchiveInspector oar-convert <archive.oar> --out <new.oar> [--plan-out <plan.json>] [--report <folder>] [--assume-safe-unscanned] [--no-clean]
-       OpenSim.ArchiveInspector oar-convert <archive.oar> --merge --out <new.oar> --merge-plan-dir <folder> [--report <folder>] [--assume-safe-unscanned]
+       OpenSim.ArchiveInspector oar-convert <archive.oar> --merge --out <new.oar> --merge-plan-dir <folder> [--report <folder>] [--lod-pixel-limit <pixels>] [--assume-safe-unscanned]
        OpenSim.ArchiveInspector oar-convert <archive.oar> --merge --plan-only --merge-plan-dir <folder> [--assume-safe-unscanned]
 
 Turns every part the eligibility rules pass (see oar-eligibility) into a mesh part and writes a new archive. A converted part
@@ -38,6 +38,10 @@ Then the new archive is checked against the source with a plan that states exact
                              lists the parts it replaced. Parts that cannot merge stay as they are. Without --merge the command
                              converts every convertible part one for one, as before.
   --merge --plan-only        only plan which parts would merge and why the others stay; writes the plan and no archive.
+  --lod-pixel-limit <px>     with --merge: the most a lower level of detail of a merged part may differ from the full mesh, in screen pixels
+                             (1080 pixels high window) at the distance the viewer switches to it; a positive number, default 1. A larger
+                             limit keeps fewer triangles in the lower levels and lowers the viewer's streaming cost, at the price of a
+                             difference that can be seen at the switch distance. The report states the streaming cost before and after.
   --merge-plan-dir <folder>  where the plan goes: merge-plan.json, merge-plan.txt and one file per linkset under linksets/
 
 The mesh assets are written with OpenSim.MeshAsset: the faces as the high level of detail, the lower levels made with the
@@ -50,6 +54,7 @@ Exit codes: 0 the check passed, 1 the parity check failed or a mesh failed its v
     {
         string archive = null, outPath = null, planOut = null, reportDir = null, mergePlanDir = null;
         bool merge = false, planOnly = false;
+        double pixelLimit = new MergeOptions().Lod.PixelLimit;
         ConvertOptions options = new ConvertOptions();
 
         for (int i = 0; i < args.Length; i++)
@@ -84,6 +89,11 @@ Exit codes: 0 the check passed, 1 the parity check failed or a mesh failed its v
                     if (i + 1 >= args.Length) return Fail("--merge-plan-dir needs a folder");
                     mergePlanDir = args[++i];
                     break;
+                case "--lod-pixel-limit":
+                    if (i + 1 >= args.Length) return Fail("--lod-pixel-limit needs a number of pixels");
+                    if (!double.TryParse(args[++i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out pixelLimit) || !double.IsFinite(pixelLimit) || pixelLimit <= 0)
+                        return Fail("--lod-pixel-limit needs a positive number of pixels, not '" + Sanitize.Text(args[i]) + "'");
+                    break;
                 case "--version":
                     Console.Out.WriteLine("oar-convert " + OpenSim.Archive.GltfExport.ExportStamp.CurrentVersion);
                     return 0;
@@ -103,7 +113,7 @@ Exit codes: 0 the check passed, 1 the parity check failed or a mesh failed its v
         if (merge && mergePlanDir == null) return Fail("--merge-plan-dir is required with --merge");
         if (merge && !planOnly && outPath == null) return Fail("--out is required with --merge (or add --plan-only)");
         if (merge)
-            return planOnly ? RunMergePlan(archive, mergePlanDir, reportDir, options) : RunMerge(archive, outPath, mergePlanDir, reportDir, options);
+            return planOnly ? RunMergePlan(archive, mergePlanDir, reportDir, options) : RunMerge(archive, outPath, mergePlanDir, reportDir, options, pixelLimit);
         if (outPath == null) return Fail("--out is required");
 
         try
@@ -127,13 +137,16 @@ Exit codes: 0 the check passed, 1 the parity check failed or a mesh failed its v
         }
     }
 
-    private static int RunMerge(string archive, string outPath, string folder, string reportDir, ConvertOptions options)
+    private static int RunMerge(string archive, string outPath, string folder, string reportDir, ConvertOptions options, double pixelLimit)
     {
         try
         {
             if (File.Exists(Path.Combine(folder, MergePlanner.PlanFileName)))
                 throw new IOException("'" + folder + "' already holds a merge plan");
-            MergeWriteResult result = MergeArchiveWriter.Write(archive, outPath, new MergeOptions(), options);
+            MergeOptions mergeOptions = new MergeOptions();
+            mergeOptions.Lod.PixelLimit = pixelLimit;
+            MergeWriteResult result = MergeArchiveWriter.Write(archive, outPath, mergeOptions, options);
+            result.Cost = CostComparison.Measure(archive, outPath);
             MergePlanFiles.Write(result.Plan, folder);
             string text = result.ToText();
             Console.Out.Write(text);
