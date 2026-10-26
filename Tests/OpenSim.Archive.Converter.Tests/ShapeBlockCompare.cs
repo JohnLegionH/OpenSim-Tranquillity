@@ -186,6 +186,9 @@ public static class ShapeBlockCompare
             }
     }
 
+    /// <summary>As <see cref="CompareArchives(string, string)"/>, matching parts by name, link number and position when asked (not yet written).</summary>
+    public static ShapeBlockReport CompareArchives(string beforePath, string afterPath, bool matchByPosition) => throw new NotImplementedException();
+
     /// <summary>Every part the two archives share by id; a part in one only is a difference.</summary>
     public static ShapeBlockReport CompareArchives(string beforePath, string afterPath)
     {

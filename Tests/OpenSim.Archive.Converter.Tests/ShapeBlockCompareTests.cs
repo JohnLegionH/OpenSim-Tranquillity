@@ -6,6 +6,7 @@
  */
 
 using OpenMetaverse;
+using OpenSim.Archive.Eligibility.Tests;
 using OpenSim.Archive.Inspection;
 using OpenSim.Framework;
 using Xunit;
@@ -186,5 +187,41 @@ public class ShapeBlockCompareTests
         if (!string.IsNullOrEmpty(report))
             File.WriteAllText(report, r.ToText());
         Assert.Empty(r.Differences);
+    }
+
+    private static string Mutated(Action<List<List<KitPart>>> change)
+    {
+        List<List<KitPart>> sets = PbrFixture.Parts();
+        change(sets);
+        return EligibilityKit.WriteArchive(sets, PbrFixture.Assets(), PlanarFixture.FlatTerrain());
+    }
+
+    [Fact]
+    public void ARegionGivesPartsNewIdsSoPartsAreMatchedByNameLinkNumberAndPositionWhenAskedTo()
+    {
+        string a = PbrFixture.Write(), b = PbrFixture.Write();
+        Assert.NotEmpty(ShapeBlockCompare.CompareArchives(a, b).Differences);
+        ShapeBlockReport r = ShapeBlockCompare.CompareArchives(a, b, true);
+        Assert.Empty(r.Differences);
+        Assert.True(r.Parts > 0 && r.PbrFaces > 0 && r.Overrides > 0, r.ToText());
+    }
+
+    [Fact]
+    public void AChangedBlockIsFoundWhenPartsAreMatchedByPosition()
+    {
+        string a = PbrFixture.Write();
+        string b = Mutated(sets => sets[0][0].ExtraParams = PbrFixture.Blocks(new[] { (0, PbrFixture.P2), (1, PbrFixture.P1), (2, PbrFixture.P2) }, new[] { (1, PbrFixture.O1), (2, PbrFixture.O1) }).ExtraParams);
+        ShapeBlockReport r = ShapeBlockCompare.CompareArchives(a, b, true);
+        Assert.Contains(r.Differences, d => d.Contains("Pbr 0.1"));
+    }
+
+    [Fact]
+    public void APartThatMovedIsMissingWhereItWasAndAppearsWhereItIsWhenMatchedByPosition()
+    {
+        string a = PbrFixture.Write();
+        string b = Mutated(sets => sets[0][1].Offset = "9,9,9");
+        ShapeBlockReport r = ShapeBlockCompare.CompareArchives(a, b, true);
+        Assert.Contains(r.Differences, d => d.Contains("missing"));
+        Assert.Contains(r.Differences, d => d.Contains("appears"));
     }
 }
