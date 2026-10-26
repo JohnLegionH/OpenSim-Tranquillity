@@ -174,7 +174,7 @@ public static class MergeGeometry
                 if (f.IsEmpty)
                     continue;
                 float[] uvs = info.Bakeable
-                    ? FaceUv.Bake(f.Positions, f.Normals, f.Uvs, info.Transform, info.TexGen == 1, m.Scale)
+                    ? FaceUv.Bake(f.Positions, f.Normals, f.Uvs, info.Transform, info.TexGen == FaceBaking.PlanarMapping, m.Scale)
                     : f.Uvs;
                 (float[] rp, float[] rn) = rootFrame[mi][fi];
                 // the face in the merged part's unit box

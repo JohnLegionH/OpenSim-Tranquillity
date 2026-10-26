@@ -106,6 +106,7 @@ public static class MergeArchiveWriter
         MergePlan plan = ArchiveMergePlanner.Plan(sourcePath, options, convert, out Dictionary<Guid, ParsedPart> parsed, out List<MergeLinkset> linksets);
         MergeWriteResult result = new MergeWriteResult { Plan = plan, Output = outputPath, SourceBytes = new FileInfo(sourcePath).Length };
         ArchiveRewriter rewriter = new ArchiveRewriter();
+        HashSet<Guid> assets = new HashSet<Guid>();
 
         for (int li = 0; li < plan.Linksets.Count; li++)
         {
@@ -114,7 +115,7 @@ public static class MergeArchiveWriter
                 continue;
             Dictionary<Guid, MergePart> read = linksets[li].Parts.ToDictionary(p => p.PartId);
             foreach (MergedPartPlan mp in lp.Merged)
-                result.Parts.Add(BuildMerged(lp, mp, read, parsed, encoder, options, convert, rewriter));
+                result.Parts.Add(BuildMerged(lp, mp, read, parsed, encoder, options, convert, rewriter, assets));
             foreach (KeptPartPlan kept in lp.Kept.Where(k => k.NewLinkNum != k.LinkNum))
             {
                 int number = kept.NewLinkNum;
@@ -131,7 +132,7 @@ public static class MergeArchiveWriter
     }
 
     private static MergedPartReport BuildMerged(LinksetPlan lp, MergedPartPlan mp, Dictionary<Guid, MergePart> read, Dictionary<Guid, ParsedPart> parsed,
-        IMeshEncoder encoder, MergeOptions options, ConvertOptions convert, ArchiveRewriter rewriter)
+        IMeshEncoder encoder, MergeOptions options, ConvertOptions convert, ArchiveRewriter rewriter, HashSet<Guid> assets)
     {
         List<MergeMember> members = new List<MergeMember>();
         foreach (MemberPlan x in mp.Members)
@@ -166,12 +167,15 @@ public static class MergeArchiveWriter
         if (problems.Count > 0)
             throw new ConvertException("the mesh of merged part " + mp.Name + " fails its check: " + string.Join("; ", problems));
         Guid meshId = MeshId.FromBytes(bytes);
-        rewriter.AddAsset(meshId, AssetType.Mesh, bytes);
+        // identical meshes (the same row of parts in two objects) are one asset
+        if (assets.Add(meshId))
+            rewriter.AddAsset(meshId, AssetType.Mesh, bytes);
 
         byte[] notecardBytes = new UTF8Encoding(false).GetBytes(Notecard(mp.Manifest));
         Guid noteAsset = MeshId.FromBytes(notecardBytes);
         Guid noteItem = MeshId.FromBytes(Encoding.UTF8.GetBytes("oarx-merge-manifest-item " + mp.Id));
-        rewriter.AddAsset(noteAsset, AssetType.Notecard, notecardBytes);
+        if (assets.Add(noteAsset))
+            rewriter.AddAsset(noteAsset, AssetType.Notecard, notecardBytes);
 
         string textureEntry = Convert.ToBase64String(TextureEntryOf(g, members, parsed).GetBytes());
         int faceCount = g.Faces.Count;
@@ -194,7 +198,7 @@ public static class MergeArchiveWriter
                 if (m.FaceInfo[i].Bakeable)
                 {
                     report.BakedFaces++;
-                    if (m.FaceInfo[i].TexGen == 1)
+                    if (m.FaceInfo[i].TexGen == FaceBaking.PlanarMapping)
                         report.PlanarFaces++;
                 }
                 else
@@ -334,7 +338,7 @@ internal static class MeshCheck
         MeshAssetModel model = MeshCodec.Decode(bytes);
         // the coordinates each face should have: the viewer's, worked out from the original face on the original part
         float[][][] wantUv = members.Select(m => m.Faces.Select((f, i) =>
-            f.IsEmpty ? Array.Empty<float>() : m.FaceInfo[i].Bakeable ? FaceUv.Bake(f.Positions, f.Normals, f.Uvs, m.FaceInfo[i].Transform, m.FaceInfo[i].TexGen == 1, m.Scale) : f.Uvs).ToArray()).ToArray();
+            f.IsEmpty ? Array.Empty<float>() : m.FaceInfo[i].Bakeable ? FaceUv.Bake(f.Positions, f.Normals, f.Uvs, m.FaceInfo[i].Transform, m.FaceInfo[i].TexGen == FaceBaking.PlanarMapping, m.Scale) : f.Uvs).ToArray()).ToArray();
 
         foreach (FaceRun run in g.Runs)
         {

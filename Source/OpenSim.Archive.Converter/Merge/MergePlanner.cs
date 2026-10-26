@@ -385,7 +385,7 @@ public static class FaceBaking
         why = "";
         if (pbr) { why = "PBR material face"; return false; }
         if (media) { why = "media face"; return false; }
-        if (texGen != 0 && texGen != 1) { why = "texture mapping other than default or planar"; return false; }
+        if (texGen != 0 && texGen != PlanarMapping) { why = "texture mapping other than default or planar"; return false; }
         if (string.IsNullOrEmpty(materialId))
             return true;
         if (material == null) { why = "legacy material not in the archive"; return false; }
