@@ -245,6 +245,14 @@ public class MergeArchiveWriterTests
     }
 
     [Fact]
+    public void AnObjectThatMergesIntoOnePartHasLinkNumberZeroAsTheRegionWritesASinglePart()
+    {
+        (string src, _) = Build(scripted: 0);
+        Merge(src, out string output);
+        Assert.Equal(0, Assert.Single(Read(output)).Value.Part.LinkNum);
+    }
+
+    [Fact]
     public void TheSourceArchiveIsNotChangedAndAnOutputThatExistsIsRefused()
     {
         (string src, _) = Build();
