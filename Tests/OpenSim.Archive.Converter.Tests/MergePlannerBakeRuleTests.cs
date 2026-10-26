@@ -116,4 +116,15 @@ public class MergePlannerBakeRuleTests
         Assert.Empty(plan.Merged);
         Assert.Equal(2, plan.Kept.Count);
     }
+
+    [Fact]
+    public void APartWhoseUnbakeablePlanarFaceCannotBeBakedStaysBecauseTheViewerWouldProjectItOnTheMergedShape()
+    {
+        MergePart planar = Part(2, 1);
+        planar.Faces[0].TexGen = 1;
+        planar.Faces[0].Bakeable = false;
+        LinksetPlan plan = Plan(Part(1), planar, Part(3, 2));
+        Assert.Contains(plan.Kept.Single(k => k.PartId == planar.PartId).Rules, r => r.Code == "UNBAKED_MAPPING");
+        Assert.Single(plan.Merged);
+    }
 }
