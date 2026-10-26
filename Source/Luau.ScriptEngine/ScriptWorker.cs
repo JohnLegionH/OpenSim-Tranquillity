@@ -68,6 +68,7 @@ namespace Luau.ScriptEngine
         private long m_droppedWhileStopped;
         private long m_droppedUnhandled;
         private long m_droppedFull;
+        private long m_cycles;
 
         internal ScriptWorker(int index, SchedulerOptions options)
         {
@@ -117,7 +118,8 @@ namespace Luau.ScriptEngine
             m_failed,
             Interlocked.Read(ref m_droppedWhileStopped),
             Interlocked.Read(ref m_droppedUnhandled),
-            Interlocked.Read(ref m_droppedFull));
+            Interlocked.Read(ref m_droppedFull),
+            Interlocked.Read(ref m_cycles));
 
         /// <summary>Hands the worker something to do on its own thread, and wakes it.</summary>
         internal void Enqueue(Action command)

@@ -443,6 +443,9 @@ namespace Luau.ScriptEngine
         /// <summary>True once every worker has failed and the engine has switched itself off.</summary>
         internal bool IsDisabled => false;
 
+        /// <summary>Events held for an item whose script has not finished loading.</summary>
+        internal int DeferredEventCount(UUID itemID) => 0;
+
         /// <summary>The clock the engine's deferred events expire by; tests replace it.</summary>
         internal ISchedulerClock Clock { get; set; } = new MonotonicClock();
 

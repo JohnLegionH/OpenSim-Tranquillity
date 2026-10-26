@@ -141,7 +141,8 @@ namespace Luau.ScriptEngine
         bool Failed = false,
         long DroppedWhileStopped = 0,
         long DroppedUnhandled = 0,
-        long DroppedFull = 0);
+        long DroppedFull = 0,
+        long Cycles = 0);
 
     /// <summary>A reading of the whole scheduler's counters.</summary>
     internal sealed class SchedulerStats
@@ -160,6 +161,7 @@ namespace Luau.ScriptEngine
         public long DroppedWhileStopped => Sum(w => w.DroppedWhileStopped);
         public long DroppedUnhandled => Sum(w => w.DroppedUnhandled);
         public long DroppedFull => Sum(w => w.DroppedFull);
+        public long Cycles => Sum(w => w.Cycles);
 
         private int Sum(Func<WorkerStats, int> f) { int n = 0; foreach (WorkerStats w in Workers) n += f(w); return n; }
         private long Sum(Func<WorkerStats, long> f) { long n = 0; foreach (WorkerStats w in Workers) n += f(w); return n; }
