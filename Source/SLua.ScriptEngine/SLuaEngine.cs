@@ -846,7 +846,18 @@ namespace SLua.ScriptEngine
         /// time (average of the last ten) is over 30 ms, the calling script is delayed by that many milliseconds. Needs
         /// the physics throttle; a no-op outside a script's call.
         /// </summary>
-        internal void PhySleep() { }
+        internal void PhySleep()
+        {
+            SchedulerScript script = SchedulerScript.Current;
+            if (script == null || !m_settings.PhysicsThrottle)
+                return;
+            int frameMs = PhysicsFrameTimeAvg;
+            if (frameMs > MaxPhysicsTimeBeforeDilationMs)
+                script.AddSleep(frameMs / 1000.0);
+        }
+
+        /// <summary>The physics frame time over which a physical change delays its script (Halcyon MAX_PHYSICS_TIME_BEFORE_DILATION, as Phlox's PhySleep uses it).</summary>
+        internal const int MaxPhysicsTimeBeforeDilationMs = 30;
 
         /// <summary>A script took or released controls: whether the parcel lets it run is asked again.</summary>
         internal void RecheckParcel(UUID itemID) => m_policy?.EvaluateItem(itemID);
