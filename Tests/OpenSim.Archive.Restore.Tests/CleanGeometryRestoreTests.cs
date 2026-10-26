@@ -90,10 +90,11 @@ public class CleanGeometryRestoreTests
     public void AShapeCleaningChangesIsComparedWithAFreshExportMadeTheSameWayAsTheFilesWereAndStaysUnchanged(bool clean)
     {
         string archive = ApexArchive();
-        string dir = Path.Combine(Path.GetDirectoryName(archive), "glb-" + clean);
+        string run = Path.Combine(Path.GetDirectoryName(archive), Guid.NewGuid().ToString("N"));
+        string dir = Path.Combine(run, "glb");
         Assert.Equal(0, ArchiveExporter.Export(archive, new ExportOptions { OutputDirectory = dir, ImageCheck = () => null, Clean = clean }).ExitCode);
 
-        RestoreResult r = new ArchiveRestorer(new RestoreOptions { WorkFolder = Path.Combine(Path.GetDirectoryName(archive), "work-" + clean) }).Restore(archive, dir, Path.Combine(Path.GetDirectoryName(archive), "out-" + clean + ".oar"));
+        RestoreResult r = new ArchiveRestorer(new RestoreOptions { WorkFolder = Path.Combine(run, "work") }).Restore(archive, dir, Path.Combine(run, "out.oar"));
 
         Assert.Equal(clean, r.ComparedAsCleaned);
         Assert.Equal(1, r.Count(PartOutcome.Unchanged));
