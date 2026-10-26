@@ -69,6 +69,13 @@ internal sealed class SchedulerHarness : IDisposable
         vm.Register("ossl", "Sleep", (tag, a) => { SchedulerScript.Current.AddSleep(Num(a[0])); return null; });
         vm.Register("ll", "Sleep", (tag, a) => { SchedulerScript.Current.AddSleep(Num(a[0])); return null; });
         vm.Register("ll", "SetTimerEvent", (tag, a) => { SchedulerScript.Current.SetTimer(Num(a[0])); return null; });
+        // Holds the thread for the given milliseconds inside a host call: an overrun the runtime cannot interrupt.
+        vm.Register("ossl", "Burn", (tag, a) =>
+        {
+            long end = System.Diagnostics.Stopwatch.GetTimestamp() + (long)(a[0].N / 1000.0 * System.Diagnostics.Stopwatch.Frequency);
+            while (System.Diagnostics.Stopwatch.GetTimestamp() < end) { }
+            return null;
+        });
         vm.RegisterPausing("ossl", "Pause",
             (tag, _) => { SchedulerScript.Current.BeginWait(); return null; },
             (tag, _) => SchedulerScript.Current.TakeResult());
@@ -102,7 +109,9 @@ internal sealed class SchedulerHarness : IDisposable
     public SchedulerScript AddAndStart(string source, bool lsl = false)
     {
         SchedulerScript s = Add(source, lsl);
-        Pump();
+        // Only until the script is made: scripts that never go idle would keep a full pump going.
+        for (int i = 0; i < 1000 && s.State == ScriptRunState.Loading; i++)
+            Scheduler.DoWork(Clock.Now);
         Scheduler.Start(s);
         return s;
     }
