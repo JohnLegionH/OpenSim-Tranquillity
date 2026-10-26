@@ -36,6 +36,9 @@ internal static unsafe class Native
         public int NewState;
         public float SleepServed;
         public int FaultKind;
+        public double CpuSeconds;
+        public int HandlersChanged;
+        public int Reserved;
     }
 
     internal static Value ToManaged(in SluaValue v) => (ValueType)v.Type switch
@@ -108,6 +111,9 @@ internal static unsafe class Native
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] internal static extern int slua_script_free(IntPtr s);
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] internal static extern int slua_script_start(IntPtr s);
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] internal static extern int slua_step(IntPtr s, double quanta, StepResultN* r);
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] internal static extern int slua_set_engine_identity([MarshalAs(UnmanagedType.LPUTF8Str)] string engine, [MarshalAs(UnmanagedType.LPUTF8Str)] string altEngine, [MarshalAs(UnmanagedType.LPUTF8Str)] string altHeader);
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] internal static extern int slua_engine_name(byte* buf, int cap);
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] internal static extern int slua_handler_mask(IntPtr s, ulong* mask, int* known);
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] internal static extern int slua_kill(IntPtr s);
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] internal static extern int slua_serialize(IntPtr s, byte** o, nuint* len);
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] internal static extern int slua_restore(IntPtr s, byte* data, nuint len);

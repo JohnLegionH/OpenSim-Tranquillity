@@ -47,7 +47,13 @@ public enum StepStatus { Ok = 0, Preempted = 1, StateChange = 2, Fault = 3, NotR
 public enum FaultKind { None = 0, Runtime = 1, OutOfMemory = 2, Timeout = 3, UnexpectedYield = 4, Unknown = 255 }
 public enum Watchdog { Default = 0, Resident = 1, Threaded = 2 }
 
-public readonly record struct StepResult(StepStatus Status, int NewState, float SleepServed, FaultKind Fault);
+/// <summary>
+/// One step's result. <see cref="SleepServed"/> is the delay the script asked for in this step (API 4: the step that is
+/// running reports it). <see cref="CpuSeconds"/> is the CPU time the calling thread used while the script ran (0 for a step
+/// that ran nothing; Windows counts it in ticks of about 15 ms). <see cref="HandlersChanged"/> is true when the script's
+/// handler mask changed during the step.
+/// </summary>
+public readonly record struct StepResult(StepStatus Status, int NewState, float SleepServed, FaultKind Fault, double CpuSeconds = 0, bool HandlersChanged = false);
 
 public class SluaException : Exception
 {
@@ -71,6 +77,29 @@ public static unsafe class Host
     internal static void Check(string what, int code)
     {
         if (code < 0) throw new SluaException(what, code);
+    }
+
+    /// <summary>
+    /// Names the engine for the library's refusal and error text. <paramref name="engineName"/> is this engine; the other two
+    /// name the engine that runs LSL scripts using os*, iw* or bot* functions and the script header that selects it. The
+    /// library has no built-in names; null or empty leaves a name out. Call before compiling.
+    /// </summary>
+    public static void SetEngineIdentity(string engineName, string altEngineName = null, string altEngineHeader = null)
+    {
+        Init();
+        Check("slua_set_engine_identity", Native.slua_set_engine_identity(engineName, altEngineName, altEngineHeader));
+    }
+
+    /// <summary>The engine name the library holds (empty when none was set).</summary>
+    public static string EngineName
+    {
+        get
+        {
+            Init();
+            byte* buf = stackalloc byte[256];
+            Check("slua_engine_name", Native.slua_engine_name(buf, 256));
+            return Marshal.PtrToStringUTF8((IntPtr)buf);
+        }
     }
 
     static bool _init;
@@ -295,7 +324,7 @@ public sealed unsafe class Script : IDisposable
     {
         Native.StepResultN r;
         Host.Check("slua_step", Native.slua_step(_h, quantaSeconds, &r));
-        return new((StepStatus)r.Status, r.NewState, r.SleepServed, (FaultKind)r.FaultKind);
+        return new((StepStatus)r.Status, r.NewState, r.SleepServed, (FaultKind)r.FaultKind, r.CpuSeconds, r.HandlersChanged != 0);
     }
 
     /// <summary>Steps until the script has nothing left to run, a fault, or maxSteps steps. Returns the last status that was not Idle.</summary>
@@ -324,7 +353,7 @@ public sealed unsafe class Script : IDisposable
         for (int i = 0; i < args.Length; i++) Native.FromManaged(args[i], &native[i], arena);
         Native.StepResultN r;
         Host.Check("slua_dispatch_event", Native.slua_dispatch_event(_h, eventIndex, native, args.Length, quantaSeconds, &r));
-        return new((StepStatus)r.Status, r.NewState, r.SleepServed, (FaultKind)r.FaultKind);
+        return new((StepStatus)r.Status, r.NewState, r.SleepServed, (FaultKind)r.FaultKind, r.CpuSeconds, r.HandlersChanged != 0);
     }
 
     public StepResult Dispatch(string eventName, ReadOnlySpan<Value> args, double quantaSeconds = 0.01) =>
@@ -346,6 +375,14 @@ public sealed unsafe class Script : IDisposable
     /// inside a host function this script called (throws SluaException with code -8 otherwise).
     /// </summary>
     public void AddSleep(double seconds) => Host.Check("slua_add_sleep", Native.slua_add_sleep(_h, seconds));
+
+    /// <summary>The events the script handles now, one bit each (the bit of event index n is 1 &lt;&lt; (n - 1)), and whether that set is complete.</summary>
+    public (ulong Mask, bool Known) Handlers()
+    {
+        ulong mask; int known;
+        Host.Check("slua_handler_mask", Native.slua_handler_mask(_h, &mask, &known));
+        return (mask, known != 0);
+    }
 
     public void Kill() => Host.Check("slua_kill", Native.slua_kill(_h));
 
