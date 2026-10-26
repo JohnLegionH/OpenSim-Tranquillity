@@ -201,6 +201,7 @@ namespace SLua.ScriptEngine
                 QuantaMs = m_settings.QuantaMs,
                 MinTimerInterval = m_settings.MinTimerInterval,
                 MaxEventQueue = m_settings.MaxEventQueue,
+                FrontOfRing = m_settings.EventFrontOfRing,
                 MemoryLimitBytes = m_settings.MemoryLimitKiB * 1024,
                 KillAfterPunishments = m_settings.KillAfterPunishments,
                 ErrorPauseSeconds = m_settings.ChatThrottle ? ErrorPauseSeconds : 0,

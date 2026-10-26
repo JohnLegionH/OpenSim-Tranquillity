@@ -112,6 +112,7 @@ namespace SLua.ScriptEngine
             s.MemoryLimitKiB = ReadMemoryLimit(c, log);
             s.MinTimerInterval = Math.Max(0.0, c.GetDouble("MinTimerInterval", s.MinTimerInterval));
             s.MaxEventQueue = Math.Max(1, c.GetInt("MaxEventQueue", s.MaxEventQueue));
+            s.EventFrontOfRing = c.GetBoolean("EventFrontOfRing", s.EventFrontOfRing);
             s.KillAfterPunishments = Math.Max(1, c.GetInt("KillAfterPunishments", s.KillAfterPunishments));
             s.StateSaveIntervalMs = Math.Max(1, c.GetInt("StateSaveIntervalMs", s.StateSaveIntervalMs));
             s.CompileCache = c.GetBoolean("CompileCache", s.CompileCache);

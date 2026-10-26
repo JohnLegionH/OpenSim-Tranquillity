@@ -806,7 +806,7 @@ namespace SLua.ScriptEngine
                 if (!s.InRing)
                 {
                     s.InRing = true;
-                    if (front && s.LastFrontCycle != Interlocked.Read(ref m_cycles))
+                    if (front && m_options.FrontOfRing && s.LastFrontCycle != Interlocked.Read(ref m_cycles))
                     {
                         s.LastFrontCycle = Interlocked.Read(ref m_cycles);
                         s.CountFrontGrant();
