@@ -193,9 +193,10 @@ public static class ShapeBlockCompare
             return CompareArchives(beforePath, afterPath);
         ArchiveMergePlanner.Plan(beforePath, new MergeOptions(), null, out Dictionary<Guid, ParsedPart> before);
         ArchiveMergePlanner.Plan(afterPath, new MergeOptions(), null, out Dictionary<Guid, ParsedPart> after);
-        // a region gives every part a new id on load, so a part is found again by its name, link number and the position of its object
+        // a region gives every part a new id on load, so a part is found again by its name, link number, the position of its object and its own offset in it
         string Key(ParsedPart p) => string.Join("|", p.Part?.Name, p.Part?.LinkNum, (p.Part?.X ?? 0).ToString("0.00", CultureInfo.InvariantCulture),
-            (p.Part?.Y ?? 0).ToString("0.00", CultureInfo.InvariantCulture), (p.Part?.Z ?? 0).ToString("0.00", CultureInfo.InvariantCulture));
+            (p.Part?.Y ?? 0).ToString("0.00", CultureInfo.InvariantCulture), (p.Part?.Z ?? 0).ToString("0.00", CultureInfo.InvariantCulture),
+            p.OffsetPosition.X.ToString("0.00", CultureInfo.InvariantCulture), p.OffsetPosition.Y.ToString("0.00", CultureInfo.InvariantCulture), p.OffsetPosition.Z.ToString("0.00", CultureInfo.InvariantCulture));
         ILookup<string, ParsedPart> afterByKey = after.Values.ToLookup(Key);
         ShapeBlockReport report = new ShapeBlockReport();
         HashSet<string> seen = new HashSet<string>();
