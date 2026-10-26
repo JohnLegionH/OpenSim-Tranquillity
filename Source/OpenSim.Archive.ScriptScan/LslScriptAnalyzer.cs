@@ -260,6 +260,7 @@ public static class LslScriptAnalyzer
         Collector collector = new Collector(result);
 
         LslListTracker lists = new LslListTracker(tokens);
+        result.LinkUses.AddRange(LslLinkUses.Find(source));
 
         foreach (LslCall call in LslCallFinder.Find(tokens, s_watched, lists))
         {
