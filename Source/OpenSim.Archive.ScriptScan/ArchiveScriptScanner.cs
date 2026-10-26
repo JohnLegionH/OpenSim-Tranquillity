@@ -249,6 +249,13 @@ public sealed class ArchiveScriptScanner
                     continue;
                 }
 
+                ScriptLinkUses links = new ScriptLinkUses
+                {
+                    LinksetId = host?.Record.LinksetId.Guid ?? Guid.Empty, Entry = b.Entry, HostPartId = s.PartId, Script = s.Name, Truncated = analysis.Truncated
+                };
+                links.Uses.AddRange(analysis.LinkUses);
+                Result.ScriptLinks.Add(links);
+
                 if (analysis.Truncated && !m_opt.AssumeSafeUnscanned)
                     foreach (Acc a in rows.Values)
                         AddReason(a, new PartReason

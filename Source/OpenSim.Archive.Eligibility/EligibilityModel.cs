@@ -104,6 +104,8 @@ public sealed class EligibilityResult
     public string ReadNote { get; set; }
     public bool AssumeSafeUnscanned { get; set; }
     public List<EligibilityRow> Parts { get; } = new List<EligibilityRow>();
+    /// <summary>The script scan the decisions were made from, for callers that need more of it than the rows (how scripts address other parts).</summary>
+    public OpenSim.Archive.ScriptScan.ScanResult Scan { get; set; }
     public int ScriptItems { get; set; }
     public int ScriptItemsWithoutSource { get; set; }
     public int NestedObjectParts { get; set; }

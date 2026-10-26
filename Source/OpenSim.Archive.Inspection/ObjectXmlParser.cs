@@ -78,6 +78,22 @@ public sealed class ParsedPart
     public int VehicleType;
     /// <summary>True when the shape is flexible: the extra parameters hold a flexible-path block or FlexiEntry is true.</summary>
     public bool Flexible;
+    /// <summary>True when the part is a point light (the LightEntry element, or a light block in the extra parameters).</summary>
+    public bool Light;
+    /// <summary>True when the part has a sit target (a non-zero sit target position).</summary>
+    public bool SitTarget;
+    /// <summary>True when the part has hover text.</summary>
+    public bool HoverText;
+    /// <summary>The part's surface material (wood, metal ...) as stored; 0 when absent.</summary>
+    public int SurfaceMaterial;
+    /// <summary>True when the part has a particle system.</summary>
+    public bool HasParticles;
+    /// <summary>True when the part has an attached sound.</summary>
+    public bool HasSound;
+    /// <summary>True when the part's Flags include Phantom.</summary>
+    public bool Phantom;
+    /// <summary>True when the part is a volume detector (the region stores that as the JointLP2P flag, SceneObjectPart.primFlagVolumeDetect).</summary>
+    public bool VolumeDetect;
 }
 
 /// <summary>One linkset as read from an object body.</summary>
@@ -356,12 +372,37 @@ internal static class ObjectXmlParser
                 {
                     UUID id = XmlRead.Uuid(r);
                     if (id != UUID.Zero)
+                        pp.HasSound = true;
+                    if (id != UUID.Zero)
                         pp.Refs.Add(new RefInfo { Id = id, Kind = ReferenceKind.Sound, Certainty = Certainty.Certain, AssetType = (int)AssetType.Sound });
                     break;
                 }
-                case "ParticleSystem": ReadParticle(XmlRead.Text(r), pp); break;
+                case "ParticleSystem":
+                {
+                    string particleText = XmlRead.Text(r);
+                    pp.HasParticles = (TryBase64(particleText)?.Length ?? 0) > 0;
+                    ReadParticle(particleText, pp);
+                    break;
+                }
+                case "SitTargetPosition":
+                case "SitTargetPositionLL":
+                {
+                    XmlRead.Vector(r, out float sx, out float sy, out float sz);
+                    if (sx != 0 || sy != 0 || sz != 0)
+                        pp.SitTarget = true;
+                    break;
+                }
+                case "Text": pp.HoverText = !string.IsNullOrEmpty(XmlRead.Text(r)); break;
+                case "Material": { XmlRead.TryInt(XmlRead.Text(r), out int sm); pp.SurfaceMaterial = sm; break; }
                 case "SOPAnims": ReadAnims(XmlRead.Text(r), pp); break;
-                case "Flags": pp.PhysicsFlag = HasPhysicsFlag(XmlRead.Text(r)); break;
+                case "Flags":
+                {
+                    string flagsText = XmlRead.Text(r);
+                    pp.PhysicsFlag = HasPhysicsFlag(flagsText);
+                    pp.Phantom = HasFlag(flagsText, "Phantom", (int)PrimFlags.Phantom);
+                    pp.VolumeDetect = HasFlag(flagsText, "JointLP2P", (int)PrimFlags.JointLP2P);
+                    break;
+                }
                 case "PhysicsShapeType": pp.PhysicsShapeType = int.TryParse(XmlRead.Text(r)?.Trim(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int pst) ? pst : -2; break;
                 case "Vehicle": ReadVehicle(r, pp); break;
                 case "TextureAnimation": pp.TextureAnimation = TryBase64(XmlRead.Text(r)) ?? Array.Empty<byte>(); break;
@@ -497,6 +538,7 @@ internal static class ObjectXmlParser
                 case "ProfileHollow": sd.ProfileHollow = ShapeInt(r); break;
                 case "SculptType": sd.SculptType = ShapeInt(r); break;
                 case "FlexiEntry": if (string.Equals(XmlRead.Text(r), "true", StringComparison.OrdinalIgnoreCase)) pp.Flexible = true; break;
+                case "LightEntry": if (string.Equals(XmlRead.Text(r), "true", StringComparison.OrdinalIgnoreCase)) pp.Light = true; break;
                 case "SculptEntry": sd.SculptEntry = string.Equals(XmlRead.Text(r), "true", StringComparison.OrdinalIgnoreCase); break;
                 case "TextureEntry":
                 {
@@ -580,6 +622,18 @@ internal static class ObjectXmlParser
     }
 
     /// <summary>The Flags element is the PrimFlags enumeration as names separated by spaces, or a number.</summary>
+    private static bool HasFlag(string text, string word, int bit)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+        if (XmlRead.TryInt(text.Trim(), out int bits))
+            return (bits & bit) != 0;
+        foreach (string w in text.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries))
+            if (string.Equals(w, word, StringComparison.OrdinalIgnoreCase))
+                return true;
+        return false;
+    }
+
     private static bool HasPhysicsFlag(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -628,6 +682,8 @@ internal static class ObjectXmlParser
             shape.ReadInExtraParamsBytes(data);
             if (shape.FlexiEntry)
                 pp.Flexible = true;
+            if (shape.LightEntry)
+                pp.Light = true;
             if (shape.ProjectionTextureUUID != UUID.Zero)
                 pp.Refs.Add(new RefInfo { Id = shape.ProjectionTextureUUID, Kind = ReferenceKind.ProjectionTexture, Certainty = Certainty.Certain, AssetType = (int)AssetType.Texture });
             if (shape.RenderMaterials?.entries != null)

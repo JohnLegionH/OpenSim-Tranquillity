@@ -118,6 +118,7 @@ public sealed class ArchiveEligibility
             ReadStatus = scan.ReadStatus,
             ReadNote = scan.ReadNote,
             AssumeSafeUnscanned = m_options.AssumeSafeUnscanned,
+            Scan = scan,
             ScriptItems = scan.ScriptItems,
             ScriptItemsWithoutSource = scan.Unscanned.Count,
             NestedObjectParts = scan.NestedObjectParts,

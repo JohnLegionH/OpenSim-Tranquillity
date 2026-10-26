@@ -76,6 +76,18 @@ public sealed class PartRow
     public int ReasonsOmitted { get; set; }
 }
 
+/// <summary>How one script addresses the parts of its linkset (see <see cref="LslLinkUses"/>).</summary>
+public sealed class ScriptLinkUses
+{
+    public Guid LinksetId { get; set; }
+    public string Entry { get; set; }
+    public Guid HostPartId { get; set; }
+    public string Script { get; set; }
+    /// <summary>True when the scan stopped at its cap of findings for this script, so the uses may be incomplete.</summary>
+    public bool Truncated { get; set; }
+    public List<LinkUse> Uses { get; } = new List<LinkUse>();
+}
+
 public sealed class UnscannedScript
 {
     public string Script { get; set; }
@@ -117,6 +129,8 @@ public sealed class ScanResult
     /// <summary>Distinct script assets that were read.</summary>
     public int ScriptAssetsRead { get; set; }
     public List<UnscannedScript> Unscanned { get; } = new List<UnscannedScript>();
+    /// <summary>For each script that was read, where it addresses other parts of its linkset.</summary>
+    public List<ScriptLinkUses> ScriptLinks { get; } = new List<ScriptLinkUses>();
     /// <summary>Parts inside objects stored in prim contents, which this scan does not assess.</summary>
     public int NestedObjectParts { get; set; }
     public int NestedObjectScripts { get; set; }
