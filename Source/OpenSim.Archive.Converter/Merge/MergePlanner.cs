@@ -143,6 +143,10 @@ public static class MergePlanner
         else if (p.Kind != "prim") Add("part", "NOT_PRIM", "the part is not a prim");
         if (p.NotConvertible.Length > 0) Add("part", "NOT_CONVERTED", "the converter keeps the part as a prim (" + p.NotConvertible + ")");
         if (p.Light) Add("part", "LIGHT", "per-part light parameters");
+        if (p.TextureAnimation) Add("part", "TEXTURE_ANIMATION", "a texture animation moves the textures of every face of the part");
+        if (p.Faces.Any(f => f.Pbr)) Add("part", "PBR_FACE", "a PBR material is held in the part's own extra parameters, which a merged part does not carry");
+        if (p.Faces.Any(f => f.Media)) Add("part", "MEDIA_FACE", "face media is held in the part's own media data, which a merged part does not carry");
+        if (p.Faces.Any(f => !f.Bakeable && f.TexGen != 0)) Add("part", "UNBAKED_MAPPING", "a face with planar or other texture mapping that cannot be baked would be projected on the merged shape instead of its own");
         if (p.Flexible) Add("part", "FLEXI", "per-part flexible path");
         if (p.SitTarget) Add("part", "SIT_TARGET", "per-part sit target");
         if (p.HoverText) Add("part", "HOVER_TEXT", "per-part hover text");
@@ -343,7 +347,8 @@ public static class MergePlanner
         }
 
         string hash = Convert.ToHexString(ManagedDigest.Sha256(Encoding.UTF8.GetBytes(string.Join(",", cluster.Select(c => c.Part.PartId.ToString("N")))))).ToLowerInvariant();
-        m.Id = new Guid(hash.Substring(0, 32));
+        // the lowest-numbered member (the root, when it is a member) is the part that is rewritten into the merged part, so the id stays its own
+        m.Id = cluster.OrderBy(c => c.Number).First().Part.PartId;
         m.Description = "oarx-merge " + hash.Substring(0, 8) + " " + m.Members.Count + " parts";
         return m;
     }
@@ -369,21 +374,27 @@ public static class MergePlanner
 public static class FaceBaking
 {
     /// <summary>
-    /// A face bakes unless it is a PBR or media face, uses planar texture mapping, or names a legacy material whose normal or specular
-    /// map is drawn with a transform other than the diffuse texture's (or whose material is not in the archive).
+    /// A face bakes unless it is a PBR or media face, uses a texture mapping other than default or planar, names a legacy material that
+    /// is not in the archive, or names one with normal or specular maps while a transform is in play.
     /// </summary>
     public static bool Bakeable(FaceTransform transform, int texGen, string materialId, LegacyMaterialInfo material, bool pbr, bool media, out string why)
     {
         why = "";
         if (pbr) { why = "PBR material face"; return false; }
         if (media) { why = "media face"; return false; }
-        if (texGen != 0) { why = "planar texture mapping"; return false; }
+        if (texGen != 0 && texGen != 1) { why = "texture mapping other than default or planar"; return false; }
         if (string.IsNullOrEmpty(materialId))
             return true;
         if (material == null) { why = "legacy material not in the archive"; return false; }
-        if ((material.HasNormalMap && !material.NormalTransform.SameAs(transform)) || (material.HasSpecularMap && !material.SpecularTransform.SameAs(transform)))
+        // The viewer draws a material's normal and specular maps with the material's own transform, from the same coordinates as the diffuse
+        // texture. Baking the face's transform into those coordinates would move the maps too, so a face with maps bakes only when neither
+        // the face nor the maps are transformed.
+        bool maps = material.HasNormalMap || material.HasSpecularMap;
+        if (maps && (!transform.SameAs(FaceTransform.Identity)
+            || (material.HasNormalMap && !material.NormalTransform.SameAs(FaceTransform.Identity))
+            || (material.HasSpecularMap && !material.SpecularTransform.SameAs(FaceTransform.Identity))))
         {
-            why = "legacy material map drawn with its own transform";
+            why = "legacy material maps are drawn with a transform of their own";
             return false;
         }
         return true;

@@ -234,11 +234,12 @@ public class MergePlannerTests
     }
 
     [Fact]
-    public void Rule12_AFaceWhoseNormalMapRepeatsLikeTheDiffuseBakes()
+    public void Rule12_AFaceWhoseMapsRepeatLikeTheDiffuseStaysUnbakedBecauseTheViewerWouldTransformTheMapsTwice()
     {
         FaceTransform xf = new FaceTransform(4, 2, 0.5f, 0, 0);
         LegacyMaterialInfo m = new LegacyMaterialInfo { HasNormalMap = true, NormalTransform = xf, HasSpecularMap = true, SpecularTransform = xf };
-        Assert.True(FaceBaking.Bakeable(xf, 0, "mat-1", m, false, false, out _));
+        Assert.False(FaceBaking.Bakeable(xf, 0, "mat-1", m, false, false, out string why));
+        Assert.Contains("maps", why);
     }
 
     [Fact]
@@ -266,10 +267,10 @@ public class MergePlannerTests
     }
 
     [Fact]
-    public void Rule12_APlanarTextureFaceStaysUnbaked()
+    public void Rule12_AMappingThatIsNeitherDefaultNorPlanarStaysUnbaked()
     {
-        Assert.False(FaceBaking.Bakeable(FaceTransform.Identity, 1, "", null, false, false, out string why));
-        Assert.Contains("planar", why);
+        Assert.False(FaceBaking.Bakeable(FaceTransform.Identity, 2, "", null, false, false, out string why));
+        Assert.Contains("mapping", why);
     }
 
     // ---------------------------------------------------------------- rule 14: the region minimum

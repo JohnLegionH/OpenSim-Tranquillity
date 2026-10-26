@@ -58,11 +58,11 @@ public sealed class MergeFace
 
     /// <summary>
     /// What a material slot of a merged part is keyed by. The transform is part of the key only for a face that cannot be baked;
-    /// a baked face carries its repeats, offset and rotation in its texture coordinates.
+    /// a baked face carries its mapping, repeats, offset and rotation in its texture coordinates.
     /// </summary>
     public string SlotKey =>
-        string.Create(CultureInfo.InvariantCulture, $"{TextureId}|{Color}|g{Glow:0.###}|s{Shiny}|b{Bump}|f{(Fullbright ? 1 : 0)}|t{TexGen}|m{MaterialId}|a{(Alpha ? 1 : 0)}")
-        + (Bakeable ? "" : "|xf:" + Transform.Key);
+        string.Create(CultureInfo.InvariantCulture, $"{TextureId}|{Color}|g{Glow:0.###}|s{Shiny}|b{Bump}|f{(Fullbright ? 1 : 0)}|m{MaterialId}|a{(Alpha ? 1 : 0)}")
+        + (Bakeable ? "" : "|t" + TexGen.ToString(CultureInfo.InvariantCulture) + "|xf:" + Transform.Key);
 }
 
 /// <summary>One part of a linkset with everything the planner reads about it.</summary>

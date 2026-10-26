@@ -24,7 +24,11 @@ public static class ArchiveMergePlanner
 {
     private const int LslAssetType = 10, LslBytecodeAssetType = 13;
 
-    public static MergePlan Plan(string archivePath, MergeOptions options, ConvertOptions convert = null)
+    public static MergePlan Plan(string archivePath, MergeOptions options, ConvertOptions convert = null) =>
+        Plan(archivePath, options, convert, out _);
+
+    /// <summary>Plans the merge and also returns the parts as the eligibility pass read them, which the merge itself builds its meshes from.</summary>
+    public static MergePlan Plan(string archivePath, MergeOptions options, ConvertOptions convert, out Dictionary<Guid, ParsedPart> parts)
     {
         options ??= new MergeOptions();
         Dictionary<Guid, ParsedPart> parsed = new Dictionary<Guid, ParsedPart>();
@@ -33,7 +37,9 @@ public static class ArchiveMergePlanner
             AssumeSafeUnscanned = convert?.AssumeSafeUnscanned ?? false,
             PartObserver = pp => parsed.TryAdd(pp.Part.PartId.Guid, pp)
         }).Evaluate(archivePath);
+        parts = parsed;
         Dictionary<Guid, LegacyMaterialInfo> materials = ArchiveMaterials.Read(archivePath);
+        Dictionary<Guid, bool> translucent = ArchiveTextureAlpha.Read(archivePath, TextureIds(parsed.Values));
 
         List<MergeLinkset> linksets = new List<MergeLinkset>();
         foreach (IGrouping<(string, Guid), EligibilityRow> build in elig.Parts.GroupBy(r => (r.Entry, r.LinksetId)))
@@ -42,7 +48,7 @@ public static class ArchiveMergePlanner
             List<EligibilityRow> rows = build.ToList();
             ls.Name = (rows.FirstOrDefault(r => r.IsRoot) ?? rows[0]).Name ?? "";
             foreach (EligibilityRow row in rows)
-                ls.Parts.Add(ReadPart(row, parsed.TryGetValue(row.PartId, out ParsedPart pp) ? pp : null, materials, convert?.Clean ?? true));
+                ls.Parts.Add(ReadPart(row, parsed.TryGetValue(row.PartId, out ParsedPart pp) ? pp : null, materials, translucent, convert?.Clean ?? true));
             ls.Links = LinkFactsFor(elig.Scan, ls.Id, rows.Select(r => r.PartId).ToHashSet());
             linksets.Add(ls);
         }
@@ -57,7 +63,7 @@ public static class ArchiveMergePlanner
 
     // ---------------------------------------------------------------- parts
 
-    private static MergePart ReadPart(EligibilityRow row, ParsedPart pp, Dictionary<Guid, LegacyMaterialInfo> materials, bool clean)
+    private static MergePart ReadPart(EligibilityRow row, ParsedPart pp, Dictionary<Guid, LegacyMaterialInfo> materials, Dictionary<Guid, bool> translucent, bool clean)
     {
         MergePart p = new MergePart
         {
@@ -81,6 +87,7 @@ public static class ArchiveMergePlanner
         p.SitTarget = pp.SitTarget;
         p.HoverText = pp.HoverText;
         p.Particles = pp.HasParticles;
+        p.TextureAnimation = pp.TextureAnimation.Length > 0;
         p.Sound = pp.HasSound;
         p.Physical = pp.PhysicsFlag || pp.HasVehicleParams;
         p.VolumeDetect = pp.VolumeDetect;
@@ -109,7 +116,7 @@ public static class ArchiveMergePlanner
             return p;
         }
 
-        FillFaces(p, pp, faces, materials);
+        FillFaces(p, pp, faces, materials, translucent);
         return p;
     }
 
@@ -134,14 +141,9 @@ public static class ArchiveMergePlanner
         p.BoxMax = hi;
     }
 
-    private static void FillFaces(MergePart p, ParsedPart pp, List<EncoderFace> faces, Dictionary<Guid, LegacyMaterialInfo> materials)
+    private static void FillFaces(MergePart p, ParsedPart pp, List<EncoderFace> faces, Dictionary<Guid, LegacyMaterialInfo> materials, Dictionary<Guid, bool> translucent)
     {
-        Primitive.TextureEntry te = null;
-        if (pp.TextureEntry.Length > 16)
-        {
-            try { te = new Primitive.TextureEntry(pp.TextureEntry, 0, pp.TextureEntry.Length); }
-            catch (Exception) { te = null; }
-        }
+        Primitive.TextureEntry te = ReadTextureEntry(pp);
         HashSet<int> pbrFaces = PbrFaces(pp);
 
         for (int i = 0; i < faces.Count; i++)
@@ -159,17 +161,45 @@ public static class ArchiveMergePlanner
                 f.TexGen = (int)tef.TexMapType;
                 f.MaterialId = tef.MaterialID == UUID.Zero ? "" : tef.MaterialID.ToString();
                 f.Transform = new FaceTransform(tef.RepeatU, tef.RepeatV, tef.OffsetU, tef.OffsetV, tef.Rotation);
-                f.Alpha = tef.RGBA.A < 0.999f;
                 LegacyMaterialInfo material = null;
                 if (tef.MaterialID != UUID.Zero)
                     materials.TryGetValue(tef.MaterialID.Guid, out material);
-                if (material != null && material.DiffuseAlphaMode == 1)
-                    f.Alpha = true;
+                f.Alpha = FaceAlpha.IsAlpha(tef.RGBA.A, translucent.TryGetValue(tef.TextureID.Guid, out bool t) && t, material);
+                f.Pbr = pbrFaces.Contains(i);
+                f.Media = tef.MediaFlags;
                 f.Bakeable = FaceBaking.Bakeable(f.Transform, f.TexGen, f.MaterialId, material, pbrFaces.Contains(i), tef.MediaFlags, out string why);
                 f.UnbakedReason = why;
             }
             p.Faces.Add(f);
         }
+    }
+
+    private static Primitive.TextureEntry ReadTextureEntry(ParsedPart pp)
+    {
+        if (pp.TextureEntry.Length <= 16)
+            return null;
+        try { return new Primitive.TextureEntry(pp.TextureEntry, 0, pp.TextureEntry.Length); }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>The texture ids the faces of the convertible parts show, for the one pass over the archive that reads their alpha channels.</summary>
+    private static HashSet<Guid> TextureIds(IEnumerable<ParsedPart> parts)
+    {
+        HashSet<Guid> ids = new HashSet<Guid>();
+        foreach (ParsedPart pp in parts)
+        {
+            Primitive.TextureEntry te = ReadTextureEntry(pp);
+            if (te == null)
+                continue;
+            if (te.DefaultTexture != null)
+                ids.Add(te.DefaultTexture.TextureID.Guid);
+            if (te.FaceTextures != null)
+                foreach (Primitive.TextureEntryFace face in te.FaceTextures)
+                    if (face != null)
+                        ids.Add(face.TextureID.Guid);
+        }
+        ids.Remove(Guid.Empty);
+        return ids;
     }
 
     private static HashSet<int> PbrFaces(ParsedPart pp)
@@ -234,6 +264,34 @@ public static class ArchiveMergePlanner
         if (locks.Count > 0)
             facts.LockedBy = locks[0] + (locks.Count > 1 ? " (and " + (locks.Count - 1) + " more)" : "");
         return facts;
+    }
+}
+
+/// <summary>Which of the wanted textures of an archive have an alpha channel that is not fully opaque, read in one pass.</summary>
+internal static class ArchiveTextureAlpha
+{
+    private const string Suffix = "_texture.jp2";
+
+    public static Dictionary<Guid, bool> Read(string archivePath, HashSet<Guid> wanted)
+    {
+        Dictionary<Guid, bool> result = new Dictionary<Guid, bool>();
+        if (wanted.Count == 0)
+            return result;
+        using FileStream fs = File.OpenRead(archivePath);
+        int b0 = fs.ReadByte(), b1 = fs.ReadByte();
+        fs.Seek(0, SeekOrigin.Begin);
+        Stream tarStream = b0 == 0x1f && b1 == 0x8b ? new GZipStream(new BufferedStream(fs, 1 << 16), CompressionMode.Decompress) : fs;
+        TarStreamReader tar = new TarStreamReader(tarStream);
+        TarEntryHeader h;
+        while ((h = tar.ReadNext()) != null)
+        {
+            if (!h.IsFile || !h.Name.StartsWith("assets/", StringComparison.Ordinal) || !h.Name.EndsWith(Suffix, StringComparison.OrdinalIgnoreCase))
+                continue;
+            string idText = h.Name.Substring("assets/".Length, h.Name.Length - "assets/".Length - Suffix.Length);
+            if (Guid.TryParse(idText, out Guid id) && wanted.Contains(id))
+                result[id] = TextureAlpha.IsTranslucent(tar.ReadBody());
+        }
+        return result;
     }
 }
 
