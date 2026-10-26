@@ -13,7 +13,7 @@ using SLua.ScriptEngine.Bindings;
 namespace SLua.ScriptEngine
 {
     /// <summary>An event waiting for a script: the native event number and its arguments.</summary>
-    internal readonly record struct QueuedEvent(int EventIndex, Value[] Args);
+    internal readonly record struct QueuedEvent(int EventIndex, Value[] Args, DetectedRecord[] Detected = null);
 
     /// <summary>
     /// A script as its worker sees it. The fields that are not marked "worker only" may be read from any thread;
@@ -135,11 +135,19 @@ namespace SLua.ScriptEngine
         internal void CountUnhandledDrop() => Interlocked.Increment(ref m_droppedUnhandled);
         internal void CountFrontGrant() => Interlocked.Increment(ref m_frontGrants);
 
-        /// <summary>Detected objects of the event being handled; empty outside an event that carries any.</summary>
-        internal int DetectedCount => 0;
+        /// <summary>
+        /// The detected objects of the event being handled, set by the worker when it dispatches the event and kept
+        /// until the next dispatch, a state change or a reset; null when the event carried none. Worker thread only,
+        /// as host functions run on it.
+        /// </summary>
+        internal DetectedRecord[] CurrentDetected;
+
+        /// <summary>Detected objects of the event being handled; 0 outside an event that carries any.</summary>
+        internal int DetectedCount => CurrentDetected?.Length ?? 0;
 
         /// <summary>One detected object of the event being handled, or null for an index out of range.</summary>
-        internal DetectedRecord DetectedAt(int index) => null;
+        internal DetectedRecord DetectedAt(int index) =>
+            CurrentDetected != null && index >= 0 && index < CurrentDetected.Length ? CurrentDetected[index] : null;
         internal void CountPunishment() => Interlocked.Increment(ref m_punishments);
 
         /// <summary>The script whose native call is running on this thread, or null.</summary>

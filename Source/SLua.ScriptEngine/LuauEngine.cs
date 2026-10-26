@@ -88,7 +88,7 @@ namespace SLua.ScriptEngine
         private sealed class DeferredList
         {
             public double Started;
-            public readonly List<(string Name, Value[] Args)> Events = new List<(string, Value[])>();
+            public readonly List<(string Name, Value[] Args, DetectedRecord[] Detected)> Events = new List<(string, Value[], DetectedRecord[])>();
         }
 
         private readonly Dictionary<UUID, DeferredList> m_deferred = new Dictionary<UUID, DeferredList>();
@@ -166,6 +166,8 @@ namespace SLua.ScriptEngine
             m_scene.EventManager.OnScriptReset += OnScriptReset;
             m_scene.EventManager.OnStartScript += OnStartScript;
             m_scene.EventManager.OnStopScript += OnStopScript;
+            m_hooks = new SceneHooksA(scene, this, m_settings.PhysicsThrottle, Clock);
+            m_hooks.Subscribe();
             m_log.Info("Added to region " + scene.RegionInfo.RegionName);
         }
 
@@ -224,6 +226,8 @@ namespace SLua.ScriptEngine
             m_scene.EventManager.OnScriptReset -= OnScriptReset;
             m_scene.EventManager.OnStartScript -= OnStartScript;
             m_scene.EventManager.OnStopScript -= OnStopScript;
+            m_hooks?.Unsubscribe();
+            m_hooks = null;
             lock (m_tracked) m_tracked.Clear();
             lock (m_starts) m_starts.Clear();
             lock (m_deferred) m_deferred.Clear();
@@ -574,15 +578,15 @@ namespace SLua.ScriptEngine
         /// </summary>
         public bool PostScriptEvent(UUID itemID, EventParams parms)
         {
-            if (!TryConvert(parms, out string name, out Value[] args))
+            if (!TryConvert(parms, out string name, out Value[] args, out DetectedRecord[] detected))
                 return false;
-            return PostToItem(itemID, name, args);
+            return PostToItem(itemID, name, args, detected);
         }
 
         /// <summary>Posts an event to every script of the prim that this engine holds or is loading.</summary>
         public bool PostObjectEvent(uint localID, EventParams parms)
         {
-            if (!TryConvert(parms, out string name, out Value[] args))
+            if (!TryConvert(parms, out string name, out Value[] args, out DetectedRecord[] detected))
                 return false;
             var items = new List<UUID>();
             lock (m_tracked)
@@ -593,11 +597,11 @@ namespace SLua.ScriptEngine
             }
             bool any = false;
             foreach (UUID item in items)
-                any |= PostToItem(item, name, args);
+                any |= PostToItem(item, name, args, detected);
             return any;
         }
 
-        private bool PostToItem(UUID itemID, string name, Value[] args)
+        private bool PostToItem(UUID itemID, string name, Value[] args, DetectedRecord[] detected)
         {
             LuauScheduler scheduler = m_scheduler;
             if (scheduler == null || m_disabled)
@@ -605,16 +609,16 @@ namespace SLua.ScriptEngine
             ScriptRecord record = RecordOf(itemID);
             if (record != null)
             {
-                scheduler.Post(record.Script, name, args);
+                scheduler.Post(record.Script, name, args, detected);
                 return true;
             }
             if (!IsTracking(itemID))
                 return false;
-            Defer(itemID, name, args);
+            Defer(itemID, name, args, detected);
             return true;
         }
 
-        private void Defer(UUID itemID, string name, Value[] args)
+        private void Defer(UUID itemID, string name, Value[] args, DetectedRecord[] detected)
         {
             double now = Clock.Now;
             lock (m_deferred)
@@ -627,7 +631,7 @@ namespace SLua.ScriptEngine
                 if (list == null)
                     m_deferred[itemID] = list = new DeferredList { Started = now };
                 if (list.Events.Count < MaxDeferredEventsPerItem)
-                    list.Events.Add((name, args)); // the first 32 are kept
+                    list.Events.Add((name, args, detected)); // the first 32 are kept
             }
         }
 
@@ -641,8 +645,8 @@ namespace SLua.ScriptEngine
             }
             if (Clock.Now - list.Started >= DeferredEventLifetimeSeconds)
                 return; // a script that took more than a minute to load lost them
-            foreach ((string name, Value[] args) in list.Events)
-                m_scheduler?.Post(record.Script, name, args);
+            foreach ((string name, Value[] args, DetectedRecord[] detected) in list.Events)
+                m_scheduler?.Post(record.Script, name, args, detected);
         }
 
         /// <summary>Events held for an item whose script has not finished loading.</summary>
@@ -652,7 +656,12 @@ namespace SLua.ScriptEngine
         }
 
         /// <summary>The scene hooks of the region the engine is in; null outside one.</summary>
-        internal SceneHooksA Hooks => null;
+        internal SceneHooksA Hooks => m_hooks;
+
+        private SceneHooksA m_hooks;
+
+        /// <summary>Average of the last ten physics frame times in milliseconds (for the physics slowdowns the function binding will apply); 0 when the throttle is off.</summary>
+        internal int PhysicsFrameTimeAvg => m_hooks?.PhysicsFrameTimeAvg ?? 0;
 
         /// <summary>True once every worker has failed and the engine has switched itself off.</summary>
         internal bool IsDisabled => m_disabled;
@@ -666,10 +675,11 @@ namespace SLua.ScriptEngine
         /// <summary>How long they are kept from the first one (Halcyon DeferredEventManager.EXPIRATION_SECONDS).</summary>
         internal const double DeferredEventLifetimeSeconds = 60;
 
-        private static bool TryConvert(EventParams parms, out string name, out Value[] args)
+        private static bool TryConvert(EventParams parms, out string name, out Value[] args, out DetectedRecord[] detected)
         {
             name = null;
             args = null;
+            detected = null;
             if (parms == null || string.IsNullOrEmpty(parms.EventName))
                 return false;
             try
@@ -682,6 +692,7 @@ namespace SLua.ScriptEngine
             }
             name = parms.EventName;
             args = EventArguments.Convert(name, parms.Params);
+            detected = DetectedRecord.From(parms.DetectParams);
             return true;
         }
 

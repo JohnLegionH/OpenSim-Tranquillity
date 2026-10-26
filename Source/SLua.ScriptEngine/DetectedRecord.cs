@@ -48,7 +48,38 @@ namespace SLua.ScriptEngine
         /// <summary>One record per DetectParams, in order; null for none.</summary>
         internal static DetectedRecord[] From(DetectParams[] detected)
         {
-            return null;
+            if (detected == null || detected.Length == 0)
+                return null;
+            var records = new DetectedRecord[detected.Length];
+            for (int i = 0; i < detected.Length; i++)
+                records[i] = detected[i] == null ? new DetectedRecord() : One(detected[i]);
+            return records;
         }
+
+        private static DetectedRecord One(DetectParams d) => new DetectedRecord
+        {
+            Key = d.Key.ToString(),
+            Name = d.Name ?? string.Empty,
+            Owner = d.Owner.ToString(),
+            Group = d.Group.ToString(),
+            Position = Vec(d.Position),
+            Rotation = new Quaternion((float)d.Rotation.x, (float)d.Rotation.y, (float)d.Rotation.z, (float)d.Rotation.s),
+            Velocity = Vec(d.Velocity),
+            LinkNumber = d.LinkNum,
+            Type = d.Type,
+            OffsetPos = Vec(d.OffsetPos),
+            TouchFace = d.TouchFace,
+            TouchUV = Vec(d.TouchUV),
+            TouchST = Vec(d.TouchST),
+            TouchNormal = Vec(d.TouchNormal),
+            TouchBinormal = Vec(d.TouchBinormal),
+            TouchPos = Vec(d.TouchPos),
+            Damage = d.Damage,
+            DamageType = d.DamageType,
+            OriginalDamage = d.OriginalDamage,
+            AdjustDamage = d.AdjustDamage,
+        };
+
+        private static Vector3 Vec(LSL_Types.Vector3 v) => new Vector3((float)v.x, (float)v.y, (float)v.z);
     }
 }

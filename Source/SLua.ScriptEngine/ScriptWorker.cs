@@ -359,7 +359,7 @@ namespace SLua.ScriptEngine
             return (s.NotHandled & bit) == 0;
         }
 
-        internal void PostEvent(SchedulerScript s, int eventIndex, Value[] args)
+        internal void PostEvent(SchedulerScript s, int eventIndex, Value[] args, DetectedRecord[] detected = null)
         {
             if (s.Native == null || s.State == ScriptRunState.Removed)
                 return;
@@ -382,7 +382,7 @@ namespace SLua.ScriptEngine
                 Interlocked.Increment(ref m_droppedFull);
                 return;
             }
-            s.Events.Enqueue(new QueuedEvent(eventIndex, args));
+            s.Events.Enqueue(new QueuedEvent(eventIndex, args, detected));
             Reschedule(s, front: s.State == ScriptRunState.Idle);
         }
 
@@ -465,6 +465,7 @@ namespace SLua.ScriptEngine
             if (s.State == ScriptRunState.Removed || s.State == ScriptRunState.Loading)
                 return;
             s.Events.Clear();
+            s.CurrentDetected = null;
             s.CurrentState = 0;
             s.NotHandled = 0;
             s.TimerQueued = false;
@@ -625,6 +626,7 @@ namespace SLua.ScriptEngine
                 if (dispatching)
                 {
                     ev = s.Events.Peek();
+                    s.CurrentDetected = ev.Detected;
                     r = s.Native.Dispatch(ev.EventIndex, ev.Args, quanta);
                 }
                 else if (m_options.StepOverride?.Invoke(s) is StepResult forced)
@@ -675,6 +677,7 @@ namespace SLua.ScriptEngine
                 // SL clears the event queue on a state change (https://wiki.secondlife.com/wiki/Event); the new
                 // state's handlers decide what is heard from here. A tick that was waiting goes with it.
                 s.CurrentState = r.NewState;
+                s.CurrentDetected = null;
                 s.Events.Clear();
                 s.TimerQueued = false;
             }
