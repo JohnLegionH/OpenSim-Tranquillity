@@ -23,7 +23,7 @@ namespace SLua.ScriptEngine
     internal delegate bool RuntimeLoader(LuauSettings settings, IEngineLog log);
 
     /// <summary>
-    /// The Luau script engine as a region module. It registers with the region only when
+    /// The SLua script engine as a region module. It registers with the region only when
     /// <c>[SLua] Enabled = true</c>; it owns a script only when the script's first line names it
     /// or the region's saved-state routing gives it the script. A script it owns is compiled by the loader, which
     /// keeps the compiled bytes; a worker of the scheduler makes the script object from them when the script starts.
@@ -521,7 +521,7 @@ namespace SLua.ScriptEngine
                     return true;
                 m_disabled = true;
             }
-            m_log.Error("The Luau script engine is disabled: every script worker has failed, so no script of this engine runs until the region restarts");
+            m_log.Error("The SLua script engine is disabled: every script worker has failed, so no script of this engine runs until the region restarts");
             return true;
         }
 
