@@ -431,6 +431,12 @@ public static class MergePlanFiles
         return d;
     }
 
+    /// <summary>For each rule and code, how many parts it applies to (a part with several reasons is counted under each).</summary>
+    public static SortedDictionary<string, int> KeptByAnyRule(MergePlan plan)
+    {
+        throw new NotImplementedException();
+    }
+
     public static string ReportText(MergePlan plan)
     {
         StringBuilder sb = new StringBuilder();

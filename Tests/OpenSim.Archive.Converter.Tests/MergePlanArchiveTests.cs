@@ -224,6 +224,25 @@ public class MergePlanArchiveTests
         Assert.Equal(2, plan.AlphaFaces);
     }
 
+    [Fact]
+    public void ThePlanCountsEveryRuleThatKeepsAPartNotOnlyTheFirst()
+    {
+        List<KitPart> parts = Linkset(5, p =>
+        {
+            p[1].Light = true;
+            p[1].Flags = "Physics";
+        });
+        MergePlan plan = PlanOf(parts);
+        SortedDictionary<string, int> first = MergePlanFiles.KeptByFirstRule(plan), any = MergePlanFiles.KeptByAnyRule(plan);
+        Assert.Equal(1, first.Values.Sum());
+        Assert.Equal(1, any["M0-2 LIGHT"]);
+        Assert.Equal(1, any["M0-2 PHYSICAL"]);
+        string text = MergePlanFiles.ReportText(plan);
+        Assert.Contains("every rule that applies", text);
+        Assert.Contains("M0-2 PHYSICAL", text);
+        Assert.Contains("keptByAnyRule", MergePlanFiles.ArchiveJson(plan));
+    }
+
     // ---------------------------------------------------------------- the files and the command line
 
     [Fact]
