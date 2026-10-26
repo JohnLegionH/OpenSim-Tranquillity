@@ -26,7 +26,9 @@ public class MergePlanHeadroomTests
             PartId = Guid.NewGuid(), LinkNum = link, IsRoot = link == 1, Name = "Part " + link, Creator = "c", Masks = "m", PhysicsShapeType = 0, PhysicsVertices = 8,
             BoxMin = new[] { x, 0f, 0f }, BoxMax = new[] { x + 1, 1f, 1f }
         };
-        p.Faces.Add(new MergeFace { TextureId = "tex", Vertices = vertices });
+        // faces of 1,000 vertices: no face of a prim is anywhere near the limit of one mesh face
+        for (int left = vertices; left > 0; left -= 1000)
+            p.Faces.Add(new MergeFace { TextureId = "tex", Vertices = Math.Min(1000, left) });
         return p;
     }
 

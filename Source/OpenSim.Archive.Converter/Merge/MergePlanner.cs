@@ -214,13 +214,32 @@ public static class MergePlanner
         return Extent(set.Select(c => c.Part)) <= cap + 1e-6;
     }
 
+    /// <summary>
+    /// The most faces the geometry stage can build for a material of <paramref name="total"/> vertices whose largest source face has
+    /// <paramref name="largest"/> vertices. The stage closes a face as soon as the next triangle (up to three new vertices) might not fit,
+    /// so a closed face holds at least two vertices fewer than the limit; and where it closes inside a source face, the vertices that face
+    /// shares across the cut are written again in the next face, at most <paramref name="largest"/> of them. With k faces built,
+    /// (k - 1) * (limit - 2 - largest) is at most the total, which bounds k. Counting with the plain limit could plan a face too few.
+    /// </summary>
+    private static int FacesNeeded(long total, long largest, MergeOptions o)
+    {
+        long capacity = Math.Max(1, o.MaxFaceVertices - 2);
+        if (total <= capacity)
+            return 1;
+        long effective = Math.Max(Math.Max(1, capacity / 4), capacity - largest);
+        return (int)(total / effective + 1);
+    }
+
     private static int SlotCount(IEnumerable<Candidate> set, MergeOptions o)
     {
-        Dictionary<string, long> vertices = new Dictionary<string, long>(StringComparer.Ordinal);
+        Dictionary<string, (long total, long largest)> keys = new Dictionary<string, (long, long)>(StringComparer.Ordinal);
         foreach (Candidate c in set)
             foreach (MergeFace f in c.Part.Faces)
-                vertices[f.SlotKey] = (vertices.TryGetValue(f.SlotKey, out long v) ? v : 0) + f.Vertices;
-        return vertices.Values.Sum(v => (int)Math.Max(1, (v + o.MaxFaceVertices - 1) / o.MaxFaceVertices));
+            {
+                keys.TryGetValue(f.SlotKey, out var cur);
+                keys[f.SlotKey] = (cur.total + f.Vertices, Math.Max(cur.largest, f.Vertices));
+            }
+        return keys.Values.Sum(v => FacesNeeded(v.total, v.largest, o));
     }
 
     /// <summary>Two ways to cut a group, by place and by material; the one with fewer pieces wins, then the one with the smaller boxes.</summary>
@@ -326,7 +345,7 @@ public static class MergePlanner
 
         // a slot per material key in order of first use; a key with more vertices than a face holds takes more slots
         List<string> order = new List<string>();
-        Dictionary<string, (int faces, long vertices, bool alpha, bool baked)> keys = new Dictionary<string, (int, long, bool, bool)>(StringComparer.Ordinal);
+        Dictionary<string, (int faces, long vertices, bool alpha, bool baked, long largest)> keys = new Dictionary<string, (int, long, bool, bool, long)>(StringComparer.Ordinal);
         foreach (Candidate c in cluster)
             foreach (MergeFace f in c.Part.Faces)
             {
@@ -334,19 +353,20 @@ public static class MergePlanner
                 if (!keys.TryGetValue(k, out var cur))
                 {
                     order.Add(k);
-                    cur = (0, 0, f.Alpha, f.Bakeable);
+                    cur = (0, 0, f.Alpha, f.Bakeable, 0);
                 }
-                keys[k] = (cur.faces + 1, cur.vertices + f.Vertices, cur.alpha, cur.baked);
+                keys[k] = (cur.faces + 1, cur.vertices + f.Vertices, cur.alpha, cur.baked, Math.Max(cur.largest, f.Vertices));
             }
         int slot = 0;
         foreach (string k in order)
         {
             var v = keys[k];
-            int n = (int)Math.Max(1, (v.vertices + o.MaxFaceVertices - 1) / o.MaxFaceVertices);
+            int n = FacesNeeded(v.vertices, v.largest, o);
+            long perSlot = (v.vertices + n - 1) / n;
             long left = v.vertices;
             for (int i = 0; i < n; i++)
             {
-                long take = Math.Min(left, o.MaxFaceVertices);
+                long take = Math.Min(left, perSlot);
                 left -= take;
                 // the source faces are counted on the key's first slot; how they split across slots is the geometry stage's decision
                 m.Slots.Add(new SlotPlan { Slot = slot++, MaterialKey = k, Alpha = v.alpha, Baked = v.baked, SourceFaces = i == 0 ? v.faces : 0, Vertices = (int)take });

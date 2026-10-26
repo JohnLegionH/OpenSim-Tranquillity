@@ -93,7 +93,12 @@ public class MergePlannerTests
     public void AMaterialWithMoreThanTheFaceVertexLimitUsesMoreThanOneSlot()
     {
         MergeOptions o = new MergeOptions { MaxFaceVertices = 100 };
-        LinksetPlan plan = Plan(Set(Part(1, 0, 1, "t", 60), Part(2, 1, 1, "t", 60)), o);
+        // six faces of ten vertices each: a single face of 60 against a limit of 100 would not be a mesh face the planner can count on
+        MergePart a = Part(1, 0, 1, "t", 10), b = Part(2, 1, 1, "t", 10);
+        foreach (MergePart p in new[] { a, b })
+            for (int i = 0; i < 5; i++)
+                p.Faces.Add(new MergeFace { TextureId = "t", Vertices = 10 });
+        LinksetPlan plan = Plan(Set(a, b), o);
         MergedPartPlan m = Assert.Single(plan.Merged);
         Assert.Equal(2, m.Slots.Count);
         Assert.All(m.Slots, s => Assert.True(s.Vertices <= 100));
