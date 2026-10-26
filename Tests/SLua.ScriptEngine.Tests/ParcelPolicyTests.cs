@@ -120,7 +120,7 @@ public class ParcelPolicyTests
     }
 
     [RequiresNativeFact]
-    public void APausedScriptKeepsItsQueuedEventsAndRunsThemWhenTheParcelAllowsScripts()
+    public void APausedScriptDropsWhatReachesItAndCarriesOnWithNewEventsWhenTheParcelAllowsScripts()
     {
         using var rig = new EngineRig();
         rig.InstallLand();
@@ -133,8 +133,10 @@ public class ParcelPolicyTests
 
         rig.SetParcelFlags(rig.WestParcel, otherScripts: true, groupScripts: false);
 
-        Assert.True(rig.Heard(item, 7), "the event queued while paused ran after the resume");
         Assert.Equal(PauseReason.None, rig.Engine.PauseReasonsOf(item));
+        rig.PostProbe(item, 8);
+        Assert.True(rig.Heard(item, 8), "the script runs new events after the resume");
+        Assert.False(rig.MarksOf(item).Contains("c7"), "the event that arrived while paused was dropped, as Phlox drops it");
     }
 
     [RequiresNativeFact]

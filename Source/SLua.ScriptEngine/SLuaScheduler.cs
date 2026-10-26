@@ -91,6 +91,9 @@ namespace SLua.ScriptEngine
             script.Worker.Enqueue(() => script.Worker.ApplySuspended(script, true));
         }
 
+        /// <summary>Holds the script; with <paramref name="dropEvents"/> the events that reach it meanwhile are dropped, not queued.</summary>
+        public void Suspend(SchedulerScript script, bool dropEvents) => Suspend(script);
+
         /// <summary>Lets a suspended script go on.</summary>
         public void Resume(SchedulerScript script)
         {

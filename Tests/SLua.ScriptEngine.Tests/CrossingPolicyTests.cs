@@ -104,54 +104,7 @@ public class CrossingPolicyTests
         Assert.Equal(PauseReason.Parcel, rig.Engine.PauseReasonsOf(item));
     }
 
-    // ---- the changed event of a crossing waits for a rider (hook 40) ----
-
-    [RequiresNativeFact]
-    public void TheChangedEventOfACrossingWaitsForARiderStillToComeAndTheScriptRunsItsOtherEventsMeanwhile()
-    {
-        var grants = new RecordingGrants { RiderPending = true };
-        using var rig = new EngineRig();
-        rig.Engine.Grants = grants;
-        UUID item = rig.Rez(EngineRig.Lsl(ChangedMarker), stateSource: (int)StateSource.PrimCrossing);
-        rig.WaitScheduled(item);
-
-        rig.PostProbe(item, 1);
-        Assert.True(rig.Heard(item, 1)); // not held up
-        Assert.True(SchedulerHarness.WaitFor(() => rig.Engine.Policy.HeldArrivalCount == 1), "the changed event is held");
-        Assert.True(rig.StaysSilent(item, 256));
-
-        ScenePresence rider = SceneHelpers.AddScenePresence(rig.Scene, grants.Rider);
-        rig.Scene.EventManager.TriggerOnMakeRootAgent(rider);
-
-        Assert.True(rig.Heard(item, 256));
-        Assert.Equal(0, rig.Engine.Policy.HeldArrivalCount);
-        Thread.Sleep(200); // a real wait: it is posted once
-        Assert.Equal(1, Count(rig, item, "c256"));
-    }
-
-    [RequiresNativeFact]
-    public void TheWaitForARiderEndsAfterTenSecondsWhoeverHasArrived()
-    {
-        var grants = new RecordingGrants { RiderPending = true };
-        var clock = new ManualClock();
-        using var rig = new EngineRig();
-        rig.Engine.Clock = clock;
-        rig.Engine.Grants = grants;
-        UUID item = rig.Rez(EngineRig.Lsl(ChangedMarker), stateSource: (int)StateSource.PrimCrossing);
-        rig.WaitScheduled(item);
-        Assert.True(SchedulerHarness.WaitFor(() => rig.Engine.Policy.HeldArrivalCount == 1), "the changed event is held");
-
-        clock.Now = 9.5;
-        rig.Scene.EventManager.TriggerOnFrame();
-        Assert.True(rig.StaysSilent(item, 256));
-        Assert.True(SchedulerHarness.WaitFor(() => rig.Engine.Policy.HeldArrivalCount == 1), "the changed event is held");
-
-        clock.Now = 10.5;
-        rig.Scene.EventManager.TriggerOnFrame();
-
-        Assert.True(rig.Heard(item, 256));
-        Assert.Equal(0, rig.Engine.Policy.HeldArrivalCount);
-    }
+    // ---- the changed event of a crossing: the region's own hold is the only wait ----
 
     [RequiresNativeFact]
     public void WithNoRiderToWaitForTheChangedEventIsPostedAtOnce()
@@ -160,66 +113,26 @@ public class CrossingPolicyTests
         UUID item = rig.Rez(EngineRig.Lsl(ChangedMarker), stateSource: (int)StateSource.PrimCrossing);
 
         Assert.True(rig.Heard(item, 256));
-        Assert.Equal(0, rig.Engine.Policy.HeldArrivalCount);
     }
 
     [RequiresNativeFact]
-    public void OnlyACrossingWaitsAStartForTheRegionStartDoesNot()
+    public void AGrantWaitingForARiderDoesNotDelayTheChangedEventTheEngineHasNoWaitOfItsOwn()
     {
         var grants = new RecordingGrants { RiderPending = true };
         using var rig = new EngineRig();
         rig.Engine.Grants = grants;
-        UUID item = rig.Rez(EngineRig.Lsl(ChangedMarker), stateSource: (int)StateSource.RegionStart);
-
-        Assert.True(rig.Heard(item, 1024));
-    }
-
-    [RequiresNativeFact]
-    public void AWornObjectDoesNotWaitForARider()
-    {
-        var grants = new RecordingGrants { RiderPending = true };
-        using var rig = new EngineRig();
-        rig.Engine.Grants = grants;
-        rig.Object.IsAttachment = true;
-        rig.Object.AttachedAvatar = UUID.Random();
         UUID item = rig.Rez(EngineRig.Lsl(ChangedMarker), stateSource: (int)StateSource.PrimCrossing);
 
         Assert.True(rig.Heard(item, 256));
     }
 
     [RequiresNativeFact]
-    public void ARemovedScriptNeverGetsItsHeldChangedEvent()
+    public void AStartForTheRegionStartBringsRegionStart()
     {
-        var grants = new RecordingGrants { RiderPending = true };
-        var clock = new ManualClock();
         using var rig = new EngineRig();
-        rig.Engine.Clock = clock;
-        rig.Engine.Grants = grants;
-        UUID item = rig.Rez(EngineRig.Lsl(ChangedMarker), stateSource: (int)StateSource.PrimCrossing);
-        rig.WaitScheduled(item);
-        Assert.True(SchedulerHarness.WaitFor(() => rig.Engine.Policy.HeldArrivalCount == 1), "the changed event is held");
+        UUID item = rig.Rez(EngineRig.Lsl(ChangedMarker), stateSource: (int)StateSource.RegionStart);
 
-        rig.Scene.EventManager.TriggerRemoveScript(rig.LocalId, item);
-        clock.Now = 11;
-        rig.Scene.EventManager.TriggerOnFrame();
-
-        Assert.Equal(0, rig.Engine.Policy.HeldArrivalCount);
-        Assert.Empty(rig.MarksOf(item));
-    }
-
-    [RequiresNativeFact]
-    public void AResetScriptForgetsTheChangedEventItWasToBeTold()
-    {
-        var grants = new RecordingGrants { RiderPending = true };
-        using var rig = new EngineRig();
-        rig.Engine.Grants = grants;
-        UUID item = rig.Rez(EngineRig.Lsl(ChangedMarker), stateSource: (int)StateSource.PrimCrossing);
-        rig.WaitScheduled(item);
-        Assert.True(SchedulerHarness.WaitFor(() => rig.Engine.Policy.HeldArrivalCount == 1), "the changed event is held");
-
-        rig.Scene.EventManager.TriggerScriptReset(rig.LocalId, item);
-
-        Assert.Equal(0, rig.Engine.Policy.HeldArrivalCount);
+        Assert.True(rig.Heard(item, 1024));
     }
 
     /// <summary>
@@ -239,23 +152,65 @@ public class CrossingPolicyTests
     }
 
     [RequiresNativeFact]
-    public void TheRegionsOwnHoldOfAnObjectArrivedWithRidersHoldsTheChangedEventToo()
+    public void TheChangedEventOfAnObjectHeldForRidersRunsOnlyAfterTheRidersHaveArrivedWithTheRegionsHoldAlone()
+    {
+        using var rig = new EngineRig();
+        UUID rider = UUID.Random();
+        double now = 1000;
+        rig.Scene.CrossingClock = () => now;
+        SceneObjectGroup arrived = rig.AddObject("Example Arrival", new Vector3(128, 128, 25), EngineRig.Owner);
+        arrived.HeldForRiders = true;
+        HoldForRiders(rig.Scene, arrived, rider, now);
+        UUID item = rig.Rez(EngineRig.Lsl(ChangedMarker), stateSource: (int)StateSource.PrimCrossing, part: arrived.RootPart);
+        rig.WaitScheduled(item);
+
+        Assert.True(rig.Scene.HoldsArrival(arrived.UUID));
+        Assert.True(rig.StaysSilent(item, 256), "the rider has not arrived");
+
+        SceneHelpers.AddScenePresence(rig.Scene, rider); // the rider becomes a root agent: the region releases the object
+
+        Assert.False(rig.Scene.HoldsArrival(arrived.UUID));
+        Assert.True(rig.Heard(item, 256));
+        Thread.Sleep(200); // a real wait: it runs once
+        Assert.Equal(1, Count(rig, item, "c256"));
+    }
+
+    [RequiresNativeFact]
+    public void TheRegionEndingItsHoldAfterTheTimeLimitReleasesTheChangedEvent()
     {
         using var rig = new EngineRig();
         double now = 1000;
         rig.Scene.CrossingClock = () => now;
         SceneObjectGroup arrived = rig.AddObject("Example Arrival", new Vector3(128, 128, 25), EngineRig.Owner);
+        arrived.HeldForRiders = true;
         HoldForRiders(rig.Scene, arrived, UUID.Random(), now);
-        Assert.True(rig.Scene.HoldsArrival(arrived.UUID));
         UUID item = rig.Rez(EngineRig.Lsl(ChangedMarker), stateSource: (int)StateSource.PrimCrossing, part: arrived.RootPart);
         rig.WaitScheduled(item);
-        Assert.True(SchedulerHarness.WaitFor(() => rig.Engine.Policy.HeldArrivalCount == 1), "the changed event is held");
         Assert.True(rig.StaysSilent(item, 256));
 
         now += 10001; // the region's wait for riders is over
         rig.Scene.ReleaseExpiredCrossingHolds();
-        rig.Scene.EventManager.TriggerOnFrame();
 
+        Assert.True(rig.Heard(item, 256));
+    }
+
+    [RequiresNativeFact]
+    public void AScriptHeldForRidersTakesItsOtherEventsAfterTheRelease()
+    {
+        using var rig = new EngineRig();
+        double now = 1000;
+        rig.Scene.CrossingClock = () => now;
+        SceneObjectGroup arrived = rig.AddObject("Example Arrival", new Vector3(128, 128, 25), EngineRig.Owner);
+        arrived.HeldForRiders = true;
+        HoldForRiders(rig.Scene, arrived, UUID.Random(), now);
+        UUID item = rig.Rez(EngineRig.Lsl(ChangedMarker), stateSource: (int)StateSource.PrimCrossing, part: arrived.RootPart);
+        rig.WaitScheduled(item);
+        rig.PostProbe(item, 3);
+
+        now += 10001;
+        rig.Scene.ReleaseExpiredCrossingHolds();
+
+        Assert.True(rig.Heard(item, 3));
         Assert.True(rig.Heard(item, 256));
     }
 
