@@ -53,6 +53,19 @@ command also compares every corner of every merged mesh with the part it came fr
 read back from the asset bytes, and reports the worst position, texture coordinate and normal difference. A mesh asset stores
 positions and coordinates in 16 bits over the mesh's range, so the read-back figures are larger than the exact ones.
 
+A merged part never has more than eight faces. A face of the mesh asset holds at most 65,535 vertices, and the writer closes a face
+as soon as the next triangle might not fit, so the plan counts a material's faces with room for that and for the vertices a cut
+inside a source face repeats; the writer still refuses a part that comes to more than eight.
+
+The mesh asset stores each texture coordinate in 16 bits over the range of its face, so a coordinate can be off by half a step,
+range / 131,070. The plan keeps that under half a texel of the face's real texture (read from the archive; 1024 pixels when the
+archive does not hold the texture): faces of one material whose coordinates are too far apart to share a mesh face get one each, and
+a face that is too wide on its own (UV_PRECISION) keeps its part as a prim. The report gives the worst case and the measured error
+in texels.
+
+The output is written under a temporary name beside it and takes its name only when complete. A run that fails leaves no output;
+the partly written file is kept beside it as `<output>.<id>.incomplete`.
+
 ## Why a part stays (the `rules` in the plan)
 
 | rule | code | meaning |
@@ -63,9 +76,13 @@ positions and coordinates in 16 bits over the mesh's range, so the read-back fig
 | 11 | ALREADY_MESH | an existing mesh keeps its makers' levels of detail |
 | 17 | SCRIPTED, ADDRESSED, PROTECTED_LINK_NUMBER, LINKSET_LOCKED | see below |
 | 18 | ALPHA_CAP | alpha-blended parts merge only within the alpha size cap |
-| part | CONTENTS, LIGHT, FLEXI, SIT_TARGET, HOVER_TEXT, PARTICLES, SOUND, PHYSICAL, VOLUME_DETECT, CONVEX_PHYSICS, ROOT_PHYSICS_NONE, TEXTURE_ANIMATION, PBR_FACE, MEDIA_FACE, UNBAKED_MAPPING, NOT_PRIM, NOT_CONVERTED | per-part settings a merged mesh cannot carry |
+| part | CONTENTS, LIGHT, FLEXI, SIT_TARGET, SIT_TEXT, TOUCH_TEXT, CLICK_ACTION, SALE_TYPE, SALE_PRICE, HOVER_TEXT, HOVER_TEXT_COLOR, PAY_PRICE, PARTICLES, SOUND, PHYSICAL, VOLUME_DETECT, CONVEX_PHYSICS, ROOT_PHYSICS_NONE, TEXTURE_ANIMATION, PBR_FACE, MEDIA_FACE, UNBAKED_MAPPING, UV_PRECISION, NOT_PRIM, NOT_CONVERTED | per-part settings a merged mesh cannot carry |
 | group | SOLE_IN_CLASS | no other part that can merge shares its group |
 | sculpt | SCULPT_NOT_PLANNED | sculpts are converted on their own |
+
+The per-part fields (sit target and text, touch text, click action, sale type and price, hover text and its colour, pay prices) are
+not carried by a merged part, so a part whose value differs from the default stays. The defaults are the ones a region writes: click
+action 0, sale type 0, sale price 0, empty texts, hover text colour opaque black, pay prices -2.
 
 A part can have several reasons; the plan lists all of them, and the totals count the first and every one.
 
