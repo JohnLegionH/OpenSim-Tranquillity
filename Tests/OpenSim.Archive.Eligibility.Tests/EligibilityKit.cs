@@ -142,8 +142,8 @@ internal static class EligibilityKit
         return sb.ToString();
     }
 
-    /// <summary>Writes the builds and assets as a gzip tar with the control file first, as the archiver does.</summary>
-    public static string WriteArchive(List<List<KitPart>> builds, Dictionary<string, byte[]> assets = null)
+    /// <summary>Writes the builds and assets as a gzip tar with the control file first, as the archiver does. The terrain is a stub a region cannot load unless the caller gives a real one.</summary>
+    public static string WriteArchive(List<List<KitPart>> builds, Dictionary<string, byte[]> assets = null, byte[] terrain = null)
     {
         string dir = Path.Combine(Path.GetTempPath(), "archive-eligibility-tests");
         Directory.CreateDirectory(dir);
@@ -160,7 +160,7 @@ internal static class EligibilityKit
             if (assets != null)
                 foreach (KeyValuePair<string, byte[]> a in assets)
                     tar.WriteFile(a.Key, a.Value);
-            tar.WriteFile("terrains/terrain.r32", new byte[16]);
+            tar.WriteFile("terrains/terrain.r32", terrain ?? new byte[16]);
         }
         return path;
     }
