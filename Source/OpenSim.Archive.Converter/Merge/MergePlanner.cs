@@ -425,9 +425,6 @@ public static class FaceBaking
     /// <summary>The texture mapping value of a planar face: the viewer's TEX_GEN_PLANAR, 0x02 in the texture entry's flags.</summary>
     public const int PlanarMapping = (int)OpenMetaverse.MappingType.Planar;
 
-    /// <summary>The most a map's transform may differ from the face's, in any of its five figures, for the face still to count as drawing both alike (a texture entry and a material store the same figure in different steps).</summary>
-    public const float MapTransformTolerance = 5e-4f;
-
     /// <summary>
     /// A face bakes unless it uses a texture mapping other than default or planar, names a legacy material that
     /// is not in the archive (a PBR face does not use it), or names one with a normal or specular map drawn with a transform other than the face's.
@@ -447,18 +444,13 @@ public static class FaceBaking
         // The viewer draws a material's normal and specular maps with the material's own transform, from the same base coordinates as the
         // diffuse texture (llface.cpp getGeometryVolume). Once the face's transform is in the mesh coordinates, a map that is drawn with
         // the same transform finds its coordinates already right.
-        if ((material.HasNormalMap && !Near(material.NormalTransform, transform)) || (material.HasSpecularMap && !Near(material.SpecularTransform, transform)))
+        if ((material.HasNormalMap && !MaterialBaking.Compose(transform, material.NormalTransform, out _)) || (material.HasSpecularMap && !MaterialBaking.Compose(transform, material.SpecularTransform, out _)))
         {
-            why = "legacy material maps are drawn with a transform of their own";
+            why = "legacy material map is drawn with a transform that is a shear relative to the face transform";
             return false;
         }
         return true;
     }
-
-    private static bool Near(FaceTransform a, FaceTransform b) =>
-        MathF.Abs(a.RepeatU - b.RepeatU) <= MapTransformTolerance && MathF.Abs(a.RepeatV - b.RepeatV) <= MapTransformTolerance
-        && MathF.Abs(a.OffsetU - b.OffsetU) <= MapTransformTolerance && MathF.Abs(a.OffsetV - b.OffsetV) <= MapTransformTolerance
-        && MathF.Abs(a.Rotation - b.Rotation) <= MapTransformTolerance;
 
     /// <summary>
     /// The most a map's coordinates may differ from the diffuse coordinates a merged face carries, in texels of the map's own texture. A texture
@@ -472,12 +464,23 @@ public static class FaceBaking
     /// with the map's transform) with the diffuse coordinates the merged face will carry. Returns the worst difference in texels of the map's
     /// own texture (<paramref name="width"/> by <paramref name="height"/> pixels, 0 when unknown).
     /// </summary>
-    public static double MapDeviationTexels(float[] diffuseUv, float[] positions, float[] normals, float[] uvs, FaceTransform map, bool planar, System.Numerics.Vector3 scale, int width, int height)
+    public static double MapDeviationTexels(float[] diffuseUv, float[] positions, float[] normals, float[] uvs, FaceTransform map, bool planar, System.Numerics.Vector3 scale, int width, int height) =>
+        MapDeviationTexels(diffuseUv, positions, normals, uvs, map, FaceTransform.Identity, planar, scale, width, height);
+
+    /// <summary>
+    /// As above, for a merged face whose material draws the map with <paramref name="carried"/> on the diffuse coordinates it carries: the map is
+    /// where the viewer draws it (the base coordinates with the map transform) against <paramref name="carried"/> applied to the diffuse coordinates.
+    /// </summary>
+    public static double MapDeviationTexels(float[] diffuseUv, float[] positions, float[] normals, float[] uvs, FaceTransform map, FaceTransform carried, bool planar, System.Numerics.Vector3 scale, int width, int height)
     {
         float[] drawn = FaceUv.Bake(positions, normals, uvs, map, planar, scale);
         double w = width > 0 ? width : UvPrecision.UnknownResolution, h = height > 0 ? height : UvPrecision.UnknownResolution, worst = 0;
         for (int i = 0; i < drawn.Length; i += 2)
-            worst = Math.Max(worst, Math.Max(Math.Abs(drawn[i] - diffuseUv[i]) * w, Math.Abs(drawn[i + 1] - diffuseUv[i + 1]) * h));
+        {
+            float s = diffuseUv[i], t = diffuseUv[i + 1];
+            FaceUv.Transform(ref s, ref t, carried);
+            worst = Math.Max(worst, Math.Max(Math.Abs(drawn[i] - s) * w, Math.Abs(drawn[i + 1] - t) * h));
+        }
         return worst;
     }
 }

@@ -622,10 +622,19 @@ internal static class MeshCheck
                 double texelsV = Math.Abs(wv - decUv[run.Slot][dv * 2 + 1]) * (shownFace.TextureHeight > 0 ? shownFace.TextureHeight : UvPrecision.UnknownResolution);
                 report.MeasuredUvTexels = Math.Max(report.MeasuredUvTexels, Math.Max(texelsU, texelsV));
                 float[] nu = wantNormalUv[run.Member][run.Face], su = wantSpecularUv[run.Member][run.Face];
+                // the viewer draws each map with the transform its material states, from the coordinates the merged face carries
                 if (nu != null)
-                    report.MeasuredMapTexels = Math.Max(report.MeasuredMapTexels, Math.Max(Math.Abs(nu[sv * 2] - decUv[run.Slot][dv * 2]) * Pixels(shownFace.NormalWidth), Math.Abs(nu[sv * 2 + 1] - decUv[run.Slot][dv * 2 + 1]) * Pixels(shownFace.NormalHeight)));
+                {
+                    float ms = decUv[run.Slot][dv * 2], mt = decUv[run.Slot][dv * 2 + 1];
+                    FaceUv.Transform(ref ms, ref mt, shownFace.NormalOut);
+                    report.MeasuredMapTexels = Math.Max(report.MeasuredMapTexels, Math.Max(Math.Abs(nu[sv * 2] - ms) * Pixels(shownFace.NormalWidth), Math.Abs(nu[sv * 2 + 1] - mt) * Pixels(shownFace.NormalHeight)));
+                }
                 if (su != null)
-                    report.MeasuredMapTexels = Math.Max(report.MeasuredMapTexels, Math.Max(Math.Abs(su[sv * 2] - decUv[run.Slot][dv * 2]) * Pixels(shownFace.SpecularWidth), Math.Abs(su[sv * 2 + 1] - decUv[run.Slot][dv * 2 + 1]) * Pixels(shownFace.SpecularHeight)));
+                {
+                    float ms = decUv[run.Slot][dv * 2], mt = decUv[run.Slot][dv * 2 + 1];
+                    FaceUv.Transform(ref ms, ref mt, shownFace.SpecularOut);
+                    report.MeasuredMapTexels = Math.Max(report.MeasuredMapTexels, Math.Max(Math.Abs(su[sv * 2] - ms) * Pixels(shownFace.SpecularWidth), Math.Abs(su[sv * 2 + 1] - mt) * Pixels(shownFace.SpecularHeight)));
+                }
                 report.Corners++;
             }
         }

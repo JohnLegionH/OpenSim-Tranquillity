@@ -20,7 +20,7 @@ namespace OpenSim.Archive.Converter.Tests;
 ///   face 1 is planar, material B (a normal map only), face transform equal to the map's;
 ///   face 2 is planar, material A2 (the maps of A with another transform), face transform equal to that one: it is the same material as A once
 ///          the transforms are taken out;
-///   face 3 is default-mapped, material M whose normal map is drawn with a transform other than the face's, so it cannot be baked.
+///   face 3 is default-mapped, material M whose normal map is drawn with a transform that is a shear relative to the face transform (a different turn on an uneven scale), so it cannot be baked.
 /// The face transforms are the values a texture entry stores (written and read back), and the material figures are those values rounded to
 /// the steps a material stores, so the two differ by what the two storage formats lose, as they do in a real archive.
 /// </summary>
@@ -38,8 +38,8 @@ internal static class MapsFixture
     public static readonly FaceTransform TransformA = AsStored(new FaceTransform(2f, 3f, 0.25f, -0.5f, 0.3f));
     public static readonly FaceTransform TransformB = AsStored(new FaceTransform(2f, 0.5f, -0.125f, 0.0625f, 1.2f));
     public static readonly FaceTransform TransformA2 = AsStored(new FaceTransform(1.5f, 1.5f, 0.5f, 0.25f, 0f));
-    public static readonly FaceTransform FaceM = AsStored(new FaceTransform(2f, 2f, 0.1f, 0.2f, 0.4f));
-    public static readonly FaceTransform NormalM = AsStored(new FaceTransform(3f, 2f, 0.1f, 0.2f, 0.4f));
+    public static readonly FaceTransform FaceM = AsStored(new FaceTransform(2f, 3f, 0.1f, 0.2f, 0.4f));
+    public static readonly FaceTransform NormalM = AsStored(new FaceTransform(3f, 2f, 0.1f, 0.2f, 1.0f));
 
     /// <summary>What a texture entry keeps of a transform: written and read back.</summary>
     public static FaceTransform AsStored(FaceTransform t)

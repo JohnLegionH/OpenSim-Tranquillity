@@ -234,10 +234,18 @@ public static class ArchiveMergePlanner
     {
         textures.TryGetValue(material.NormalMapId, out TextureFacts normal);
         textures.TryGetValue(material.SpecularMapId, out TextureFacts specular);
+        // each map is drawn from the merged coordinates (the diffuse, with the face transform in them) with the map transform relative to the face transform, as the material stores it
+        FaceTransform normalOut = FaceTransform.Identity, specularOut = FaceTransform.Identity;
+        // a map drawn like the diffuse (to within what a texture entry and a material lose in storing the same figures) keeps the identity: rounding a
+        // composed figure that close to the identity to the material's step would only add error
+        if (material.HasNormalMap && MaterialBaking.Compose(f.DrawnTransform, material.NormalTransform, out FaceTransform n) && !MaterialBaking.NearIdentity(n))
+            normalOut = MaterialBaking.AsStored(n);
+        if (material.HasSpecularMap && MaterialBaking.Compose(f.DrawnTransform, material.SpecularTransform, out FaceTransform sp) && !MaterialBaking.NearIdentity(sp))
+            specularOut = MaterialBaking.AsStored(sp);
         if (shown != null)
         {
-            if (material.HasNormalMap && FaceBaking.MapDeviationTexels(shown, face.Positions, face.Normals, face.Uvs, material.NormalTransform, planar, size, normal.Width, normal.Height) > FaceBaking.MapTolerance
-                || material.HasSpecularMap && FaceBaking.MapDeviationTexels(shown, face.Positions, face.Normals, face.Uvs, material.SpecularTransform, planar, size, specular.Width, specular.Height) > FaceBaking.MapTolerance)
+            if (material.HasNormalMap && FaceBaking.MapDeviationTexels(shown, face.Positions, face.Normals, face.Uvs, material.NormalTransform, normalOut, planar, size, normal.Width, normal.Height) > FaceBaking.MapTolerance
+                || material.HasSpecularMap && FaceBaking.MapDeviationTexels(shown, face.Positions, face.Normals, face.Uvs, material.SpecularTransform, specularOut, planar, size, specular.Width, specular.Height) > FaceBaking.MapTolerance)
             {
                 f.Bakeable = false;
                 f.UnbakedReason = "legacy material maps are drawn too far from the diffuse";
@@ -248,16 +256,22 @@ public static class ArchiveMergePlanner
         f.SpecularBaked = material.HasSpecularMap;
         f.NormalTransform = material.NormalTransform;
         f.SpecularTransform = material.SpecularTransform;
+        f.NormalOut = normalOut;
+        f.SpecularOut = specularOut;
         f.NormalWidth = normal.Width; f.NormalHeight = normal.Height;
         f.SpecularWidth = specular.Width; f.SpecularHeight = specular.Height;
         // the one set of coordinates drives every texture of the face, so the coarsest storage error is the largest texture's
-        f.TextureWidth = Math.Max(f.TextureWidth, Math.Max(material.HasNormalMap ? Size(normal.Width) : 0, material.HasSpecularMap ? Size(specular.Width) : 0));
-        f.TextureHeight = Math.Max(f.TextureHeight, Math.Max(material.HasNormalMap ? Size(normal.Height) : 0, material.HasSpecularMap ? Size(specular.Height) : 0));
-        if (material.MapsTransformed && material.IdentityBytes != null)
+        // a map repeated by its own transform multiplies the error of the stored coordinates by its repeats
+        double normalGain = Math.Max(1, Math.Max(Math.Abs(normalOut.RepeatU), Math.Abs(normalOut.RepeatV))), specularGain = Math.Max(1, Math.Max(Math.Abs(specularOut.RepeatU), Math.Abs(specularOut.RepeatV)));
+        f.TextureWidth = Math.Max(f.TextureWidth, (int)Math.Min(1 << 20, Math.Ceiling(Math.Max(material.HasNormalMap ? Size(normal.Width) * normalGain : 0, material.HasSpecularMap ? Size(specular.Width) * specularGain : 0))));
+        f.TextureHeight = Math.Max(f.TextureHeight, (int)Math.Min(1 << 20, Math.Ceiling(Math.Max(material.HasNormalMap ? Size(normal.Height) * normalGain : 0, material.HasSpecularMap ? Size(specular.Height) * specularGain : 0))));
+        bool changed = (material.HasNormalMap && !normalOut.SameAs(material.NormalTransform)) || (material.HasSpecularMap && !specularOut.SameAs(material.SpecularTransform));
+        if (changed && material.Source != null)
         {
-            f.BakedMaterialId = material.IdentityId.ToString();
-            if (!materials.ContainsKey(material.IdentityId))
-                f.NewMaterial = material.IdentityBytes;
+            (Guid id, byte[] bytes) = MaterialBaking.WithMapTransforms(material.Source, material.HasNormalMap ? normalOut : FaceTransform.Identity, material.HasSpecularMap ? specularOut : FaceTransform.Identity);
+            f.BakedMaterialId = id.ToString();
+            if (!materials.ContainsKey(id))
+                f.NewMaterial = bytes;
         }
     }
 
@@ -421,6 +435,7 @@ internal static class ArchiveMaterials
                 SpecularTransform = new FaceTransform(F("SpecRepeatX"), F("SpecRepeatY"), F("SpecOffsetX"), F("SpecOffsetY"), F("SpecRotation")),
                 DiffuseAlphaMode = (int)map["DiffuseAlphaMode"].AsUInteger()
             };
+            info.Source = map;
             (info.IdentityId, info.IdentityBytes) = MaterialBaking.WithoutMapTransforms(map);
             return info;
         }

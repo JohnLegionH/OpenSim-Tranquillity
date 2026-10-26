@@ -41,7 +41,7 @@ A face's slot is set by its texture, colour, glow, shininess, bump, fullbright, 
 mapping, repeats, offset, rotation and flips are not part of it when the face can be baked into the merged texture
 coordinates; they are then written into the coordinates as the viewer computes them (`xform` and `planarProjection` in the
 viewer's `llface.cpp`) and the merged face is drawn with default mapping and no transform. A face cannot be baked when it uses a mapping other than default or planar, names a legacy material that is not in the archive, or names
-one with a normal or specular map that is drawn somewhere other than the diffuse texture is (see below). Such a default-mapped
+one with a normal or specular map that is drawn with a transform that is a shear relative to the face's (see below). Such a default-mapped
 face keeps its own slot, keyed with its transform, and its transform stays on the merged face.
 
 ### PBR faces
@@ -71,18 +71,24 @@ marked as media and has no entry is carried as marked, with no entry.
 
 ### Legacy materials with normal and specular maps
 
-The viewer draws the diffuse texture with the face's transform and each map with the material's own transform for that map, all from
-the same base coordinates (projected first when the face is planar). A merged mesh has one set of coordinates, so a face with maps bakes
-only when its maps are drawn where its diffuse texture is: every corner is compared, in texels of the map's own texture, and the face
-bakes when no map is more than 0.25 texel away (a texture entry and a material keep the same figure in different steps, so equal figures
-differ by a little). The coordinates must also be stored to half a texel at the size of the largest texture the face shows (diffuse,
-normal or specular map; 2048 pixels for a texture the archive does not hold), or the part stays (UV_PRECISION). A face whose maps are drawn
-anywhere else keeps its own transform and material.
+The viewer draws the diffuse texture with the face's transform F and each map with the material's own transform M for that map, all from
+the same base coordinates (projected first when the face is planar). A merged mesh has one set of coordinates, and they carry F. The merged
+face therefore names a material that draws each map with N, where N(F(p)) = M(p) for every p: M taken relative to F. A material states a
+transform as a turn, then repeats, then an offset (`xform` in `llface.cpp`), and N can be stated in those five figures unless it shears: with
+L = S_m R(d) S_f^-1 (S the repeats, R the turn, d the difference of the two turns), the rows of L must be at right angles. That holds when the
+face is scaled alike in both directions, or when the map and the face are turned alike (or a quarter turn apart); otherwise the face is not
+baked and keeps its own transform and material. A map drawn like the diffuse composes to the identity.
 
-When a baked face's material has a map drawn with a transform other than the identity, the merged face names a new material: the old one
-with both maps' repeats, offsets and rotations taken out, encoded the way the region encodes a legacy material, with the id the region
-derives (the MD5 of its bytes). It is written into the archive once however many faces name it; materials that differ only in their map
-transforms become one. A material whose maps are not transformed is kept as it is.
+The figures are stored in ten-thousandths, so every corner is compared, in texels of the map's own texture, with the transform the material will
+state applied to the merged coordinates, and the face bakes when no map is more than 0.25 texel away (a texture entry and a material keep the
+same figure in different steps, so equal figures differ by a little). The coordinates must also be stored to half a texel at the size of the
+largest texture the face shows (diffuse, normal or specular map; 2048 pixels for a texture the archive does not hold), times the largest repeat
+N states, or the part stays (UV_PRECISION).
+
+When a baked face's material states a map transform other than the one it has, the merged face names a new material: the old one with the
+maps' transforms replaced by N, encoded the way the region encodes a legacy material, with the id the region derives (the MD5 of its bytes).
+It is written into the archive once however many faces name it; faces that need the same N share it. A material whose maps need no change is
+kept as it is.
 
 ## The merged part
 

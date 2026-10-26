@@ -32,6 +32,8 @@ public sealed class LegacyMaterialInfo
     public int DiffuseAlphaMode { get; set; }
     public Guid NormalMapId { get; set; }
     public Guid SpecularMapId { get; set; }
+    /// <summary>The material as the archive stores it, for writing a variant of it (null when not read from an archive).</summary>
+    public OpenMetaverse.StructuredData.OSDMap Source { get; set; }
     /// <summary>True when a map the material has is drawn with a transform other than the identity.</summary>
     public bool MapsTransformed =>
         (HasNormalMap && !NormalTransform.SameAs(FaceTransform.Identity)) || (HasSpecularMap && !SpecularTransform.SameAs(FaceTransform.Identity));
@@ -66,6 +68,9 @@ public sealed class MergeFace
     public bool SpecularBaked { get; set; }
     public FaceTransform NormalTransform { get; set; } = FaceTransform.Identity;
     public FaceTransform SpecularTransform { get; set; } = FaceTransform.Identity;
+    /// <summary>The transform the merged face material draws each baked map with (see <see cref="MaterialBaking.Compose"/>): the map transform relative to the face transform, as the material stores it.</summary>
+    public FaceTransform NormalOut { get; set; } = FaceTransform.Identity;
+    public FaceTransform SpecularOut { get; set; } = FaceTransform.Identity;
     public int NormalWidth { get; set; }
     public int NormalHeight { get; set; }
     public int SpecularWidth { get; set; }
