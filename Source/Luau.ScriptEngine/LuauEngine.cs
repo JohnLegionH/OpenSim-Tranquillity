@@ -30,7 +30,7 @@ namespace Luau.ScriptEngine
         public event ObjectRemoved OnObjectRemoved;
 #pragma warning restore CS0067
 
-        public LuauEngine() : this(new RegionLog(), (settings, log) => true) { }
+        public LuauEngine() : this(new RegionLog(), NativeRuntime.GateForEngine) { }
 
         private readonly IEngineLog m_log;
         private readonly RuntimeLoader m_loadRuntime;

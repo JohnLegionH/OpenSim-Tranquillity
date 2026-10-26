@@ -82,6 +82,8 @@
          C5, protobuf-net, Antlr4, System.Data.SQLite/e_sqlite3) deploys automatically —
          no manual DLL copying, no compile/runtime identity splits. -->
     <ProjectReference Include="../../Source/Phlox.ScriptEngine/Phlox.ScriptEngine.csproj" />
+    <!-- The Luau engine registers nothing unless [NGC.Luau] Enabled = true. -->
+    <ProjectReference Include="../../Source/Luau.ScriptEngine/Luau.ScriptEngine.csproj" />
     <ProjectReference Include="../../Addons/os-webrtc-janus/WebRtcVoiceRegionModule/WebRtcVoiceRegionModule.csproj" />
     <ProjectReference Include="../../Addons/os-webrtc-janus/WebRtcVoiceServiceModule/WebRtcVoiceServiceModule.csproj" />
     <ProjectReference Include="../../Addons/os-webrtc-janus/Janus/WebRtcJanusService.csproj" />
