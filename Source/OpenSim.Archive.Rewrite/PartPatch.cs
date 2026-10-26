@@ -50,7 +50,12 @@ public sealed class ElementEdit
     }
 
     /// <summary>Like <see cref="SetInnerXml"/>, but a part that lacks the element gets it added at the end of the part. Only an element directly below the part can be added.</summary>
-    public static ElementEdit SetInnerXmlOrAdd(string path, string markup) => throw new NotImplementedException();
+    public static ElementEdit SetInnerXmlOrAdd(string path, string markup)
+    {
+        ElementEdit edit = SetInnerXml(path, markup);
+        edit.AddIfMissing = true;
+        return edit;
+    }
 
     /// <summary>Replaces the content of the element with this XML markup, which must be well formed.</summary>
     public static ElementEdit SetInnerXml(string path, string markup)

@@ -122,7 +122,7 @@ internal static class ObjectXml
             {
                 if ((!part.ByPath.TryGetValue(edit.Path, out List<Span> spans) || spans.Count == 0) && edit.AddIfMissing && edit.Path.IndexOf('/') < 0)
                 {
-                    cuts.Add((part.CloseAt, part.CloseAt, "<" + edit.Path + ">" + Escape(edit.Value) + "</" + edit.Path + ">"));
+                    cuts.Add((part.CloseAt, part.CloseAt, "<" + edit.Path + ">" + (edit.IsMarkup ? edit.Value : Escape(edit.Value)) + "</" + edit.Path + ">"));
                     continue;
                 }
                 if (!part.ByPath.TryGetValue(edit.Path, out spans) || spans.Count == 0)

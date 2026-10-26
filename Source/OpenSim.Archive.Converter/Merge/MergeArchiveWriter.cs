@@ -292,8 +292,8 @@ public static class MergeArchiveWriter
         if (physicsType == -1)
             edits.Add(ElementEdit.SetTextOrAdd("PhysicsShapeType", "0"));
 
-        Need("TaskInventory");
-        edits.Add(ElementEdit.SetInnerXml("TaskInventory", NotecardItem(view, mp.Id, noteAsset, noteItem)));
+        // a part with no inventory element gets one; its other contents (none, for a part that can merge) are not touched
+        edits.Add(ElementEdit.SetInnerXmlOrAdd("TaskInventory", NotecardItem(view, mp.Id, noteAsset, noteItem)));
         return edits;
     }
 
