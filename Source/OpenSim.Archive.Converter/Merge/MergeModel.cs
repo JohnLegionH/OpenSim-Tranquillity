@@ -60,8 +60,10 @@ public sealed class MergeFace
     public int TextureHeight { get; set; }
     /// <summary>The range of the texture coordinates the face carries in a merged mesh (baked when the face is baked).</summary>
     public UvBounds Uv { get; set; }
-    /// <summary>True when the face is baked and its own coordinates already run too wide to be stored in a mesh asset; it cannot be left unbaked.</summary>
+    /// <summary>True when the coordinates of the face as drawn already run so wide that a mesh asset cannot store them to half a texel; the part stays a prim.</summary>
     public bool UvTooWide { get; set; }
+    /// <summary>0 for the first group of faces of a material whose coordinates fit one mesh face, then 1, 2 ... (set when the merged part is planned).</summary>
+    public int UvClass { get; set; }
 
     /// <summary>
     /// What a material slot of a merged part is keyed by. The transform is part of the key only for a face that cannot be baked;
@@ -69,6 +71,7 @@ public sealed class MergeFace
     /// </summary>
     public string SlotKey =>
         string.Create(CultureInfo.InvariantCulture, $"{TextureId}|{Color}|g{Glow:0.###}|s{Shiny}|b{Bump}|f{(Fullbright ? 1 : 0)}|m{MaterialId}|a{(Alpha ? 1 : 0)}")
+        + (UvClass > 0 ? "|u" + UvClass.ToString(CultureInfo.InvariantCulture) : "")
         + (Bakeable ? "" : "|t" + TexGen.ToString(CultureInfo.InvariantCulture) + "|xf:" + Transform.Key);
 }
 

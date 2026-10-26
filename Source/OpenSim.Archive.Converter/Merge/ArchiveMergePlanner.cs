@@ -43,7 +43,7 @@ public static class ArchiveMergePlanner
         }).Evaluate(archivePath);
         parts = parsed;
         Dictionary<Guid, LegacyMaterialInfo> materials = ArchiveMaterials.Read(archivePath);
-        Dictionary<Guid, bool> translucent = ArchiveTextureAlpha.Read(archivePath, TextureIds(parsed.Values));
+        Dictionary<Guid, TextureFacts> translucent = ArchiveTextureAlpha.Read(archivePath, TextureIds(parsed.Values));
 
         List<MergeLinkset> linksets = new List<MergeLinkset>();
         foreach (IGrouping<(string, Guid), EligibilityRow> build in elig.Parts.GroupBy(r => (r.Entry, r.LinksetId)))
@@ -68,7 +68,7 @@ public static class ArchiveMergePlanner
 
     // ---------------------------------------------------------------- parts
 
-    private static MergePart ReadPart(EligibilityRow row, ParsedPart pp, Dictionary<Guid, LegacyMaterialInfo> materials, Dictionary<Guid, bool> translucent, bool clean)
+    private static MergePart ReadPart(EligibilityRow row, ParsedPart pp, Dictionary<Guid, LegacyMaterialInfo> materials, Dictionary<Guid, TextureFacts> translucent, bool clean)
     {
         MergePart p = new MergePart
         {
@@ -153,7 +153,7 @@ public static class ArchiveMergePlanner
         p.BoxMax = hi;
     }
 
-    private static void FillFaces(MergePart p, ParsedPart pp, List<EncoderFace> faces, Dictionary<Guid, LegacyMaterialInfo> materials, Dictionary<Guid, bool> translucent)
+    private static void FillFaces(MergePart p, ParsedPart pp, List<EncoderFace> faces, Dictionary<Guid, LegacyMaterialInfo> materials, Dictionary<Guid, TextureFacts> translucent)
     {
         Primitive.TextureEntry te = ReadTextureEntry(pp);
         HashSet<int> pbrFaces = PbrFaces(pp);
@@ -176,7 +176,23 @@ public static class ArchiveMergePlanner
                 LegacyMaterialInfo material = null;
                 if (tef.MaterialID != UUID.Zero)
                     materials.TryGetValue(tef.MaterialID.Guid, out material);
-                f.Alpha = FaceAlpha.IsAlpha(tef.RGBA.A, translucent.TryGetValue(tef.TextureID.Guid, out bool t) && t, material);
+                translucent.TryGetValue(tef.TextureID.Guid, out TextureFacts texture);
+                f.Alpha = FaceAlpha.IsAlpha(tef.RGBA.A, texture.Translucent, material);
+                f.TextureWidth = texture.Width;
+                f.TextureHeight = texture.Height;
+                // the coordinates the face will be drawn with from a mesh asset: baked into the mesh or applied by its texture entry, the same figures
+                if (!faces[i].IsEmpty)
+                {
+                    float[] shown = FaceUv.Bake(faces[i].Positions, faces[i].Normals, faces[i].Uvs, f.Transform, f.TexGen == FaceBaking.PlanarMapping, new System.Numerics.Vector3(pp.Scale.X, pp.Scale.Y, pp.Scale.Z));
+                    float minU = float.MaxValue, maxU = float.MinValue, minV = float.MaxValue, maxV = float.MinValue;
+                    for (int v = 0; v < shown.Length; v += 2)
+                    {
+                        minU = Math.Min(minU, shown[v]); maxU = Math.Max(maxU, shown[v]);
+                        minV = Math.Min(minV, shown[v + 1]); maxV = Math.Max(maxV, shown[v + 1]);
+                    }
+                    f.Uv = new UvBounds(minU, maxU, minV, maxV);
+                    f.UvTooWide = UvPrecision.TooWide(f);
+                }
                 f.Pbr = pbrFaces.Contains(i);
                 f.Media = tef.MediaFlags;
                 f.Bakeable = FaceBaking.Bakeable(f.Transform, f.TexGen, f.MaterialId, material, pbrFaces.Contains(i), tef.MediaFlags, out string why);
@@ -284,9 +300,9 @@ internal static class ArchiveTextureAlpha
 {
     private const string Suffix = "_texture.jp2";
 
-    public static Dictionary<Guid, bool> Read(string archivePath, HashSet<Guid> wanted)
+    public static Dictionary<Guid, TextureFacts> Read(string archivePath, HashSet<Guid> wanted)
     {
-        Dictionary<Guid, bool> result = new Dictionary<Guid, bool>();
+        Dictionary<Guid, TextureFacts> result = new Dictionary<Guid, TextureFacts>();
         if (wanted.Count == 0)
             return result;
         using FileStream fs = File.OpenRead(archivePath);
@@ -301,7 +317,7 @@ internal static class ArchiveTextureAlpha
                 continue;
             string idText = h.Name.Substring("assets/".Length, h.Name.Length - "assets/".Length - Suffix.Length);
             if (Guid.TryParse(idText, out Guid id) && wanted.Contains(id))
-                result[id] = TextureAlpha.IsTranslucent(tar.ReadBody());
+                result[id] = TextureAlpha.Inspect(tar.ReadBody());
         }
         return result;
     }

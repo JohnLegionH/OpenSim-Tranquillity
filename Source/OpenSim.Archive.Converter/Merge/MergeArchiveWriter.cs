@@ -95,6 +95,8 @@ public sealed class MergeWriteResult
         sb.AppendLine("  corners compared with the original parts: " + Parts.Sum(p => (long)p.Corners));
         sb.AppendLine("  worst position difference " + Worst(p => p.WorstPositionMeters) + " m before the mesh is encoded, " + Worst(p => p.WorstPositionMetersDecoded) + " m as written");
         sb.AppendLine("  worst texture coordinate difference " + Worst(p => p.WorstUv) + " before the mesh is encoded, " + Worst(p => p.WorstUvDecoded) + " as written");
+        sb.AppendLine("  worst texture coordinate error after the mesh is stored (16 bits over each face's range): " + Worst(p => p.WorstUvTexels, "0.000") + " texels at most, "
+            + Worst(p => p.MeasuredUvTexels, "0.000") + " texels measured (limit " + UvPrecision.MaxTexels.ToString(CultureInfo.InvariantCulture) + ")");
         sb.AppendLine("  worst normal difference " + Worst(p => p.WorstNormal) + " before the mesh is encoded, " + Worst(p => p.WorstNormalDecoded) + " as written");
         sb.AppendLine("  face mapping of the convertible prims: " + Mapping.DefaultFaces + " default, " + Mapping.PlanarFaces + " planar, " + Mapping.OtherFaces + " other");
         foreach (PlanarPart pp in Mapping.PlanarParts.Take(200))
@@ -112,7 +114,7 @@ public sealed class MergeWriteResult
         return sb.ToString();
     }
 
-    private string Worst(Func<MergedPartReport, double> pick) => (Parts.Count == 0 ? 0 : Parts.Max(pick)).ToString("0.0e+0", CultureInfo.InvariantCulture);
+    private string Worst(Func<MergedPartReport, double> pick, string format = "0.0e+0") => (Parts.Count == 0 ? 0 : Parts.Max(pick)).ToString(format, CultureInfo.InvariantCulture);
 }
 
 /// <summary>
@@ -279,6 +281,9 @@ public static class MergeArchiveWriter
                     report.UnbakedFaces++;
             }
         MeshCheck.Measure(members, g, bytes, textureEntryBytes, report);
+        // the planner keeps every merged face inside the limit; this is the backstop if the mesh built differs from the plan
+        if (report.WorstUvTexels > UvPrecision.MaxTexels + 1e-6)
+            throw new ConvertException("merged part " + mp.Name + " would show texture coordinates up to " + report.WorstUvTexels.ToString("0.00", CultureInfo.InvariantCulture) + " texels off; the limit is " + UvPrecision.MaxTexels.ToString(CultureInfo.InvariantCulture));
         return report;
     }
 
@@ -457,6 +462,23 @@ internal static class MeshCheck
             return shown;
         }).ToArray();
 
+        // the most each merged face can be off after the asset stores it, in texels of its texture, from the range of the coordinates as drawn
+        for (int slot = 0; slot < g.Faces.Count; slot++)
+        {
+            (int tm, int tf) = g.Template[slot];
+            MergeFace template = members[tm].FaceInfo[tf];
+            float minU = float.MaxValue, maxU = float.MinValue, minV = float.MaxValue, maxV = float.MinValue;
+            for (int v = 0; v < gotUv[slot].Length; v += 2)
+            {
+                minU = Math.Min(minU, gotUv[slot][v]); maxU = Math.Max(maxU, gotUv[slot][v]);
+                minV = Math.Min(minV, gotUv[slot][v + 1]); maxV = Math.Max(maxV, gotUv[slot][v + 1]);
+            }
+            if (minU <= maxU)
+                report.WorstUvTexels = Math.Max(report.WorstUvTexels,
+                    UvPrecision.Texels(new UvBounds(minU, maxU, minV, maxV), template.TextureWidth > 0 ? template.TextureWidth : UvPrecision.UnknownResolution,
+                        template.TextureHeight > 0 ? template.TextureHeight : UvPrecision.UnknownResolution));
+        }
+
         foreach (FaceRun run in g.Runs)
         {
             MergeMember m = members[run.Member];
@@ -481,6 +503,10 @@ internal static class MeshCheck
                 report.WorstPositionMetersDecoded = Math.Max(report.WorstPositionMetersDecoded, SysVector3.Distance(wantPos, decPos));
                 report.WorstNormalDecoded = Math.Max(report.WorstNormalDecoded, MaxComponent(wantNormal - decNormal));
                 report.WorstUvDecoded = Math.Max(report.WorstUvDecoded, Math.Max(Math.Abs(wu - decUv[run.Slot][dv * 2]), Math.Abs(wv - decUv[run.Slot][dv * 2 + 1])));
+                MergeFace shownFace = m.FaceInfo[run.Face];
+                double texelsU = Math.Abs(wu - decUv[run.Slot][dv * 2]) * (shownFace.TextureWidth > 0 ? shownFace.TextureWidth : UvPrecision.UnknownResolution);
+                double texelsV = Math.Abs(wv - decUv[run.Slot][dv * 2 + 1]) * (shownFace.TextureHeight > 0 ? shownFace.TextureHeight : UvPrecision.UnknownResolution);
+                report.MeasuredUvTexels = Math.Max(report.MeasuredUvTexels, Math.Max(texelsU, texelsV));
                 report.Corners++;
             }
         }

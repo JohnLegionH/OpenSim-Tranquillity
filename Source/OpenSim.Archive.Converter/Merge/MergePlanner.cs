@@ -55,6 +55,9 @@ public static class MergePlanner
             Id = linkset.Id, Name = linkset.Name, Entry = linkset.Entry, PartsBefore = parts.Count, LockedBy = linkset.Links.LockedBy
         };
 
+        foreach (MergePart reset in parts)
+            foreach (MergeFace face in reset.Faces)
+                face.UvClass = 0;
         Dictionary<Guid, KeptPartPlan> kept = new Dictionary<Guid, KeptPartPlan>();
         List<Candidate> candidates = new List<Candidate>();
         int protectedUpTo = linkset.Links.Literal.Count > 0 ? linkset.Links.Literal.Max() : 0;
@@ -146,6 +149,7 @@ public static class MergePlanner
         if (p.TextureAnimation) Add("part", "TEXTURE_ANIMATION", "a texture animation moves the textures of every face of the part");
         if (p.Faces.Any(f => f.Pbr)) Add("part", "PBR_FACE", "a PBR material is held in the part's own extra parameters, which a merged part does not carry");
         if (p.Faces.Any(f => f.Media)) Add("part", "MEDIA_FACE", "face media is held in the part's own media data, which a merged part does not carry");
+        if (p.Faces.Any(f => f.UvTooWide || UvPrecision.TooWide(f))) Add("part", "UV_PRECISION", "the texture coordinates of a face run so wide that a mesh asset would show them more than half a texel off");
         if (p.Faces.Any(f => !f.Bakeable && f.TexGen != 0)) Add("part", "UNBAKED_MAPPING", "a face with planar or other texture mapping that cannot be baked would be projected on the merged shape instead of its own");
         if (p.Flexible) Add("part", "FLEXI", "per-part flexible path");
         if (p.SitTarget) Add("part", "SIT_TARGET", "per-part sit target");
@@ -232,14 +236,16 @@ public static class MergePlanner
 
     private static int SlotCount(IEnumerable<Candidate> set, MergeOptions o)
     {
-        Dictionary<string, (long total, long largest)> keys = new Dictionary<string, (long, long)>(StringComparer.Ordinal);
+        // a material takes a mesh face for each group of its faces that can share one (see UvPrecision.Groups), and more when it is long
+        Dictionary<string, List<MergeFace>> keys = new Dictionary<string, List<MergeFace>>(StringComparer.Ordinal);
         foreach (Candidate c in set)
             foreach (MergeFace f in c.Part.Faces)
             {
-                keys.TryGetValue(f.SlotKey, out var cur);
-                keys[f.SlotKey] = (cur.total + f.Vertices, Math.Max(cur.largest, f.Vertices));
+                if (!keys.TryGetValue(f.SlotKey, out List<MergeFace> list))
+                    keys[f.SlotKey] = list = new List<MergeFace>();
+                list.Add(f);
             }
-        return keys.Values.Sum(v => FacesNeeded(v.total, v.largest, o));
+        return keys.Values.Sum(list => UvPrecision.Groups(list).Sum(g => FacesNeeded(g.Sum(f => (long)f.Vertices), g.Max(f => (long)f.Vertices), o)));
     }
 
     /// <summary>Two ways to cut a group, by place and by material; the one with fewer pieces wins, then the one with the smaller boxes.</summary>
@@ -342,6 +348,23 @@ public static class MergePlanner
         };
         foreach (Candidate c in cluster)
             m.Members.Add(new MemberPlan { PartId = c.Part.PartId, LinkNum = c.Number, Name = c.Part.Name, Creator = c.Part.Creator });
+
+        // faces of one material that are too far apart in texture space to share a mesh face get a class of their own, which is part of the key
+        Dictionary<string, List<MergeFace>> byKey = new Dictionary<string, List<MergeFace>>(StringComparer.Ordinal);
+        foreach (Candidate c in cluster)
+            foreach (MergeFace f in c.Part.Faces)
+            {
+                if (!byKey.TryGetValue(f.SlotKey, out List<MergeFace> list))
+                    byKey[f.SlotKey] = list = new List<MergeFace>();
+                list.Add(f);
+            }
+        foreach (List<MergeFace> list in byKey.Values)
+        {
+            List<List<MergeFace>> groups = UvPrecision.Groups(list);
+            for (int g = 1; g < groups.Count; g++)
+                foreach (MergeFace f in groups[g])
+                    f.UvClass = g;
+        }
 
         // a slot per material key in order of first use; a key with more vertices than a face holds takes more slots
         List<string> order = new List<string>();
