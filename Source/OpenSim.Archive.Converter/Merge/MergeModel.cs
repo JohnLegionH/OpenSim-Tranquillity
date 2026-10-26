@@ -131,6 +131,9 @@ public sealed class MergePart
     public bool HoverTextColor { get; set; }
     public bool PayPrice { get; set; }
     public bool Particles { get; set; }
+    /// <summary>True when the part's PBR material assignments or overrides, or its media list, cannot be read or name a face the part does not have.</summary>
+    public bool PbrDataUnreadable { get; set; }
+    public bool MediaDataUnreadable { get; set; }
     /// <summary>True when the part has a texture animation, which moves the textures of all its faces.</summary>
     public bool TextureAnimation { get; set; }
     public bool Sound { get; set; }

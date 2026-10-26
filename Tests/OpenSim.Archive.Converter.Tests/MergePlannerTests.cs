@@ -263,12 +263,27 @@ public class MergePlannerTests
     }
 
     [Fact]
-    public void Rule12_PbrAndMediaFacesAreNeverBaked()
+    public void Rule12_PbrAndMediaFacesBakeLikeOthers()
     {
-        Assert.False(FaceBaking.Bakeable(FaceTransform.Identity, 0, "", null, true, false, out string pbr));
-        Assert.Contains("PBR", pbr);
-        Assert.False(FaceBaking.Bakeable(FaceTransform.Identity, 0, "", null, false, true, out string media));
-        Assert.Contains("media", media);
+        Assert.True(FaceBaking.Bakeable(new FaceTransform(2, 2, 0, 0, 0), 0, "", null, true, false, out string pbr));
+        Assert.Equal("", pbr);
+        Assert.True(FaceBaking.Bakeable(new FaceTransform(2, 2, 0, 0, 0), FaceBaking.PlanarMapping, "", null, true, false, out _));
+        Assert.True(FaceBaking.Bakeable(new FaceTransform(2, 2, 0, 0, 0), 0, "", null, false, true, out string media));
+        Assert.Equal("", media);
+    }
+
+    [Fact]
+    public void Rule12_APbrFaceIgnoresItsLegacyMaterial()
+    {
+        // the viewer draws a PBR face from the PBR material and ignores the face's legacy material (llvovolume.cpp, "ignore traditional material if GLTF material is present")
+        Assert.True(FaceBaking.Bakeable(FaceTransform.Identity, 0, "mat-1", null, true, false, out _));
+    }
+
+    [Fact]
+    public void Rule12_APbrFaceWithAnotherMappingStaysUnbaked()
+    {
+        Assert.False(FaceBaking.Bakeable(FaceTransform.Identity, 4, "", null, true, false, out string why));
+        Assert.Contains("mapping", why);
     }
 
     [Fact]

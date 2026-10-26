@@ -101,16 +101,27 @@ public class MergePlannerBakeRuleTests
     // ---------------------------------------------------------------- what a merge cannot carry
 
     [Fact]
-    public void APartWithAPbrFaceOrAMediaFaceOrATextureAnimationStays()
+    public void APartWithATextureAnimationOrMaterialOrMediaDataThatCannotBeReadStays()
     {
-        MergePart pbr = Part(2, 1), media = Part(3, 2), anim = Part(4, 3);
+        MergePart badPbr = Part(2, 1), badMedia = Part(3, 2), anim = Part(4, 3);
+        badPbr.PbrDataUnreadable = true;
+        badMedia.MediaDataUnreadable = true;
+        anim.TextureAnimation = true;
+        LinksetPlan plan = Plan(Part(1), badPbr, badMedia, anim, Part(5, 4));
+        Assert.Contains(plan.Kept.Single(k => k.PartId == badPbr.PartId).Rules, r => r.Code == "PBR_DATA");
+        Assert.Contains(plan.Kept.Single(k => k.PartId == badMedia.PartId).Rules, r => r.Code == "MEDIA_DATA");
+        Assert.Contains(plan.Kept.Single(k => k.PartId == anim.PartId).Rules, r => r.Code == "TEXTURE_ANIMATION");
+    }
+
+    [Fact]
+    public void APartWithAPbrFaceOrAMediaFaceMerges()
+    {
+        MergePart pbr = Part(2, 1), media = Part(3, 2);
         pbr.Faces[0].Pbr = true;
         media.Faces[0].Media = true;
-        anim.TextureAnimation = true;
-        LinksetPlan plan = Plan(Part(1), pbr, media, anim, Part(5, 4));
-        Assert.Contains(plan.Kept.Single(k => k.PartId == pbr.PartId).Rules, r => r.Code == "PBR_FACE");
-        Assert.Contains(plan.Kept.Single(k => k.PartId == media.PartId).Rules, r => r.Code == "MEDIA_FACE");
-        Assert.Contains(plan.Kept.Single(k => k.PartId == anim.PartId).Rules, r => r.Code == "TEXTURE_ANIMATION");
+        LinksetPlan plan = Plan(Part(1), pbr, media, Part(4, 3));
+        Assert.Empty(plan.Kept);
+        Assert.Equal(4, Assert.Single(plan.Merged).Members.Count);
     }
 
     // ---------------------------------------------------------------- identity of a merged part
