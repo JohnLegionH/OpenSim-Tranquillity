@@ -405,13 +405,14 @@ public static class MergePlanner
 
     private static string Manifest(MergedPartPlan m)
     {
+        // line feeds, not AppendLine: the text goes into the archive, and the same archive must give the same bytes on every platform
         StringBuilder sb = new StringBuilder();
-        sb.AppendLine("Merged part " + m.Name);
-        sb.AppendLine("Made by oar-convert --merge from " + m.Members.Count + " parts; the plan file is " + PlanFileName + ".");
-        sb.AppendLine();
-        sb.AppendLine("link | name | creator | id");
+        sb.Append("Merged part ").Append(m.Name).Append('\n');
+        sb.Append("Made by oar-convert --merge from ").Append(m.Members.Count).Append(" parts; the plan file is ").Append(PlanFileName).Append(".\n");
+        sb.Append('\n');
+        sb.Append("link | name | creator | id\n");
         foreach (MemberPlan p in m.Members)
-            sb.AppendLine(p.LinkNum + " | " + p.Name + " | " + p.Creator + " | " + p.PartId);
+            sb.Append(p.LinkNum).Append(" | ").Append(p.Name).Append(" | ").Append(p.Creator).Append(" | ").Append(p.PartId).Append('\n');
         return sb.ToString();
     }
 

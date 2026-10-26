@@ -134,7 +134,7 @@ Exit codes: 0 done (also when some builds failed), 2 not a region archive or unr
                     options.Clean = false;
                     break;
                 case "--version":
-                    Console.Out.WriteLine("oar-export " + OpenSim.Archive.GltfExport.ExportStamp.CurrentVersion);
+                    Console.Out.WriteLine("oar-export " + ToolRelease.Version);
                     return 0;
                 case "-h":
                 case "--help":
