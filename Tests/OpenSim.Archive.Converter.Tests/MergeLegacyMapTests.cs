@@ -52,6 +52,15 @@ public class MergeLegacyMapTests
     }
 
     [Fact]
+    public void TheFixtureCanBeWrittenToAFileForALoadIntoARegion()
+    {
+        string outPath = Environment.GetEnvironmentVariable("OARX_MAPS_OUT");
+        if (string.IsNullOrEmpty(outPath))
+            return;
+        File.Copy(MapsFixture.Write(), outPath, false);
+    }
+
+    [Fact]
     public void FacesWhoseMapsAreDrawnLikeTheirDiffuseBakeAndTheirPartsMerge()
     {
         MergePlan plan = ArchiveMergePlanner.Plan(MapsFixture.Write(), new MergeOptions());

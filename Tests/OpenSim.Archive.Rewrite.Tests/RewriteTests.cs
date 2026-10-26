@@ -175,6 +175,34 @@ public class RewriteTests
     }
 
     [Fact]
+    public void AnEditThatAsksForIt_CanAddAnElementAtTheEndOfTheShape_AndReplacesOneItHas()
+    {
+        string text = ObjectText();
+        byte[] added = Patch(Utf8(text), new PartPatch(PartB, new[] { ElementEdit.SetTextOrAddInShape("Shape/MatOvrd", "AA==") }));
+        string after = new UTF8Encoding(false).GetString(added);
+        Assert.Contains("<Shape><ProfileShape>Circle</ProfileShape><MatOvrd>AA==</MatOvrd></Shape>", after);
+        Assert.Equal(1, System.Xml.Linq.XDocument.Parse(after).Descendants("MatOvrd").Count());
+
+        byte[] replaced = Patch(added, new PartPatch(PartB, new[] { ElementEdit.SetTextOrAddInShape("Shape/MatOvrd", "AQID") }));
+        string again = new UTF8Encoding(false).GetString(replaced);
+        Assert.Contains("<MatOvrd>AQID</MatOvrd>", again);
+        Assert.Equal(1, System.Xml.Linq.XDocument.Parse(again).Descendants("MatOvrd").Count());
+
+        // text with markup characters is escaped, as every text edit is
+        byte[] escaped = Patch(Utf8(text), new PartPatch(PartB, new[] { ElementEdit.SetTextOrAddInShape("Shape/Media", "<OSMedia type=\"sl\"/>") }));
+        Assert.Contains("<Media>&lt;OSMedia type=\"sl\"/&gt;</Media></Shape>", new UTF8Encoding(false).GetString(escaped));
+    }
+
+    [Fact]
+    public void AnEditThatAddsInTheShape_NeedsAShapeAndAPathDirectlyBelowIt()
+    {
+        // a part with no Shape element has nowhere to put the element
+        Assert.Throws<InvalidDataException>(() => Patch(Utf8(ObjectText()), new PartPatch(PartA, new[] { ElementEdit.SetTextOrAddInShape("Shape/MatOvrd", "AA==") })));
+        Assert.Throws<ArgumentException>(() => ElementEdit.SetTextOrAddInShape("Shape/A/B", "x"));
+        Assert.Throws<ArgumentException>(() => ElementEdit.SetTextOrAddInShape("Name", "x"));
+    }
+
+    [Fact]
     public void AnEditCanAddAMarkupElementThePartLacks_AndReplacesOneItHas()
     {
         string text = ObjectText();

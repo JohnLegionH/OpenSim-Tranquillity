@@ -41,6 +41,20 @@ public sealed class ElementEdit
         return new ElementEdit(path, text, false);
     }
 
+    /// <summary>True when a part that lacks the element gets it added at the end of its Shape element (only for an element directly below Shape).</summary>
+    public bool AddBelowShape { get; private set; }
+
+    /// <summary>Like <see cref="SetText"/> for a path of the form "Shape/Name": a part that has a Shape element but lacks the element gets it added at the end of the Shape.</summary>
+    public static ElementEdit SetTextOrAddInShape(string path, string text)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        if (!path.StartsWith("Shape/", StringComparison.Ordinal) || path.IndexOf('/', "Shape/".Length) >= 0 || path.Length == "Shape/".Length)
+            throw new ArgumentException("the path must be an element directly below Shape", nameof(path));
+        ElementEdit edit = SetText(path, text);
+        edit.AddBelowShape = true;
+        return edit;
+    }
+
     /// <summary>Like <see cref="SetText"/>, but a part that lacks the element gets it added at the end of the part. Only an element directly below the part can be added.</summary>
     public static ElementEdit SetTextOrAdd(string path, string text)
     {

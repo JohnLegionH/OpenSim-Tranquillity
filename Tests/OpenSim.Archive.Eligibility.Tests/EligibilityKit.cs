@@ -48,6 +48,8 @@ internal sealed class KitPart
     public List<KitItem> Items = new List<KitItem>();
     /// <summary>Further elements of the part (sit target, hover text, surface material ...), written as they are.</summary>
     public string ExtraXml = "";
+    /// <summary>Elements written at the end of the Shape element (the part's Media and MatOvrd elements, for example).</summary>
+    public string ShapeXml = "";
 
     public KitPart() { }
     public KitPart(string name, int linkNum = 0) { Name = name; LinkNum = linkNum; }
@@ -118,6 +120,7 @@ internal static class EligibilityKit
         sb.Append("<SculptTexture><UUID>").Append(p.SculptTexture).Append("</UUID></SculptTexture><SculptType>").Append(s.SculptType).Append("</SculptType>");
         sb.Append("<SculptEntry>").Append(s.SculptEntry ? "true" : "false").Append("</SculptEntry>");
         sb.Append("<FlexiEntry>false</FlexiEntry><LightEntry>").Append(p.Light ? "true" : "false").Append("</LightEntry>");
+        sb.Append(p.ShapeXml);
         sb.Append("</Shape>");
         string[] sc = p.Scale.Split(',');
         sb.Append("<Scale><X>").Append(sc[0]).Append("</X><Y>").Append(sc[1]).Append("</Y><Z>").Append(sc[2]).Append("</Z></Scale>");
