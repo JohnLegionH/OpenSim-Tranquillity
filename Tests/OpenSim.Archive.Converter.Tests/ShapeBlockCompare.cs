@@ -187,7 +187,36 @@ public static class ShapeBlockCompare
     }
 
     /// <summary>As <see cref="CompareArchives(string, string)"/>, matching parts by name, link number and position when asked (not yet written).</summary>
-    public static ShapeBlockReport CompareArchives(string beforePath, string afterPath, bool matchByPosition) => throw new NotImplementedException();
+    public static ShapeBlockReport CompareArchives(string beforePath, string afterPath, bool matchByPosition)
+    {
+        if (!matchByPosition)
+            return CompareArchives(beforePath, afterPath);
+        ArchiveMergePlanner.Plan(beforePath, new MergeOptions(), null, out Dictionary<Guid, ParsedPart> before);
+        ArchiveMergePlanner.Plan(afterPath, new MergeOptions(), null, out Dictionary<Guid, ParsedPart> after);
+        // a region gives every part a new id on load, so a part is found again by its name, link number and the position of its object
+        string Key(ParsedPart p) => string.Join("|", p.Part?.Name, p.Part?.LinkNum, (p.Part?.X ?? 0).ToString("0.00", CultureInfo.InvariantCulture),
+            (p.Part?.Y ?? 0).ToString("0.00", CultureInfo.InvariantCulture), (p.Part?.Z ?? 0).ToString("0.00", CultureInfo.InvariantCulture));
+        ILookup<string, ParsedPart> afterByKey = after.Values.ToLookup(Key);
+        ShapeBlockReport report = new ShapeBlockReport();
+        HashSet<string> seen = new HashSet<string>();
+        foreach (IGrouping<string, ParsedPart> group in before.Values.GroupBy(Key).OrderBy(g => g.Key, StringComparer.Ordinal))
+        {
+            List<ParsedPart> others = afterByKey[group.Key].ToList();
+            seen.Add(group.Key);
+            if (group.Count() != 1 || others.Count > 1)
+            {
+                report.Differences.Add(group.Key + ": " + group.Count() + " part(s) before and " + others.Count + " after share this name, link number and position, so they cannot be paired");
+                continue;
+            }
+            if (others.Count == 0)
+                report.Differences.Add(group.Key + ": the part is missing after");
+            else
+                ComparePart(group.Key, group.First(), others[0], report);
+        }
+        foreach (string key in after.Values.Select(Key).Distinct().Where(k => !seen.Contains(k)).OrderBy(k => k, StringComparer.Ordinal))
+            report.Differences.Add(key + ": the part appears after");
+        return report;
+    }
 
     /// <summary>Every part the two archives share by id; a part in one only is a difference.</summary>
     public static ShapeBlockReport CompareArchives(string beforePath, string afterPath)

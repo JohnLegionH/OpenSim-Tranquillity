@@ -183,7 +183,7 @@ public class ShapeBlockCompareTests
         string before = Environment.GetEnvironmentVariable("OARX_BLOCKS_BEFORE"), after = Environment.GetEnvironmentVariable("OARX_BLOCKS_AFTER"), report = Environment.GetEnvironmentVariable("OARX_BLOCKS_REPORT");
         if (string.IsNullOrEmpty(before) || string.IsNullOrEmpty(after))
             return;
-        ShapeBlockReport r = ShapeBlockCompare.CompareArchives(before, after);
+        ShapeBlockReport r = ShapeBlockCompare.CompareArchives(before, after, Environment.GetEnvironmentVariable("OARX_BLOCKS_MATCH") == "position");
         if (!string.IsNullOrEmpty(report))
             File.WriteAllText(report, r.ToText());
         Assert.Empty(r.Differences);
