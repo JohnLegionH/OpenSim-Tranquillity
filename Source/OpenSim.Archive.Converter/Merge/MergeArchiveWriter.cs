@@ -126,12 +126,15 @@ public sealed class MergeWriteResult
             + Worst(p => p.Levels.Count == 0 ? 0 : p.Levels.Max(l => l.ErrorPixels), "0.00") + " pixel at most); triangles medium/low/lowest: "
             + Parts.Sum(p => p.Levels.Count > 0 ? p.Levels[0].Triangles : 0) + "/" + Parts.Sum(p => p.Levels.Count > 1 ? p.Levels[1].Triangles : 0) + "/" + Parts.Sum(p => p.Levels.Count > 2 ? p.Levels[2].Triangles : 0)
             + " of " + Parts.Sum(p => p.Triangles) + " in the full meshes; members left out of a level: " + Parts.Sum(p => p.Levels.Count > 2 ? p.Levels[2].DroppedMembers : 0) + " at the lowest");
+        sb.AppendLine("  collision: " + Parts.Count(p => p.PhysicsHulls > 0) + " merged parts carry hulls (" + Parts.Sum(p => p.PhysicsHulls) + " in all, one for each member) next to the triangle mesh; "
+            + Parts.Count(p => p.PhysicsHulls == 0) + " carry the triangle mesh only");
         sb.AppendLine("  merged parts:");
         foreach (MergedPartReport p in Parts)
         {
             sb.AppendLine("    " + p.Name.PadRight(48) + p.Members.ToString().PadLeft(4) + " parts, " + p.Faces + " faces, " + p.Vertices + " vertices, " + p.Triangles + " triangles, "
                 + p.MeshBytes + " bytes, position " + p.WorstPositionMeters.ToString("0.0e+0", CultureInfo.InvariantCulture) + " m, uv " + p.WorstUv.ToString("0.0e+0", CultureInfo.InvariantCulture)
                 + (p.TookTheRoot ? ", took the root" : "") + (p.PlanarFaces > 0 ? ", " + p.PlanarFaces + " planar faces" : ""));
+            sb.AppendLine("      collision: " + (p.PhysicsHulls > 0 ? p.PhysicsHulls + " hulls and the triangle mesh" : "the triangle mesh only (" + p.PhysicsReason + ")"));
             sb.AppendLine("      levels of detail: " + string.Join(", ", p.Levels.Select(l => (l.Level == 2 ? "medium " : l.Level == 1 ? "low " : "lowest ") + l.Triangles + " triangles at " + l.SwitchDistance.ToString("0", CultureInfo.InvariantCulture) + " m (" + l.ErrorPixels.ToString("0.00", CultureInfo.InvariantCulture) + " pixel"
                 + (l.DroppedMembers > 0 ? ", " + l.DroppedMembers + " members left out" : "") + ")")));
         }
@@ -294,7 +297,12 @@ public static class MergeArchiveWriter
             throw new ConvertException("merged part " + mp.Name + " has no triangles");
 
         List<LodLevel> levels = MergedLods.Build(g, members, options.Lod);
-        byte[] bytes = encoder.Encode(g.Faces, new EncodeOptions { Physics = g.Physics, Lods = levels.Select(l => (IReadOnlyList<EncoderFace>)l.Faces).ToList() });
+        List<List<SysVector3>> hulls = MemberHulls(mp, members, g, out string physicsReason);
+        byte[] bytes = encoder.Encode(g.Faces, new EncodeOptions
+        {
+            Physics = g.Physics, Lods = levels.Select(l => (IReadOnlyList<EncoderFace>)l.Faces).ToList(),
+            Hulls = hulls?.Select(h => (IReadOnlyList<SysVector3>)h).ToList()
+        });
         List<string> problems = MeshValidator.Check(bytes, g.Faces, out _, g.Physics);
         if (problems.Count > 0)
             throw new ConvertException("the mesh of merged part " + mp.Name + " fails its check: " + string.Join("; ", problems));
@@ -345,7 +353,8 @@ public static class MergeArchiveWriter
         {
             Id = mp.Id, MeshId = meshId, ManifestAssetId = noteAsset, Name = mp.Name, Linkset = lp.Name, Members = mp.Members.Count, Faces = faceCount,
             Vertices = g.Faces.Sum(f => f.VertexCount), Triangles = g.Faces.Sum(f => f.TriangleCount), TookTheRoot = carrierIsRoot, MeshBytes = bytes.Length,
-            MapFaces = mapFaces, NewMaterials = newMaterials, PbrFaces = extras.PbrFaces, MediaFaces = extras.MediaFaces, Levels = levels
+            MapFaces = mapFaces, NewMaterials = newMaterials, PbrFaces = extras.PbrFaces, MediaFaces = extras.MediaFaces, Levels = levels,
+            PhysicsHulls = hulls?.Count ?? 0, PhysicsReason = physicsReason
         };
         foreach (MergeMember m in members)
             for (int i = 0; i < m.Faces.Count; i++)
@@ -366,6 +375,27 @@ public static class MergeArchiveWriter
         if (report.WorstUvTexels > UvPrecision.MaxTexels + 1e-6)
             throw new ConvertException("merged part " + mp.Name + " would show texture coordinates up to " + report.WorstUvTexels.ToString("0.00", CultureInfo.InvariantCulture) + " texels off; the limit is " + UvPrecision.MaxTexels.ToString(CultureInfo.InvariantCulture));
         return report;
+    }
+
+    /// <summary>
+    /// The hull of each member in the merged part unit box when every member is exactly convex (a solid whose every face plane has the whole
+    /// shape on one side), else null with the first member that is not named. A hollow, cut or concave member would be made solid by its hull.
+    /// </summary>
+    private static List<List<SysVector3>> MemberHulls(MergedPartPlan mp, List<MergeMember> members, MergedGeometry g, out string reason)
+    {
+        reason = "";
+        List<List<SysVector3>> hulls = new List<List<SysVector3>>();
+        for (int i = 0; i < members.Count; i++)
+        {
+            List<SysVector3> hull = ConvexPhysics.IsConvex(members[i].Physics) ? ConvexPhysics.Hull(members[i].Physics) : null;
+            if (hull == null)
+            {
+                reason = mp.Members[i].Name + " (link " + mp.Members[i].LinkNum + ") is not convex (hollow, cut, twisted or round) or has more than " + ConvexPhysics.MaxHullVertices + " hull points";
+                return null;
+            }
+            hulls.Add(hull.Select(p => (MergeGeometry.ToRoot(members[i], p) - g.Position) / g.Scale).ToList());
+        }
+        return hulls;
     }
 
     private static string Notecard(string manifest)

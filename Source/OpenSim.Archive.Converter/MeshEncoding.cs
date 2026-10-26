@@ -47,6 +47,12 @@ public sealed class EncodeOptions
     /// hull is made from the full mesh, so a level that leaves out small members does not shrink it.
     /// </summary>
     public IReadOnlyList<IReadOnlyList<EncoderFace>> Lods { get; set; }
+
+    /// <summary>
+    /// A hull for each part of the shape, in the unit-size space of the faces: written as the hull list of the physics_convex block (the hull of
+    /// all of them stays as its bounding hull). Null writes the bounding hull only.
+    /// </summary>
+    public IReadOnlyList<IReadOnlyList<System.Numerics.Vector3>> Hulls { get; set; }
 }
 
 /// <summary>

@@ -40,10 +40,51 @@ public static class PhysicsBlock
     /// Sets <see cref="MeshAssetModel.PhysicsConvex"/> to a hull list: the hulls (each at most 256 points) with the counts of each in HullList
     /// (0 standing for 256) and all their points in Positions, 16 bits an axis over the box that spans them, and the hull of everything as BoundingVerts.
     /// </summary>
-    public static void AddHullList(MeshAssetModel model, IReadOnlyList<IReadOnlyList<Vector3>> hulls, IReadOnlyList<Vector3> bounding) => throw new NotImplementedException();
+    public static void AddHullList(MeshAssetModel model, IReadOnlyList<IReadOnlyList<Vector3>> hulls, IReadOnlyList<Vector3> bounding)
+    {
+        if (hulls.Count == 0 || hulls.Any(h => h.Count < 4 || h.Count > MaxHullVertices))
+            throw new ArgumentException("a hull list needs hulls of 4 to " + MaxHullVertices + " points");
+        var all = hulls.SelectMany(h => h).Concat(bounding).ToList();
+        var min = all[0]; var max = all[0];
+        foreach (var p in all) { min = Vector3.Min(min, p); max = Vector3.Max(max, p); }
+        double rx = Range(min.X, max.X), ry = Range(min.Y, max.Y), rz = Range(min.Z, max.Z);
+        byte[] Pack(IEnumerable<Vector3> points)
+        {
+            var bytes = new List<byte>();
+            void Put(double v) { var q = (ushort)Math.Clamp((long)Math.Round(v * 65535), 0L, 65535L); bytes.Add((byte)q); bytes.Add((byte)(q >> 8)); }
+            foreach (var p in points) { Put((p.X - (double)min.X) / rx); Put((p.Y - (double)min.Y) / ry); Put((p.Z - (double)min.Z) / rz); }
+            return bytes.ToArray();
+        }
+        var m = LlsdBinary.NewMap();
+        m["BoundingVerts"] = Pack(bounding);
+        m["HullList"] = hulls.Select(h => (byte)(h.Count == MaxHullVertices ? 0 : h.Count)).ToArray();
+        m["Max"] = new List<object?> { (double)max.X, (double)max.Y, (double)max.Z };
+        m["Min"] = new List<object?> { (double)min.X, (double)min.Y, (double)min.Z };
+        m["Positions"] = Pack(hulls.SelectMany(h => h));
+        model.PhysicsConvex = m;
+    }
 
-    /// <summary>The hulls of a physics_convex map's hull list (empty when it has none).</summary>
-    public static List<List<Vector3>> ReadHullList(object? physicsConvex) => throw new NotImplementedException();
+    /// <summary>The hulls of a physics_convex map hull list, read the way a region reads them (empty when it has none).</summary>
+    public static List<List<Vector3>> ReadHullList(object? physicsConvex)
+    {
+        var result = new List<List<Vector3>>();
+        if (physicsConvex is not IDictionary<string, object?> m || !m.TryGetValue("HullList", out var hl) || hl is not byte[] counts
+            || !m.TryGetValue("Positions", out var ps) || ps is not byte[] b) return result;
+        Vector3 Vec(object? o, Vector3 fallback) => o is IList<object?> l && l.Count == 3 ? new Vector3(Convert.ToSingle(l[0]), Convert.ToSingle(l[1]), Convert.ToSingle(l[2])) : fallback;
+        var min = Vec((m.TryGetValue("Min", out var mn) ? mn : null), new Vector3(-0.5f)); var max = Vec((m.TryGetValue("Max", out var mx) ? mx : null), new Vector3(0.5f));
+        int at = 0;
+        foreach (byte c in counts)
+        {
+            var hull = new List<Vector3>();
+            for (int i = 0; i < (c == 0 ? MaxHullVertices : c) && at + 5 < b.Length; i++, at += 6)
+                hull.Add(new Vector3(
+                    min.X + (max.X - min.X) * (b[at] | b[at + 1] << 8) / 65535f,
+                    min.Y + (max.Y - min.Y) * (b[at + 2] | b[at + 3] << 8) / 65535f,
+                    min.Z + (max.Z - min.Z) * (b[at + 4] | b[at + 5] << 8) / 65535f));
+            result.Add(hull);
+        }
+        return result;
+    }
 
     /// <summary>The physics_convex map: Min and Max over the points, and the points as 16-bit values inside that box.</summary>
     public static SortedDictionary<string, object?> ToLlsd(IReadOnlyList<Vector3> hull)

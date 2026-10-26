@@ -65,6 +65,45 @@ public class MergePhysicsHullTests
         Assert.False(ConvexPhysics.IsConvex(new PhysicsGeometry()));
     }
 
+    private static PhysicsGeometry Cube(float half, bool inward)
+    {
+        float[] corners = new float[24];
+        for (int i = 0; i < 8; i++)
+        {
+            corners[i * 3] = (i & 1) == 0 ? -half : half;
+            corners[i * 3 + 1] = (i & 2) == 0 ? -half : half;
+            corners[i * 3 + 2] = (i & 4) == 0 ? -half : half;
+        }
+        int[] quads = { 0, 2, 3, 1, 4, 5, 7, 6, 0, 1, 5, 4, 2, 6, 7, 3, 0, 4, 6, 2, 1, 3, 7, 5 };
+        List<int> indices = new List<int>();
+        for (int q = 0; q < 24; q += 4)
+        {
+            int[] t = inward ? new[] { quads[q], quads[q + 1], quads[q + 2], quads[q], quads[q + 2], quads[q + 3] } : new[] { quads[q], quads[q + 2], quads[q + 1], quads[q], quads[q + 3], quads[q + 2] };
+            indices.AddRange(t);
+        }
+        return new PhysicsGeometry { Positions = corners, Indices = indices.ToArray() };
+    }
+
+    [Fact]
+    public void AClosedShapeWithAHoleInItIsNotConvexEvenThoughEveryEdgeIsShared()
+    {
+        PhysicsGeometry outer = Cube(0.5f, false), inner = Cube(0.25f, true);
+        Assert.True(ConvexPhysics.IsConvex(outer));
+        PhysicsGeometry both = new PhysicsGeometry { Positions = outer.Positions.Concat(inner.Positions).ToArray(), Indices = outer.Indices.Concat(inner.Indices.Select(i => i + 8)).ToArray() };
+        Assert.False(ConvexPhysics.IsConvex(both));
+    }
+
+    [Fact]
+    public void AFlatSheetWithTwoSidesIsNotAConvexSolid()
+    {
+        PhysicsGeometry sheet = new PhysicsGeometry
+        {
+            Positions = new float[] { 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0 },
+            Indices = new[] { 0, 1, 2, 0, 2, 3, 0, 3, 1, 1, 3, 2 } // front along one diagonal, back along the other: every edge is shared twice
+        };
+        Assert.False(ConvexPhysics.IsConvex(sheet));
+    }
+
     [Fact]
     public void TheHullOfABoxHasItsEightCornersAndTheHullOfACylinderStaysUnderTheLimit()
     {

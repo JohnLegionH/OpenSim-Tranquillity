@@ -61,6 +61,8 @@ public sealed class MeshAssetEncoder : IMeshEncoder
             Lap("levels of detail made");
         }
         PhysicsBlock.AddBoundingHull(model, fromHigh: options?.Lods != null);
+        if (options?.Hulls != null)
+            PhysicsBlock.AddHullList(model, options.Hulls, PhysicsBlock.ReadBoundingVerts(model.PhysicsConvex));
         Lap("bounding hull made");
         if (options?.Physics != null)
             model.PhysicsMesh = PhysicsMeshBlock.Make(options.Physics);
