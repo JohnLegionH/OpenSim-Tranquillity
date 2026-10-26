@@ -30,6 +30,10 @@ internal sealed class RecordingLoader : IScriptLoader
     public readonly HashSet<UUID> Ready = new();
     public bool IsReady(UUID itemID) => Ready.Contains(itemID);
     public void Dispose() => Disposed = true;
+    public event Action<ReadyScript> ScriptReady;
+    public event Action<LoadFailure> FailureUnclaimed;
+    public void RaiseReady(ReadyScript ready) => ScriptReady?.Invoke(ready);
+    public void RaiseFailure(LoadFailure failure) => FailureUnclaimed?.Invoke(failure);
 }
 
 /// <summary>What the engine does with a script it owns, with the loader replaced by a recorder.</summary>

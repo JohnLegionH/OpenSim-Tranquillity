@@ -63,6 +63,21 @@ namespace Luau.ScriptEngine
         /// <summary>Times the script was put to sleep by a step that overran (the runtime's punishment), as opposed to a delay it asked for.</summary>
         public long Punishments => Interlocked.Read(ref m_punishments);
 
+        /// <summary>The Running flag: false while the script is stopped, and after a fault or a kill, until reset or set again.</summary>
+        public bool Running { get; internal set; } = true;
+
+        /// <summary>Held by suspend; events keep queueing.</summary>
+        public bool Suspended { get; internal set; }
+
+        /// <summary>The script was stopped by a fault or a kill and has not been reset or set running since.</summary>
+        public bool Killed { get; internal set; }
+
+        /// <summary>Consecutive turns the runtime punished; a turn without a punishment sets it back to 0.</summary>
+        public int ConsecutivePunishments { get; internal set; }
+
+        /// <summary>Plain steps the runtime refused, in a row.</summary>
+        public int ConsecutiveRefusals { get; internal set; }
+
         public FaultKind Fault { get; internal set; }
         public string FaultMessage { get; internal set; }
 
@@ -106,6 +121,12 @@ namespace Luau.ScriptEngine
             RequireCurrent();
             Native.AddSleep(seconds);
             AskedSeconds += seconds;
+        }
+
+        /// <summary>For a host function: reports a script error to the owner and pauses the script for the error pause (the chat pause of an error shout).</summary>
+        public void ReportError(string text)
+        {
+            RequireCurrent();
         }
 
         /// <summary>For a host function: sets or clears (0 or less) this script's timer, as llSetTimerEvent does. The interval is raised to the floor.</summary>

@@ -68,6 +68,26 @@ namespace Luau.ScriptEngine
             script.Worker.Enqueue(() => script.Worker.PostEvent(script, index, args));
         }
 
+        /// <summary>Sets the Running flag. Off: the script is not run, its events are dropped and its timer is held. On: it continues where it stopped; a script stopped by a fault starts over.</summary>
+        public void SetRunning(SchedulerScript script, bool running)
+        {
+        }
+
+        /// <summary>Holds the script without dropping its events (the console's suspend).</summary>
+        public void Suspend(SchedulerScript script)
+        {
+        }
+
+        /// <summary>Lets a suspended script go on.</summary>
+        public void Resume(SchedulerScript script)
+        {
+        }
+
+        /// <summary>Starts the script over from a fresh script object: events, timer, sleep and a pending call are dropped, and a fault or kill is cleared.</summary>
+        public void Reset(SchedulerScript script)
+        {
+        }
+
         /// <summary>Frees the script's native objects on its worker and forgets it.</summary>
         public void Remove(SchedulerScript script) => script.Worker.Enqueue(() => script.Worker.RemoveScript(script));
 

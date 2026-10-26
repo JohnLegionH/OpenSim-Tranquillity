@@ -47,8 +47,17 @@ namespace Luau.ScriptEngine
         private readonly LoaderFactory m_loaderFactory;
         private IScriptLoader m_loader;
 
-        internal LuauEngine(IEngineLog log, RuntimeLoader loadRuntime, ISavedStateStore store = null, LoaderFactory loaderFactory = null)
+        /// <summary>Builds the scheduler from the options the engine made; tests change the options (host functions, clock) first.</summary>
+        internal delegate LuauScheduler SchedulerFactory(SchedulerOptions options);
+
+        private readonly SchedulerFactory m_schedulerFactory;
+        private IScriptMessages m_messages;
+
+        internal LuauEngine(IEngineLog log, RuntimeLoader loadRuntime, ISavedStateStore store = null, LoaderFactory loaderFactory = null,
+            SchedulerFactory schedulerFactory = null, IScriptMessages messages = null)
         {
+            m_schedulerFactory = schedulerFactory;
+            m_messages = messages;
             m_log = log;
             m_loadRuntime = loadRuntime;
             m_store = store ?? new EmptyStateStore();
@@ -219,6 +228,12 @@ namespace Luau.ScriptEngine
             return m_loader != null && IsTracking(itemID) && m_loader.IsReady(itemID);
         }
         public bool GetScriptState(UUID itemID) => false;
+
+        /// <summary>The scheduler's counters for the status console command; null when the engine has no scheduler.</summary>
+        internal SchedulerStats GetStats() => null;
+
+        /// <summary>The scheduler's record of the item's script, or null.</summary>
+        internal SchedulerScript SchedulerScriptFor(UUID itemID) => null;
         public void SaveAllState() { }
         public void StartProcessing() { }
         public float GetScriptExecutionTime(List<UUID> itemIDs) => 0f;

@@ -51,9 +51,23 @@ namespace Luau.ScriptEngine
 
         bool IsLoading(UUID itemID);
         bool IsReady(UUID itemID);
+
+        /// <summary>Raised on the loader's thread when a script has compiled and is held ready: its compiled bytes, not a script object.</summary>
+        event Action<ReadyScript> ScriptReady;
+
+        /// <summary>Raised when a compile failed and no editor collected its errors in time; the owner is told.</summary>
+        event Action<LoadFailure> FailureUnclaimed;
     }
 
-    /// <summary>A compiled script held ready: its script object exists and has not been started.</summary>
+    /// <summary>A compile failure nobody collected.</summary>
+    internal sealed class LoadFailure
+    {
+        public uint LocalID { get; init; }
+        public UUID ItemID { get; init; }
+        public List<string> Errors { get; init; }
+    }
+
+    /// <summary>A compiled script held ready: its compiled bytes. The scheduler makes the script object from them when the script starts.</summary>
     internal sealed class ReadyScript : IDisposable
     {
         public UUID ItemID { get; init; }
@@ -61,6 +75,9 @@ namespace Luau.ScriptEngine
         public UUID AssetID { get; init; }
         public ScriptLanguage Language { get; init; }
         public long Serial { get; init; }
+
+        /// <summary>The compiled asset: header and bytecode.</summary>
+        public byte[] Asset { get; init; }
         public Script Script { get; init; }
         internal ImageLease Lease { get; init; }
 
@@ -109,6 +126,17 @@ namespace Luau.ScriptEngine
 
         // The serial this thread posted last, so the editor that saved is answered for that save.
         [ThreadStatic] private static (UUID Item, long Serial) t_posted;
+
+        public event Action<ReadyScript> ScriptReady;
+        public event Action<LoadFailure> FailureUnclaimed;
+
+        /// <summary>How long a compile failure is held for an editor to collect before the owner is told.</summary>
+        public TimeSpan UnclaimedGrace { get; set; } = TimeSpan.FromSeconds(2);
+
+        public ScriptLoader(ScriptCompiler compiler, IScriptTextSource assets, IEngineLog log, bool ownsCompiler = false)
+            : this(compiler, assets, log, 128 * 1024, () => new Vm(Watchdog.Default), ownsCompiler)
+        {
+        }
 
         public ScriptLoader(ScriptCompiler compiler, IScriptTextSource assets, IEngineLog log, int memoryLimitBytes, Func<Vm> vmFactory, bool ownsCompiler = false)
         {

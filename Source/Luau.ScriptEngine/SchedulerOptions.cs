@@ -52,6 +52,12 @@ namespace Luau.ScriptEngine
 
         /// <summary>Taken out of the scheduler; its native objects are freed.</summary>
         Removed,
+
+        /// <summary>Its Running flag is off: not run, events are dropped, timers are held. Resuming continues where it stopped.</summary>
+        Stopped,
+
+        /// <summary>Held by suspend: not run, events keep queueing. Resuming continues where it stopped.</summary>
+        Suspended,
     }
 
     /// <summary>What the scheduler is built from. Defaults are the settings defaults.</summary>
@@ -87,8 +93,32 @@ namespace Luau.ScriptEngine
 
         public IEngineLog Log { get; set; }
 
-        /// <summary>Called on the worker's thread when a script ends in a fault.</summary>
+        /// <summary>Called on the worker's thread when a script ends in a fault or is killed.</summary>
         public Action<SchedulerScript> ScriptFaulted { get; set; }
+
+        /// <summary>Consecutive punished turns after which a script is killed.</summary>
+        public int KillAfterPunishments { get; set; }
+
+        /// <summary>Delay a script's own error report adds to the script, in seconds (the 15 ms chat pause).</summary>
+        public double ErrorPauseSeconds { get; set; }
+
+        /// <summary>Called on the worker's thread when a host function reports a script error (<see cref="SchedulerScript.ReportError"/>).</summary>
+        public Action<SchedulerScript, string> ScriptError { get; set; }
+
+        /// <summary>Wait before a worker whose pass failed carries on, in milliseconds.</summary>
+        public int WorkerRestartDelayMs { get; set; }
+
+        /// <summary>Failed passes after which a worker stops for good.</summary>
+        public int MaxWorkerCrashes { get; set; }
+
+        /// <summary>Called once, on the worker's thread, when a worker has stopped for good after too many failed passes: its index, the failures, the last one's message.</summary>
+        public Action<int, int, string> WorkerStopped { get; set; }
+
+        /// <summary>Tests only: called on the worker's thread at the start of each pass with the worker's index and the pass number; it may throw to fail the pass.</summary>
+        public Action<int, long> BeforePass { get; set; }
+
+        /// <summary>Tests only: returns the result of a plain step in place of the runtime's, or null to run the step.</summary>
+        public Func<SchedulerScript, StepResult?> StepOverride { get; set; }
     }
 
     /// <summary>A reading of one worker's counters.</summary>
@@ -100,11 +130,32 @@ namespace Luau.ScriptEngine
         long Passes,
         long Steps,
         long Wakeups,
-        long BudgetCutoffs);
+        long BudgetCutoffs,
+        int Stopped = 0,
+        int Suspended = 0,
+        int Faulted = 0,
+        long Kills = 0,
+        long Punishments = 0,
+        long RefusedCaps = 0,
+        long Crashes = 0,
+        bool Failed = false);
 
     /// <summary>A reading of the whole scheduler's counters.</summary>
     internal sealed class SchedulerStats
     {
         public WorkerStats[] Workers { get; init; }
+
+        public int Scripts => Sum(w => w.Scripts);
+        public int Stopped => Sum(w => w.Stopped);
+        public int Suspended => Sum(w => w.Suspended);
+        public int Faulted => Sum(w => w.Faulted);
+        public long Kills => Sum(w => w.Kills);
+        public long Punishments => Sum(w => w.Punishments);
+        public long RefusedCaps => Sum(w => w.RefusedCaps);
+        public long Crashes => Sum(w => w.Crashes);
+        public int FailedWorkers => Sum(w => w.Failed ? 1 : 0);
+
+        private int Sum(Func<WorkerStats, int> f) { int n = 0; foreach (WorkerStats w in Workers) n += f(w); return n; }
+        private long Sum(Func<WorkerStats, long> f) { long n = 0; foreach (WorkerStats w in Workers) n += f(w); return n; }
     }
 }

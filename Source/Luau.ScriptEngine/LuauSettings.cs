@@ -51,6 +51,9 @@ namespace Luau.ScriptEngine
         public double MinTimerInterval { get; private set; } = 0.1;
 
         public int MaxEventQueue { get; private set; } = 64;
+
+        /// <summary>Consecutive punished turns after which a script is killed.</summary>
+        public int KillAfterPunishments { get; private set; }
         public int StateSaveIntervalMs { get; private set; } = 2500;
         public bool CompileCache { get; private set; } = true;
 
