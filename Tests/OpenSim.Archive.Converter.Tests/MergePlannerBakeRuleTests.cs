@@ -82,11 +82,21 @@ public class MergePlannerBakeRuleTests
     }
 
     [Fact]
-    public void AFaceWithMapsDrawnWithAnotherTransformDoesNotBake()
+    public void AFaceWithMapsDrawnWithAnotherTransformBakesWhenTheDifferenceCanBeStated()
     {
+        // the face is scaled alike in both directions, so the map's transform relative to it is a turn, repeats and an offset
         FaceTransform xf = new FaceTransform(2, 2, 0, 0, 0);
         LegacyMaterialInfo other = new LegacyMaterialInfo { HasNormalMap = true, NormalTransform = new FaceTransform(2, 3, 0, 0, 0), HasSpecularMap = true, SpecularTransform = xf };
-        Assert.False(FaceBaking.Bakeable(xf, 0, "m1", other, false, false, out string why));
+        Assert.True(FaceBaking.Bakeable(xf, 0, "m1", other, false, false, out string why));
+        Assert.Equal("", why);
+    }
+
+    [Fact]
+    public void AFaceWithMapsDrawnWithATransformThatShearsRelativeToTheFaceDoesNotBake()
+    {
+        FaceTransform xf = new FaceTransform(2, 3, 0, 0, 0.2f);
+        LegacyMaterialInfo sheared = new LegacyMaterialInfo { HasNormalMap = true, NormalTransform = new FaceTransform(2, 3, 0, 0, 0.9f), HasSpecularMap = true, SpecularTransform = xf };
+        Assert.False(FaceBaking.Bakeable(xf, 0, "m1", sheared, false, false, out string why));
         Assert.Contains("map", why);
     }
 

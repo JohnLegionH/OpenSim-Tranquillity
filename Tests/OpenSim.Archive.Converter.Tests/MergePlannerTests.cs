@@ -248,10 +248,18 @@ public class MergePlannerTests
     }
 
     [Fact]
-    public void Rule12_AFaceWhoseMapRepeatsDifferentlyFromTheDiffuseStaysUnbaked()
+    public void Rule12_AFaceWhoseMapRepeatsDifferentlyFromTheDiffuseBakesWhenTheDifferenceCanBeStated()
     {
         LegacyMaterialInfo m = new LegacyMaterialInfo { HasNormalMap = true, NormalTransform = new FaceTransform(1, 1, 0, 0, 0) };
-        Assert.False(FaceBaking.Bakeable(new FaceTransform(4, 4, 0, 0, 0), 0, "mat-1", m, false, false, out string why));
+        Assert.True(FaceBaking.Bakeable(new FaceTransform(4, 4, 0, 0, 0), 0, "mat-1", m, false, false, out string why));
+        Assert.Equal("", why);
+    }
+
+    [Fact]
+    public void Rule12_AFaceWhoseMapIsTurnedAgainstAnUnevenDiffuseStaysUnbaked()
+    {
+        LegacyMaterialInfo m = new LegacyMaterialInfo { HasNormalMap = true, NormalTransform = new FaceTransform(4, 2, 0, 0, 0.6f) };
+        Assert.False(FaceBaking.Bakeable(new FaceTransform(4, 2, 0, 0, 0.1f), 0, "mat-1", m, false, false, out string why));
         Assert.Contains("material", why);
     }
 
