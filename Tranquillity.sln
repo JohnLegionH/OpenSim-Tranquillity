@@ -223,9 +223,9 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Region.PhysicsModul
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Region.PhysicsModules.Jolt.Tests", "Tests\OpenSim.Region.PhysicsModules.Jolt.Tests\OpenSim.Region.PhysicsModules.Jolt.Tests.csproj", "{F23323BB-E221-42B7-98D4-D42E5ACFAD26}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Luau.ScriptEngine", "Source\Luau.ScriptEngine\Luau.ScriptEngine.csproj", "{3D401ABC-2F76-43C1-B481-4370106C65A4}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SLua.ScriptEngine", "Source\SLua.ScriptEngine\SLua.ScriptEngine.csproj", "{3D401ABC-2F76-43C1-B481-4370106C65A4}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Luau.ScriptEngine.Tests", "Tests\Luau.ScriptEngine.Tests\Luau.ScriptEngine.Tests.csproj", "{F96B13B7-92FF-491B-ADAC-EEE7D0E0CBA0}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SLua.ScriptEngine.Tests", "Tests\SLua.ScriptEngine.Tests\SLua.ScriptEngine.Tests.csproj", "{F96B13B7-92FF-491B-ADAC-EEE7D0E0CBA0}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
