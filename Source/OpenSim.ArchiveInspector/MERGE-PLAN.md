@@ -152,3 +152,30 @@ the whole linkset: every part stays. A message to LINK_SET with llMessageLinked 
 
 A merged part's collision shape is a triangle mesh: a region older than 6.4.2 (the Jolt native-shape fix, NGC PR #378)
 can treat a merged part with few faces as a solid box. The tool runs offline and only warns.
+
+### Levels of detail
+
+A merged part carries its own medium, low and lowest levels (an unmerged conversion keeps the viewer profile: a third, a ninth and a
+twenty-seventh of the triangles). Each level is made from the full mesh and checked against it at the distance where the viewer starts to
+draw that level. The viewer chooses a level from tan = lodFactor * radius / distance (`calcLOD` and `computeLODDetail` in `llvovolume.cpp`;
+the distance is scaled by 1 - lodFactor * 0.1 and by pi/3), with the lowest level up to tan 0.03, low up to 0.06, medium up to 0.24, high
+above (`llvolumemgr.cpp`, `LLVolumeLODGroup`), and a radius of half the length of the scale vector. A level may differ from the full mesh by at most one screen pixel there (a 1080 pixel high window, a 60 degree view; `MergeOptions.Lod`).
+
+- A member whose screen size at that distance (the length of its scale vector) is under the limit is left out of the level; the largest
+  member always stays.
+- Each slot is simplified on its own with meshoptimizer. Vertices on a texture seam (one place, two coordinates), on a hard edge (normals more
+  than sixty degrees apart), at a place shared by two members, and on the slot's border stay where they are, so every vertex of a level is a
+  vertex of the full mesh in the same slot and no corner takes another corner's coordinate.
+- The level is measured: every vertex of the full slot against the nearest point of the same slot of the level, in metres, and the
+  coordinate difference there, turned into metres by how far the surface runs for that difference on the nearest triangle. Both must be
+  within the limit; otherwise the level keeps more triangles than the profile aims for, up to the level above.
+
+The result is that a mesh with many seams (boxes) keeps most of its triangles in every level, and a smooth one loses what the limit allows.
+The report lists each level's triangles, switch distance, measured difference in pixels and the members left out.
+
+### Collision
+
+A merged part always carries the triangle mesh of its members in the physics_mesh block. When every member is exactly convex (a closed
+surface whose every triangle plane has the whole shape on one side) it also carries a hull list in the physics_convex block, one hull for
+each member (at most 256 points each). A hollow, cut, twisted or round member keeps the part on the triangle mesh alone, and the report names
+the member: a hull of such a member would fill what it leaves empty.
