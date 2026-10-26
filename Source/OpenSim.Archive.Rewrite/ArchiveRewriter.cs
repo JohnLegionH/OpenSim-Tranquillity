@@ -91,8 +91,25 @@ public sealed class ArchiveRewriter
         // Everything that can be refused is checked before the output file is created.
         PlanResult plan = Plan(() => File.OpenRead(sourcePath));
 
-        using FileStream dest = new FileStream(destPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        return Write(() => File.OpenRead(sourcePath), dest, plan);
+        // The archive is built under a temporary name beside the output and takes the output name only when it is complete, so a failed
+        // run never leaves a file that looks like a result. The partly written file is kept under "<output>.<id>.incomplete".
+        if (File.Exists(destPath) || Directory.Exists(destPath))
+            throw new IOException("the output '" + destPath + "' already exists; it is never overwritten");
+        string temporary = destPath + "." + Guid.NewGuid().ToString("N").Substring(0, 8) + ".tmp";
+        RewriteSummary summary;
+        try
+        {
+            using (FileStream dest = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                summary = Write(() => File.OpenRead(sourcePath), dest, plan);
+            File.Move(temporary, destPath, overwrite: false);
+        }
+        catch
+        {
+            if (File.Exists(temporary))
+                File.Move(temporary, Path.ChangeExtension(temporary, ".incomplete"));
+            throw;
+        }
+        return summary;
     }
 
     /// <summary>Rewrites a source stream (gzip tar or plain tar) into a gzip-compressed tar on <paramref name="dest"/>.</summary>
