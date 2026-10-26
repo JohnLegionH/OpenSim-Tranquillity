@@ -269,7 +269,7 @@ public class MergePlannerTests
     [Fact]
     public void Rule12_AMappingThatIsNeitherDefaultNorPlanarStaysUnbaked()
     {
-        Assert.False(FaceBaking.Bakeable(FaceTransform.Identity, 2, "", null, false, false, out string why));
+        Assert.False(FaceBaking.Bakeable(FaceTransform.Identity, 4, "", null, false, false, out string why));
         Assert.Contains("mapping", why);
     }
 

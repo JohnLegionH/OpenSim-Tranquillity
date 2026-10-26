@@ -39,24 +39,24 @@ public class MergePlannerBakeRuleTests
     [Fact]
     public void APlanarFaceBakesAndSoDoesADefaultMappedOne()
     {
-        Assert.True(FaceBaking.Bakeable(FaceTransform.Identity, 1, "", null, false, false, out _));
-        Assert.True(FaceBaking.Bakeable(new FaceTransform(2, 2, 0.5f, 0, 1), 1, "", null, false, false, out _));
+        Assert.True(FaceBaking.Bakeable(FaceTransform.Identity, FaceBaking.PlanarMapping, "", null, false, false, out _));
+        Assert.True(FaceBaking.Bakeable(new FaceTransform(2, 2, 0.5f, 0, 1), FaceBaking.PlanarMapping, "", null, false, false, out _));
         Assert.True(FaceBaking.Bakeable(FaceTransform.Identity, 0, "", null, false, false, out _));
     }
 
     [Fact]
     public void AMappingOtherThanDefaultOrPlanarDoesNotBake()
     {
-        Assert.False(FaceBaking.Bakeable(FaceTransform.Identity, 2, "", null, false, false, out string why));
+        Assert.False(FaceBaking.Bakeable(FaceTransform.Identity, 4, "", null, false, false, out string why));
         Assert.Contains("texture mapping", why);
-        Assert.False(FaceBaking.Bakeable(FaceTransform.Identity, 3, "", null, false, false, out _));
+        Assert.False(FaceBaking.Bakeable(FaceTransform.Identity, 6, "", null, false, false, out _));
     }
 
     [Fact]
     public void ABakedPlanarFaceAndADefaultFaceWithTheSameMaterialShareOneSlot()
     {
         MergePart a = Part(1), b = Part(2, 1);
-        b.Faces[0].TexGen = 1;
+        b.Faces[0].TexGen = FaceBaking.PlanarMapping;
         Assert.Single(Assert.Single(Plan(a, b).Merged).Slots);
     }
 
@@ -68,7 +68,7 @@ public class MergePlannerBakeRuleTests
     public void AFaceWithMapsAndNoTransformBakes()
     {
         Assert.True(FaceBaking.Bakeable(FaceTransform.Identity, 0, "m1", MapsAtIdentity, false, false, out _));
-        Assert.True(FaceBaking.Bakeable(FaceTransform.Identity, 1, "m1", MapsAtIdentity, false, false, out _));
+        Assert.True(FaceBaking.Bakeable(FaceTransform.Identity, FaceBaking.PlanarMapping, "m1", MapsAtIdentity, false, false, out _));
     }
 
     [Fact]
@@ -121,7 +121,7 @@ public class MergePlannerBakeRuleTests
     public void APartWhoseUnbakeablePlanarFaceCannotBeBakedStaysBecauseTheViewerWouldProjectItOnTheMergedShape()
     {
         MergePart planar = Part(2, 1);
-        planar.Faces[0].TexGen = 1;
+        planar.Faces[0].TexGen = FaceBaking.PlanarMapping;
         planar.Faces[0].Bakeable = false;
         LinksetPlan plan = Plan(Part(1), planar, Part(3, 2));
         Assert.Contains(plan.Kept.Single(k => k.PartId == planar.PartId).Rules, r => r.Code == "UNBAKED_MAPPING");

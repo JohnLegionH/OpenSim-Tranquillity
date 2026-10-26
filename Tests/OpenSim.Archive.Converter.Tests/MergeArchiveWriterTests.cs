@@ -184,6 +184,43 @@ public class MergeArchiveWriterTests
     }
 
     [Fact]
+    public void PlanarFacesOfAnArchiveAreBakedCountedAndDrawnWithDefaultMapping()
+    {
+        Primitive.TextureEntry te = new Primitive.TextureEntry(UUID.Random());
+        te.DefaultTexture.TexMapType = MappingType.Planar;
+        te.DefaultTexture.RepeatU = 2f;
+        te.DefaultTexture.OffsetV = 0.25f;
+        (string src, _) = Build(scripted: 0, change: p =>
+        {
+            foreach (KitPart k in p)
+                k.TextureEntry = Convert.ToBase64String(te.GetBytes());
+            p[1].Rotation = "0,0,0.38,0.92";
+        });
+        MergeWriteResult r = Merge(src, out string output);
+        MergedPartReport rep = Assert.Single(r.Parts);
+        Assert.Equal(30, rep.PlanarFaces);
+        Assert.Equal(0, rep.UnbakedFaces);
+        Assert.True(rep.WorstUv < 1e-5, "uv " + rep.WorstUv);
+        ParsedPart p0 = Read(output).Values.Single();
+        Primitive.TextureEntry after = new Primitive.TextureEntry(p0.TextureEntry, 0, p0.TextureEntry.Length);
+        Assert.Equal(MappingType.Default, (after.FaceTextures[0] ?? after.DefaultTexture).TexMapType);
+    }
+
+    [Fact]
+    public void TwoMergedPartsWithTheSameMeshShareOneAsset()
+    {
+        (string src, List<KitPart> first) = Build(scripted: 0);
+        // the same row of boxes again, as a second object
+        List<KitPart> second = first.Select(k => new KitPart(k.Name, k.LinkNum) { Offset = k.Offset, Scale = k.Scale }).ToList();
+        string both = EligibilityKit.WriteArchive(new List<List<KitPart>> { first, second });
+        MergeWriteResult r = Merge(both, out string output);
+        Assert.Equal(2, r.Parts.Count);
+        Assert.Equal(r.Parts[0].MeshId, r.Parts[1].MeshId);
+        Assert.Equal(1, r.Rewrite.AddedAssets.Count(a => a.EndsWith("_mesh.llmesh", StringComparison.Ordinal)));
+        Assert.Equal(2, Read(output).Count);
+    }
+
+    [Fact]
     public void TheSourceArchiveIsNotChangedAndAnOutputThatExistsIsRefused()
     {
         (string src, _) = Build();

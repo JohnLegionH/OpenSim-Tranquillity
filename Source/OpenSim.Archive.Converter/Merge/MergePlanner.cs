@@ -373,6 +373,9 @@ public static class MergePlanner
 /// <summary>Decides whether a face's transform can be baked into merged texture coordinates (merge rule 12).</summary>
 public static class FaceBaking
 {
+    /// <summary>The texture mapping value of a planar face: the viewer's TEX_GEN_PLANAR, 0x02 in the texture entry's flags.</summary>
+    public const int PlanarMapping = (int)OpenMetaverse.MappingType.Planar;
+
     /// <summary>
     /// A face bakes unless it is a PBR or media face, uses a texture mapping other than default or planar, names a legacy material that
     /// is not in the archive, or names one with normal or specular maps while a transform is in play.

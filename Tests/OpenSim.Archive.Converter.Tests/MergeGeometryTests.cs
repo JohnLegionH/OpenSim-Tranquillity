@@ -158,11 +158,11 @@ public class MergeGeometryTests
     public void APlanarFaceIsProjectedOnItsOwnPartsSizeNotTheMergedPartsAndThenTransformed()
     {
         Spec[] specs = Three();
-        specs[1].TexGen = 1;
+        specs[1].TexGen = FaceBaking.PlanarMapping;
         specs[1].Transform = new FaceTransform(2, 2, 0.1f, 0.2f, 0.4f);
         var (plan, members, _) = Make(null, specs);
         MergedGeometry g = MergeGeometry.Build(plan, members, carrierIsRoot: false);
-        MergeMember planarMember = members.Single(m => m.FaceInfo[0].TexGen == 1);
+        MergeMember planarMember = members.Single(m => m.FaceInfo[0].TexGen == FaceBaking.PlanarMapping);
         int mi = members.IndexOf(planarMember);
         int checkedCorners = 0;
         foreach (FaceRun run in g.Runs.Where(r => r.Member == mi))
