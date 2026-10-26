@@ -25,7 +25,7 @@ internal static class SculptKit
 
     /// <summary>
     /// A square sculpt map: each pixel's red, green and blue are the x, y and z of a point of the shape in the unit box, 0 to 255 for -0.5 to 0.5.
-    /// The sphere's first and last rows are one point each (the poles), so a whole row of the map is one position.
+    /// The sphere's first and last tenth of the rows are the poles, where a whole row of the map is one position.
     /// </summary>
     public static byte[] Map(Shape shape, int n)
     {
@@ -34,9 +34,11 @@ internal static class SculptKit
             for (int x = 0; x < n; x++)
             {
                 double u = 2 * Math.PI * x / n, rowFraction = (double)y / (n - 1);
+                // the sphere's first and last tenth of the rows are the poles: every pixel of such a row is the same point, however the mesher samples the map
+                double polar = Math.Clamp((rowFraction - 0.1) / 0.8, 0, 1);
                 (double px, double py, double pz) = shape switch
                 {
-                    Shape.Sphere => (0.5 * Math.Sin(Math.PI * rowFraction) * Math.Cos(u), 0.5 * Math.Sin(Math.PI * rowFraction) * Math.Sin(u), 0.5 * Math.Cos(Math.PI * rowFraction)),
+                    Shape.Sphere => (0.5 * Math.Sin(Math.PI * polar) * Math.Cos(u), 0.5 * Math.Sin(Math.PI * polar) * Math.Sin(u), 0.5 * Math.Cos(Math.PI * polar)),
                     Shape.Torus => ((0.32 + 0.14 * Math.Cos(2 * Math.PI * y / n)) * Math.Cos(u), (0.32 + 0.14 * Math.Cos(2 * Math.PI * y / n)) * Math.Sin(u), 0.14 * Math.Sin(2 * Math.PI * y / n)),
                     Shape.Plane => ((double)x / (n - 1) - 0.5, rowFraction - 0.5, 0.05 * Math.Sin(6 * (double)x / n)),
                     _ => (0.5 * Math.Cos(u), 0.5 * Math.Sin(u), rowFraction - 0.5)

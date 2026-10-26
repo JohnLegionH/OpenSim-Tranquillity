@@ -24,13 +24,36 @@ internal static class MemberGeometry
     public static MemberShape Build(string kind, ParsedPart pp, ISculptMapSource maps, bool clean, out string problem)
     {
         problem = null;
-        if (kind != "prim")
+        List<EncoderFace> faces;
+        PhysicsGeometry physics;
+        if (kind == "prim")
         {
-            problem = "only prims are built";
+            faces = FaceBuilder.FromPrim(pp.Shape, out _, clean);
+            physics = PrimPhysics.Build(pp.Shape, null, null, pp.Scale, out problem);
+        }
+        else if (kind == "sculpt")
+        {
+            // as the converter builds a sculpt on its own: the sculpt mesher on the map's pixels (seams stay split, zero-area triangles go with the cleaning)
+            SculptMap map = maps?.Get(pp.Shape.SculptTexture.Guid, out problem);
+            if (map == null)
+            {
+                problem ??= "the sculpt map could not be read";
+                return null;
+            }
+            SculptResult sr = SculptGeometry.BuildVolume(map, pp.Shape.SculptType, PrimParams.FromShape(pp.Shape));
+            if (sr.Faces.Count == 0)
+            {
+                problem = sr.Problem ?? "the sculpt gave no geometry";
+                return null;
+            }
+            faces = FaceBuilder.Slots(sr.Faces, sr.ViewerFaceCount, clean);
+            physics = PrimPhysics.Build(pp.Shape, null, map, pp.Scale, out problem);
+        }
+        else
+        {
+            problem = "only prims and sculpts are built";
             return null;
         }
-        List<EncoderFace> faces = FaceBuilder.FromPrim(pp.Shape, out _, clean);
-        PhysicsGeometry physics = PrimPhysics.Build(pp.Shape, null, null, pp.Scale, out problem);
         return physics == null ? null : new MemberShape { Faces = faces, Physics = physics };
     }
 }

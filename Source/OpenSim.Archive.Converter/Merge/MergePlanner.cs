@@ -142,8 +142,7 @@ public static class MergePlanner
             Add("17", "PROTECTED_LINK_NUMBER", "a script addresses link number " + protectedUpTo + ", so numbers up to it do not change");
         if (p.HasContents) Add("part", "CONTENTS", "the part holds items other than scripts");
         if (p.Kind == "mesh") Add("11", "ALREADY_MESH", "an existing mesh keeps its makers' levels of detail");
-        else if (p.Kind == "sculpt") Add("sculpt", "SCULPT_NOT_PLANNED", "a sculpt is converted on its own; merging it needs the geometry stage to read its map");
-        else if (p.Kind != "prim") Add("part", "NOT_PRIM", "the part is not a prim");
+        else if (p.Kind != "prim" && p.Kind != "sculpt") Add("part", "NOT_PRIM", "the part is not a prim");
         if (p.NotConvertible.Length > 0) Add("part", "NOT_CONVERTED", "the converter keeps the part as a prim (" + p.NotConvertible + ")");
         if (p.Light) Add("part", "LIGHT", "per-part light parameters");
         if (p.TextureAnimation) Add("part", "TEXTURE_ANIMATION", "a texture animation moves the textures of every face of the part");

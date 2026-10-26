@@ -141,6 +141,8 @@ public static class MergeArchiveWriter
         MergeWriteResult result = new MergeWriteResult { Plan = plan, Output = outputPath, SourceBytes = new FileInfo(sourcePath).Length };
         ArchiveRewriter rewriter = new ArchiveRewriter();
         HashSet<Guid> assets = new HashSet<Guid>();
+        ISculptMapSource maps = new ArchiveSculptMapSource(sourcePath, plan.Linksets.SelectMany((l, i) => l.Merged.SelectMany(m => m.Members))
+            .Select(m => m.PartId).Where(id => parsed.TryGetValue(id, out ParsedPart q) && q.Shape != null && q.Shape.SculptEntry).Select(id => parsed[id].Shape.SculptTexture.Guid));
 
         for (int li = 0; li < plan.Linksets.Count; li++)
         {
@@ -149,7 +151,7 @@ public static class MergeArchiveWriter
                 continue;
             Dictionary<Guid, MergePart> read = linksets[li].Parts.ToDictionary(p => p.PartId);
             foreach (MergedPartPlan mp in lp.Merged)
-                result.Parts.Add(BuildMerged(lp, mp, read, parsed, encoder, options, convert, rewriter, assets));
+                result.Parts.Add(BuildMerged(lp, mp, read, parsed, encoder, options, convert, rewriter, assets, maps));
             foreach (KeptPartPlan kept in lp.Kept.Where(k => k.NewLinkNum != k.LinkNum))
             {
                 int number = kept.NewLinkNum;
@@ -205,16 +207,17 @@ public static class MergeArchiveWriter
     }
 
     private static MergedPartReport BuildMerged(LinksetPlan lp, MergedPartPlan mp, Dictionary<Guid, MergePart> read, Dictionary<Guid, ParsedPart> parsed,
-        IMeshEncoder encoder, MergeOptions options, ConvertOptions convert, ArchiveRewriter rewriter, HashSet<Guid> assets)
+        IMeshEncoder encoder, MergeOptions options, ConvertOptions convert, ArchiveRewriter rewriter, HashSet<Guid> assets, ISculptMapSource maps)
     {
         List<MergeMember> members = new List<MergeMember>();
         foreach (MemberPlan x in mp.Members)
         {
             ParsedPart pp = parsed[x.PartId];
             MergePart part = read[x.PartId];
-            List<EncoderFace> faces = FaceBuilder.FromPrim(pp.Shape, out _, convert.Clean);
-            PhysicsGeometry physics = PrimPhysics.Build(pp.Shape, null, null, pp.Scale, out string problem)
-                ?? throw new ConvertException("part " + x.PartId + " has no collision shape to merge: " + problem);
+            MemberShape shape = MemberGeometry.Build(part.Kind, pp, maps, convert.Clean, out string problem)
+                ?? throw new ConvertException("part " + x.PartId + " has no geometry to merge: " + problem);
+            List<EncoderFace> faces = shape.Faces;
+            PhysicsGeometry physics = shape.Physics;
             if (faces.Count != part.Faces.Count)
                 throw new ConvertException("part " + x.PartId + " has " + faces.Count + " faces now and had " + part.Faces.Count + " when the plan was made");
             members.Add(new MergeMember

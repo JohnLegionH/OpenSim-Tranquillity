@@ -125,8 +125,10 @@ public class MergeSculptTests
                     if (Area(tri[0], tri[1], tri[2]) > 1e-9f)
                         expected.Add(tri);
                 }
+                // the sphere's poles: many corners of the mesher's output are one point (a fan of triangles around it)
                 if (part.Name.StartsWith("Sphere"))
-                    Assert.True(expected.Count < rawTriangles, "the sphere's poles should give triangles with no area");
+                    Assert.True(Enumerable.Range(0, face.Positions.Length / 3).GroupBy(c => (Math.Round(face.Positions[c * 3], 3), Math.Round(face.Positions[c * 3 + 1], 3), Math.Round(face.Positions[c * 3 + 2], 3))).Max(gr => gr.Count()) >= 16,
+                        "the sphere should have a pole where a whole row of the map is one point");
             }
 
             // what the merged part holds for it

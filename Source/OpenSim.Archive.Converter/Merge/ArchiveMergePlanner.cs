@@ -44,6 +44,9 @@ public static class ArchiveMergePlanner
         parts = parsed;
         Dictionary<Guid, LegacyMaterialInfo> materials = ArchiveMaterials.Read(archivePath);
         Dictionary<Guid, TextureFacts> translucent = ArchiveTextureAlpha.Read(archivePath, TextureIds(parsed.Values));
+        ISculptMapSource maps = new ArchiveSculptMapSource(archivePath, elig.Parts
+            .Where(r => r.Action == PartAction.Convert && r.Kind == "sculpt" && parsed.TryGetValue(r.PartId, out ParsedPart q) && q.Shape != null)
+            .Select(r => parsed[r.PartId].Shape.SculptTexture.Guid));
 
         List<MergeLinkset> linksets = new List<MergeLinkset>();
         foreach (IGrouping<(string, Guid), EligibilityRow> build in elig.Parts.GroupBy(r => (r.Entry, r.LinksetId)))
@@ -52,7 +55,7 @@ public static class ArchiveMergePlanner
             List<EligibilityRow> rows = build.ToList();
             ls.Name = (rows.FirstOrDefault(r => r.IsRoot) ?? rows[0]).Name ?? "";
             foreach (EligibilityRow row in rows)
-                ls.Parts.Add(ReadPart(row, parsed.TryGetValue(row.PartId, out ParsedPart pp) ? pp : null, materials, translucent, convert?.Clean ?? true));
+                ls.Parts.Add(ReadPart(row, parsed.TryGetValue(row.PartId, out ParsedPart pp) ? pp : null, materials, translucent, maps, convert?.Clean ?? true));
             ls.Links = LinkFactsFor(elig.Scan, ls.Id, rows.Select(r => r.PartId).ToHashSet());
             linksets.Add(ls);
         }
@@ -68,7 +71,7 @@ public static class ArchiveMergePlanner
 
     // ---------------------------------------------------------------- parts
 
-    private static MergePart ReadPart(EligibilityRow row, ParsedPart pp, Dictionary<Guid, LegacyMaterialInfo> materials, Dictionary<Guid, TextureFacts> translucent, bool clean)
+    private static MergePart ReadPart(EligibilityRow row, ParsedPart pp, Dictionary<Guid, LegacyMaterialInfo> materials, Dictionary<Guid, TextureFacts> translucent, ISculptMapSource maps, bool clean)
     {
         MergePart p = new MergePart
         {
@@ -107,19 +110,20 @@ public static class ArchiveMergePlanner
         p.PhysicsShapeType = pp.PhysicsShapeType;
         SetBox(p, pp, row.IsRoot);
 
-        if (row.Action != PartAction.Convert || row.Kind != "prim" || pp.Shape == null)
+        if (row.Action != PartAction.Convert || (row.Kind != "prim" && row.Kind != "sculpt") || pp.Shape == null)
             return p;
 
         List<EncoderFace> faces;
         try
         {
-            faces = FaceBuilder.FromPrim(pp.Shape, out _, clean);
-            PhysicsGeometry physics = PrimPhysics.Build(pp.Shape, null, null, pp.Scale, out _);
-            if (physics == null)
+            MemberShape shape = MemberGeometry.Build(row.Kind, pp, maps, clean, out string problem);
+            if (shape == null)
             {
-                p.NotConvertible = "PHYSICS_UNAVAILABLE";
+                p.NotConvertible = row.Kind == "sculpt" ? "SCULPT_MAP_UNREADABLE" : "PHYSICS_UNAVAILABLE";
                 return p;
             }
+            faces = shape.Faces;
+            PhysicsGeometry physics = shape.Physics;
             p.PhysicsVertices = physics.VertexCount;
         }
         catch (Exception e) when (e is InvalidOperationException || e is ArgumentException || e is IndexOutOfRangeException || e is NullReferenceException)

@@ -385,12 +385,13 @@ public class MergePlannerTests
     }
 
     [Fact]
-    public void ASculptStaysSeparateUntilTheGeometryStageCanReadItsMap()
+    public void ASculptIsPlannedLikeAPrim()
     {
         MergePart sculpt = Part(3, 2);
         sculpt.Kind = "sculpt";
         LinksetPlan plan = Plan(Set(Part(1), Part(2, 1), sculpt));
-        Assert.True(HasRule(plan, sculpt, "sculpt", "SCULPT_NOT_PLANNED"));
+        Assert.Empty(plan.Kept);
+        Assert.Equal(3, Assert.Single(plan.Merged).Members.Count);
     }
 
     [Fact]
