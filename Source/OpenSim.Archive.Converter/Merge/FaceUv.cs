@@ -13,6 +13,10 @@ namespace OpenSim.Archive.Converter.Merge;
 /// The texture coordinates a viewer draws a face with, worked out once so they can be written into a merged mesh. The two steps
 /// are the viewer's own (Firestorm-lineage indra/newview/llface.cpp): planar projection (planarProjection) for a face whose texture
 /// mapping is planar, and the face's texture transform (xform): a turn about the middle of the texture, then the repeats, then the offset.
+/// Reference (the code is written from the viewer's behaviour, not copied from it): planarProjection is llface.cpp lines 89-123, xform is
+/// lines 734-757, and LLFace::getGeometryVolume (lines 1232 onward) applies them per channel: the diffuse coordinates take the face's
+/// own transform (lines 1744-1797 and 1850-1930), the normal and specular coordinates take the legacy material's transform for that map and
+/// not the face's (lines 1855-1892).
 /// </summary>
 public static class FaceUv
 {

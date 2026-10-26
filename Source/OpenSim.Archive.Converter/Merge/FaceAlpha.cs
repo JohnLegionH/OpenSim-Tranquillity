@@ -85,7 +85,11 @@ public static class TextureAlpha
     private static byte Level(byte a) => a >= 254 ? (byte)255 : a <= 1 ? (byte)0 : a;
 }
 
-/// <summary>The viewer's test for a texture whose alpha can be drawn as a mask. The steps and limits are the viewer's own figures.</summary>
+/// <summary>
+/// The viewer's test for a texture whose alpha can be drawn as a mask. The steps and limits are the viewer's own figures.
+/// Reference (behaviour followed, no code copied): LLImageGL::analyzeAlpha, indra/llrender/llimagegl.cpp lines 2190-2288, whose result
+/// LLFace::canRenderAsMask (indra/newview/llface.cpp lines 1168-1204) reads through getIsAlphaMask (llimagegl.cpp line 2086).
+/// </summary>
 public static class AlphaTest
 {
     /// <summary>
