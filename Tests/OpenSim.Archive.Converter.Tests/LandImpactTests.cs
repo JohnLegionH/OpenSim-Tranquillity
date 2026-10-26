@@ -41,4 +41,20 @@ public class LandImpactTests
         Assert.Equal(w.Parts.Sum(p => p.Levels[2].Triangles), r.LowestTriangles);
         Assert.True(r.MeshBytes > 0);
     }
+
+    [Fact]
+    public void TheArchivesNamedInTheEnvironmentAreMeasuredAndTheTableIsWritten()
+    {
+        string list = Environment.GetEnvironmentVariable("OARX_COST_LIST"), outPath = Environment.GetEnvironmentVariable("OARX_COST_OUT");
+        if (string.IsNullOrEmpty(list) || string.IsNullOrEmpty(outPath))
+            return;
+        System.Text.StringBuilder sb = new System.Text.StringBuilder("label\tlinksets\tparts\tmesh parts\tregion land impact\tviewer streaming cost\thigh tris\tmedium tris\tlow tris\tlowest tris\tmesh bytes\n");
+        foreach (string item in list.Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] kv = item.Split('=', 2);
+            LandImpactReport r = LandImpact.Measure(kv[1]);
+            sb.AppendLine(string.Join("\t", kv[0], r.Linksets, r.Parts, r.MeshParts, r.RegionLandImpact.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture), r.ViewerStreamingCost.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture), r.HighTriangles, r.MediumTriangles, r.LowTriangles, r.LowestTriangles, r.MeshBytes));
+        }
+        File.WriteAllText(outPath, sb.ToString());
+    }
 }
