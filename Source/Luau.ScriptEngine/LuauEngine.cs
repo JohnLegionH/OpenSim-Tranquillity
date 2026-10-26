@@ -32,15 +32,46 @@ namespace Luau.ScriptEngine
 
         public LuauEngine() : this(new RegionLog(), (settings, log) => true) { }
 
-        internal LuauEngine(IEngineLog log, RuntimeLoader loadRuntime) { }
+        private readonly IEngineLog m_log;
+        private readonly RuntimeLoader m_loadRuntime;
+        private LuauSettings m_settings = new LuauSettings();
+        private bool m_enabled;
+        private Scene m_scene;
+
+        internal LuauEngine(IEngineLog log, RuntimeLoader loadRuntime)
+        {
+            m_log = log;
+            m_loadRuntime = loadRuntime;
+        }
+
+        internal LuauSettings Settings => m_settings;
 
         public string Name => EngineIdentity.EngineName;
         public string ScriptEngineName => EngineIdentity.EngineName;
         public Type ReplaceableInterface => null;
 
-        public void Initialise(IConfigSource source) { }
+        public void Initialise(IConfigSource source)
+        {
+            m_settings = LuauSettings.Read(source, m_log);
+            if (!m_settings.Enabled)
+                return;
+
+            // The native runtime is needed before any script can run. If it cannot be used the engine stays out of
+            // the region: it logs one line and registers nothing, and the other engines carry on.
+            m_enabled = m_loadRuntime(m_settings, m_log);
+        }
+
         public void Close() { }
-        public void AddRegion(Scene scene) { }
+
+        public void AddRegion(Scene scene)
+        {
+            if (!m_enabled) return;
+            m_scene = scene;
+            m_scene.RegisterModuleInterface<IScriptModule>(this);
+            m_scene.StackModuleInterface<IScriptModule>(this);
+            m_log.Info("Added to region " + scene.RegionInfo.RegionName);
+        }
+
         public void RemoveRegion(Scene scene) { }
         public void RegionLoaded(Scene scene) { }
 
