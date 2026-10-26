@@ -186,7 +186,7 @@ namespace SLua.ScriptEngine
         }
 
         /// <summary>The scheduler's options from the engine's settings, with the engine's own callbacks for faults, script errors and a worker that gave up.</summary>
-        private SchedulerOptions BuildSchedulerOptions()
+        internal SchedulerOptions BuildSchedulerOptions()
         {
             Bindings.Watchdog watchdog = m_settings.Watchdog switch
             {

@@ -52,6 +52,9 @@ namespace SLua.ScriptEngine
 
         public int MaxEventQueue { get; private set; } = 64;
 
+        /// <summary>An event that wakes an idle script puts it at the front of its worker's ring (once per ring cycle).</summary>
+        public bool EventFrontOfRing { get; private set; } = true;
+
         /// <summary>Consecutive punished turns after which a script is killed.</summary>
         public int KillAfterPunishments { get; private set; } = 20;
         public int StateSaveIntervalMs { get; private set; } = 2500;

@@ -78,6 +78,9 @@ namespace SLua.ScriptEngine
         /// <summary>Events queued per script; more are dropped and counted.</summary>
         public int MaxEventQueue { get; set; } = 64;
 
+        /// <summary>An event or timer tick that wakes an idle script puts it at the front of the ring, at most once per ring cycle.</summary>
+        public bool FrontOfRing { get; set; } = true;
+
         public ThreadPriority ThreadPriority { get; set; } = ThreadPriority.Lowest;
 
         /// <summary>Memory limit given to each script, in bytes; 0 is the library's default.</summary>
