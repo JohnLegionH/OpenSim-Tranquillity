@@ -29,5 +29,48 @@ public sealed class LandImpactReport
 
 public static class LandImpact
 {
-    public static LandImpactReport Measure(string archivePath) => throw new NotImplementedException();
+    private const double StreamingPart = 1.0, SimulationPart = 0.5, PhysicsPart = 0.1;
+
+    public static LandImpactReport Measure(string archivePath)
+    {
+        ArchiveMergePlanner.Plan(archivePath, new MergeOptions(), null, out Dictionary<Guid, ParsedPart> parsed);
+        HashSet<string> wanted = parsed.Values.Where(IsMesh).Select(p => "assets/" + p.Shape.SculptTexture + "_mesh.llmesh").ToHashSet();
+        Dictionary<string, byte[]> meshes = new Dictionary<string, byte[]>();
+        using (FileStream fs = File.OpenRead(archivePath))
+        {
+            TarStreamReader tar = new TarStreamReader(new GZipStream(fs, CompressionMode.Decompress));
+            TarEntryHeader h;
+            while ((h = tar.ReadNext()) != null)
+                if (h.IsFile && wanted.Contains(h.Name))
+                    meshes[h.Name] = tar.ReadBody();
+        }
+
+        LandImpactReport r = new LandImpactReport();
+        foreach (IGrouping<Guid, ParsedPart> linkset in parsed.Values.GroupBy(p => p.Part.LinksetId.Guid))
+        {
+            r.Linksets++;
+            List<ParsedPart> parts = linkset.ToList();
+            r.Parts += parts.Count;
+            // a part whose physics shape type is none, or a mesh part, makes the linkset cost by part (SceneObjectPart.UsesComplexCost)
+            bool complex = parts.Any(p => IsMesh(p) || p.PhysicsShapeType == 1);
+            r.RegionLandImpact += complex ? parts.Sum(p => Math.Max(StreamingPart, Math.Max(SimulationPart, p.PhysicsShapeType == 1 ? 0 : PhysicsPart))) : parts.Count;
+            foreach (ParsedPart p in parts.Where(IsMesh))
+            {
+                r.MeshParts++;
+                if (!meshes.TryGetValue("assets/" + p.Shape.SculptTexture + "_mesh.llmesh", out byte[] bytes))
+                    continue;
+                MeshAssetModel model = MeshCodec.Decode(bytes);
+                r.MeshBytes += bytes.Length;
+                int Count(MeshLod lod) => lod == null ? 0 : lod.Faces.Sum(f => f.NoGeometry ? 0 : f.TriangleCount);
+                r.HighTriangles += Count(model.High);
+                r.MediumTriangles += Count(model.Medium);
+                r.LowTriangles += Count(model.Low);
+                r.LowestTriangles += Count(model.Lowest);
+                r.ViewerStreamingCost += StreamingCost.FromAsset(bytes).StaticCost(0.5 * new System.Numerics.Vector3(p.Scale.X, p.Scale.Y, p.Scale.Z).Length());
+            }
+        }
+        return r;
+    }
+
+    private static bool IsMesh(ParsedPart p) => p.Shape != null && p.Shape.SculptEntry && p.Shape.SculptType == (int)OpenMetaverse.SculptType.Mesh;
 }
