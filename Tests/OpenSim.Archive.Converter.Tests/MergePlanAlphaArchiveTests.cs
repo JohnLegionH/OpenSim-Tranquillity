@@ -16,8 +16,7 @@ using Xunit;
 namespace OpenSim.Archive.Converter.Tests;
 
 /// <summary>
-/// The alpha rule read from archives: a face whose texture has an alpha channel is alpha unless its legacy material says none or
-/// mask. Each test writes its own archive and shares nothing, so the class runs in parallel with others.
+/// The alpha rule read from archives (the viewer's rule is in FaceAlphaTests; more cases are in MergePlanViewerAlphaTests). Each test writes its own archive and shares nothing, so the class runs in parallel with others.
 /// </summary>
 public class MergePlanAlphaArchiveTests
 {

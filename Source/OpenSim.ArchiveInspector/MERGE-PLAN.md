@@ -22,8 +22,15 @@ merged parts that stay inside these limits: at most 8 faces (material slots) per
 vertices in the physics block, a longest side of 24 m (4 m when the part holds alpha-blended faces), and nothing over
 64 m. The plan chooses between cutting by place and cutting by material, whichever gives fewer parts.
 
-A face is alpha-blended when its colour alpha is below 1, when its legacy material blends, or when its texture has an alpha
-channel with a pixel that is not fully opaque (unless the legacy material's alpha mode is none or mask).
+A face is alpha-blended as the viewer draws it (the references are the viewer's `LLPipeline::getPoolTypeFromTE`, `LLFace::canRenderAsMask`
+and `LLImageGL::analyzeAlpha`). It goes through the alpha pool when its colour alpha is below 0.999 or its texture has an alpha channel,
+that is two or four components in the JPEG 2000 file, whatever the pixels hold; a legacy material with an alpha mode other than blend
+takes the texture's part away, and a blend material blends the face even on an opaque texture. A face of the alpha pool is drawn as an
+alpha test instead of a blend, and so is not counted, when its colour alpha is exactly 1, it does not glow, and the texture's alpha is
+mostly clear or opaque (the viewer sorts alpha into 16 steps, counting each 2 x 2 average too, and takes it for a mask unless more than
+1/48 of the counts are in the middle steps, or all are in one half without being all clear or all opaque). A four-channel texture whose
+alpha is all 255 therefore does not blend. This library's decoder reads a constant alpha of 255 from a lossy file as 254; levels within
+one of 0 or 255 are taken as 0 or 255.
 
 A face's slot is set by its texture, colour, glow, shininess, bump, fullbright, legacy material and alpha. Its texture
 mapping, repeats, offset, rotation and flips are not part of it when the face can be baked into the merged texture
