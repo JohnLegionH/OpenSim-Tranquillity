@@ -12,7 +12,7 @@ using Xunit;
 namespace SLua.ScriptEngine.Tests;
 
 /// <summary>
-/// A fact that runs only where the runtime's event list can be read: SLUA_BUILTINS_PATH names the runtime's
+/// A fact that runs only where the runtime's builtins.txt can be compared: SLUA_BUILTINS_PATH names the runtime's
 /// builtins.txt. Without it the fact is reported as skipped with the reason, not passed.
 /// </summary>
 public sealed class RequiresBuiltinsFactAttribute : FactAttribute
@@ -27,20 +27,57 @@ public sealed class RequiresBuiltinsFactAttribute : FactAttribute
     }
 }
 
+/// <summary>Where the copy of the runtime's builtins.txt and the note about its source sit in the test output.</summary>
+internal static class BuiltinsCopy
+{
+    internal static string Path => System.IO.Path.Combine(AppContext.BaseDirectory, "TestData", "builtins.txt");
+
+    internal static string NotePath => System.IO.Path.Combine(AppContext.BaseDirectory, "TestData", "builtins-source.txt");
+}
+
+/// <summary>
+/// The copy of builtins.txt in the test data is the runtime's file, byte for byte, and says which runtime commit it came from.
+/// </summary>
+public class BuiltinsCopyTests
+{
+    [Fact]
+    public void TheCopyIsInTheTestDataAndHoldsTheRuntimesEventLines()
+    {
+        Assert.True(File.Exists(BuiltinsCopy.Path), "TestData/builtins.txt is missing from the test output");
+        Assert.Contains(File.ReadLines(BuiltinsCopy.Path), line => line.StartsWith("event touch_start(", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void TheNoteNamesThePinnedRuntimeCommit()
+    {
+        Assert.True(File.Exists(BuiltinsCopy.NotePath), "TestData/builtins-source.txt is missing from the test output");
+        Assert.Matches(@"(?m)^pinned runtime commit: [0-9a-f]{10,40}\s*$", File.ReadAllText(BuiltinsCopy.NotePath));
+    }
+
+    [RequiresBuiltinsFact]
+    public void TheCopyIsByteIdenticalToTheRuntimesWhenItsPathIsSet()
+    {
+        byte[] runtime = File.ReadAllBytes(Environment.GetEnvironmentVariable("SLUA_BUILTINS_PATH"));
+        byte[] copy = File.ReadAllBytes(BuiltinsCopy.Path);
+        Assert.True(runtime.AsSpan().SequenceEqual(copy), $"the copy ({copy.Length} bytes) differs from the runtime's builtins.txt ({runtime.Length} bytes); copy the runtime's file over it");
+    }
+}
+
 /// <summary>
 /// The parameter types the engine uses to turn posted event arguments into values come from the runtime's own event
 /// list (the "event" lines of its builtins.txt), through a generated table. These tests fail when the two disagree.
+/// They read the copy of builtins.txt kept in the test data, so they run on any machine.
 /// </summary>
 [Collection("native-library")]
 public class EventSignatureTests
 {
     private static readonly Regex EventLine = new(@"^event\s+(\w+)\(\s*(.*?)\s*\)\s*$");
 
-    /// <summary>The "event name( type name, ... )" lines of the runtime's builtins.txt, as name -> parameter types.</summary>
+    /// <summary>The "event name( type name, ... )" lines of the copy of the runtime's builtins.txt, as name -> parameter types.</summary>
     internal static Dictionary<string, string[]> RuntimeEvents()
     {
         var events = new Dictionary<string, string[]>();
-        foreach (string line in File.ReadLines(Environment.GetEnvironmentVariable("SLUA_BUILTINS_PATH")))
+        foreach (string line in File.ReadLines(BuiltinsCopy.Path))
         {
             Match m = EventLine.Match(line);
             if (!m.Success)
@@ -53,7 +90,7 @@ public class EventSignatureTests
         return events;
     }
 
-    [RequiresBuiltinsFact]
+    [Fact]
     public void TheTableHoldsExactlyTheRuntimesEventsWithTheirParameterTypes()
     {
         Dictionary<string, string[]> runtime = RuntimeEvents();
@@ -63,7 +100,7 @@ public class EventSignatureTests
             Assert.True(types.SequenceEqual(EventSignatures.Parameters[name]), $"{name}: runtime ({string.Join(",", types)}) table ({string.Join(",", EventSignatures.Parameters[name])})");
     }
 
-    [RequiresBuiltinsFact]
+    [Fact]
     public void EveryKeyParameterOfEveryEventArrivesAsAKeyWhetherPostedAsUuidOrText()
     {
         foreach ((string name, string[] types) in RuntimeEvents())
