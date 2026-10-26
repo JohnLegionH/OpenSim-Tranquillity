@@ -155,9 +155,11 @@ public class EventMaskTests
         h.Scheduler.Post(s, "dataserver", Value.Key("k"), Value.Str("1"));
         h.Pump();
         h.Scheduler.Post(s, "touch_start", Value.Int(1)); // run to find out nobody listens now
-        h.Scheduler.Post(s, "touch_start", Value.Int(1));
+        h.Pump();
+        h.Scheduler.Post(s, "touch_start", Value.Int(1)); // and now it is not even queued
         h.Pump();
 
         Assert.Equal(new[] { "touch:0" }, h.MarksOf(s));
+        Assert.Equal(1, s.DroppedUnhandled);
     }
 }
