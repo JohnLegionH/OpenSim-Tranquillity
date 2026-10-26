@@ -74,7 +74,7 @@ public class SchedulerMeasurementTests
         }
 
         var log = new RecordingLog();
-        using var scheduler = new LuauScheduler(new SchedulerOptions
+        using var scheduler = new SLuaScheduler(new SchedulerOptions
         {
             WorkerThreads = workers,
             QuantaMs = quantaMs,

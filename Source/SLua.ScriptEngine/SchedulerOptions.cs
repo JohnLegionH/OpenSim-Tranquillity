@@ -91,7 +91,7 @@ namespace SLua.ScriptEngine
 
         public ISchedulerClock Clock { get; set; } = new MonotonicClock();
 
-        /// <summary>False: no threads are started and the caller pumps <see cref="LuauScheduler.DoWork"/> (tests).</summary>
+        /// <summary>False: no threads are started and the caller pumps <see cref="SLuaScheduler.DoWork"/> (tests).</summary>
         public bool RunThreads { get; set; } = true;
 
         public IEngineLog Log { get; set; }

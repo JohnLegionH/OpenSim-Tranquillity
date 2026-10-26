@@ -77,7 +77,7 @@ public class E6RulingsTests
         PropertyInfo internalProperty = typeof(SchedulerOptions).GetProperty(name, BindingFlags.NonPublic | BindingFlags.Instance);
         Assert.Null(publicProperty);
         Assert.NotNull(internalProperty);
-        Assert.Contains(typeof(LuauEngine).Assembly.GetCustomAttributes<System.Runtime.CompilerServices.InternalsVisibleToAttribute>(),
+        Assert.Contains(typeof(SLuaEngine).Assembly.GetCustomAttributes<System.Runtime.CompilerServices.InternalsVisibleToAttribute>(),
             a => a.AssemblyName == "SLua.ScriptEngine.Tests");
     }
 

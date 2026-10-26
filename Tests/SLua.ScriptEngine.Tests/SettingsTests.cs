@@ -14,20 +14,20 @@ namespace SLua.ScriptEngine.Tests;
 /// <summary>The section's keys and their defaults.</summary>
 public class SettingsTests
 {
-    private static LuauSettings Read(Action<IConfig> fill, out RecordingLog log, Action<IConfigSource> other = null)
+    private static SLuaSettings Read(Action<IConfig> fill, out RecordingLog log, Action<IConfigSource> other = null)
     {
         var source = new IniConfigSource();
         IConfig c = source.AddConfig(EngineIdentity.ConfigSection);
         fill?.Invoke(c);
         other?.Invoke(source);
         log = new RecordingLog();
-        return LuauSettings.Read(source, log);
+        return SLuaSettings.Read(source, log);
     }
 
     [Fact]
     public void DefaultsAreTheDocumentedOnes()
     {
-        LuauSettings s = Read(null, out RecordingLog log);
+        SLuaSettings s = Read(null, out RecordingLog log);
         Assert.False(s.Enabled);
         Assert.Equal("ScriptEngines", s.ScriptEnginesPath);
         Assert.Equal(1, s.WorkerThreads);
@@ -54,7 +54,7 @@ public class SettingsTests
     [Fact]
     public void ConfiguredValuesAreRead()
     {
-        LuauSettings s = Read(c =>
+        SLuaSettings s = Read(c =>
         {
             c.Set("Enabled", "true");
             c.Set("ScriptEnginesPath", "/srv/engines");
@@ -81,7 +81,7 @@ public class SettingsTests
     [Fact]
     public void AMemoryLimitAboveTheCeilingIsLoggedAndReplacedByTheCeiling()
     {
-        LuauSettings s = Read(c => c.Set("MemoryLimitKiB", "512"), out RecordingLog log);
+        SLuaSettings s = Read(c => c.Set("MemoryLimitKiB", "512"), out RecordingLog log);
         Assert.Equal(128, s.MemoryLimitKiB);
         Assert.Single(log.Warnings);
     }
@@ -89,7 +89,7 @@ public class SettingsTests
     [Fact]
     public void ANameThatIsNotAWatchdogModeIsLoggedAndTheDefaultUsed()
     {
-        LuauSettings s = Read(c => c.Set("Watchdog", "signal"), out RecordingLog log);
+        SLuaSettings s = Read(c => c.Set("Watchdog", "signal"), out RecordingLog log);
         Assert.Equal("default", s.Watchdog);
         Assert.Single(log.Warnings);
     }

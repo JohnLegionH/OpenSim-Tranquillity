@@ -43,7 +43,7 @@ namespace SLua.ScriptEngine
         public static string MakeStamp(string runtimeVersion, string boundFunctionHash) => $"{runtimeVersion} fns={boundFunctionHash}";
 
         /// <summary>The engine's cache folder under its own state folder.</summary>
-        public static string DirectoryFor(LuauSettings settings) => Path.Combine(settings.StateRoot, "cache");
+        public static string DirectoryFor(SLuaSettings settings) => Path.Combine(settings.StateRoot, "cache");
 
         /// <summary>The entry's file: the SHA-256 of the stamp, the language and the source text.</summary>
         public string PathFor(string text, ScriptLanguage language)

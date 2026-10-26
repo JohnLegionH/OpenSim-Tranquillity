@@ -90,7 +90,7 @@ public class EngineLifecycleTests
     [RequiresNativeFact]
     public void TheEngineHandsOutTheSchedulersCounters()
     {
-        var bare = new LuauEngine(new RecordingLog(), (s, l) => true);
+        var bare = new SLuaEngine(new RecordingLog(), (s, l) => true);
         Assert.Null(bare.GetStats()); // no region, no scheduler
 
         using var rig = new EngineRig();

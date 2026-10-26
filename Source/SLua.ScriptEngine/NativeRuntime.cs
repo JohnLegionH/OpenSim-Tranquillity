@@ -184,7 +184,7 @@ namespace SLua.ScriptEngine
         }
 
         /// <summary>The loader the engine uses in a region: the library is searched for with the configured path.</summary>
-        internal static bool GateForEngine(LuauSettings settings, IEngineLog log) =>
+        internal static bool GateForEngine(SLuaSettings settings, IEngineLog log) =>
             Gate(new NativeRuntimeOptions { ConfiguredPath = settings.NativeLibraryPath }, log);
 
         private static void Bind(IntPtr handle)

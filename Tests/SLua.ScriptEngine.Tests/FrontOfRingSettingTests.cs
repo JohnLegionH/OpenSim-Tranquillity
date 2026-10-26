@@ -21,13 +21,13 @@ public class FrontOfRingSettingTests
     private const string Busy = "while true do ossl.Mark(\"busy\", 0) coroutine.yield() end";
     private const string Listener = "LLEvents:on(\"dataserver\", function(q, d) ossl.Mark(\"event\", d) end)";
 
-    private static LuauSettings Read(string value)
+    private static SLuaSettings Read(string value)
     {
         var source = new IniConfigSource();
         IConfig c = source.AddConfig(EngineIdentity.ConfigSection);
         if (value != null)
             c.Set("EventFrontOfRing", value);
-        return LuauSettings.Read(source, new RecordingLog());
+        return SLuaSettings.Read(source, new RecordingLog());
     }
 
     private static SchedulerOptions EngineOptions(string value)
@@ -36,7 +36,7 @@ public class FrontOfRingSettingTests
         IConfig c = source.AddConfig(EngineIdentity.ConfigSection);
         if (value != null)
             c.Set("EventFrontOfRing", value);
-        var engine = new LuauEngine(new RecordingLog(), (settings, log) => true);
+        var engine = new SLuaEngine(new RecordingLog(), (settings, log) => true);
         engine.Initialise(source);
         return engine.BuildSchedulerOptions();
     }

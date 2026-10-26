@@ -35,7 +35,7 @@ public class SelectionTests
         Scene scene = new SceneHelpers().SetupScene();
         scene.StackModuleInterface<IScriptModule>(new OtherEngine(Phlox));
         scene.StackModuleInterface<IScriptModule>(new OtherEngine(YEngine));
-        var engine = new LuauEngine(new RecordingLog(), (settings, log) => true);
+        var engine = new SLuaEngine(new RecordingLog(), (settings, log) => true);
         var source = new IniConfigSource();
         source.AddConfig(EngineIdentity.ConfigSection).Set("Enabled", "true");
         engine.Initialise(source);
@@ -102,7 +102,7 @@ public class SelectionTests
         Scene scene = new SceneHelpers().SetupScene();
         scene.StackModuleInterface<IScriptModule>(new OtherEngine(Phlox));
         var item = new TaskInventoryItem { ItemID = UUID.Random(), AssetID = UUID.Random() };
-        var engine = new LuauEngine(new RecordingLog(), (settings, log) => true, new RowStore(item.ItemID, item.AssetID));
+        var engine = new SLuaEngine(new RecordingLog(), (settings, log) => true, new RowStore(item.ItemID, item.AssetID));
         var source = new IniConfigSource();
         source.AddConfig(EngineIdentity.ConfigSection).Set("Enabled", "true");
         engine.Initialise(source);

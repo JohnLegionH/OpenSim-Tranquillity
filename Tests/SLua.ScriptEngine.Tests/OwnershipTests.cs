@@ -26,11 +26,11 @@ public class OwnershipTests
     {
         public Scene Scene = new SceneHelpers().SetupScene();
         public RecordingLog Log = new();
-        public LuauEngine Engine;
+        public SLuaEngine Engine;
 
         public Rig(ISavedStateStore store = null)
         {
-            Engine = new LuauEngine(Log, (settings, log) => true, store, (settings, log, scene) => new RecordingLoader());
+            Engine = new SLuaEngine(Log, (settings, log) => true, store, (settings, log, scene) => new RecordingLoader());
             var source = new IniConfigSource();
             source.AddConfig(EngineIdentity.ConfigSection).Set("Enabled", "true");
             Engine.Initialise(source);

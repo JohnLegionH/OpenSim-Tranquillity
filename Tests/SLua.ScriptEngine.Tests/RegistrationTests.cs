@@ -21,10 +21,10 @@ public class RegistrationTests
 {
     private static IScriptModule[] Engines(Scene scene) => scene.RequestModuleInterfaces<IScriptModule>();
 
-    private static Scene Region(IConfigSource config, out LuauEngine engine, RuntimeLoader runtime = null)
+    private static Scene Region(IConfigSource config, out SLuaEngine engine, RuntimeLoader runtime = null)
     {
         Scene scene = new SceneHelpers().SetupScene();
-        engine = new LuauEngine(new RecordingLog(), runtime ?? ((settings, log) => true));
+        engine = new SLuaEngine(new RecordingLog(), runtime ?? ((settings, log) => true));
         engine.Initialise(config);
         engine.AddRegion(scene);
         engine.RegionLoaded(scene);
@@ -66,7 +66,7 @@ public class RegistrationTests
     [Fact]
     public void EnabledTrueRegistersTheEngineUnderItsName()
     {
-        Scene scene = Region(Config(EngineIdentity.ConfigSection, "true"), out LuauEngine engine);
+        Scene scene = Region(Config(EngineIdentity.ConfigSection, "true"), out SLuaEngine engine);
         IScriptModule registered = Assert.Single(Engines(scene));
         Assert.Same(engine, registered);
         Assert.Equal("SLua", registered.ScriptEngineName);

@@ -47,12 +47,12 @@ public class EngineLoaderTests
         public Scene Scene = new SceneHelpers().SetupScene();
         public RecordingLog Log = new();
         public RecordingLoader Loader = new();
-        public LuauEngine Engine;
+        public SLuaEngine Engine;
         public int FactoryCalls;
 
         public Rig(bool enabled = true)
         {
-            Engine = new LuauEngine(Log, (settings, log) => true, null, (settings, log, scene) => { FactoryCalls++; return Loader; });
+            Engine = new SLuaEngine(Log, (settings, log) => true, null, (settings, log, scene) => { FactoryCalls++; return Loader; });
             var source = new IniConfigSource();
             source.AddConfig(EngineIdentity.ConfigSection).Set("Enabled", enabled ? "true" : "false");
             Engine.Initialise(source);
@@ -194,14 +194,14 @@ public class EngineErrorsTests
     private sealed class Rig : IDisposable
     {
         public Scene Scene = new SceneHelpers().SetupScene();
-        public LuauEngine Engine;
+        public SLuaEngine Engine;
         public ScriptLoader Loader;
 
         public Rig()
         {
             RealLibrary.Load();
             var log = new RecordingLog();
-            Engine = new LuauEngine(log, (settings, l) => true, null, (settings, l, scene) =>
+            Engine = new SLuaEngine(log, (settings, l) => true, null, (settings, l, scene) =>
                 Loader = new ScriptLoader(new ScriptCompiler(), new FakeAssets(), l));
             var source = new IniConfigSource();
             source.AddConfig(EngineIdentity.ConfigSection).Set("Enabled", "true");

@@ -20,7 +20,7 @@ using OpenSim.Region.ScriptEngine.Shared;
 namespace SLua.ScriptEngine
 {
     /// <summary>Loads the native runtime for the engine; false means it is unusable and the engine must not register.</summary>
-    internal delegate bool RuntimeLoader(LuauSettings settings, IEngineLog log);
+    internal delegate bool RuntimeLoader(SLuaSettings settings, IEngineLog log);
 
     /// <summary>
     /// The SLua script engine as a region module. It registers with the region only when
@@ -30,7 +30,7 @@ namespace SLua.ScriptEngine
     /// The region's start, stop, reset and remove events drive the script; a script that faults is stopped and its
     /// owner is told.
     /// </summary>
-    public class LuauEngine : INonSharedRegionModule, IScriptModule, IScriptStateProvider, IEventPoster
+    public class SLuaEngine : INonSharedRegionModule, IScriptModule, IScriptStateProvider, IEventPoster
     {
         public event ScriptRemoved OnScriptRemoved;
 
@@ -38,27 +38,27 @@ namespace SLua.ScriptEngine
         public event ObjectRemoved OnObjectRemoved;
 #pragma warning restore CS0067
 
-        public LuauEngine() : this(new RegionLog(), NativeRuntime.GateForEngine) { }
+        public SLuaEngine() : this(new RegionLog(), NativeRuntime.GateForEngine) { }
 
         private readonly IEngineLog m_log;
         private readonly RuntimeLoader m_loadRuntime;
-        private LuauSettings m_settings = new LuauSettings();
+        private SLuaSettings m_settings = new SLuaSettings();
         private bool m_enabled;
         private Scene m_scene;
 
         private readonly ISavedStateStore m_store;
 
         /// <summary>Builds the loader for a region once the engine is enabled; tests substitute their own.</summary>
-        internal delegate IScriptLoader LoaderFactory(LuauSettings settings, IEngineLog log, Scene scene);
+        internal delegate IScriptLoader LoaderFactory(SLuaSettings settings, IEngineLog log, Scene scene);
 
         /// <summary>Builds the scheduler from the options the engine made; tests change the options (host functions, clock) first.</summary>
-        internal delegate LuauScheduler SchedulerFactory(SchedulerOptions options);
+        internal delegate SLuaScheduler SchedulerFactory(SchedulerOptions options);
 
         private readonly LoaderFactory m_loaderFactory;
         private readonly SchedulerFactory m_schedulerFactory;
         private IScriptMessages m_messages;
         private IScriptLoader m_loader;
-        private LuauScheduler m_scheduler;
+        private SLuaScheduler m_scheduler;
 
         /// <summary>The pause a script pays for its own error report, as a script's chat does: 15 ms.</summary>
         private const double ErrorPauseSeconds = 0.015;
@@ -96,7 +96,7 @@ namespace SLua.ScriptEngine
 
         private readonly Dictionary<UUID, ScriptRecord> m_records = new Dictionary<UUID, ScriptRecord>();
 
-        internal LuauEngine(IEngineLog log, RuntimeLoader loadRuntime, ISavedStateStore store = null, LoaderFactory loaderFactory = null,
+        internal SLuaEngine(IEngineLog log, RuntimeLoader loadRuntime, ISavedStateStore store = null, LoaderFactory loaderFactory = null,
             SchedulerFactory schedulerFactory = null, IScriptMessages messages = null)
         {
             m_log = log;
@@ -116,7 +116,7 @@ namespace SLua.ScriptEngine
         private readonly Dictionary<UUID, uint> m_tracked = new Dictionary<UUID, uint>();
         private bool m_warnedNoFunctions;
 
-        internal LuauSettings Settings => m_settings;
+        internal SLuaSettings Settings => m_settings;
 
         public string Name => EngineIdentity.EngineName;
         public string ScriptEngineName => EngineIdentity.EngineName;
@@ -124,7 +124,7 @@ namespace SLua.ScriptEngine
 
         public void Initialise(IConfigSource source)
         {
-            m_settings = LuauSettings.Read(source, m_log);
+            m_settings = SLuaSettings.Read(source, m_log);
             if (!m_settings.Enabled)
                 return;
 
@@ -155,7 +155,7 @@ namespace SLua.ScriptEngine
             }
             try
             {
-                m_scheduler = (m_schedulerFactory ?? (o => new LuauScheduler(o)))(BuildSchedulerOptions());
+                m_scheduler = (m_schedulerFactory ?? (o => new SLuaScheduler(o)))(BuildSchedulerOptions());
             }
             catch (Exception e)
             {
@@ -178,7 +178,7 @@ namespace SLua.ScriptEngine
         internal const string BoundFunctionHash = "none";
 
         /// <summary>The loader the engine runs with: the compile cache in the engine's folder (unless switched off), the region's asset service for text, scripts held as compiled bytes.</summary>
-        private static IScriptLoader DefaultLoader(LuauSettings settings, IEngineLog log, Scene scene)
+        private static IScriptLoader DefaultLoader(SLuaSettings settings, IEngineLog log, Scene scene)
         {
             CompileCache cache = settings.CompileCache
                 ? new CompileCache(CompileCache.DirectoryFor(settings), CompileCache.MakeStamp(Host.Version(), BoundFunctionHash), log)
@@ -305,7 +305,7 @@ namespace SLua.ScriptEngine
         /// <summary>Called on the loader's thread when a script has compiled: a worker makes the script from its bytes, and it starts if its Running flag is on.</summary>
         private void OnScriptReady(ReadyScript ready)
         {
-            LuauScheduler scheduler = m_scheduler;
+            SLuaScheduler scheduler = m_scheduler;
             if (scheduler == null || m_disabled || !IsTracking(ready.ItemID))
                 return;
 
@@ -358,7 +358,7 @@ namespace SLua.ScriptEngine
                     return;
                 record.StartupPending = false;
             }
-            LuauScheduler scheduler = m_scheduler;
+            SLuaScheduler scheduler = m_scheduler;
             if (scheduler == null)
                 return;
             StartInfo start = record.Start;
@@ -603,7 +603,7 @@ namespace SLua.ScriptEngine
 
         private bool PostToItem(UUID itemID, string name, Value[] args, DetectedRecord[] detected)
         {
-            LuauScheduler scheduler = m_scheduler;
+            SLuaScheduler scheduler = m_scheduler;
             if (scheduler == null || m_disabled)
                 return false;
             ScriptRecord record = RecordOf(itemID);

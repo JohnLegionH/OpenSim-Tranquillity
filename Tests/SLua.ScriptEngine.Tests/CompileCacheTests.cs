@@ -13,7 +13,7 @@ namespace SLua.ScriptEngine.Tests;
 /// <summary>A scratch folder that exists for one test; it removes only the folder it made.</summary>
 internal sealed class TempFolder : IDisposable
 {
-    public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "luau-test-" + Guid.NewGuid().ToString("N"));
+    public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "slua-test-" + Guid.NewGuid().ToString("N"));
 
     public TempFolder() => Directory.CreateDirectory(Path);
 
@@ -191,13 +191,13 @@ public class CompileCacheTests
     [Fact]
     public void TheCacheFolderIsInsideTheEnginesOwnFolder()
     {
-        var settings = LuauSettings.Read(new IniConfigSource(), new RecordingLog());
+        var settings = SLuaSettings.Read(new IniConfigSource(), new RecordingLog());
         string folder = CompileCache.DirectoryFor(settings);
         Assert.Equal(Path.Combine("ScriptEngines", EngineIdentity.EngineName, "cache"), folder);
 
         var source = new IniConfigSource();
         source.AddConfig(EngineIdentity.ConfigSection).Set("ScriptEnginesPath", "data/engines");
-        Assert.Equal(Path.Combine("data/engines", EngineIdentity.EngineName, "cache"), CompileCache.DirectoryFor(LuauSettings.Read(source, new RecordingLog())));
+        Assert.Equal(Path.Combine("data/engines", EngineIdentity.EngineName, "cache"), CompileCache.DirectoryFor(SLuaSettings.Read(source, new RecordingLog())));
     }
 
     [Fact]

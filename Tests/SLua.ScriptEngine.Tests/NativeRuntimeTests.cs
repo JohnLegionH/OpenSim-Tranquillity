@@ -169,11 +169,11 @@ public class NativeRuntimeTests
         Assert.Empty(log.Errors);
     }
 
-    private static Scene RegionWithPhloxAndOurEngine(NativeRuntimeOptions options, RecordingLog log, out LuauEngine engine)
+    private static Scene RegionWithPhloxAndOurEngine(NativeRuntimeOptions options, RecordingLog log, out SLuaEngine engine)
     {
         Scene scene = new SceneHelpers().SetupScene();
         scene.StackModuleInterface<IScriptModule>(new OtherEngine("InWorldz.Phlox"));
-        engine = new LuauEngine(log, (settings, l) => NativeRuntime.Gate(options, l));
+        engine = new SLuaEngine(log, (settings, l) => NativeRuntime.Gate(options, l));
         var source = new IniConfigSource();
         source.AddConfig(EngineIdentity.ConfigSection).Set("Enabled", "true");
         engine.Initialise(source);
@@ -188,7 +188,7 @@ public class NativeRuntimeTests
     {
         var log = new RecordingLog();
         var options = failure == "missing" ? Options(exists: _ => false) : Options(version: () => 2);
-        Scene scene = RegionWithPhloxAndOurEngine(options, log, out LuauEngine engine);
+        Scene scene = RegionWithPhloxAndOurEngine(options, log, out SLuaEngine engine);
 
         IScriptModule only = Assert.Single(scene.RequestModuleInterfaces<IScriptModule>());
         Assert.Equal("InWorldz.Phlox", only.ScriptEngineName);

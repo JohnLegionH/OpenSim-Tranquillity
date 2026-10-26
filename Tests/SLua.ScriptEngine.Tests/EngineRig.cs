@@ -47,16 +47,16 @@ internal sealed class EngineRig : IDisposable
     public readonly RecordingMessages Messages = new();
     public readonly ConcurrentDictionary<long, long> Counts = new();
     public readonly SceneObjectGroup Object;
-    public readonly LuauEngine Engine;
+    public readonly SLuaEngine Engine;
     public ScriptLoader Loader;
-    public LuauScheduler Scheduler;
+    public SLuaScheduler Scheduler;
 
     private readonly List<string> m_marks = new();
 
     public EngineRig(Dictionary<string, string> settings = null, Action<SchedulerOptions> tweak = null, double graceMs = 100, NativeCompile compile = null)
     {
         RealLibrary.Load();
-        Engine = new LuauEngine(Log, (s, l) => true, null,
+        Engine = new SLuaEngine(Log, (s, l) => true, null,
             (s, l, scene) => Loader = new ScriptLoader(new ScriptCompiler(null, compile ?? Host.Compile, l, null), new FakeAssets(), l, ownsCompiler: true)
             {
                 UnclaimedGrace = TimeSpan.FromMilliseconds(graceMs),
@@ -65,7 +65,7 @@ internal sealed class EngineRig : IDisposable
             {
                 options.VmFactory = MakeVm;
                 tweak?.Invoke(options);
-                return Scheduler = new LuauScheduler(options);
+                return Scheduler = new SLuaScheduler(options);
             },
             Messages);
         var source = new IniConfigSource();

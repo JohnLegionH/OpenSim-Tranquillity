@@ -15,7 +15,7 @@ namespace SLua.ScriptEngine
     /// thread that touches them. A worker keeps a round-robin ring of runnable scripts, gives each a run window of
     /// the configured quanta per turn, parks sleeping and waiting scripts until due, and wakes timers.
     /// </summary>
-    internal sealed class LuauScheduler : IDisposable
+    internal sealed class SLuaScheduler : IDisposable
     {
         private static readonly TimeSpan StopWait = TimeSpan.FromSeconds(5);
 
@@ -25,7 +25,7 @@ namespace SLua.ScriptEngine
         private long m_nextId;
         private bool m_disposed;
 
-        public LuauScheduler(SchedulerOptions options)
+        public SLuaScheduler(SchedulerOptions options)
         {
             if (options.VmFactory == null)
                 throw new ArgumentException("a VM factory is required", nameof(options));
@@ -45,7 +45,7 @@ namespace SLua.ScriptEngine
             lock (m_lock)
             {
                 if (m_disposed)
-                    throw new ObjectDisposedException(nameof(LuauScheduler));
+                    throw new ObjectDisposedException(nameof(SLuaScheduler));
                 worker = null;
                 foreach (ScriptWorker w in m_workers)
                     if (!w.Failed && (worker == null || w.ScriptCount < worker.ScriptCount))

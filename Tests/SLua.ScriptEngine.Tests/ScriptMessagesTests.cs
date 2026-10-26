@@ -137,13 +137,13 @@ public class ScriptMessagesTests
 /// <summary>The settings the lifecycle and kill rules read.</summary>
 public class KillSettingTests
 {
-    private static LuauSettings Read(string value)
+    private static SLuaSettings Read(string value)
     {
         var source = new IniConfigSource();
         IConfig config = source.AddConfig(EngineIdentity.ConfigSection);
         config.Set("Enabled", "true");
         if (value != null) config.Set("KillAfterPunishments", value);
-        return LuauSettings.Read(source, new RecordingLog());
+        return SLuaSettings.Read(source, new RecordingLog());
     }
 
     [Fact]

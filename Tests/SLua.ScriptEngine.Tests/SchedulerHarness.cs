@@ -28,7 +28,7 @@ internal sealed class SchedulerHarness : IDisposable
     public readonly ManualClock Clock = new();
     public readonly RecordingLog Log = new();
     public readonly ConcurrentDictionary<long, long> Counts = new();
-    public readonly LuauScheduler Scheduler;
+    public readonly SLuaScheduler Scheduler;
     public int VmsMade;
     public int FaultsSeen;
 
@@ -66,7 +66,7 @@ internal sealed class SchedulerHarness : IDisposable
             WorkerStopped = (index, crashes, message) => StoppedWorkers.Enqueue((index, crashes, message)),
         };
         configure?.Invoke(options);
-        Scheduler = new LuauScheduler(options);
+        Scheduler = new SLuaScheduler(options);
     }
 
     private Vm MakeVm()
@@ -155,8 +155,8 @@ internal sealed class SchedulerHarness : IDisposable
         Pump();
     }
 
-    /// <summary>The longest a poll waits when the caller gives no cap; LUAU_TEST_WAIT_CAP_MS shortens it for a run where failures are expected.</summary>
-    private static readonly int DefaultWaitMs = int.TryParse(Environment.GetEnvironmentVariable("LUAU_TEST_WAIT_CAP_MS"), out int cap) ? cap : 30000;
+    /// <summary>The longest a poll waits when the caller gives no cap; SLUA_TEST_WAIT_CAP_MS shortens it for a run where failures are expected.</summary>
+    private static readonly int DefaultWaitMs = int.TryParse(Environment.GetEnvironmentVariable("SLUA_TEST_WAIT_CAP_MS"), out int cap) ? cap : 30000;
 
     /// <summary>Polls until the condition holds or the cap passes; for threaded runs.</summary>
     public static bool WaitFor(Func<bool> condition, int timeoutMs = -1)

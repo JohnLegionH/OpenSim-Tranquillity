@@ -260,7 +260,7 @@ public class EngineEventIntakeTests
 
         for (int i = 1; i <= 40; i++)
             rig.Engine.PostScriptEvent(item, "dataserver", new object[] { "query", "n" + i });
-        Assert.Equal(LuauEngine.MaxDeferredEventsPerItem, rig.Engine.DeferredEventCount(item));
+        Assert.Equal(SLuaEngine.MaxDeferredEventsPerItem, rig.Engine.DeferredEventCount(item));
         gate.Open.Set();
 
         Assert.True(Marked(rig, item, 32));
@@ -281,7 +281,7 @@ public class EngineEventIntakeTests
         UUID item = rig.Rez(EngineRig.Slua(Listener));
 
         rig.Engine.PostScriptEvent(item, "dataserver", new object[] { "query", "early" });
-        clock.Now = LuauEngine.DeferredEventLifetimeSeconds + 1;
+        clock.Now = SLuaEngine.DeferredEventLifetimeSeconds + 1;
         rig.Engine.PostScriptEvent(item, "dataserver", new object[] { "query", "late" });
         Assert.Equal(1, rig.Engine.DeferredEventCount(item)); // the expired one went when the late one came
         gate.Open.Set();

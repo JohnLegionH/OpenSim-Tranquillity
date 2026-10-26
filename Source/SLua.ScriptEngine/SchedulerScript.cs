@@ -179,7 +179,7 @@ namespace SLua.ScriptEngine
             Worker.SetTimerFor(this, seconds);
         }
 
-        /// <summary>For a pausing call's start function: the script is parked after this step until <see cref="LuauScheduler.CompleteWait"/>.</summary>
+        /// <summary>For a pausing call's start function: the script is parked after this step until <see cref="SLuaScheduler.CompleteWait"/>.</summary>
         public void BeginWait()
         {
             RequireCurrent();

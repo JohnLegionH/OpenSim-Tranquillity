@@ -17,7 +17,7 @@ namespace SLua.ScriptEngine
     /// a stock install does not load the engine. Every default is the value used when the key is not set; none of
     /// them changes how another engine behaves.
     /// </summary>
-    internal sealed class LuauSettings
+    internal sealed class SLuaSettings
     {
         /// <summary>The ceiling for a script's memory limit, in KiB. A larger configured value is replaced by it.</summary>
         public const int MemoryLimitCeilingKiB = 128;
@@ -91,9 +91,9 @@ namespace SLua.ScriptEngine
         /// <summary>The engine's own folder under <see cref="ScriptEnginesPath"/>: the compile cache and state database live here.</summary>
         public string StateRoot { get; private set; } = Path.Combine("ScriptEngines", EngineIdentity.EngineName);
 
-        public static LuauSettings Read(IConfigSource source, IEngineLog log)
+        public static SLuaSettings Read(IConfigSource source, IEngineLog log)
         {
-            var s = new LuauSettings();
+            var s = new SLuaSettings();
             IConfig c = source?.Configs[EngineIdentity.ConfigSection];
             IConfig yengine = source?.Configs["YEngine"];
             s.AllowGodFunctions = yengine?.GetBoolean("AllowGodFunctions", false) ?? false;
