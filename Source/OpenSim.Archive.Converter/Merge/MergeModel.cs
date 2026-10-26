@@ -130,7 +130,7 @@ public sealed class MergeOptions
 
 public sealed class KeepRule
 {
-    /// <summary>The number of the merge rule that applies (see the merge-plan documentation), or "M0-n" for a general per-part reason.</summary>
+    /// <summary>The number of the merge rule that applies (see MERGE-PLAN.md), or "part", "group" or "sculpt" for the reasons that have no number.</summary>
     public string Rule { get; set; }
     public string Code { get; set; }
     public string Detail { get; set; }

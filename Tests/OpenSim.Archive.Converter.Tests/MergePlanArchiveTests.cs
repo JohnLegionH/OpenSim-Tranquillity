@@ -235,11 +235,11 @@ public class MergePlanArchiveTests
         MergePlan plan = PlanOf(parts);
         SortedDictionary<string, int> first = MergePlanFiles.KeptByFirstRule(plan), any = MergePlanFiles.KeptByAnyRule(plan);
         Assert.Equal(1, first.Values.Sum());
-        Assert.Equal(1, any["M0-2 LIGHT"]);
-        Assert.Equal(1, any["M0-2 PHYSICAL"]);
+        Assert.Equal(1, any["part LIGHT"]);
+        Assert.Equal(1, any["part PHYSICAL"]);
         string text = MergePlanFiles.ReportText(plan);
         Assert.Contains("every rule that applies", text);
-        Assert.Contains("M0-2 PHYSICAL", text);
+        Assert.Contains("part PHYSICAL", text);
         Assert.Contains("keptByAnyRule", MergePlanFiles.ArchiveJson(plan));
     }
 

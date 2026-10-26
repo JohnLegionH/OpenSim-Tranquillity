@@ -137,21 +137,21 @@ public static class MergePlanner
             Add("17", "ADDRESSED", "a script addresses the part by link number " + number);
         else if (partCount > 1 && number <= protectedUpTo)
             Add("17", "PROTECTED_LINK_NUMBER", "a script addresses link number " + protectedUpTo + ", so numbers up to it do not change");
-        if (p.HasContents) Add("M0-2", "CONTENTS", "the part holds items other than scripts");
+        if (p.HasContents) Add("part", "CONTENTS", "the part holds items other than scripts");
         if (p.Kind == "mesh") Add("11", "ALREADY_MESH", "an existing mesh keeps its makers' levels of detail");
-        else if (p.Kind == "sculpt") Add("M1", "SCULPT_NOT_PLANNED", "a sculpt is converted on its own; merging it needs the geometry stage to read its map");
-        else if (p.Kind != "prim") Add("M0-2", "NOT_PRIM", "the part is not a prim");
-        if (p.NotConvertible.Length > 0) Add("M0-2", "NOT_CONVERTED", "the converter keeps the part as a prim (" + p.NotConvertible + ")");
-        if (p.Light) Add("M0-2", "LIGHT", "per-part light parameters");
-        if (p.Flexible) Add("M0-2", "FLEXI", "per-part flexible path");
-        if (p.SitTarget) Add("M0-2", "SIT_TARGET", "per-part sit target");
-        if (p.HoverText) Add("M0-2", "HOVER_TEXT", "per-part hover text");
-        if (p.Particles) Add("M0-2", "PARTICLES", "per-part particle system");
-        if (p.Sound) Add("M0-2", "SOUND", "per-part sound");
-        if (p.Physical) Add("M0-2", "PHYSICAL", "a physical part's hull is not the union of its pieces' hulls");
-        if (p.VolumeDetect) Add("M0-2", "VOLUME_DETECT", "a trigger volume");
-        if (p.PhysicsShapeType == 2) Add("M0-2", "CONVEX_PHYSICS", "a convex hull of a merged mesh is not the union of the hulls");
-        if (p.IsRoot && p.PhysicsShapeType == 1) Add("M0-2", "ROOT_PHYSICS_NONE", "the region gives a root with no physics shape its default shape");
+        else if (p.Kind == "sculpt") Add("sculpt", "SCULPT_NOT_PLANNED", "a sculpt is converted on its own; merging it needs the geometry stage to read its map");
+        else if (p.Kind != "prim") Add("part", "NOT_PRIM", "the part is not a prim");
+        if (p.NotConvertible.Length > 0) Add("part", "NOT_CONVERTED", "the converter keeps the part as a prim (" + p.NotConvertible + ")");
+        if (p.Light) Add("part", "LIGHT", "per-part light parameters");
+        if (p.Flexible) Add("part", "FLEXI", "per-part flexible path");
+        if (p.SitTarget) Add("part", "SIT_TARGET", "per-part sit target");
+        if (p.HoverText) Add("part", "HOVER_TEXT", "per-part hover text");
+        if (p.Particles) Add("part", "PARTICLES", "per-part particle system");
+        if (p.Sound) Add("part", "SOUND", "per-part sound");
+        if (p.Physical) Add("part", "PHYSICAL", "a physical part's hull is not the union of its pieces' hulls");
+        if (p.VolumeDetect) Add("part", "VOLUME_DETECT", "a trigger volume");
+        if (p.PhysicsShapeType == 2) Add("part", "CONVEX_PHYSICS", "a convex hull of a merged mesh is not the union of the hulls");
+        if (p.IsRoot && p.PhysicsShapeType == 1) Add("part", "ROOT_PHYSICS_NONE", "the region gives a root with no physics shape its default shape");
 
         double extent = Extent(new[] { p });
         if (extent > o.HardCapMeters)
@@ -168,7 +168,7 @@ public static class MergePlanner
         if (differs)
             k.Rules.Add(new KeepRule { Rule = "10", Code = "SOLE_CREATOR_OR_PERMISSIONS", Detail = "no other plain part has the same creator and permissions" });
         else
-            k.Rules.Add(new KeepRule { Rule = "M0-5", Code = "SOLE_IN_CLASS", Detail = "no other plain part shares its surface material, physics class and alpha class" });
+            k.Rules.Add(new KeepRule { Rule = "group", Code = "SOLE_IN_CLASS", Detail = "no other part that can merge shares its creator, permissions, surface material, physics class and alpha class" });
         return k;
     }
 

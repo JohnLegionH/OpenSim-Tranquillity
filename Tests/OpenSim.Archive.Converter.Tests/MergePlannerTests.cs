@@ -351,7 +351,7 @@ public class MergePlannerTests
         MergePart p = Part(3, 2);
         typeof(MergePart).GetProperty(feature).SetValue(p, true);
         LinksetPlan plan = Plan(Set(Part(1), Part(2, 1), p, Part(4, 3)));
-        Assert.Contains(Kept(plan, p).Rules, r => r.Rule == "M0-2");
+        Assert.Contains(Kept(plan, p).Rules, r => r.Rule == "part");
     }
 
     [Fact]
@@ -362,8 +362,8 @@ public class MergePlannerTests
         MergePart root = Part(1);
         root.PhysicsShapeType = 1;
         LinksetPlan plan = Plan(Set(root, convex, Part(3, 2), Part(4, 3)));
-        Assert.True(HasRule(plan, convex, "M0-2", "CONVEX_PHYSICS"));
-        Assert.True(HasRule(plan, root, "M0-2", "ROOT_PHYSICS_NONE"));
+        Assert.True(HasRule(plan, convex, "part", "CONVEX_PHYSICS"));
+        Assert.True(HasRule(plan, root, "part", "ROOT_PHYSICS_NONE"));
     }
 
     [Fact]
@@ -384,7 +384,7 @@ public class MergePlannerTests
         MergePart sculpt = Part(3, 2);
         sculpt.Kind = "sculpt";
         LinksetPlan plan = Plan(Set(Part(1), Part(2, 1), sculpt));
-        Assert.True(HasRule(plan, sculpt, "M1", "SCULPT_NOT_PLANNED"));
+        Assert.True(HasRule(plan, sculpt, "sculpt", "SCULPT_NOT_PLANNED"));
     }
 
     [Fact]
@@ -393,7 +393,7 @@ public class MergePlannerTests
         MergePart p = Part(3, 2);
         p.NotConvertible = "FACES_GT8";
         LinksetPlan plan = Plan(Set(Part(1), Part(2, 1), p));
-        Assert.True(HasRule(plan, p, "M0-2", "NOT_CONVERTED"));
+        Assert.True(HasRule(plan, p, "part", "NOT_CONVERTED"));
     }
 
     // ---------------------------------------------------------------- rule 18: alpha faces
