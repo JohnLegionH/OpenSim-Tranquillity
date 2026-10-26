@@ -53,7 +53,7 @@ Exit codes: 0 the check passed, 1 the parity check failed or a mesh failed its v
     public static int Run(string[] args)
     {
         string archive = null, outPath = null, planOut = null, reportDir = null, mergePlanDir = null;
-        bool merge = false, planOnly = false;
+        bool merge = false, planOnly = false, lodGiven = false;
         double pixelLimit = new MergeOptions().Lod.PixelLimit;
         ConvertOptions options = new ConvertOptions();
 
@@ -90,6 +90,7 @@ Exit codes: 0 the check passed, 1 the parity check failed or a mesh failed its v
                     mergePlanDir = args[++i];
                     break;
                 case "--lod-pixel-limit":
+                    lodGiven = true;
                     if (i + 1 >= args.Length) return Fail("--lod-pixel-limit needs a number of pixels");
                     if (!double.TryParse(args[++i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out pixelLimit) || !double.IsFinite(pixelLimit) || pixelLimit <= 0)
                         return Fail("--lod-pixel-limit needs a positive number of pixels, not '" + Sanitize.Text(args[i]) + "'");
@@ -110,6 +111,7 @@ Exit codes: 0 the check passed, 1 the parity check failed or a mesh failed its v
         }
         if (archive == null) return Fail("an archive is required");
         if (planOnly && !merge) return Fail("--plan-only goes with --merge");
+        if (lodGiven && !merge) return Fail("--lod-pixel-limit goes with --merge: it sets the levels of detail of merged parts, and without --merge no part is merged");
         if (merge && mergePlanDir == null) return Fail("--merge-plan-dir is required with --merge");
         if (merge && !planOnly && outPath == null) return Fail("--out is required with --merge (or add --plan-only)");
         if (merge)

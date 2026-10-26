@@ -125,7 +125,11 @@ public sealed class MergeWriteResult
         if (Mapping.PlanarParts.Count > 200)
             sb.AppendLine("    ... and " + (Mapping.PlanarParts.Count - 200) + " more parts with planar faces");
         if (Cost != null)
+        {
+            sb.AppendLine("  before -> after: region part count " + Plan.PartsBefore + " -> " + Plan.PartsAfter + "; viewer streaming cost "
+                + Cost.Before.ToString("0.00", CultureInfo.InvariantCulture) + " -> " + Cost.After.ToString("0.00", CultureInfo.InvariantCulture));
             sb.AppendLine("  " + Cost.ToText());
+        }
         sb.AppendLine("  levels of detail: each lower level is within " + LodPixelLimit.ToString("0.##", CultureInfo.InvariantCulture) + " pixel of the full mesh at the distance the viewer switches to it (measured: "
             + Worst(p => p.Levels.Count == 0 ? 0 : p.Levels.Max(l => l.ErrorPixels), "0.00") + " pixel at most); triangles medium/low/lowest: "
             + Parts.Sum(p => p.Levels.Count > 0 ? p.Levels[0].Triangles : 0) + "/" + Parts.Sum(p => p.Levels.Count > 1 ? p.Levels[1].Triangles : 0) + "/" + Parts.Sum(p => p.Levels.Count > 2 ? p.Levels[2].Triangles : 0)
