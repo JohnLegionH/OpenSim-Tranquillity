@@ -12,6 +12,8 @@ using SLua.ScriptEngine.Bindings;
 using Nini.Config;
 using OpenMetaverse;
 using OpenSim.Framework;
+using OpenSim.Region.CoreModules.World.Land;
+using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
 using OpenSim.Tests.Common;
 
@@ -121,13 +123,14 @@ internal sealed class EngineRig : IDisposable
     public static string Lsl(string body) => "//SLua:lsl\n" + body;
 
     /// <summary>Adds a script item to the object and tells the region it was rezzed; the Running flag is the item's.</summary>
-    public UUID Rez(string source, bool running = true, UUID? item = null, int startParam = 0, bool postOnRez = false, int stateSource = 0)
+    public UUID Rez(string source, bool running = true, UUID? item = null, int startParam = 0, bool postOnRez = false, int stateSource = 0, SceneObjectPart part = null)
     {
+        part ??= Object.RootPart;
         UUID id = item ?? UUID.Random();
-        TaskInventoryItem existing = Object.RootPart.Inventory.GetInventoryItem(id);
+        TaskInventoryItem existing = part.Inventory.GetInventoryItem(id);
         if (existing == null)
         {
-            Object.RootPart.Inventory.AddInventoryItem(new TaskInventoryItem
+            part.Inventory.AddInventoryItem(new TaskInventoryItem
             {
                 ItemID = id,
                 AssetID = UUID.Random(),
@@ -138,8 +141,73 @@ internal sealed class EngineRig : IDisposable
                 ScriptRunning = running,
             }, false);
         }
-        Scene.EventManager.TriggerRezScript(LocalId, id, source, startParam, postOnRez, "InWorldz.Phlox", stateSource);
+        Scene.EventManager.TriggerRezScript(part.LocalId, id, source, startParam, postOnRez, "InWorldz.Phlox", stateSource);
         return id;
+    }
+
+    public static readonly UUID ParcelOwner = new UUID("00000000-0000-0000-0000-930000000001");
+    public static readonly Vector3 West = new Vector3(64, 64, 25);
+    public static readonly Vector3 East = new Vector3(192, 64, 25);
+
+    public LandManagementModule Land;
+    public ILandObject WestParcel, EastParcel;
+
+    /// <summary>Two parcels owned by <see cref="ParcelOwner"/>: west (x below 128) allows no outside or group scripts, east allows everything.</summary>
+    public void InstallLand()
+    {
+        Land = new LandManagementModule();
+        SceneHelpers.SetupSceneModules(Scene, new IniConfigSource(), Land);
+        int half = (int)Constants.RegionSize / 2;
+        var west = new LandObject(ParcelOwner, false, Scene);
+        west.LandData.Name = "west";
+        west.SetLandBitmap(west.GetSquareLandBitmap(0, 0, half, (int)Constants.RegionSize));
+        WestParcel = Land.AddLandObject(west);
+        WestParcel.LandData.Flags &= ~(uint)(ParcelFlags.AllowOtherScripts | ParcelFlags.AllowGroupScripts);
+        var east = new LandObject(ParcelOwner, false, Scene);
+        east.LandData.Name = "east";
+        east.SetLandBitmap(east.GetSquareLandBitmap(half, 0, (int)Constants.RegionSize, (int)Constants.RegionSize));
+        EastParcel = Land.AddLandObject(east);
+    }
+
+    private int m_tail = 0x9300;
+
+    /// <summary>Adds another object to the scene at a position, owned by <paramref name="owner"/>.</summary>
+    public SceneObjectGroup AddObject(string name, Vector3 pos, UUID owner, UUID group = default)
+    {
+        SceneObjectGroup sog = SceneHelpers.CreateSceneObject(1, owner, name + "-", m_tail);
+        m_tail += 16;
+        sog.Name = name;
+        sog.RootPart.Name = name;
+        if (!group.IsZero())
+            sog.RootPart.GroupID = group;
+        sog.AbsolutePosition = pos;
+        Scene.AddNewSceneObject(sog, false);
+        return sog;
+    }
+
+    /// <summary>The parcel dialog: flags through LandChannel.UpdateLandObject, which raises OnLandObjectAdded.</summary>
+    public void SetParcelFlags(ILandObject parcel, bool otherScripts, bool groupScripts, UUID group = default)
+    {
+        LandData d = parcel.LandData.Copy();
+        if (otherScripts) d.Flags |= (uint)ParcelFlags.AllowOtherScripts; else d.Flags &= ~(uint)ParcelFlags.AllowOtherScripts;
+        if (groupScripts) d.Flags |= (uint)ParcelFlags.AllowGroupScripts; else d.Flags &= ~(uint)ParcelFlags.AllowGroupScripts;
+        if (!group.IsZero()) d.GroupID = group;
+        Scene.LandChannel.UpdateLandObject(parcel.LandData.LocalID, d);
+    }
+
+    public const string Probe = "default { changed(integer c) { llOwnerSay(\"c\" + (string)c); } }";
+
+    /// <summary>Posts changed(n) to the script; if it runs, it marks "cN".</summary>
+    public void PostProbe(UUID item, int n) => Assert.True(Engine.PostScriptEvent(item, "changed", new object[] { n }));
+
+    /// <summary>The script runs: the mark of a probe event arrives.</summary>
+    public bool Heard(UUID item, int n) => SchedulerHarness.WaitFor(() => MarksOf(item).Contains("c" + n));
+
+    /// <summary>The script is held: no mark of a probe event arrives in the time a run would take (a real wait: it proves nothing happens).</summary>
+    public bool StaysSilent(UUID item, int n, int ms = 400)
+    {
+        Thread.Sleep(ms);
+        return !MarksOf(item).Contains("c" + n);
     }
 
     public TaskInventoryItem ItemOf(UUID item) => Object.RootPart.Inventory.GetInventoryItem(item);
