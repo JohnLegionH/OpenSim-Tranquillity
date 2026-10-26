@@ -211,7 +211,7 @@ public class SourceGuardTests
         using var compiler = new ScriptCompiler(limits, (t, l) => throw new SluaException("slua_compile", -5, detail));
         CompileResult r = compiler.Compile(Lsl("        x();"));
         Assert.Equal(4, r.Errors.Count);
-        Assert.Equal(new[] { 1, 2, 3 }, r.Errors.Take(3).Select(e => e.Line));
+        Assert.Equal(new[] { 2, 3, 4 }, r.Errors.Take(3).Select(e => e.Line)); // the library's line numbers are used as they come
         Assert.Contains("7 more errors", r.Errors[3].Message);
     }
 }

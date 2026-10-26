@@ -124,7 +124,6 @@ namespace SLua.ScriptEngine
         internal bool Waiting;
         internal Value[] WaitResult;
         internal double AskedSeconds;
-        internal double Owed;
         internal double SluaTimer;
         internal ScriptWorker Worker;
 

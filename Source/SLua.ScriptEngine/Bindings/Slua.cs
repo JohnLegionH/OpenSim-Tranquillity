@@ -371,7 +371,7 @@ public sealed unsafe class Script : IDisposable
     }
 
     /// <summary>
-    /// Adds a delay to this script: the next step reports it in <see cref="StepResult.SleepServed"/>. Only valid
+    /// Adds a delay to this script: the step that is running reports it in <see cref="StepResult.SleepServed"/>. A call that returns no values also ends the script's turn. Only valid
     /// inside a host function this script called (throws SluaException with code -8 otherwise).
     /// </summary>
     public void AddSleep(double seconds) => Host.Check("slua_add_sleep", Native.slua_add_sleep(_h, seconds));

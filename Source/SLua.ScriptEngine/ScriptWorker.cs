@@ -475,7 +475,6 @@ namespace SLua.ScriptEngine
             s.SleepGen++;
             s.Waiting = false;
             s.WaitResult = null;
-            s.Owed = 0;
             s.AskedSeconds = 0;
             s.SluaTimer = 0;
             s.NeedsStep = false;
@@ -708,15 +707,14 @@ namespace SLua.ScriptEngine
                     break;
             }
 
-            // The runtime reports a sleep at the start of the step after the one that asked for it, and that step
-            // runs the script. So the delays the script asked for in this turn are served here, before the next
-            // step; what the runtime reports beyond what was already served is its own punishment for an overrun.
+            // The runtime reports, in the step that is running, the delay the script owes after it: what its host calls
+            // asked for (AskedSeconds, served below) plus, when the step overran its window, a punishment. What it
+            // reports beyond what was asked is the punishment.
             double extra = 0;
             bool punished = false;
             if (r.SleepServed > 0)
             {
-                extra = r.SleepServed - s.Owed;
-                s.Owed = 0;
+                extra = r.SleepServed - s.AskedSeconds;
                 if (extra > SleepTolerance)
                 {
                     s.CountPunishment();
@@ -754,7 +752,6 @@ namespace SLua.ScriptEngine
                     s.ConsecutiveRefusals = 0;
             }
 
-            s.Owed += s.AskedSeconds;
             double sleep = Math.Max(s.AskedSeconds + extra, backoff);
             if (sleep > 0)
                 s.SleepUntil = Now() + sleep;

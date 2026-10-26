@@ -163,6 +163,8 @@ namespace SLua.ScriptEngine
                 };
             }
 
+            if (real) EngineIdentity.Apply();
+
             return new RuntimeLoadResult
             {
                 Ok = true,

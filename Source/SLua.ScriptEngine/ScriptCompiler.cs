@@ -27,9 +27,6 @@ namespace SLua.ScriptEngine
         // The runtime's result code for LSL that calls an os*, iw* or bot* function (SLUA_ERR_UNSUPPORTED_FUNCTION).
         private const int UnsupportedFunctionCode = -10;
 
-        // The runtime reports an LSL error with the compiler's 1-based line plus one more. SLua lines are exact.
-        private const int LslLineOffset = 1;
-
         private static readonly Regex ErrorLine = new Regex(@"^(\d+): (.*)$", RegexOptions.Compiled | RegexOptions.Singleline);
 
         private readonly CompileLimits m_limits;
@@ -102,11 +99,16 @@ namespace SLua.ScriptEngine
             }
             catch (SluaException e)
             {
+                bool isRefusal = e.Code == UnsupportedFunctionCode;
+                List<CompileError> errors = ParseErrors(DetailOf(e));
+                if (isRefusal && EngineHeader.NamedEngine(source) is string named
+                    && string.Equals(named, EngineIdentity.EngineName, StringComparison.OrdinalIgnoreCase))
+                    errors[^1] = errors[^1] with { Message = errors[^1].Message + " " + EngineIdentity.RefusalHint };
                 return new CompileResult
                 {
                     Language = language,
-                    Errors = CapErrors(ParseErrors(DetailOf(e), language)),
-                    Refused = e.Code == UnsupportedFunctionCode,
+                    Errors = CapErrors(errors),
+                    Refused = isRefusal,
                 };
             }
             catch (Exception e) when (e is not ObjectDisposedException)
@@ -177,10 +179,9 @@ namespace SLua.ScriptEngine
         /// The compiler gives one "line: message" per error, one per text line. A line that does not begin that way
         /// continues the error before it, or is an error of its own with no line when it comes first.
         /// </summary>
-        private static List<CompileError> ParseErrors(string detail, ScriptLanguage language)
+        private static List<CompileError> ParseErrors(string detail)
         {
             var errors = new List<CompileError>();
-            int offset = language == ScriptLanguage.Lsl ? LslLineOffset : 0;
             foreach (string raw in detail.Split('\n'))
             {
                 string line = raw.TrimEnd('\r');
@@ -188,7 +189,7 @@ namespace SLua.ScriptEngine
                     continue;
                 Match m = ErrorLine.Match(line);
                 if (m.Success && int.TryParse(m.Groups[1].Value, out int number))
-                    errors.Add(new CompileError(Math.Max(number - offset, 0), m.Groups[2].Value));
+                    errors.Add(new CompileError(Math.Max(number, 0), m.Groups[2].Value));
                 else if (errors.Count > 0)
                     errors[^1] = errors[^1] with { Message = errors[^1].Message + " " + line };
                 else
