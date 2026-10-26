@@ -55,6 +55,13 @@ public sealed class MergeFace
     /// <summary>True when the face shows media (held in its part's media data, which a merge does not carry).</summary>
     public bool Media { get; set; }
     public int Vertices { get; set; }
+    /// <summary>The size of the face's texture in pixels (0 when the archive does not hold it).</summary>
+    public int TextureWidth { get; set; }
+    public int TextureHeight { get; set; }
+    /// <summary>The range of the texture coordinates the face carries in a merged mesh (baked when the face is baked).</summary>
+    public UvBounds Uv { get; set; }
+    /// <summary>True when the face is baked and its own coordinates already run too wide to be stored in a mesh asset; it cannot be left unbaked.</summary>
+    public bool UvTooWide { get; set; }
 
     /// <summary>
     /// What a material slot of a merged part is keyed by. The transform is part of the key only for a face that cannot be baked;

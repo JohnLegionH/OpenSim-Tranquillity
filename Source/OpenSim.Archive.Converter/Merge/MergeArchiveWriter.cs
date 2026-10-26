@@ -44,6 +44,9 @@ public sealed class MergedPartReport
     public double WorstPositionMetersDecoded { get; set; }
     public double WorstUvDecoded { get; set; }
     public double WorstNormalDecoded { get; set; }
+    /// <summary>The most a texture coordinate of the part can have moved when the mesh asset stores it (half a step of 65,535 over the range of its face), in texels of the face's texture; and the most that was measured after reading the asset back.</summary>
+    public double WorstUvTexels { get; set; }
+    public double MeasuredUvTexels { get; set; }
 }
 
 /// <summary>A part that holds planar-mapped faces: which faces, and whether the part went into a merged part or stayed.</summary>
