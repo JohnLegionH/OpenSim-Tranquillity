@@ -35,6 +35,7 @@ namespace Luau.ScriptEngine
         private readonly CompileLimits m_limits;
         private readonly NativeCompile m_native;
         private readonly IEngineLog m_log;
+        private readonly CompileCache m_cache;
 
         // The native compiler runs on one dedicated thread with a large fixed stack, never on the caller's thread.
         private readonly BlockingCollection<Job> m_jobs = new BlockingCollection<Job>();
@@ -49,11 +50,12 @@ namespace Luau.ScriptEngine
             public readonly TaskCompletionSource<byte[]> Done = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
         }
 
-        public ScriptCompiler(CompileLimits limits = null, NativeCompile native = null, IEngineLog log = null)
+        public ScriptCompiler(CompileLimits limits = null, NativeCompile native = null, IEngineLog log = null, CompileCache cache = null)
         {
             m_limits = limits ?? new CompileLimits();
             m_native = native ?? Host.Compile;
             m_log = log;
+            m_cache = cache;
         }
 
         /// <summary>Stops the compile thread once the jobs already queued have been answered.</summary>
