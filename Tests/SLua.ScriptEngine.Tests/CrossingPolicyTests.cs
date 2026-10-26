@@ -117,7 +117,7 @@ public class CrossingPolicyTests
 
         rig.PostProbe(item, 1);
         Assert.True(rig.Heard(item, 1)); // not held up
-        Assert.Equal(1, rig.Engine.Policy.HeldArrivalCount);
+        Assert.True(SchedulerHarness.WaitFor(() => rig.Engine.Policy.HeldArrivalCount == 1), "the changed event is held");
         Assert.True(rig.StaysSilent(item, 256));
 
         ScenePresence rider = SceneHelpers.AddScenePresence(rig.Scene, grants.Rider);
@@ -139,11 +139,12 @@ public class CrossingPolicyTests
         rig.Engine.Grants = grants;
         UUID item = rig.Rez(EngineRig.Lsl(ChangedMarker), stateSource: (int)StateSource.PrimCrossing);
         rig.WaitScheduled(item);
+        Assert.True(SchedulerHarness.WaitFor(() => rig.Engine.Policy.HeldArrivalCount == 1), "the changed event is held");
 
         clock.Now = 9.5;
         rig.Scene.EventManager.TriggerOnFrame();
         Assert.True(rig.StaysSilent(item, 256));
-        Assert.Equal(1, rig.Engine.Policy.HeldArrivalCount);
+        Assert.True(SchedulerHarness.WaitFor(() => rig.Engine.Policy.HeldArrivalCount == 1), "the changed event is held");
 
         clock.Now = 10.5;
         rig.Scene.EventManager.TriggerOnFrame();
@@ -196,7 +197,7 @@ public class CrossingPolicyTests
         rig.Engine.Grants = grants;
         UUID item = rig.Rez(EngineRig.Lsl(ChangedMarker), stateSource: (int)StateSource.PrimCrossing);
         rig.WaitScheduled(item);
-        Assert.Equal(1, rig.Engine.Policy.HeldArrivalCount);
+        Assert.True(SchedulerHarness.WaitFor(() => rig.Engine.Policy.HeldArrivalCount == 1), "the changed event is held");
 
         rig.Scene.EventManager.TriggerRemoveScript(rig.LocalId, item);
         clock.Now = 11;
@@ -214,7 +215,7 @@ public class CrossingPolicyTests
         rig.Engine.Grants = grants;
         UUID item = rig.Rez(EngineRig.Lsl(ChangedMarker), stateSource: (int)StateSource.PrimCrossing);
         rig.WaitScheduled(item);
-        Assert.Equal(1, rig.Engine.Policy.HeldArrivalCount);
+        Assert.True(SchedulerHarness.WaitFor(() => rig.Engine.Policy.HeldArrivalCount == 1), "the changed event is held");
 
         rig.Scene.EventManager.TriggerScriptReset(rig.LocalId, item);
 
@@ -248,7 +249,7 @@ public class CrossingPolicyTests
         Assert.True(rig.Scene.HoldsArrival(arrived.UUID));
         UUID item = rig.Rez(EngineRig.Lsl(ChangedMarker), stateSource: (int)StateSource.PrimCrossing, part: arrived.RootPart);
         rig.WaitScheduled(item);
-        Assert.Equal(1, rig.Engine.Policy.HeldArrivalCount);
+        Assert.True(SchedulerHarness.WaitFor(() => rig.Engine.Policy.HeldArrivalCount == 1), "the changed event is held");
         Assert.True(rig.StaysSilent(item, 256));
 
         now += 10001; // the region's wait for riders is over
