@@ -48,7 +48,13 @@ namespace Luau.ScriptEngine
         }
 
         /// <summary>Whether the engine holds a load record for the item (a rez it accepted and has not forgotten).</summary>
-        internal bool IsTracking(UUID itemID) => false;
+        internal bool IsTracking(UUID itemID)
+        {
+            lock (m_tracked) return m_tracked.ContainsKey(itemID);
+        }
+
+        private readonly Dictionary<UUID, uint> m_tracked = new Dictionary<UUID, uint>();
+        private bool m_warnedNoLoader;
 
         internal LuauSettings Settings => m_settings;
 
@@ -75,11 +81,55 @@ namespace Luau.ScriptEngine
             m_scene = scene;
             m_scene.RegisterModuleInterface<IScriptModule>(this);
             m_scene.StackModuleInterface<IScriptModule>(this);
+            m_scene.EventManager.OnRezScript += OnRezScript;
             m_log.Info("Added to region " + scene.RegionInfo.RegionName);
         }
 
-        public void RemoveRegion(Scene scene) { }
+        public void RemoveRegion(Scene scene)
+        {
+            if (m_scene == null) return;
+            m_scene.EventManager.OnRezScript -= OnRezScript;
+            lock (m_tracked) m_tracked.Clear();
+            m_scene = null;
+        }
+
         public void RegionLoaded(Scene scene) { }
+
+        /// <summary>
+        /// Every engine receives every rez with the engine name the region selected. The first-line header still takes
+        /// priority, so a script is ours exactly when <see cref="EngineHeader.Owner"/> gives it to this engine.
+        /// </summary>
+        private void OnRezScript(uint localID, UUID itemID, string script, int startParam, bool postOnRez, string engine, int stateSource)
+        {
+            if (EngineHeader.Owner(script, engine, LoadedEngineNames()) != ScriptEngineName)
+            {
+                Disown(itemID);
+                return;
+            }
+
+            lock (m_tracked) m_tracked[itemID] = localID;
+            if (!m_warnedNoLoader)
+            {
+                m_warnedNoLoader = true;
+                m_log.Warn("A script was given to this engine, which cannot load or run scripts yet; the script will not run");
+            }
+        }
+
+        private IEnumerable<string> LoadedEngineNames()
+        {
+            foreach (IScriptModule module in m_scene?.RequestModuleInterfaces<IScriptModule>() ?? Array.Empty<IScriptModule>())
+                if (module != null)
+                    yield return module.ScriptEngineName;
+        }
+
+        /// <summary>
+        /// The script belongs to another engine: forget this item's load record. The saved state row is kept, so the
+        /// script resumes if it returns here with the same asset; an edited script has a new asset and starts fresh.
+        /// </summary>
+        private void Disown(UUID itemID)
+        {
+            lock (m_tracked) m_tracked.Remove(itemID);
+        }
 
         public bool HasSavedScriptState(UUID itemID, UUID assetID) => m_store.HasSavedState(itemID, assetID);
 
