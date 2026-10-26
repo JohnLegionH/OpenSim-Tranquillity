@@ -197,6 +197,8 @@ public sealed class MergeOptions
     public int MaxFacesPerPart { get; set; } = 8;
     public int MaxFaceVertices { get; set; } = 65535;
     public int MaxPhysicsVertices { get; set; } = 65535;
+    /// <summary>What the lower levels of detail of a merged part are checked against (see <see cref="MergedLods"/>).</summary>
+    public LodOptions Lod { get; set; } = new LodOptions();
 }
 
 public sealed class KeepRule

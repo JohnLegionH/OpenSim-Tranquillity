@@ -55,6 +55,8 @@ public sealed class MergedPartReport
     public int PbrFaces { get; set; }
     public int MediaFaces { get; set; }
     public double MeasuredMapTexels { get; set; }
+    /// <summary>The lower levels of detail the mesh carries, medium first, with what was checked about each.</summary>
+    public List<LodLevel> Levels { get; set; } = new List<LodLevel>();
 }
 
 /// <summary>A part that holds planar-mapped faces: which faces, and whether the part went into a merged part or stayed.</summary>
