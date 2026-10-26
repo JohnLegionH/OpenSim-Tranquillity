@@ -149,7 +149,7 @@ public class MergeLinkSafetyTests
     }
 
     /// <summary>The scripted linksets: each is eight parts with one script in link 2, a sit target on link 8 and the numbers its script reaches.</summary>
-    private static List<(Variant v, List<KitPart> parts)> ScriptedArchive(out Dictionary<string, byte[]> assets)
+    internal static List<(Variant v, List<KitPart> parts)> ScriptedArchive(out Dictionary<string, byte[]> assets)
     {
         assets = new Dictionary<string, byte[]>();
         List<(Variant, List<KitPart>)> result = new List<(Variant, List<KitPart>)>();
