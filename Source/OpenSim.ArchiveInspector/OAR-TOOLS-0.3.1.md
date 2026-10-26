@@ -1,11 +1,30 @@
 <!-- Copyright (c) 2026 Legion Builds. Released under the Mozilla Public License 2.0 (https://mozilla.org/MPL/2.0/). -->
 
+# oar tools 0.3.1: one package, and the same bytes on every platform
+
+0.3.1 changes two things since 0.3:
+
+1. **Line endings.** The notecard a merged part holds (the list of the parts it replaced) is written with line feeds on every platform. In 0.3 it
+   used the line ending of the platform, so a merge made on Windows and the same merge made on Linux differed in those notecards. They now give
+   the same bytes.
+2. **One package with all three programs.** 0.3 packaged `oar-convert` alone, and `oar-export` and `oar-restore` stayed at 0.2. The 0.3.1 packages
+   hold `oar-convert`, `oar-export` and `oar-restore`, and each prints `0.3.1` with `--version`. `oar-export` and `oar-restore` behave as they did in
+   0.2. The version stamped into a `.glb` is still 0.2: it is the file format version and changes only when the `.glb` changes, so files made by
+   0.2 still restore.
+
+A merge made by 0.3 on Windows differs from the 0.3.1 merge of the same archive in the manifest notecards and in the object files that name them
+(the notecard's asset id is part of the object file), and in nothing else. Measured on seven test archives: four merge nothing and their output is
+byte-identical to 0.3's; for the other three the 0.3.1 output differs from 0.3's in 28 notecards and 19 object files (the 404-prim shop archive),
+34 and 22 (the 464-prim one) and 3 and 3 (the 90-prim one), and every other entry is equal. With the notecard asset ids matched, each differing
+object file is equal to its 0.3 counterpart.
+
+The rest of this file is the 0.3 text, carried forward.
+
 # oar-convert 0.3: merging parts
 
 0.3 adds `--merge` to `oar-convert`: the parts of each linkset that can merge become fewer mesh parts, and the parts that cannot stay as they are.
-Without `--merge` the command does what 0.2 did, byte for byte. `oar-export` and `oar-restore` are unchanged; the version stamped into a `.glb`
-is still 0.2, so files made by 0.2 still restore. The details of the merge (what merges, why a part stays, levels of detail, collision) are in
-[MERGE-PLAN.md](MERGE-PLAN.md).
+Without `--merge` the command does what 0.2 did, byte for byte. The details of the merge (what merges, why a part stays, levels of detail,
+collision) are in [MERGE-PLAN.md](MERGE-PLAN.md).
 
 ## Usage
 
@@ -90,12 +109,31 @@ limit, still merges nothing more, and says nothing about it.
 - Viewers were not measured: the viewer cost is the viewer's formula applied by the tool, not a measurement in a running viewer.
 - A script that builds a link number or a parameter list in a way the scan cannot follow locks its linkset, so such linksets keep every part. On
   the test archives this cost one single-part linkset and no parts; an archive full of such scripts would keep more parts.
-- A merge gives the same plan and the same mesh assets on Windows and on Linux, but the manifest notecards of the merged parts use the line
-  ending of the platform the tool runs on, so the two archives are not byte-identical (a repeated run on one platform is). It was checked on the 464-prim
-  test archive: 34 notecards differ, all 34 are equal once the line endings and the notecard's length field are ignored, and all 34 mesh assets are equal.
+- A merge gives the same archive, byte for byte, on Windows and on Linux (0.3.1; in 0.3 the manifest notecards used the line ending of the
+  platform). Checked on seven test archives, each merged twice on each platform: the seven first-pass archives agree across the platforms and
+  the second pass equals the first on both. The files in the plan folder (`merge-plan.json`, `merge-plan.txt`, `linksets/`) are still written with
+  the line ending of the platform: on three of the archives every plan file differs between Windows and Linux and none differs once the line
+  endings are ignored.
 - The front door of the walk-test shop is closed in the original archive as well, so the walk through a door was proved for the back door only.
 
 ## Packages
 
-`oar-convert-windows-x64.zip` and `oar-convert-linux-x64.tar.gz` (64-bit, glibc; the program needs the system's OpenSSL library on Linux). Each holds
-the program, the two native libraries, QUICKSTART.txt, MPL-2.0.txt and THIRD-PARTY-NOTICES.txt. `oar-convert --version` prints `oar-convert 0.3`.
+`oar-tools-windows-x64.zip` and `oar-tools-linux-x64.tar.gz` (64-bit, glibc; `oar-convert` and `oar-restore` need the system's OpenSSL library on
+Linux). Each holds `oar-convert`, `oar-export` and `oar-restore`, the two native libraries they share, QUICKSTART.txt, MPL-2.0.txt and
+THIRD-PARTY-NOTICES.txt. Each program prints `0.3.1` with `--version`.
+
+Checked on the unpacked packages, on Windows and, as an ordinary user with an empty home folder, in an Ubuntu 24.04 container:
+- all three programs print their name and `0.3.1`;
+- `oar-export` of a 48-part test archive followed by `oar-restore` of the untouched `.glb` files writes an archive equal to the original in all 56
+  entries, on both platforms; the 103 files of the two exports other than the two export-summary files are equal;
+- `oar-convert --merge` over seven test archives, twice on each platform (the second pass over the first pass's output): the first-pass archives
+  agree between Windows and Linux, and on each platform the second pass equals the first.
+
+## Checksums (SHA-256)
+
+```
+cdd862814b6b0ba5710a3ee06537840fdbb622e8a03e827467c6130108eadbb1  oar-tools-windows-x64.zip  (129135480 bytes)
+e2e599c941ab5cca2e990b7e7cdbfa089adedd0c9e6c06d7d369f57103ee2cef  oar-tools-linux-x64.tar.gz  (128325068 bytes)
+```
+
+Built from commit d641a09bc8770fa36b64dfc6f6d77095ed56d5a2 (the program is the same in any commit after it that changes documentation only).
