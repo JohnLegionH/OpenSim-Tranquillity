@@ -272,12 +272,12 @@ public class MergePlanArchiveTests
     }
 
     [Fact]
-    public void TheCommandNeedsAFolderForThePlanAndRefusesMergeWithoutPlanOnly()
+    public void TheCommandNeedsAFolderForThePlanAndAnOutputUnlessItOnlyPlans()
     {
         string source = EligibilityKit.WriteArchive(new List<List<KitPart>> { Linkset(3) });
         string folder = Folder();
         Assert.Equal(2, ConvertCommand.Run(new[] { source, "--merge", "--plan-only" }));
-        Assert.Equal(2, ConvertCommand.Run(new[] { source, "--merge", "--merge-plan-dir", folder, "--out", Path.Combine(folder, "x.oar") }));
+        Assert.Equal(2, ConvertCommand.Run(new[] { source, "--merge", "--merge-plan-dir", folder }));
         Assert.Equal(2, ConvertCommand.Run(new[] { source, "--plan-only", "--merge-plan-dir", folder }));
         Assert.False(Directory.Exists(folder));
     }

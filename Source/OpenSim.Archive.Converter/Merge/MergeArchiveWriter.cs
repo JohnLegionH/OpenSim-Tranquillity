@@ -56,6 +56,9 @@ public sealed class MergeWriteResult
     public long SourceBytes { get; set; }
     public long OutputBytes { get; set; }
     public double Seconds { get; set; }
+
+    /// <summary>The report: what was merged and how far each merged mesh is from the parts it replaces.</summary>
+    public string ToText() => throw new NotImplementedException();
 }
 
 /// <summary>
