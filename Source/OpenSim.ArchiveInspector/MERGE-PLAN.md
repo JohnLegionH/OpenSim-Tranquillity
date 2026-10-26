@@ -129,7 +129,7 @@ the partly written file is kept beside it as `<output>.<id>.incomplete`.
 | 7 | SINGLE_PART_OBJECT | the object has one part |
 | 9 | SOFT_CAP, HARD_CAP, SPLIT_BY_CAPS | the part is longer than the cap, or no neighbour fits with it |
 | 10 | SOLE_CREATOR_OR_PERMISSIONS | the part differs from the others in creator or permissions |
-| 11 | ALREADY_MESH | an existing mesh keeps its makers' levels of detail |
+| 11 | ALREADY_MESH, ALREADY_MERGED | an existing mesh keeps its makers' levels of detail; a part an earlier merge made is never merged again |
 | 17 | SCRIPTED, ADDRESSED, PROTECTED_LINK_NUMBER, LINKSET_LOCKED | see below |
 | 18 | ALPHA_CAP | alpha-blended parts merge only within the alpha size cap |
 | part | CONTENTS, LIGHT, FLEXI, SIT_TARGET, SIT_TEXT, TOUCH_TEXT, CLICK_ACTION, SALE_TYPE, SALE_PRICE, HOVER_TEXT, HOVER_TEXT_COLOR, PAY_PRICE, PARTICLES, SOUND, PHYSICAL, VOLUME_DETECT, CONVEX_PHYSICS, ROOT_PHYSICS_NONE, TEXTURE_ANIMATION, PBR_DATA, MEDIA_DATA, UNBAKED_MAPPING, UV_PRECISION, NOT_PRIM, NOT_CONVERTED | per-part settings a merged mesh cannot carry |
@@ -147,6 +147,34 @@ numbers do not change. A script that addresses a part in a way the scan cannot w
 LINK_SET, LINK_ALL_OTHERS, LINK_ALL_CHILDREN), counts or numbers parts (llGetNumberOfPrims, llGetObjectPrimCount,
 llGetLinkNumber, llDetectedLinkNumber), reads the sender number in a link_message handler, or cannot be read at all locks
 the whole linkset: every part stays. A message to LINK_SET with llMessageLinked does not lock it.
+
+### Link safety
+
+A merge never changes anything a script in the archive can observe about its own linkset: the link numbers it can reach, the names and
+descriptions of the parts, the number of parts, the root, the sit targets, and which parts carry scripts. The plan keeps the parts, or the
+whole linkset, wherever it cannot show that no script can see the difference:
+
+- a part that holds a script, that a script addresses by a link number, or that is numbered at or below the highest number a script addresses
+  stays (SCRIPTED, ADDRESSED, PROTECTED_LINK_NUMBER), and so does the root when a script addresses it;
+- a script that counts the parts, reads its own or a touched part's link number, reads a sender's link number, or addresses the parts in a way the
+  scan cannot work out locks the linkset (LINKSET_LOCKED), so the numbers, names, descriptions and count of every part stay as they were;
+- the link number is read wherever the script gives one: as the first argument of the llSetLink*, llGetLink*, llLinkXxx and osXxxLink calls, as
+  the second argument of llSitOnLink and llGetObjectLinkKey, as the third of osNpcTouch, and after PRIM_LINK_TARGET in the parameter list of
+  llSetPrimitiveParams, llGetPrimitiveParams, llSetLinkPrimitiveParams, llSetLinkPrimitiveParamsFast, llGetLinkPrimitiveParams and
+  osGetLinkPrimitiveParams. A parameter list the scan cannot read could hold a PRIM_LINK_TARGET, so it counts as a link argument that cannot
+  be worked out;
+- a part with a sit target of its own stays (SIT_TARGET); a sit target a script sets on another part by link number is an addressed part.
+
+The scan reads script text and not what it does when it runs, so it can only keep more than is needed, never less.
+
+### Running the merge over its own output
+
+A merged part is a mesh whose description starts with `oarx-merge ` and whose inventory holds a `Merge manifest` notecard. A second run over the
+output keeps such a part (ALREADY_MERGED) and merges nothing more, so at the same `--lod-pixel-limit` the second run writes the same bytes as the
+first (measured on seven test archives, three of which merge, and on a third run). Each manifest notecard ends with the line `Levels of detail
+made at a limit of N pixels.`, and `merge-plan.json` carries `lodPixelLimit` next to `tool` when a merge was carried out (a `--plan-only` plan
+has none). A run at another limit reads the notecards and warns that the merged parts keep the levels of detail they were made with; it does not
+make them again.
 
 ## Collision
 
@@ -175,6 +203,7 @@ The report lists each level's triangles, switch distance, measured difference in
 
 The pixel limit is an option: `--lod-pixel-limit <pixels>` (a positive number; the default is 1, the strictest setting measured). A larger limit
 keeps fewer triangles in the lower levels and leaves out more small members, at the price of a difference that can be seen at the switch distance.
+The option goes with `--merge`; without it the command stops with an error.
 
 ### Viewer streaming cost
 
@@ -182,8 +211,8 @@ Merging lowers the part count and the region's land impact, but it can raise wha
 plain prim from the triangles it estimates for the prim's four levels of detail (`LLVolume::getLoDTriangleCounts` in `llvolume.cpp`, ten bytes a
 triangle, `LLVOVolume::getCostData` in `llvovolume.cpp`) and a mesh from the byte sizes of its levels (`LLMeshCostData` in `llmeshrepository.cpp`, 16 bytes
 a triangle after a 384 byte discount). A simple prim such as a box stays under that discount at every level and counts as one triangle (0.06); a
-merged mesh holds the real triangles of its members. The merge report therefore states the viewer's streaming cost of the archive before and after
-and whether the result is heavier. Measured on a 464-prim test archive that merges to 95 parts, the viewer cost was 29.2 before merging and 251.0, 224.5,
+merged mesh holds the real triangles of its members. The merge report therefore states the region's part count and the viewer's streaming cost of the archive
+before and after, side by side, and whether the result is heavier. The cost is reported and never a limit: the merge does not keep prims to hold it down. Measured on a 464-prim test archive that merges to 95 parts, the viewer cost was 29.2 before merging and 251.0, 224.5,
 200.9, 166.6, 135.6 and 82.6 after, at pixel limits of 1, 2, 4, 8, 16, 32 and 64; the region's land impact fell from 464 to 95 at every limit. Physics and
 server costs are the region's own model and are not part of this figure.
 
@@ -193,3 +222,7 @@ A merged part always carries the triangle mesh of its members in the physics_mes
 surface whose every triangle plane has the whole shape on one side) it also carries a hull list in the physics_convex block, one hull for
 each member (at most 256 points each). A hollow, cut, twisted or round member keeps the part on the triangle mesh alone, and the report names
 the member: a hull of such a member would fill what it leaves empty.
+
+Both are kept because an engine may read either. A region on the Jolt physics module collides with the triangle mesh: a probe archive whose
+hull lists were replaced by one small box each stopped an avatar at the same places as the unprobed merged archive and the original. Another
+engine may read the hull list; this has not been measured.
