@@ -40,11 +40,18 @@ namespace Luau.ScriptEngine
 
         private readonly ISavedStateStore m_store;
 
-        internal LuauEngine(IEngineLog log, RuntimeLoader loadRuntime, ISavedStateStore store = null)
+        /// <summary>Builds the loader for a region once the engine is enabled; tests substitute their own.</summary>
+        internal delegate IScriptLoader LoaderFactory(LuauSettings settings, IEngineLog log, Scene scene);
+
+        private readonly LoaderFactory m_loaderFactory;
+        private IScriptLoader m_loader;
+
+        internal LuauEngine(IEngineLog log, RuntimeLoader loadRuntime, ISavedStateStore store = null, LoaderFactory loaderFactory = null)
         {
             m_log = log;
             m_loadRuntime = loadRuntime;
             m_store = store ?? new EmptyStateStore();
+            m_loaderFactory = loaderFactory;
         }
 
         /// <summary>Whether the engine holds a load record for the item (a rez it accepted and has not forgotten).</summary>
