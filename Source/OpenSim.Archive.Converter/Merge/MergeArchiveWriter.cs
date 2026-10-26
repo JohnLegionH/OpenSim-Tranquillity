@@ -93,6 +93,12 @@ public sealed class MergeWriteResult
         sb.AppendLine("  worst position difference " + Worst(p => p.WorstPositionMeters) + " m before the mesh is encoded, " + Worst(p => p.WorstPositionMetersDecoded) + " m as written");
         sb.AppendLine("  worst texture coordinate difference " + Worst(p => p.WorstUv) + " before the mesh is encoded, " + Worst(p => p.WorstUvDecoded) + " as written");
         sb.AppendLine("  worst normal difference " + Worst(p => p.WorstNormal) + " before the mesh is encoded, " + Worst(p => p.WorstNormalDecoded) + " as written");
+        sb.AppendLine("  face mapping of the convertible prims: " + Mapping.DefaultFaces + " default, " + Mapping.PlanarFaces + " planar, " + Mapping.OtherFaces + " other");
+        foreach (PlanarPart pp in Mapping.PlanarParts.Take(200))
+            sb.AppendLine("    planar: " + (pp.Linkset ?? "").PadRight(32) + " " + (pp.Name ?? "").PadRight(32) + " link " + pp.LinkNum + " faces " + string.Join(",", pp.Faces)
+                + (pp.MergedInto.Length > 0 ? " -> merged into " + pp.MergedInto : " -> stays (" + pp.KeptBy + ")"));
+        if (Mapping.PlanarParts.Count > 200)
+            sb.AppendLine("    ... and " + (Mapping.PlanarParts.Count - 200) + " more parts with planar faces");
         sb.AppendLine("  merged parts:");
         foreach (MergedPartReport p in Parts)
             sb.AppendLine("    " + p.Name.PadRight(48) + p.Members.ToString().PadLeft(4) + " parts, " + p.Faces + " faces, " + p.Vertices + " vertices, " + p.Triangles + " triangles, "
@@ -148,10 +154,49 @@ public static class MergeArchiveWriter
             }
         }
 
+        result.Mapping = Census(plan, linksets);
         result.Rewrite = rewriter.Rewrite(sourcePath, outputPath);
         result.OutputBytes = new FileInfo(outputPath).Length;
         result.Seconds = sw.Elapsed.TotalSeconds;
         return result;
+    }
+
+    private static MappingCensus Census(MergePlan plan, List<MergeLinkset> linksets)
+    {
+        MappingCensus census = new MappingCensus();
+        for (int li = 0; li < linksets.Count; li++)
+        {
+            LinksetPlan lp = plan.Linksets[li];
+            foreach (MergePart part in linksets[li].Parts)
+            {
+                PlanarPart planar = null;
+                for (int i = 0; i < part.Faces.Count; i++)
+                {
+                    MergeFace f = part.Faces[i];
+                    if (f.Vertices == 0)
+                        continue;
+                    if (f.TexGen == 0)
+                        census.DefaultFaces++;
+                    else if (f.TexGen == FaceBaking.PlanarMapping)
+                    {
+                        census.PlanarFaces++;
+                        planar ??= new PlanarPart { Linkset = lp.Name, Name = part.Name, LinkNum = part.LinkNum };
+                        planar.Faces.Add(i);
+                    }
+                    else
+                        census.OtherFaces++;
+                }
+                if (planar == null)
+                    continue;
+                MergedPartPlan into = lp.Merged.FirstOrDefault(m => m.Members.Any(x => x.PartId == part.PartId));
+                if (into != null)
+                    planar.MergedInto = into.Name;
+                else
+                    planar.KeptBy = string.Join(", ", lp.Kept.Where(k => k.PartId == part.PartId).SelectMany(k => k.Rules).Select(r => r.Code).Distinct());
+                census.PlanarParts.Add(planar);
+            }
+        }
+        return census;
     }
 
     private static MergedPartReport BuildMerged(LinksetPlan lp, MergedPartPlan mp, Dictionary<Guid, MergePart> read, Dictionary<Guid, ParsedPart> parsed,
