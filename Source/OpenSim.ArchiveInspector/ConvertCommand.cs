@@ -19,6 +19,7 @@ internal static class ConvertCommand
 {
     public const string Usage =
 @"Usage: OpenSim.ArchiveInspector oar-convert <archive.oar> --out <new.oar> [--plan-out <plan.json>] [--report <folder>] [--assume-safe-unscanned] [--no-clean]
+       OpenSim.ArchiveInspector oar-convert <archive.oar> --merge --out <new.oar> --merge-plan-dir <folder> [--report <folder>] [--assume-safe-unscanned]
        OpenSim.ArchiveInspector oar-convert <archive.oar> --merge --plan-only --merge-plan-dir <folder> [--assume-safe-unscanned]
 
 Turns every part the eligibility rules pass (see oar-eligibility) into a mesh part and writes a new archive. A converted part
@@ -31,8 +32,12 @@ Then the new archive is checked against the source with a plan that states exact
   --assume-safe-unscanned    treat a script with no readable source as harmless (see oar-eligibility)
   --no-clean                 keep the faces as the mesher builds them; by default duplicate and loose vertices and zero-area triangles
                              are removed before the levels of detail are made (texture coordinates and faces are never changed)
-  --merge --plan-only        plan which parts of each linkset would merge into fewer mesh parts, and why the others stay; writes the plan
-                             and no archive. Merging itself is not built yet, so --merge needs --plan-only.
+  --merge                    merge the parts of each linkset that can merge into fewer mesh parts and write the archive to --out. A merged
+                             part is its lowest-numbered member rewritten as a mesh part with every face drawn as it was (texture
+                             repeats, offset, rotation and planar mapping are baked into the coordinates); it holds a notecard that
+                             lists the parts it replaced. Parts that cannot merge stay as they are. Without --merge the command
+                             converts every convertible part one for one, as before.
+  --merge --plan-only        only plan which parts would merge and why the others stay; writes the plan and no archive.
   --merge-plan-dir <folder>  where the plan goes: merge-plan.json, merge-plan.txt and one file per linkset under linksets/
 
 The mesh assets are written with OpenSim.MeshAsset: the faces as the high level of detail, the lower levels made with the
@@ -95,10 +100,10 @@ Exit codes: 0 the check passed, 1 the parity check failed or a mesh failed its v
         }
         if (archive == null) return Fail("an archive is required");
         if (planOnly && !merge) return Fail("--plan-only goes with --merge");
-        if (merge && !planOnly) return Fail("--merge only plans for now: add --plan-only");
         if (merge && mergePlanDir == null) return Fail("--merge-plan-dir is required with --merge");
+        if (merge && !planOnly && outPath == null) return Fail("--out is required with --merge (or add --plan-only)");
         if (merge)
-            return RunMergePlan(archive, mergePlanDir, reportDir, options);
+            return planOnly ? RunMergePlan(archive, mergePlanDir, reportDir, options) : RunMerge(archive, outPath, mergePlanDir, reportDir, options);
         if (outPath == null) return Fail("--out is required");
 
         try
@@ -116,6 +121,31 @@ Exit codes: 0 the check passed, 1 the parity check failed or a mesh failed its v
         }
         catch (Exception e) when (e is ScanException || e is ConvertException || e is CompareException || e is IOException
             || e is UnauthorizedAccessException || e is InvalidDataException || e is ArgumentException || e is InvalidOperationException)
+        {
+            Console.Error.WriteLine("oar-convert could not run: " + Sanitize.Text(e.Message));
+            return 2;
+        }
+    }
+
+    private static int RunMerge(string archive, string outPath, string folder, string reportDir, ConvertOptions options)
+    {
+        try
+        {
+            if (File.Exists(Path.Combine(folder, MergePlanner.PlanFileName)))
+                throw new IOException("'" + folder + "' already holds a merge plan");
+            MergeWriteResult result = MergeArchiveWriter.Write(archive, outPath, new MergeOptions(), options);
+            MergePlanFiles.Write(result.Plan, folder);
+            string text = result.ToText();
+            Console.Out.Write(text);
+            if (reportDir != null)
+            {
+                Directory.CreateDirectory(reportDir);
+                File.WriteAllText(Path.Combine(reportDir, "merge-report.txt"), text + Environment.NewLine + MergePlanFiles.ReportText(result.Plan));
+            }
+            return 0;
+        }
+        catch (Exception e) when (e is ScanException || e is ConvertException || e is IOException || e is UnauthorizedAccessException || e is InvalidDataException
+            || e is ArgumentException || e is InvalidOperationException)
         {
             Console.Error.WriteLine("oar-convert could not run: " + Sanitize.Text(e.Message));
             return 2;

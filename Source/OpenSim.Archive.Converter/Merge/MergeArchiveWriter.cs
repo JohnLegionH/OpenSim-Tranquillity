@@ -58,7 +58,29 @@ public sealed class MergeWriteResult
     public double Seconds { get; set; }
 
     /// <summary>The report: what was merged and how far each merged mesh is from the parts it replaces.</summary>
-    public string ToText() => throw new NotImplementedException();
+    public string ToText()
+    {
+        StringBuilder sb = new StringBuilder();
+        sb.AppendLine("Merge of " + Plan.Archive + " written to " + Output);
+        sb.AppendLine("  parts before " + Plan.PartsBefore + ", after " + Plan.PartsAfter + "; merged parts " + Parts.Count + " hold " + Parts.Sum(p => p.Members)
+            + " parts, " + Plan.KeptParts + " parts stay as they are");
+        sb.AppendLine("  meshes added " + Parts.Count + ", archive " + SourceBytes + " -> " + OutputBytes + " bytes, " + Seconds.ToString("0.0", CultureInfo.InvariantCulture) + " s");
+        sb.AppendLine("  faces baked " + Parts.Sum(p => p.BakedFaces) + " (planar " + Parts.Sum(p => p.PlanarFaces) + "), faces kept with their own transform " + Parts.Sum(p => p.UnbakedFaces));
+        sb.AppendLine("  corners compared with the original parts: " + Parts.Sum(p => (long)p.Corners));
+        sb.AppendLine("  worst position difference " + Worst(p => p.WorstPositionMeters) + " m before the mesh is encoded, " + Worst(p => p.WorstPositionMetersDecoded) + " m as written");
+        sb.AppendLine("  worst texture coordinate difference " + Worst(p => p.WorstUv) + " before the mesh is encoded, " + Worst(p => p.WorstUvDecoded) + " as written");
+        sb.AppendLine("  worst normal difference " + Worst(p => p.WorstNormal) + " before the mesh is encoded, " + Worst(p => p.WorstNormalDecoded) + " as written");
+        sb.AppendLine("  merged parts:");
+        foreach (MergedPartReport p in Parts)
+            sb.AppendLine("    " + p.Name.PadRight(48) + p.Members.ToString().PadLeft(4) + " parts, " + p.Faces + " faces, " + p.Vertices + " vertices, " + p.Triangles + " triangles, "
+                + p.MeshBytes + " bytes, position " + p.WorstPositionMeters.ToString("0.0e+0", CultureInfo.InvariantCulture) + " m, uv " + p.WorstUv.ToString("0.0e+0", CultureInfo.InvariantCulture)
+                + (p.TookTheRoot ? ", took the root" : "") + (p.PlanarFaces > 0 ? ", " + p.PlanarFaces + " planar faces" : ""));
+        foreach (string warning in Plan.Warnings)
+            sb.AppendLine("  WARNING: " + warning);
+        return sb.ToString();
+    }
+
+    private string Worst(Func<MergedPartReport, double> pick) => (Parts.Count == 0 ? 0 : Parts.Max(pick)).ToString("0.0e+0", CultureInfo.InvariantCulture);
 }
 
 /// <summary>
