@@ -132,7 +132,7 @@ public class EngineLifecycleTests
         using var rig = new EngineRig();
         UUID item = rig.Rez(Slua("ossl.Mark(\"start\", 0) " + Counting));
         Assert.True(SchedulerHarness.WaitFor(() => rig.CountOf(item) > 3));
-        Assert.Equal(new[] { "start:0" }, rig.MarksOf(item));
+        Assert.Equal(new[] { "start" }, rig.MarksOf(item));
 
         rig.Scene.EventManager.TriggerScriptReset(rig.LocalId, item);
 
@@ -216,7 +216,7 @@ public class EngineLifecycleTests
 
         Thread.Sleep(400); // a window in which a restart, and a second message, would have come
         Assert.Single(rig.Messages.Shouts);
-        Assert.Equal(new[] { "start:0" }, rig.MarksOf(item));
+        Assert.Equal(new[] { "start" }, rig.MarksOf(item));
     }
 
     [RequiresNativeFact]
