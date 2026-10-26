@@ -22,6 +22,15 @@ internal static class MaterialBaking
     private const int Repeat = 10000;
 
     /// <summary>
+    /// The transform N a map must be drawn with once the face transform F is in the mesh coordinates, so that N(F(p)) = M(p) for the map's
+    /// transform M. False when N is not a transform a material can state (a shear: the five figures are a turn, then the repeats, then the offset).
+    /// </summary>
+    public static bool Compose(FaceTransform face, FaceTransform map, out FaceTransform composed)
+    {
+        throw new NotImplementedException();
+    }
+
+    /// <summary>
     /// The material with both maps' repeats set to 1 and offsets and rotations to 0, in the encoding the region writes a legacy material
     /// (FaceMaterial.toLLSDxml, OpenSim.Region.Framework.Scenes), and the id the region derives from those bytes (FaceMaterial.genID: their MD5).
     /// Everything else (the maps, the specular colour and exponent, the environment intensity and the alpha mode and cutoff) is kept.

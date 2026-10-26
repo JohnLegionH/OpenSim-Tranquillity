@@ -76,7 +76,7 @@ public class MergeLegacyMapTests
         }
     }
 
-    private sealed class Written
+    internal sealed class Written
     {
         public string Source, Output;
         public MergePlan Plan;
@@ -86,9 +86,9 @@ public class MergeLegacyMapTests
         public List<MergeLinkset> Linksets;
     }
 
-    private static Written WriteFixture()
+    internal static Written WriteFixture(string source = null)
     {
-        Written w = new Written { Source = MapsFixture.Write(), Output = Temp("maps-merged") };
+        Written w = new Written { Source = source ?? MapsFixture.Write(), Output = Temp("maps-merged") };
         MergeArchiveWriter.Write(w.Source, w.Output);
         w.Plan = ArchiveMergePlanner.Plan(w.Source, new MergeOptions(), null, out w.Parsed, out w.Linksets);
         ArchiveMergePlanner.Plan(w.Output, new MergeOptions(), null, out w.OutParsed);
@@ -170,11 +170,38 @@ public class MergeLegacyMapTests
     [Fact]
     public void EveryCornerOfTheDiffuseAndOfEachMapIsWhereTheViewerDrawsTheSourceCorner()
     {
-        Written w = WriteFixture();
+        CornerProof p = ProveCorners(WriteFixture());
+        string report = Environment.GetEnvironmentVariable("OARX_MAPS_REPORT");
+        if (!string.IsNullOrEmpty(report))
+            File.WriteAllText(report, p.Report);
+        Assert.True(p.Corners > 0, p.Report);
+        Assert.True(p.BakedCorners > 0 && p.UnbakedCorners > 0, p.Report);
+        Assert.True(p.NormalCorners > 0 && p.SpecularCorners > 0, p.Report);
+        Assert.True(p.WorstDiffuse < 1e-5, p.Report);
+        Assert.True(p.WorstNormalTexels <= 0.25, p.Report);
+        Assert.True(p.WorstSpecularTexels <= 0.25, p.Report);
+    }
+
+    /// <summary>What the corner-by-corner comparison of a written merge found: counts, and the worst difference of the diffuse and of each map.</summary>
+    internal sealed class CornerProof
+    {
+        public long Corners, BakedCorners, UnbakedCorners, NormalCorners, SpecularCorners, MapCornersDrawnWithOtherTransform;
+        public double WorstDiffuse, WorstNormalTexels, WorstSpecularTexels;
+        public string Report;
+    }
+
+    /// <summary>
+    /// Every corner of every merged part against the source corner it came from: the diffuse is where the viewer draws the source face, and each map
+    /// is where the viewer draws the source material's map (the base coordinates with the material's transform) against the merged material's
+    /// transform applied to the merged coordinates. The viewer's two steps are written out in <see cref="Viewer"/>, not taken from FaceUv.
+    /// Maps are 512 pixels (normal) and 256 pixels (specular) in the fixtures.
+    /// </summary>
+    internal static CornerProof ProveCorners(Written w)
+    {
         Dictionary<Guid, LegacyMaterialInfo> sourceMaterials = ArchiveMaterials.Read(w.Source);
         StringBuilder sb = new StringBuilder();
         double worstDiffuse = 0, worstNormalTexels = 0, worstSpecularTexels = 0;
-        long corners = 0, bakedCorners = 0, unbakedCorners = 0, normalCorners = 0, specularCorners = 0;
+        long corners = 0, bakedCorners = 0, unbakedCorners = 0, normalCorners = 0, specularCorners = 0, otherTransform = 0;
         for (int li = 0; li < w.Plan.Linksets.Count; li++)
         {
             Dictionary<Guid, MergePart> read = w.Linksets[li].Parts.ToDictionary(p => p.PartId);
@@ -225,6 +252,8 @@ public class MergeLegacyMapTests
                             Viewer(Vector3.UnitZ, Vector3.Zero, Vector3.One, drawnMaterial.NormalTransform, false, mf.Uvs[mv * 2], mf.Uvs[mv * 2 + 1], out float gs, out float gt);
                             worstNormalTexels = Math.Max(worstNormalTexels, Math.Max(Math.Abs(ws - gs), Math.Abs(wt - gt)) * 512);
                             normalCorners++;
+                            if (baked && !srcMaterial.NormalTransform.SameAs(Of(src)))
+                                otherTransform++;
                         }
                         if (srcMaterial != null && srcMaterial.HasSpecularMap)
                         {
@@ -232,24 +261,19 @@ public class MergeLegacyMapTests
                             Viewer(Vector3.UnitZ, Vector3.Zero, Vector3.One, drawnMaterial.SpecularTransform, false, mf.Uvs[mv * 2], mf.Uvs[mv * 2 + 1], out float gs, out float gt);
                             worstSpecularTexels = Math.Max(worstSpecularTexels, Math.Max(Math.Abs(ws - gs), Math.Abs(wt - gt)) * 256);
                             specularCorners++;
+                            if (baked && !srcMaterial.SpecularTransform.SameAs(Of(src)))
+                                otherTransform++;
                         }
                     }
                 }
             }
         }
-        sb.AppendLine("corners " + corners + " (baked faces " + bakedCorners + ", faces drawn with their own transform " + unbakedCorners + "), normal-map corners " + normalCorners + ", specular-map corners " + specularCorners);
+        sb.AppendLine("corners " + corners + " (baked faces " + bakedCorners + ", faces drawn with their own transform " + unbakedCorners + "), normal-map corners " + normalCorners + ", specular-map corners " + specularCorners + ", map corners whose source map is drawn with a transform other than the face's " + otherTransform);
         sb.AppendLine("worst diffuse difference " + worstDiffuse.ToString("0.0e+0", CultureInfo.InvariantCulture) + " (limit 1e-5)");
         sb.AppendLine("worst normal-map difference " + worstNormalTexels.ToString("0.000", CultureInfo.InvariantCulture) + " texels of its 512 pixel map (limit 0.25)");
         sb.AppendLine("worst specular-map difference " + worstSpecularTexels.ToString("0.000", CultureInfo.InvariantCulture) + " texels of its 256 pixel map (limit 0.25)");
-        string report = Environment.GetEnvironmentVariable("OARX_MAPS_REPORT");
-        if (!string.IsNullOrEmpty(report))
-            File.WriteAllText(report, sb.ToString());
-        Assert.True(corners > 0, sb.ToString());
-        Assert.True(bakedCorners > 0 && unbakedCorners > 0, sb.ToString());
-        Assert.True(normalCorners > 0 && specularCorners > 0, sb.ToString());
-        Assert.True(worstDiffuse < 1e-5, sb.ToString());
-        Assert.True(worstNormalTexels <= 0.25, sb.ToString());
-        Assert.True(worstSpecularTexels <= 0.25, sb.ToString());
+        return new CornerProof { Corners = corners, BakedCorners = bakedCorners, UnbakedCorners = unbakedCorners, NormalCorners = normalCorners, SpecularCorners = specularCorners,
+            MapCornersDrawnWithOtherTransform = otherTransform, WorstDiffuse = worstDiffuse, WorstNormalTexels = worstNormalTexels, WorstSpecularTexels = worstSpecularTexels, Report = sb.ToString() };
     }
 
     // ---------------------------------------------------------------- the precision guard at each map's own size
