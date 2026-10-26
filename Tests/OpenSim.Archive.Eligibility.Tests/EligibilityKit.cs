@@ -25,6 +25,8 @@ internal sealed class KitPart
 {
     public Guid Id = Guid.NewGuid();
     public string Name = "Part";
+    /// <summary>The part's Description element.</summary>
+    public string Description = "";
     public int LinkNum;
     public string Scale = "1.5,2.5,3.5";
     /// <summary>The part's OffsetPosition (x,y,z) and RotationOffset (x,y,z,w).</summary>
@@ -97,7 +99,7 @@ internal static class EligibilityKit
         string[] off = p.Offset.Split(','), rot = p.Rotation.Split(',');
         sb.Append("<OffsetPosition><X>").Append(off[0]).Append("</X><Y>").Append(off[1]).Append("</Y><Z>").Append(off[2]).Append("</Z></OffsetPosition>");
         sb.Append("<RotationOffset><X>").Append(rot[0]).Append("</X><Y>").Append(rot[1]).Append("</Y><Z>").Append(rot[2]).Append("</Z><W>").Append(rot[3]).Append("</W></RotationOffset>");
-        sb.Append("<Description></Description><LinkNum>").Append(p.LinkNum).Append("</LinkNum>");
+        sb.Append("<Description>").Append(p.Description).Append("</Description><LinkNum>").Append(p.LinkNum).Append("</LinkNum>");
         sb.Append("<Flags>").Append(p.Flags).Append("</Flags>");
         if (p.PhysicsShapeType >= 0)
             sb.Append("<PhysicsShapeType>").Append(p.PhysicsShapeType).Append("</PhysicsShapeType>");
