@@ -33,6 +33,9 @@ namespace Luau.ScriptEngine
         private long m_runTicks;
         private long m_droppedEvents;
         private long m_punishments;
+        private long m_droppedWhileStopped;
+        private long m_droppedUnhandled;
+        private long m_frontGrants;
 
         internal SchedulerScript(long id, int workerIndex, byte[] asset, ScriptLanguage language)
         {
@@ -62,6 +65,15 @@ namespace Luau.ScriptEngine
 
         /// <summary>Events dropped because the script's queue was full.</summary>
         public long DroppedEvents => Interlocked.Read(ref m_droppedEvents);
+
+        /// <summary>Events dropped because the script was stopped (its Running flag off, or stopped by a fault), including the ones already queued when it was stopped.</summary>
+        public long DroppedWhileStopped => Interlocked.Read(ref m_droppedWhileStopped);
+
+        /// <summary>Events not queued because the script has no handler for them.</summary>
+        public long DroppedUnhandled => Interlocked.Read(ref m_droppedUnhandled);
+
+        /// <summary>Times an event that woke the idle script put it at the front of its worker's ring.</summary>
+        public long FrontGrants => Interlocked.Read(ref m_frontGrants);
 
         /// <summary>Times the script was put to sleep by a step that overran (the runtime's punishment), as opposed to a delay it asked for.</summary>
         public long Punishments => Interlocked.Read(ref m_punishments);
@@ -112,6 +124,9 @@ namespace Luau.ScriptEngine
         internal void CountStep(long ticks) { Interlocked.Increment(ref m_steps); Interlocked.Add(ref m_runTicks, ticks); }
         internal void CountDispatch(long ticks) { Interlocked.Increment(ref m_dispatches); Interlocked.Add(ref m_runTicks, ticks); }
         internal void CountDrop() => Interlocked.Increment(ref m_droppedEvents);
+        internal void CountStoppedDrop(long n = 1) => Interlocked.Add(ref m_droppedWhileStopped, n);
+        internal void CountUnhandledDrop() => Interlocked.Increment(ref m_droppedUnhandled);
+        internal void CountFrontGrant() => Interlocked.Increment(ref m_frontGrants);
         internal void CountPunishment() => Interlocked.Increment(ref m_punishments);
 
         /// <summary>The script whose native call is running on this thread, or null.</summary>

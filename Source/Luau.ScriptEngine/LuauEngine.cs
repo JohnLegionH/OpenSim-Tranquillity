@@ -14,6 +14,7 @@ using OpenMetaverse;
 using OpenSim.Framework;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
+using OpenSim.Region.ScriptEngine.Shared;
 
 namespace Luau.ScriptEngine
 {
@@ -432,6 +433,24 @@ namespace Luau.ScriptEngine
         public bool SetXMLState(UUID itemID, string xml) => false;
         public bool PostScriptEvent(UUID itemID, string name, object[] args) => false;
         public bool PostObjectEvent(UUID itemID, string name, object[] args) => false;
+
+        /// <summary>Posts an event to one script (the entry point other engines and the async plugins use).</summary>
+        public bool PostScriptEvent(UUID itemID, EventParams parms) => false;
+
+        /// <summary>Posts an event to every script of the prim that this engine holds.</summary>
+        public bool PostObjectEvent(uint localID, EventParams parms) => false;
+
+        /// <summary>True once every worker has failed and the engine has switched itself off.</summary>
+        internal bool IsDisabled => false;
+
+        /// <summary>The clock the engine's deferred events expire by; tests replace it.</summary>
+        internal ISchedulerClock Clock { get; set; } = new MonotonicClock();
+
+        /// <summary>Events kept for a script that is still loading, per item (Halcyon DeferredEventManager.MAX_DEFERRED_EVENTS).</summary>
+        internal const int MaxDeferredEventsPerItem = 32;
+
+        /// <summary>How long they are kept from the first one (Halcyon DeferredEventManager.EXPIRATION_SECONDS).</summary>
+        internal const double DeferredEventLifetimeSeconds = 60;
 
         public bool SuspendScript(UUID itemID)
         {
