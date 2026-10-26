@@ -57,6 +57,9 @@ public static class LandImpact
             // a part whose physics shape type is none, or a mesh part, makes the linkset cost by part (SceneObjectPart.UsesComplexCost)
             bool complex = parts.Any(p => IsMesh(p) || p.PhysicsShapeType == 1);
             r.RegionLandImpact += complex ? parts.Sum(p => Math.Max(StreamingPart, Math.Max(SimulationPart, p.PhysicsShapeType == 1 ? 0 : PhysicsPart))) : parts.Count;
+            // a plain prim is priced by the viewer from its shape alone (pcode 9 is a prim; trees and grass have no volume to price)
+            r.ViewerStreamingCostPrims += parts.Where(p => !IsMesh(p) && p.Shape != null && p.Shape.PCode == 9)
+                .Sum(p => PrimStreaming.Cost(p.Shape, new System.Numerics.Vector3(p.Scale.X, p.Scale.Y, p.Scale.Z)));
             foreach (ParsedPart p in parts.Where(IsMesh))
             {
                 r.MeshParts++;

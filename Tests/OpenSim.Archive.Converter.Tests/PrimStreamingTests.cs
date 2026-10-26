@@ -58,10 +58,13 @@ public class PrimStreamingTests
     }
 
     [Fact]
-    public void AnArchiveOfBoxesHasAViewerCostOfSixHundredthsForEachPart()
+    public void AnArchiveOfBoxesAndCylindersHasTheViewerCostOfEachPart()
     {
+        // MapsFixture: eight parts in each of two objects, parts 3 and 6 cylinders (26, 38, 62 and 98 triangles), the rest boxes; scale (0.8 + 0.3 i, 1.2 - 0.1 i, 0.6 + 0.2 (i mod 4)) for part i from 0
+        double Cylinder(float x, float y, float z) => new StreamingCost(260, 380, 620, 980).StaticCost(0.5 * new Vector3(x, y, z).Length());
+        double expected = MapsFixture.ObjectCount * (6 * 0.06 + Cylinder(1.4f, 1.0f, 1.0f) + Cylinder(2.3f, 0.7f, 0.8f));
         LandImpactReport r = LandImpact.Measure(MapsFixture.Write());
-        Assert.Equal(0.06 * r.Parts, r.ViewerStreamingCostPrims, 6);
+        Assert.Equal(expected, r.ViewerStreamingCostPrims, 4);
         Assert.Equal(r.ViewerStreamingCost + r.ViewerStreamingCostPrims, r.ViewerStreamingCostTotal, 9);
     }
 }
