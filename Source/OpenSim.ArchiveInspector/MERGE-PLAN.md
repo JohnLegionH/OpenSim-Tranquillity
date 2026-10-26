@@ -173,6 +173,20 @@ above (`llvolumemgr.cpp`, `LLVolumeLODGroup`), and a radius of half the length o
 The result is that a mesh with many seams (boxes) keeps most of its triangles in every level, and a smooth one loses what the limit allows.
 The report lists each level's triangles, switch distance, measured difference in pixels and the members left out.
 
+The pixel limit is an option: `--lod-pixel-limit <pixels>` (a positive number; the default is 1, the strictest setting measured). A larger limit
+keeps fewer triangles in the lower levels and leaves out more small members, at the price of a difference that can be seen at the switch distance.
+
+### Viewer streaming cost
+
+Merging lowers the part count and the region's land impact, but it can raise what a viewer is charged to stream the build. The viewer prices a
+plain prim from the triangles it estimates for the prim's four levels of detail (`LLVolume::getLoDTriangleCounts` in `llvolume.cpp`, ten bytes a
+triangle, `LLVOVolume::getCostData` in `llvovolume.cpp`) and a mesh from the byte sizes of its levels (`LLMeshCostData` in `llmeshrepository.cpp`, 16 bytes
+a triangle after a 384 byte discount). A simple prim such as a box stays under that discount at every level and counts as one triangle (0.06); a
+merged mesh holds the real triangles of its members. The merge report therefore states the viewer's streaming cost of the archive before and after
+and whether the result is heavier. Measured on a 464-prim test archive that merges to 95 parts, the viewer cost was 29.2 before merging and 251.0, 224.5,
+200.9, 166.6, 135.6 and 82.6 after, at pixel limits of 1, 2, 4, 8, 16, 32 and 64; the region's land impact fell from 464 to 95 at every limit. Physics and
+server costs are the region's own model and are not part of this figure.
+
 ### Collision
 
 A merged part always carries the triangle mesh of its members in the physics_mesh block. When every member is exactly convex (a closed
