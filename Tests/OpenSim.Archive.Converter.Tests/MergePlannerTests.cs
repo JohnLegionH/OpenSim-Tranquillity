@@ -485,6 +485,17 @@ public class MergePlannerTests
     }
 
     [Fact]
+    public void Rule8_TheManifestUsesLineFeedsOnEveryPlatform()
+    {
+        MergePart a = Part(1), b = Part(2, 1);
+        MergePlan plan = MergePlanner.Plan(new[] { Set(a, b) }, new MergeOptions(), "shop.oar");
+        string manifest = plan.Linksets[0].Merged[0].Manifest;
+        Assert.DoesNotContain("\r", manifest);
+        Assert.True(manifest.Split('\n').Length > 4, "the manifest has a header, a blank line, the column line and one line per part");
+        Assert.EndsWith("\n", manifest);
+    }
+
+    [Fact]
     public void TheArchiveCountsAddUpTheLinksets()
     {
         MergePlan plan = MergePlanner.Plan(new[] { Set(Part(1), Part(2, 1), Part(3, 2)), Set(Part(0)) }, new MergeOptions(), "a.oar");

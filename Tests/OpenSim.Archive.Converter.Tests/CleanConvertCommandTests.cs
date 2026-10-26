@@ -38,6 +38,30 @@ public class CleanConvertCommandTests
         Console.SetOut(capture);
         try { Assert.Equal(0, ConvertCommand.Run(new[] { "--version" })); }
         finally { Console.SetOut(saved); }
-        Assert.Contains("oar-convert 0.3", capture.ToString());
+        Assert.Contains("oar-convert 0.3.1", capture.ToString());
+    }
+
+    private static string VersionLine(Func<string[], int> run)
+    {
+        TextWriter saved = Console.Out;
+        StringWriter capture = new StringWriter();
+        Console.SetOut(capture);
+        try { Assert.Equal(0, run(new[] { "--version" })); }
+        finally { Console.SetOut(saved); }
+        return capture.ToString().Trim();
+    }
+
+    [Fact]
+    public void AllThreeToolsReportTheSameRelease()
+    {
+        Assert.Equal("oar-convert 0.3.1", VersionLine(ConvertCommand.Run));
+        Assert.Equal("oar-export 0.3.1", VersionLine(ExportCommand.Run));
+        Assert.Equal("oar-restore 0.3.1", VersionLine(RestoreCommand.Run));
+    }
+
+    [Fact]
+    public void TheStampWrittenIntoAGlbStaysAtTheFileFormatVersion()
+    {
+        Assert.Equal("0.2", OpenSim.Archive.GltfExport.ExportStamp.CurrentVersion);
     }
 }
