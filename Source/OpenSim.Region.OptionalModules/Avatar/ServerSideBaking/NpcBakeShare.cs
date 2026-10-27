@@ -85,21 +85,29 @@ public sealed class NpcBakeShare
     }
 
     /// <summary>
-    /// The NPC is gone. Its holds are let go; returns the assets that nobody holds now and that this process stored.
+    /// The NPC is gone. Its holds are let go. Returns the assets that nobody holds now and that this process stored;
+    /// those are no longer offered for reuse, and the caller may delete them. A bake another NPC still holds, and a
+    /// bake known only from a stored index, are not returned.
     /// </summary>
-    public IReadOnlyList<UUID> Release(UUID npc) => new List<UUID>();
-
-    /// <summary>The NPC is gone. Its hold is let go; its bakes stay stored and findable for the next NPC in that outfit.</summary>
-    public void Drop(UUID npc)
+    public IReadOnlyList<UUID> Release(UUID npc)
     {
+        var gone = new List<UUID>();
         lock (m_lock)
         {
             foreach (var channel in System.Enum.GetValues<BakeChannel>())
             {
                 if (!m_current.Remove((npc, channel), out var asset)) continue;
-                if (m_entries.TryGetValue(asset, out var entry)) entry.Holders--;
+                if (!m_entries.TryGetValue(asset, out var entry)) continue;
+                entry.Holders--;
+                if (entry.Holders > 0 || !entry.StoredHere) continue;
+
+                m_entries.Remove(asset);
+                if (m_byHash.TryGetValue((entry.Channel, entry.Hash), out var offered) && offered == asset)
+                    m_byHash.Remove((entry.Channel, entry.Hash));
+                gone.Add(asset);
             }
         }
+        return gone;
     }
 
     private Entry EntryFor(UUID assetId, BakeChannel channel, string hash)

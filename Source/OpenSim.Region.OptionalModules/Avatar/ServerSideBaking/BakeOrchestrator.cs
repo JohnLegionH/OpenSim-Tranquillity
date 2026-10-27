@@ -348,7 +348,7 @@ public static class BakeOrchestrator
                 appearance.Texture.CreateFace((uint)FaceOf(ch)).TextureID = keep.AssetId;
                 outcomes.Add(new ChannelOutcome(ch, ChannelStatus.Reused, keep.AssetId, keep.Hash, "inputs unchanged", empty));
                 if (npcShare is not null)
-                    DeleteSuperseded(assets, appearance, npcShare.Hold(agentId, ch, keep.Hash, keep.AssetId), keep.AssetId, superseded, timings);
+                    DeleteSuperseded(assets, appearance, npcShare.Hold(agentId, ch, keep.Hash, keep.AssetId), keep.AssetId, superseded, timings, npcBakesOnly: true);
                 continue;
             }
             byChannel.TryGetValue(ch, out var result);
@@ -380,7 +380,9 @@ public static class BakeOrchestrator
             var asset = new AssetBase(UUID.Random(), AssetNameFor(agentId, ch), (sbyte)AssetType.Texture, agentId.ToString())
             {
                 Data = result.J2kBytes,
-                Description = result.InputHash,
+                // An NPC bake carries a mark after its hash, so the cleanup can tell it from an avatar's bake and
+                // from a texture a person made (NpcBakeMark).
+                Description = npcShare is not null ? NpcBakeMark.Describe(result.InputHash) : result.InputHash,
                 Temporary = false,
                 Local = false,
             };
@@ -400,7 +402,7 @@ public static class BakeOrchestrator
             {
                 // An NPC's bakes may be shared with other NPCs: the old asset goes only when nobody holds it.
                 npcShare.NoteStored(ch, result.InputHash, id);
-                DeleteSuperseded(assets, appearance, npcShare.Hold(agentId, ch, result.InputHash, id), id, superseded, timings);
+                DeleteSuperseded(assets, appearance, npcShare.Hold(agentId, ch, result.InputHash, id), id, superseded, timings, npcBakesOnly: true);
             }
             else Supersede(assets, appearance, previous, ch, id, superseded, timings);
         }
@@ -420,7 +422,7 @@ public static class BakeOrchestrator
     }
 
     private static void DeleteSuperseded(IAssetService assets, AvatarAppearance appearance, UUID oldId, UUID newId,
-        List<UUID> superseded, BakeTimings timings)
+        List<UUID> superseded, BakeTimings timings, bool npcBakesOnly = false)
     {
         if (oldId.IsZero() || oldId == newId) return;
         foreach (var other in AllChannels)
@@ -430,6 +432,8 @@ public static class BakeOrchestrator
         }
         try
         {
+            // An NPC's old bake is deleted only if it is one this module marked as an NPC bake.
+            if (npcBakesOnly && !NpcBakeMark.IsMarked(assets.GetMetadata(oldId.ToString()))) return;
             var t0 = BakeTimings.Now;
             var gone = assets.Delete(oldId.ToString());
             timings?.AddAssetStore(t0, deleted: true);
