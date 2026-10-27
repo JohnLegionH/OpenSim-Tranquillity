@@ -237,6 +237,8 @@ namespace SLua.ScriptEngine
             m_scene.EventManager.OnScriptReset += OnScriptReset;
             m_scene.EventManager.OnStartScript += OnStartScript;
             m_scene.EventManager.OnStopScript += OnStopScript;
+            if (m_settings.WarmUp)
+                ApiWarmUp.Start(m_log);
             m_hooks = new SceneHooksA(scene, this, m_settings.PhysicsThrottle, Clock);
             m_hooks.Subscribe();
             m_policy = new SceneHooksB(scene, this, m_grants, new LiveClock(this));
@@ -308,8 +310,11 @@ namespace SLua.ScriptEngine
         }
 
         /// <summary>The context of the script a function was called from, made when the script joined the scheduler.</summary>
-        private ScriptContext ContextOf(SchedulerScript script) =>
-            m_contexts.TryGetValue(script.Id, out ScriptContext context) ? context : throw new InvalidOperationException("the script is not known to the engine");
+        private ScriptContext ContextOf(SchedulerScript script)
+        {
+            ApiWarmUp.WaitDone(); // a first call that comes while the API is still being compiled waits for it
+            return m_contexts.TryGetValue(script.Id, out ScriptContext context) ? context : throw new InvalidOperationException("the script is not known to the engine");
+        }
 
         /// <summary>How long GetScriptErrors waits for a compile; the region's own wait for a save is the same 15 seconds.</summary>
         internal static TimeSpan ErrorWaitTimeout = TimeSpan.FromSeconds(15);

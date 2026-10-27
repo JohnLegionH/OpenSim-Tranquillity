@@ -119,6 +119,7 @@ namespace SLua.ScriptEngine
             s.KillAfterPunishments = Math.Max(1, c.GetInt("KillAfterPunishments", s.KillAfterPunishments));
             s.StateSaveIntervalMs = Math.Max(1, c.GetInt("StateSaveIntervalMs", s.StateSaveIntervalMs));
             s.CompileCache = c.GetBoolean("CompileCache", s.CompileCache);
+            s.WarmUp = c.GetBoolean("WarmUp", s.WarmUp);
             s.ServiceCallDeferral = ReadChoice(c, "ServiceCallDeferral", s.ServiceCallDeferral, DeferralModes, log);
             s.ServiceCallThreads = Math.Max(1, c.GetInt("ServiceCallThreads", s.ServiceCallThreads));
             s.ServiceCallTimeoutMs = Math.Max(1, c.GetInt("ServiceCallTimeoutMs", s.ServiceCallTimeoutMs));
