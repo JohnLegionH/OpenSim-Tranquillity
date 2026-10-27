@@ -283,6 +283,13 @@ namespace SLua.ScriptEngine
             text.Append("|unavailable");
             foreach (string name in LlBindings.Unavailable)
                 text.Append('|').Append(name);
+            text.Append("|os1");
+            foreach (OsFunction f in OsBindings.All)
+                foreach (BoundFunction o in f.Overloads)
+                    text.Append('|').Append(o.ApiName).Append(':').Append(o.Class).Append(':').Append(string.Join(",", o.ParamTypes));
+            text.Append("|unavailable");
+            foreach (string name in OsBindings.Unavailable)
+                text.Append('|').Append(name);
             byte[] hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text.ToString()));
             return Convert.ToHexString(hash, 0, 8).ToLowerInvariant();
         }
@@ -321,6 +328,7 @@ namespace SLua.ScriptEngine
                 {
                     var vm = new Vm(watchdog);
                     LlBindings.Register(vm, ContextOf, serviceLane: true, unavailable: true);
+                    OsBindings.Register(vm, ContextOf, serviceLane: true, unavailable: true);
                     return vm;
                 },
                 Log = m_log,

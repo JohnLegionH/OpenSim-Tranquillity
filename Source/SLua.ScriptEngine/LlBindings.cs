@@ -152,7 +152,7 @@ namespace SLua.ScriptEngine
         /// also ends the script's turn when the delay is given to the runtime; one that returns values keeps them and the delay
         /// takes effect at the script's next interrupt, and two such delays add up.
         /// </summary>
-        private static Value[] RunInContext(BoundFunction function, ScriptContext context, ReadOnlySpan<Value> args, out double delaySeconds)
+        internal static Value[] RunInContext(BoundFunction function, ScriptContext context, ReadOnlySpan<Value> args, out double delaySeconds)
         {
             var call = new SyscallContext(context.ItemId, SyscallContext.NextSeq());
             Value[] result;
@@ -160,6 +160,9 @@ namespace SLua.ScriptEngine
             try { result = function.Call(context, args); }
             finally { SyscallContext.Exit(); }
             delaySeconds = call.DelayMs / 1000.0;
+            // A long-running call run here (no service lane) gives its value with SysReturn, as it does on the lane.
+            if (function.Class == FunctionClass.Async && result == null)
+                result = RecordedResult(function, call);
             return result;
         }
 
@@ -171,7 +174,7 @@ namespace SLua.ScriptEngine
         /// deferral is not off; otherwise it runs here, on the worker, as in Phlox. A call that goes to the lane parks its
         /// script until the lane answers.
         /// </summary>
-        private static Value[] StartLaneCall(BoundFunction function, ScriptContext context, ReadOnlySpan<Value> args)
+        internal static Value[] StartLaneCall(BoundFunction function, ScriptContext context, ReadOnlySpan<Value> args)
         {
             SchedulerScript script = context.Script;
             ServiceLane lane = context.Lane;
@@ -209,7 +212,7 @@ namespace SLua.ScriptEngine
         /// The take of a pausing call, in the step that carries on after the answer: a fault the call ended with is raised in the
         /// script (Phlox: SetPendingFault), the values are the call's results, and the call's delay is the script's.
         /// </summary>
-        private static Value[] TakeLaneAnswer()
+        internal static Value[] TakeLaneAnswer()
         {
             SchedulerScript script = SchedulerScript.Current;
             (Value[] result, double delay, Exception fault) = script.TakeOutcome();

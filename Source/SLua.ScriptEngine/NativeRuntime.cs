@@ -163,7 +163,23 @@ namespace SLua.ScriptEngine
                 };
             }
 
-            if (real) EngineIdentity.Apply();
+            if (real)
+            {
+                EngineIdentity.Apply();
+                try
+                {
+                    OsBindings.ApplyHostList();
+                }
+                catch (SluaException e)
+                {
+                    return new RuntimeLoadResult
+                    {
+                        LibraryPath = loadedPath,
+                        ApiVersion = version,
+                        Message = $"The native runtime library {loadedPath} refused the list of os, iw and bot functions: {e.Message}. The engine is not registered.",
+                    };
+                }
+            }
 
             return new RuntimeLoadResult
             {

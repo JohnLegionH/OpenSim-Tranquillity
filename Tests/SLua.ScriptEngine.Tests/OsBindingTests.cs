@@ -6,6 +6,7 @@
  */
 
 using System.Globalization;
+using InWorldz.Phlox.Glue;
 using InWorldz.Phlox.Types;
 using OpenMetaverse;
 using SLua.ScriptEngine.Bindings;
@@ -186,10 +187,12 @@ public class OsCallTests
             rig.H.Pump();
             rig.H.Advance(2.1);
         }
-        Assert.Empty(rig.H.FaultedScripts);
+        Assert.True(rig.H.FaultedScripts.IsEmpty, "the script faulted: " + string.Join("; ", rig.H.FaultedScripts.Select(f => f.FaultMessage)));
         Assert.Empty(rig.H.ReportedErrors);
         return Recorded(rig);
     }
+
+    private static void Same(string[] expected, string[] actual) => Assert.Equal(string.Join("\n", expected), string.Join("\n", actual));
 
     private static string[] Lsl(BindingRig rig, string body)
     {
@@ -205,8 +208,8 @@ public class OsCallTests
         using var rig = new BindingRig();
         rig.Fake.Returns("osSHA256", Sha);
         rig.Fake.Returns("iwFormatTime", "noon");
-        rig.Fake.Returns("botCreateBot", "11111111-2222-3333-4444-555555555555");
-        Assert.Equal(new[]
+        rig.Fake.Runs("botCreateBot", _ => { SyscallContext.Current?.SetResult("11111111-2222-3333-4444-555555555555", 0); return null; }); // a long-running call gives its value with SysReturn
+        Same(new[]
         {
             "osSHA256(abc)", "iwFormatTime(0|1|%H)", "botCreateBot(A|B|Outfit|<1,2,3>|0)",
             "llOwnerSay(" + Sha + " noon 11111111-2222-3333-4444-555555555555)",
@@ -221,8 +224,8 @@ public class OsCallTests
         using var rig = new BindingRig();
         rig.Fake.Returns("osSHA256", Sha);
         rig.Fake.Returns("iwFormatTime", "noon");
-        rig.Fake.Returns("botCreateBot", "11111111-2222-3333-4444-555555555555");
-        Assert.Equal(new[]
+        rig.Fake.Runs("botCreateBot", _ => { SyscallContext.Current?.SetResult("11111111-2222-3333-4444-555555555555", 0); return null; }); // a long-running call gives its value with SysReturn
+        Same(new[]
         {
             "osSHA256(abc)", "iwFormatTime(0|1|%H)", "botCreateBot(A|B|Outfit|<1,2,3>|0)",
             "llOwnerSay(" + Sha + " noon 11111111-2222-3333-4444-555555555555)",
@@ -235,7 +238,7 @@ public class OsCallTests
     public void AnSLuaScriptReachesEachSignatureOfAnOverloadedNameByItsArguments()
     {
         using var rig = new BindingRig();
-        Assert.Equal(new[]
+        Same(new[]
         {
             "osNpcSay(npc|hi)", "osNpcSay(npc|5|hello)",
             "osMakeNotecard(card|text)", "osMakeNotecard(card|[a,b])",
@@ -249,7 +252,7 @@ public class OsCallTests
     public void AnLslScriptReachesEachSignatureOfAnOverloadedNameAsPhloxsCompilerPicksIt()
     {
         using var rig = new BindingRig();
-        Assert.Equal(new[]
+        Same(new[]
         {
             "osNpcSay(npc|hi)", "osNpcSay(npc|5|hello)",
             "osMakeNotecard(card|text)", "osMakeNotecard(card|[a,b])",
@@ -263,11 +266,9 @@ public class OsCallTests
     public void AnSLuaCallNoSignatureTakesReportsAnErrorThatNamesTheFunction()
     {
         using var rig = new BindingRig();
-        SchedulerScript s = rig.H.AddAndStart("ossl.TeleportAgent(1)", lsl: false);
-        for (int i = 0; i < 10; i++) { rig.H.Pump(); rig.H.Advance(1.0); }
-        string text = string.Join("\n", rig.H.ReportedErrors);
-        Assert.Contains("osTeleportAgent", text);
-        Assert.Empty(rig.Fake.Calls);
-        Assert.NotEmpty(rig.H.ReportedErrors);
+        string[] calls = Run(rig, "local ok, err = pcall(ossl.TeleportAgent, 1)\nll.OwnerSay(tostring(ok) .. ' ' .. tostring(err))", lsl: false);
+        string said = Assert.Single(calls);
+        Assert.StartsWith("llOwnerSay(false ", said);
+        Assert.Contains("osTeleportAgent", said);
     }
 }

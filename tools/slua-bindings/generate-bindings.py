@@ -6,7 +6,7 @@
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 """Writes the ll function bindings of the SLua engine: LlBindings.g.cs and LlCoverage.g.cs.
 
-usage: generate-bindings.py <builtins.txt> <ILSLSystemAPI.cs> <LSLSystemAPI.cs> <SyscallShim.cs> <output folder>
+usage: generate-bindings.py <builtins.txt> <ILSLSystemAPI.cs> <LSLSystemAPI.cs> <SyscallShim.cs> <output folder> [<Defaults.cs>]
 
 Inputs
   builtins.txt      the SLua runtime's function list: the ll functions a script can call and their LSL types
@@ -18,8 +18,14 @@ Inputs
                     through Defer may be handed to the service lane. Both can leave the script's thread.
 
 An ll function is bound when the runtime's list and the interface agree on its name and every type. The others are
-listed in LlCoverage.g.cs: missing from the interface, only in the interface, or the signatures differ. Every os, iw and
-bot function of the interface is listed apart: the compiler does not know them yet.
+listed in LlCoverage.g.cs: missing from the interface, only in the interface, or the signatures differ.
+
+With Defaults.cs (Phlox's compiler table) the generator also writes OsBindings.g.cs: every os, iw and bot function of that
+table, with the LSL types and parameter names the table has (a key stays a key), one entry per signature and one function per
+name. Each signature is matched to the interface method of the same name and types. The call kind, the delay and the host
+members a function needs are read from the Phlox source the same way as for the ll functions; the table index of a signature
+finds its call shim, so an overload with a shim of its own (osNpcCreate with five arguments) is read from that shim. The
+list the library's LSL compiler is given is the same table written as `type name( type parameter, ... )` lines.
 
 Call kinds are read from the Phlox source by pattern, and so is whether a function asks for a delay; the delay itself is not
 copied into the table, because the engine takes it from LSLSystemAPI when the call runs. What the patterns cannot settle (a
@@ -47,6 +53,8 @@ FUNCTION_CLASSES = ("NonBlocking", "Delayed", "Async", "Service", "Unplaced")
 BUILTIN = re.compile(r"^(void|integer|float|string|key|vector|rotation|list)\s+(ll\w+)\(\s*(.*?)\s*\)\s*$")
 MEMBER = re.compile(r"^\s{8}([A-Za-z0-9_<>\[\]]+)\s+(\w+)\((.*)\);\s*$")
 PREFIXES = ("ll", "os", "iw", "bot")
+HOST_PREFIXES = ("os", "iw", "bot")
+TABLE_OF = {"os": "ossl", "iw": "iw", "bot": "bot"}
 
 
 def read(path):
@@ -255,7 +263,7 @@ def read_delays(path):
                       if access and not public and n != "ScriptSleep" and SLEEP.search(body)})
     delays = {}
     for name, types, names, access, public, body in methods:
-        if public and name.startswith("ll"):
+        if public and name.startswith(PREFIXES):
             delays[(name, tuple(types))] = delay_of(body, names, consts, helpers)
     return delays
 
@@ -265,7 +273,6 @@ def read_delays(path):
 # The members of the engine's host services (IScriptHostServices) that the SLua engine does not provide yet. A script function
 # that reaches one, itself or through a method it calls, cannot run on the real LSLSystemAPI with the SLua engine's host.
 LACKING_HOST_MEMBERS = (
-    "Ossl",
     "ExperienceGrantRestored", "ExperienceCannotRun",
 )
 HOST_MEMBER = re.compile(r"m_ScriptEngine\s*\??\s*\.\s*(%s)\b" % "|".join(LACKING_HOST_MEMBERS))
@@ -314,6 +321,105 @@ def read_shim_kinds(path):
         elif re.search(r"\bDefer\(self", body):
             kinds[m.group(1)] = "Service"
     return kinds
+
+
+def read_shim_table(path):
+    """Table index -> the name of the shim that serves it, from the shim array (`Shim_osTeleportAgent, //672`)."""
+    return {int(m.group(2)): m.group(1) for m in re.finditer(r"\bShim_(\w+),\s*//\s*(\d+)", read(path))}
+
+
+DEFER_ANY = re.compile(r'\bDefer\(self, "((?:ll|os|iw|bot)\w+)", [^\n]*, (null|"[^"]*"|-?\d+|new LSLList\(\)), (?:true|false)\);')
+
+
+def read_shim_calls(path):
+    """Shim name -> ("Async", None, None) or ("Service", the name the shim defers under, its failure value), for os, iw and bot."""
+    text = read(path)
+    calls = {}
+    for part in re.split(r"\n(?=\s*static private void Shim_)", text):
+        m = re.match(r"\s*static private void Shim_((?:os|iw|bot)\w*)\(", part)
+        if not m:
+            continue
+        body = part.split("\n        }\n")[0]
+        if re.search(r"\bRunAsync\(self", body):
+            calls[m.group(1)] = ("Async", None, None)
+        else:
+            d = DEFER_ANY.search(body)
+            if d:
+                calls[m.group(1)] = ("Service", d.group(1), d.group(2))
+            elif re.search(r"\bDefer\(self", body):
+                sys.exit("the shim of %s defers its call in a form the generator does not read" % m.group(1))
+    return calls
+
+
+# ---- Phlox's compiler table ----
+
+VARTYPE = {"Integer": "integer", "Float": "float", "String": "string", "Key": "key",
+           "Vector": "vector", "Rotation": "rotation", "List": "list", "Void": "void"}
+SIGNATURE = re.compile(
+    r'FunctionName\s*=\s*"((?:os|iw|bot)[A-Z]\w*)",\s*ReturnType\s*=\s*VarType\.(\w+),\s*'
+    r'ParamTypes\s*=\s*new VarType\[\]\s*\{([^}]*)\},\s*ParamNames\s*=\s*new string\[\]\s*\{([^}]*)\},\s*TableIndex\s*=\s*(\d+)')
+
+
+def read_compiler_table(path):
+    """[(name, return type, [parameter types], [parameter names], table index)] for every os, iw and bot signature, in table order."""
+    out = []
+    for m in SIGNATURE.finditer(read(path)):
+        types = [VARTYPE[x.strip().replace("VarType.", "")] for x in m.group(3).split(",") if x.strip()]
+        names = [x.strip().strip('"') for x in m.group(4).split(",") if x.strip()]
+        if len(types) != len(names):
+            sys.exit("%s has %d parameter types and %d names" % (m.group(1), len(types), len(names)))
+        out.append((m.group(1), VARTYPE[m.group(2)], types, names, int(m.group(5))))
+    if not out:
+        sys.exit("no os, iw or bot functions found in " + path)
+    out.sort(key=lambda s: s[4])
+    return out
+
+
+def os_functions(defaults_path, shim_path, members, delays, host_needs):
+    """One row per os, iw and bot signature of Phlox's compiler table, matched to the interface method of the same types."""
+    table = read_compiler_table(defaults_path)
+    shim_of = read_shim_table(shim_path)
+    calls = read_shim_calls(shim_path)
+    by_name = {}
+    for ret, name, params, names in members:
+        if name.startswith(HOST_PREFIXES):
+            by_name.setdefault(name, []).append((ret, params))
+    rows = []
+    seen = set()
+    for name, ret, types, names, index in table:
+        want = [LSL_TO_CLR[x] for x in types]
+        member = next((m for m in by_name.get(name, []) if m[1] == want and m[0] == LSL_TO_CLR[ret]), None)
+        sysret = False
+        if member is None:
+            # Phlox's method is void and gives the script's result with SysReturn (its shim runs it as a long-running call).
+            member = next((m for m in by_name.get(name, []) if m[1] == want and m[0] == "void"), None)
+            sysret = member is not None and ret != "void"
+        if member is None:
+            sys.exit("%s (table index %d) has no interface method of the same parameter types and result" % (name, index))
+        seen.add((name, tuple(member[1])))
+        delay_ms, delay_arg, reason = delays.get((name, tuple(member[1])), (0, -1, "the implementation's method was not found by the generator"))
+        shim = shim_of.get(index)
+        call = calls.get(shim)
+        if call and call[0] == "Async":
+            cls, defer, failure = "Async", None, None
+        elif call:
+            cls, defer, failure = "Service", call[1], call[2]
+        elif reason:
+            cls, defer, failure = "Unplaced", None, None
+        elif delay_ms > 0 or delay_arg >= 0:
+            cls, defer, failure = "Delayed", None, None
+        else:
+            cls, defer, failure = "NonBlocking", None, None
+        if sysret and cls != "Async":
+            sys.exit("%s returns %s in the compiler table and void in the interface, but its shim is not a long-running call" % (name, ret))
+        rows.append({"sysret": sysret, "name": name, "ret": ret, "types": types, "names": names, "index": index, "cls": cls, "failure": failure,
+                     "reason": reason if cls == "Unplaced" else None, "needs": sorted(host_needs.get(name, ())),
+                     "prefix": next(p for p in HOST_PREFIXES if name.startswith(p))})
+    for name, sigs in by_name.items():
+        for ret, params in sigs:
+            if (name, tuple(params)) not in seen:
+                sys.exit("%s(%s) is in the interface but not in Phlox's compiler table" % (name, ", ".join(params)))
+    return rows
 
 
 # What the script receives when a deferred call passes its deadline: the failure argument of the shim's Defer call.
@@ -376,7 +482,7 @@ def lsl_sig(name, builtin):
     return "%s %s(%s)" % (ret, name, ", ".join(params))
 
 
-def main(builtins_path, interface_path, impl_path, shim_path, out_dir):
+def main(builtins_path, interface_path, impl_path, shim_path, out_dir, defaults_path=None):
     builtins = read_builtins(builtins_path)
     members = read_interface(interface_path)
     delays = read_delays(impl_path)
@@ -431,9 +537,6 @@ def main(builtins_path, interface_path, impl_path, shim_path, out_dir):
         seam_only.append("%s %s(%s): %s" % (ret, name, ", ".join(params), reason))
     seam_only.sort()
 
-    compiler = sorted("%s %s(%s)" % (ret, name, ", ".join(params))
-                      for ret, name, params, names in members if not name.startswith("ll"))
-
     rows = []
     unplaced = []
     for name, builtin, member in bound:
@@ -458,14 +561,22 @@ def main(builtins_path, interface_path, impl_path, shim_path, out_dir):
     for name, builtin, cls, _, _ in rows:
         if cls == "Service" and name not in failures:
             sys.exit("%s is a service call but the shim has no failure value for it" % name)
+    os_rows = os_functions(defaults_path, shim_path, members, delays, host_needs) if defaults_path else None
+    if os_rows is not None:
+        write_os_bindings(out_dir, os_rows)
     write_bindings(out_dir, rows, failures)
     write_served(out_dir, [r[0] for r in rows], host_needs)
-    write_coverage(out_dir, [r[0] for r in rows], missing, seam_only, mismatch, compiler, unplaced)
+    write_coverage(out_dir, [r[0] for r in rows], missing, seam_only, mismatch, unplaced)
     write_indexes(out_dir, read_builtin_parameters(builtins_path), read_marks(os.path.join(os.path.dirname(builtins_path), "lsl-definition-marks.txt")))
     counts = {c: sum(1 for r in rows if r[2] == c) for c in FUNCTION_CLASSES}
-    print("bound %d (%s); missing from the seam %d; seam only %d; signature mismatch %d; os/iw/bot %d; unplaced %d"
+    print("bound %d (%s); missing from the seam %d; seam only %d; signature mismatch %d; unplaced %d"
           % (len(rows), ", ".join("%s %d" % (c, counts[c]) for c in FUNCTION_CLASSES), len(missing), len(seam_only),
-             len(mismatch), len(compiler), len(unplaced)))
+             len(mismatch), len(unplaced)))
+    if os_rows is not None:
+        oc = {c: sum(1 for r in os_rows if r["cls"] == c) for c in FUNCTION_CLASSES}
+        print("os/iw/bot: %d signatures, %d names (%s); not served %d"
+              % (len(os_rows), len({r["name"] for r in os_rows}), ", ".join("%s %d" % (c, oc[c]) for c in FUNCTION_CLASSES),
+                 sum(1 for r in os_rows if r["needs"])))
 
 
 HEADER = """/* Copyright (c) 2026 Legion Builds
@@ -533,6 +644,78 @@ namespace SLua.ScriptEngine
     write(out_dir, "LlBindings.g.cs", "".join(out))
 
 
+def sig_text(row):
+    return "%s %s(%s)" % (row["ret"], row["name"], ", ".join(row["types"]))
+
+
+def host_line(row):
+    """The signature as the library's LSL compiler takes it, with Phlox's parameter names."""
+    if not row["types"]:
+        return "%s %s()" % (row["ret"], row["name"])
+    return "%s %s( %s )" % (row["ret"], row["name"], ", ".join("%s %s" % (t, n) for t, n in zip(row["types"], row["names"])))
+
+
+def write_os_bindings(out_dir, rows):
+    """OsBindings.g.cs: the call methods, the table of functions and the host list, for the os, iw and bot signatures."""
+    out = [HEADER, """
+// The os, iw and bot functions of Phlox's compiler table, one call method per signature. The long-running and service-lane
+// call kinds follow the call shims of Phlox (RunAsync and Defer) and a function is classed as delayed when LSLSystemAPI asks for
+// a ScriptSleep, as for the ll functions; the delay of a call is whatever LSLSystemAPI asks for when it runs.
+
+using System;
+using SLua.ScriptEngine.Bindings;
+
+namespace SLua.ScriptEngine
+{
+    internal static partial class OsBindings
+    {
+"""]
+    method = lambda r: "%s_%d" % (r["name"][len(r["prefix"]):], r["index"])
+    for r in rows:
+        args = ", ".join('LslMarshal.%s(a, %d, "%s")' % (MARSHAL_IN[t], i, r["name"]) for i, t in enumerate(r["types"]))
+        call = "c.Api.%s(%s)" % (r["name"], args)
+        out.append("        private static Value[] %s(ScriptContext c, ReadOnlySpan<Value> a)\n        {\n" % method(r))
+        out.append('            LslMarshal.Arity(a, %d, "%s");\n' % (len(r["types"]), r["name"]))
+        if r["ret"] == "void" or r["sysret"]:
+            out.append("            %s;\n            return null;\n" % call)
+        else:
+            out.append("            return new[] { LslMarshal.%s(%s) };\n" % (MARSHAL_OUT[r["ret"]], call))
+        out.append("        }\n\n")
+        if r["cls"] == "Service":
+            out.append("        private static object[] %sArgs(ReadOnlySpan<Value> a)\n        {\n" % method(r))
+            out.append('            LslMarshal.Arity(a, %d, "%s");\n' % (len(r["types"]), r["name"]))
+            out.append("            return new object[] { %s };\n        }\n\n" % args)
+    names = sorted({r["name"] for r in rows})
+    out.append("        /// <summary>One function per name, in the table of its prefix; the signatures of a name in the order of Phlox's compiler table.</summary>\n")
+    out.append("        internal static readonly OsFunction[] All = new OsFunction[]\n        {\n")
+    for name in names:
+        sigs = [r for r in rows if r["name"] == name]
+        prefix = sigs[0]["prefix"]
+        short = name[len(prefix):]
+        out.append('            new OsFunction("%s", "%s", "%s", new BoundFunction[]\n            {\n' % (TABLE_OF[prefix], short, name))
+        for r in sigs:
+            types = "new string[0]" if not r["types"] else "new[] { %s }" % ", ".join('"%s"' % t for t in r["types"])
+            extra = ""
+            if r["cls"] == "Service":
+                extra = ", %s, %sArgs" % (failure_expr(r["failure"]), method(r))
+            out.append('                new BoundFunction("%s", "%s", FunctionClass.%s, "%s", %s, %s%s),\n'
+                       % (short, name, r["cls"], r["ret"], types, method(r), extra))
+        out.append("            }),\n")
+    out.append("        };\n\n")
+    out.append("        /// <summary>The same signatures as lines for the library's LSL compiler (`type name( type parameter, ... )`).</summary>\n")
+    out.append("        internal static readonly string[] HostLines = new string[]\n        {\n")
+    for r in rows:
+        out.append('            "%s",\n' % esc(host_line(r)))
+    out.append("        };\n\n")
+    unplaced = ["%s: %s" % (sig_text(r), r["reason"]) for r in rows if r["cls"] == "Unplaced"]
+    needs = ["%s: %s" % (sig_text(r), ", ".join(r["needs"])) for r in rows if r["needs"]]
+    out.append(string_array("Unplaced", "Signatures whose delay the generator could not read, with the reason; they were given the class Unplaced.", unplaced))
+    out.append("\n")
+    out.append(string_array("NotServed", "Signatures that reach a host member the engine does not provide, with the members; they answer a script with \"not available\".", needs))
+    out.append("    }\n}\n")
+    write(out_dir, "OsBindings.g.cs", "".join(out))
+
+
 def write_served(out_dir, bound, host_needs):
     served = [n for n in bound if not host_needs.get(n)]
     not_served = ["%s: %s" % (n, ", ".join(sorted(host_needs[n]))) for n in bound if host_needs.get(n)]
@@ -569,7 +752,7 @@ def string_array(name, doc, items):
     return "".join(lines)
 
 
-def write_coverage(out_dir, bound, missing, seam_only, mismatch, compiler, unplaced):
+def write_coverage(out_dir, bound, missing, seam_only, mismatch, unplaced):
     adapted = ["%s: %s" % (n, ADAPTERS[n][1]) for n in sorted(ADAPTERS)]
     gaps = ["%s: %s" % (n, PHLOX_GAPS[n]) for n in sorted(PHLOX_GAPS)]
     out = [HEADER, """
@@ -589,8 +772,6 @@ namespace SLua.ScriptEngine
     out.append(string_array("SeamOnly", "ll members of the interface that are not bound, with the reason.", seam_only))
     out.append("\n")
     out.append(string_array("SignatureMismatch", "In both, with different types or parameter counts: the two signatures.", ["%s: %s" % m for m in mismatch]))
-    out.append("\n")
-    out.append(string_array("NeedsCompilerChange", "The os, iw and bot members of the interface. Not bound: the compiler does not know them yet.", compiler))
     out.append("\n")
     out.append(string_array("Unplaced", "Bound functions whose delay the generator could not read, with the class they were given.", unplaced))
     out.append("\n")
@@ -678,6 +859,6 @@ def write(out_dir, name, text):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 6:
+    if len(sys.argv) not in (6, 7):
         sys.exit(__doc__)
     main(*sys.argv[1:])
