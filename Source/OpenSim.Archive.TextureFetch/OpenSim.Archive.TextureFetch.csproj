@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>oar-texfetch</AssemblyName>
+    <AssemblyTitle>oar-texfetch</AssemblyTitle>
+    <Nullable>disable</Nullable>
+    <!-- no ICU library is needed on Linux; the login library asks for a culture by name when it starts, which invariant mode allows only with this -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <PredefinedCulturesOnly>false</PredefinedCulturesOnly>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- the viewer-side client library: it logs in, opens the circuit and asks for a texture the way a viewer does -->
+    <PackageReference Include="LibreMetaverse" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- the release number the oar tools print: one constant for every program -->
+    <Compile Include="../OpenSim.ArchiveInspector/ToolRelease.cs" Link="ToolRelease.cs" />
+  </ItemGroup>
+</Project>
