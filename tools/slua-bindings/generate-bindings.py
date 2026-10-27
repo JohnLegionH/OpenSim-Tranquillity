@@ -26,6 +26,7 @@ copied into the table, because the engine takes it from LSLSystemAPI when the ca
 delay that depends on a setting, a computed delay, several different delays on one function) is listed as unplaced in
 LlCoverage.g.cs. The output is deterministic: sorted, no dates, no paths.
 """
+import os
 import re
 import sys
 
@@ -460,7 +461,7 @@ def main(builtins_path, interface_path, impl_path, shim_path, out_dir):
     write_bindings(out_dir, rows, failures)
     write_served(out_dir, [r[0] for r in rows], host_needs)
     write_coverage(out_dir, [r[0] for r in rows], missing, seam_only, mismatch, compiler, unplaced)
-    write_indexes(out_dir, read_builtin_parameters(builtins_path))
+    write_indexes(out_dir, read_builtin_parameters(builtins_path), read_marks(os.path.join(os.path.dirname(builtins_path), "lsl-definition-marks.txt")))
     counts = {c: sum(1 for r in rows if r[2] == c) for c in FUNCTION_CLASSES}
     print("bound %d (%s); missing from the seam %d; seam only %d; signature mismatch %d; os/iw/bot %d; unplaced %d"
           % (len(rows), ", ".join("%s %d" % (c, counts[c]) for c in FUNCTION_CLASSES), len(missing), len(seam_only),
@@ -600,33 +601,40 @@ namespace SLua.ScriptEngine
     write(out_dir, "LlCoverage.g.cs", "".join(out))
 
 
-# Which arguments and returns are positions, read from the runtime's own definitions: an integer parameter named "index" or
-# ending in "_index" is a position (the functions the runtime registers with a compatibility mode take them: VM/src/lll.cpp),
-# and an integer result of a function whose name has Find or Index in it is the position of a match. Integer parameters
-# whose name suggests a position without saying so are listed, not shifted.
+# Which arguments and results are positions or truth values, read from Second Life's definitions (secondlife/lsl-definitions,
+# index-semantics and bool-semantics), as written into lsl-definition-marks.txt by extract-marks.py. A position is zero-based in
+# LSL and counts from 1 for an SLua script; a truth value is an integer in LSL and a boolean for an SLua script. Integer
+# parameters whose name suggests a position that the definitions do not mark are listed, not shifted.
 POSITION_LIKE = re.compile(r"^(number|item|line|face|num)$")
-FINDS_A_POSITION = re.compile(r"Find|Index")
 
 
-def is_index_parameter(ptype, pname):
-    return ptype == "integer" and (pname == "index" or pname.endswith("_index"))
+def read_marks(path):
+    """name -> list of marks ("return:bool", "arg1:index" ...) from the marks file."""
+    marks = {}
+    for line in read(path).split("\n"):
+        if line and not line.startswith("#"):
+            fields = line.split("\t")
+            marks[fields[0]] = fields[1:]
+    if not marks:
+        sys.exit("no marks found in " + path)
+    return marks
 
 
-def write_indexes(out_dir, definitions):
+def write_indexes(out_dir, definitions, marks):
     arguments = {}
     returns = []
     not_derived = []
     for name in sorted(definitions):
         ret, params = definitions[name]
-        named = [p for p in params if len(p) == 2]
-        at = [i for i, p in enumerate(params) if len(p) == 2 and is_index_parameter(p[0], p[1])]
+        given = marks.get(name, [])
+        at = sorted(int(m[3:m.index(":")]) for m in given if m.startswith("arg") and m.endswith(":index"))
         if at:
             arguments[name] = at
-        if ret == "integer" and FINDS_A_POSITION.search(name):
+        if ret == "integer" and "return:index" in given:
             returns.append(name)
-        for t, n in named:
-            if t == "integer" and POSITION_LIKE.match(n):
-                not_derived.append("%s(%s)" % (name, n))
+        for i, p in enumerate(params):
+            if len(p) == 2 and p[0] == "integer" and POSITION_LIKE.match(p[1]) and i not in at:
+                not_derived.append("%s(%s)" % (name, p[1]))
     out = [HEADER, """
 using System.Collections.Generic;
 
@@ -644,9 +652,12 @@ namespace SLua.ScriptEngine
     out.append("        };\n\n")
     out.append(string_array("Returns", "The ll functions whose integer result is a position (-1 for no match).", returns))
     out.append("\n")
-    out.append(string_array("NotDerived", "Integer parameters whose name suggests a position without saying so; they are not shifted.", not_derived))
+    out.append(string_array("NotDerived", "Integer parameters whose name suggests a position that the definitions do not mark; they are not shifted.", not_derived))
     out.append("    }\n}\n")
     write(out_dir, "LlIndexes.g.cs", "".join(out))
+
+    booleans = sorted(n for n in definitions if definitions[n][0] == "integer" and "return:bool" in marks.get(n, []))
+    lists = sorted(n for n in definitions if definitions[n][0] == "list" and "return:bool" in marks.get(n, []))
     out = [HEADER, """
 namespace SLua.ScriptEngine
 {
@@ -654,9 +665,9 @@ namespace SLua.ScriptEngine
     internal static class LlBooleans
     {
 """]
-    out.append(string_array("Returns", "The ll functions whose integer result is a truth value: true or false for an SLua script.", []))
+    out.append(string_array("Returns", "The ll functions whose integer result is a truth value: true or false for an SLua script.", booleans))
     out.append("\n")
-    out.append(string_array("ListsNotConverted", "The ll functions whose list result holds truth values at places that depend on the request; not converted.", []))
+    out.append(string_array("ListsNotConverted", "The ll functions whose list result holds truth values at places that depend on the request; not converted.", lists))
     out.append("    }\n}\n")
     write(out_dir, "LlBooleans.g.cs", "".join(out))
 

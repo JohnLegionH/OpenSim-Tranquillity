@@ -7,3 +7,7 @@ runtime branch head checked: 100f9dff23b3beb0b0f544692b2648c87eb6d5bb
 To refresh after the pin moves: copy the runtime's builtins.txt over this file, run tools/slua-events/generate-event-signatures.py on it
 to rewrite Source/SLua.ScriptEngine/EventSignatures.cs, and update the commit above. With SLUA_BUILTINS_PATH set,
 BuiltinsCopyTests checks the copy against the runtime's file.
+
+lsl-definition-marks.txt in this folder is written by tools/slua-bindings/extract-marks.py from secondlife/lsl-definitions
+lsl_definitions.yaml at commit f1906c95d53d8d950fde97064959ab6c6029f1c2 (MIT, Copyright (c) 2025 Linden Research, Inc.): the
+functions whose arguments or results the definitions mark as positions (index-semantics) or truth values (bool-semantics).

@@ -69,26 +69,49 @@ namespace SLua.ScriptEngine
                 if (refused != null && refused.Contains(f.ApiName))
                     continue;
                 BoundFunction function = f;
+                LlIndexes.Arguments.TryGetValue(function.ApiName, out int[] indexArguments);
+                bool indexResult = Array.IndexOf(LlIndexes.Returns, function.ApiName) >= 0;
+                bool booleanResult = Array.IndexOf(LlBooleans.Returns, function.ApiName) >= 0;
+                // The "ll" table gives an SLua script its positions and truth values (the definitions' index and bool marks);
+                // "llcompat", and "ll" for an LSL script, keep LSL's. The API underneath always sees LSL's.
+                bool Shifts(ScriptContext context) => !compat && context.Script.Language == ScriptLanguage.Slua;
+
                 if (serviceLane && function.Class is FunctionClass.Async or FunctionClass.Service)
                 {
                     vm.RegisterPausing(table, function.Name,
-                        (tag, args) => StartLaneCall(function, contextOf(SchedulerScript.Current), args),
-                        (tag, args) => TakeLaneAnswer());
+                        (tag, args) =>
+                        {
+                            ScriptContext context = contextOf(SchedulerScript.Current);
+                            ReadOnlySpan<Value> given = Shifts(context) && indexArguments != null ? ShiftArguments(function.Name, indexArguments, args) : args;
+                            return StartLaneCall(function, context, given);
+                        },
+                        (tag, args) =>
+                        {
+                            Value[] answer = TakeLaneAnswer();
+                            return booleanResult && Shifts(contextOf(SchedulerScript.Current)) ? ToBoolean(answer) : answer;
+                        });
                     continue;
                 }
 
-                LlIndexes.Arguments.TryGetValue(function.ApiName, out int[] indexArguments);
-                bool indexResult = Array.IndexOf(LlIndexes.Returns, function.ApiName) >= 0;
                 vm.Register(table, function.Name, (tag, args) =>
                 {
                     ScriptContext context = contextOf(SchedulerScript.Current);
-                    bool shift = !compat && context.Script.Language == ScriptLanguage.Slua;
+                    bool shift = Shifts(context);
                     ReadOnlySpan<Value> given = shift && indexArguments != null ? ShiftArguments(function.Name, indexArguments, args) : args;
                     Value[] result = RunInContext(function, context, given, out double delay);
                     if (delay > 0) context.Script.AddSleep(delay);
-                    return shift && indexResult ? ShiftResult(result) : result;
+                    if (!shift) return result;
+                    return indexResult ? ShiftResult(result) : booleanResult ? ToBoolean(result) : result;
                 });
             }
+        }
+
+        /// <summary>A truth value for an SLua script (VM/src/llsl.cpp luaSL_pushboollike): an integer result becomes true or false.</summary>
+        private static Value[] ToBoolean(Value[] result)
+        {
+            if (result == null || result.Length == 0 || result[0].Type != Bindings.ValueType.Int)
+                return result;
+            return new[] { Value.Bool(result[0].I != 0) };
         }
 
         /// <summary>

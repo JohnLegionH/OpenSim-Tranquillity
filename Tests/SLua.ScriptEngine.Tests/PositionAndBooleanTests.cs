@@ -156,6 +156,6 @@ public class PositionAndBooleanTests
 
         Assert.Equal(new[] { "r:text" }, marks);
         Assert.Equal(new[] { "z:false" }, zero);
-        Assert.Equal(new[] { "llGetNotecardLineSync(card|0)" }, rig.Calls());
+        Assert.Equal(new[] { "llGetNotecardLineSync(card|0)" }, rig.Calls().Where(c => !c.StartsWith("NeedsService")).ToArray());
     }
 }

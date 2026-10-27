@@ -18,11 +18,35 @@ namespace SLua.ScriptEngine
         /// <summary>The ll functions whose integer result is a truth value: true or false for an SLua script.</summary>
         internal static readonly string[] Returns = new string[]
         {
+            "llAgentInExperience",
+            "llDerezObject",
+            "llDetectedGroup",
+            "llEdgeOfWorld",
+            "llGetScriptState",
+            "llGetStatus",
+            "llIsFriend",
+            "llIsLinkGLTFMaterial",
+            "llManageEstateAccess",
+            "llOverMyLand",
+            "llSameGroup",
+            "llScaleByFactor",
+            "llScriptDanger",
+            "llSetMemoryLimit",
+            "llSetRegionPos",
+            "llVerifyRSA",
         };
 
         /// <summary>The ll functions whose list result holds truth values at places that depend on the request; not converted.</summary>
         internal static readonly string[] ListsNotConverted = new string[]
         {
+            "llGetEnvironment",
+            "llGetLinkMedia",
+            "llGetLinkPrimitiveParams",
+            "llGetObjectDetails",
+            "llGetParcelDetails",
+            "llGetPrimMediaParams",
+            "llGetPrimitiveParams",
+            "llParcelMediaQuery",
         };
     }
 }

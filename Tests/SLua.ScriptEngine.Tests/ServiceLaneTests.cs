@@ -294,7 +294,7 @@ public class ServiceLaneTests
         rig.Fake.Returns("NeedsService", true);
         // llGetNotecardLineSync answers three newlines when it is late (Phlox: Defer in Shim_llGetNotecardLineSync), not an empty value
         rig.Fake.Runs("llGetNotecardLineSync", a => { gate.Wait(TimeSpan.FromSeconds(10)); Interlocked.Exchange(ref finished, 1); return "the late line"; });
-        SchedulerScript s = rig.H.AddAndStart("ossl.Mark('r', ll.GetNotecardLineSync('card', 0))\nossl.Count()");
+        SchedulerScript s = rig.H.AddAndStart("ossl.Mark('r', ll.GetNotecardLineSync('card', 1))\nossl.Count()");
 
         Assert.True(rig.PumpUntil(() => rig.H.CountOf(s) == 1), Diag(rig));
         Assert.Equal(new[] { "r:\n\n\n" }, Marks(rig, s));
