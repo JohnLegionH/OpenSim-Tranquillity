@@ -29,8 +29,10 @@ internal static class RigKit
     {
         /// <summary>The name of each of the three joints.</summary>
         public string[] Names = DefaultNames;
-        /// <summary>Names of joints added after the three, which no vertex uses.</summary>
+        /// <summary>Names of joints added after the three, which no vertex uses unless <see cref="Fixed"/> gives them weight.</summary>
         public string[] ExtraJoints = Array.Empty<string>();
+        /// <summary>The rest position of each extra joint in the file's world (glTF axes); null puts each 5 cm above the chest.</summary>
+        public Vector3[] ExtraJointWorld;
         /// <summary>For each level (0 = full mesh, 3 = lowest), the order of the skin's joints as default-joint numbers; null keeps the default order.</summary>
         public int[][] Orders;
         /// <summary>Rotation in degrees about the vertical of each of the three joints' rest frame (the inverse bind matrix then carries the turn).</summary>
@@ -51,6 +53,9 @@ internal static class RigKit
         public bool WideAttributes;
     }
 
+    /// <summary>The rest position of an extra joint in the file's world.</summary>
+    public static Vector3 ExtraWorld(Options o, int extra) => o.ExtraJointWorld != null ? o.ExtraJointWorld[extra] : new Vector3(0f, JointY[2] + 0.05f, 0f);
+
     public static string[] FileNames(string name = "rig") => new[] { name + ".glb", name + "_lod2.glb", name + "_lod1.glb", name + "_lod0.glb" };
 
     /// <summary>The influences a vertex at height y carries under the height rule, as (default joint number, weight).</summary>
@@ -63,9 +68,11 @@ internal static class RigKit
     }
 
     /// <summary>The inverse bind matrix of a joint as the file stores it (column-major, glTF axes): the inverse of a rest frame at height y turned by the given angle.</summary>
-    public static float[] InverseBind(float y, double degrees)
+    public static float[] InverseBind(float y, double degrees) => InverseBind(new Vector3(0f, y, 0f), degrees);
+
+    public static float[] InverseBind(Vector3 position, double degrees)
     {
-        Matrix4x4 world = Matrix4x4.CreateRotationY((float)(degrees * Math.PI / 180.0)) * Matrix4x4.CreateTranslation(0f, y, 0f);
+        Matrix4x4 world = Matrix4x4.CreateRotationY((float)(degrees * Math.PI / 180.0)) * Matrix4x4.CreateTranslation(position);
         Matrix4x4.Invert(world, out Matrix4x4 inverse);
         // System.Numerics keeps row vectors with the translation in the last row, which flattens to glTF's column-major layout
         return new[]
@@ -192,7 +199,8 @@ internal static class RigKit
         float[] localY = { JointY[0], JointY[1] - JointY[0], JointY[2] - JointY[1] };
         for (int j = 0; j < jointCount; j++)
         {
-            JsonObject n = new JsonObject { ["name"] = jointNames[j], ["translation"] = new JsonArray(0f, j < 3 ? localY[j] : 0.05f, 0f) };
+            Vector3 local = j < 3 ? new Vector3(0f, localY[j], 0f) : ExtraWorld(o, j - 3) - new Vector3(0f, JointY[2], 0f);
+            JsonObject n = new JsonObject { ["name"] = jointNames[j], ["translation"] = new JsonArray(local.X, local.Y, local.Z) };
             if (j < 2)
                 n["children"] = new JsonArray(j + 2);
             else if (j == 2)
@@ -210,9 +218,9 @@ internal static class RigKit
         for (int k = 0; k < jointCount; k++)
         {
             int j = order[k];
-            float y = j < 3 ? JointY[j] : JointY[2] + 0.05f;
+            Vector3 at = j < 3 ? new Vector3(0f, JointY[j], 0f) : ExtraWorld(o, j - 3);
             double degrees = j < 3 ? o.RotateDegrees[j] : 0.0;
-            Array.Copy(InverseBind(y, degrees), 0, ibm, k * 16, 16);
+            Array.Copy(InverseBind(at, degrees), 0, ibm, k * 16, 16);
         }
         JsonObject skin = new JsonObject { ["joints"] = new JsonArray(order.Select(j => (JsonNode)(1 + j)).ToArray()), ["skeleton"] = 1 };
         if (!o.OmitInverseBind)

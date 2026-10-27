@@ -297,11 +297,29 @@ public class RiggedImportTests
     }
 
     [Fact]
-    public void AnUnusedBoneOfAnotherNameStopsTheFileAsWell()
+    public void AnUnusedBoneThatIsNoJointIsDroppedWithAWarningAndTheFileIsWritten()
     {
-        string folder = RigKit.Write(new RigKit.Options { ExtraJoints = new[] { "root_ctrl" } });
+        Run run = Import(new RigKit.Options { ExtraJoints = new[] { "root_ctrl" } });
+        Assert.Equal(RigKit.DefaultNames, run.Mesh.Skin.JointNames.ToArray());
+        Assert.Contains(run.Result.Notes, n => n.Contains("root_ctrl") && n.Contains("not a joint", StringComparison.Ordinal) && n.Contains("no weight", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ABoneThatIsNoJointAndCarriesWeightInOnlyTheLowestLevelStopsTheFileAndNamesTheLevel()
+    {
+        // joint 0 of the lowest level is renamed to something that is no joint; the vertices of that level weight it
+        string folder = RigKit.Write(new RigKit.Options { LowestLevelOnlyJoint = "Spine_ctrl" });
         ImportException e = Assert.Throws<ImportException>(() => ObjectImporter.Import(folder, ImportKit.OutputPath(), Options()));
-        Assert.Contains("root_ctrl", e.Message);
+        Assert.Contains("rig_lod0.glb", e.Message);
+        Assert.Contains("Spine_ctrl", e.Message);
+    }
+
+    [Fact]
+    public void AnUnweightedVertexStopsTheFileAndTheMessageGivesTheNumberOfSuchVertices()
+    {
+        string folder = RigKit.Write(new RigKit.Options { ZeroWeightVertex = true });
+        ImportException e = Assert.Throws<ImportException>(() => ObjectImporter.Import(folder, ImportKit.OutputPath(), Options()));
+        Assert.Contains("1 vertices carry no weight", e.Message);
     }
 
     [Fact]
