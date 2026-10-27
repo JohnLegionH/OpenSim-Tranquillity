@@ -97,19 +97,23 @@ namespace OpenSim.Region.Framework.Interfaces
         /// region, in another one, or away. The look is the named outfit, else the owner's current look, else (owner
         /// away) the owner's stored look with its worn items resolved to their assets. <paramref name="botDoor"/> is
         /// true for botCreateBot, which also registers the creating script for bot_update, and false for osNpcCreate.
+        /// <paramref name="hostObjectID"/> is the object the creating script is in: a botCreateBot bot that is not
+        /// persistent is removed with it.
         /// </summary>
         UUID CreateBotInRegion(Scene scene, string firstName, string lastName, Vector3 startPos,
-            string outfitName, UUID scriptItemID, UUID ownerID, bool owned, bool senseAsAgent, bool botDoor, out string reason);
+            string outfitName, UUID scriptItemID, UUID ownerID, bool owned, bool senseAsAgent, bool botDoor,
+            UUID hostObjectID, out string reason);
 
         /// <summary>
         /// Makes a bot in <paramref name="scene"/> that wears <paramref name="appearance"/> (an outfit read from a
         /// notecard). The owner need not be in the region: nothing is read from the owner's presence.
         /// <paramref name="botDoor"/> is true for botCreateBot, which also registers the creating script for
-        /// bot_update, and false for osNpcCreate.
+        /// bot_update, and false for osNpcCreate. <paramref name="hostObjectID"/> is the object the creating script is
+        /// in, as for <see cref="CreateBotInRegion"/>.
         /// </summary>
         UUID CreateBotWithAppearance(Scene scene, string firstName, string lastName, Vector3 startPos,
             AvatarAppearance appearance, UUID scriptItemID, UUID ownerID, bool owned, bool senseAsAgent, bool botDoor,
-            out string reason);
+            out string reason, UUID hostObjectID = default);
 
         /// <summary>
         /// Dresses an existing bot in <paramref name="appearance"/> (an outfit read from a notecard). The caller must

@@ -63,6 +63,8 @@ namespace OpenSim.Region.OptionalModules.World.NPC
         public UUID BotID;
         public UUID OwnerID;
         public UUID ScriptItemID;
+        public UUID CreatorObject;  // the object the creating script was in
+        public bool BotDoor;        // made by botCreateBot (removed with its object unless persistent); osNpcCreate NPCs are not
         public Scene BotScene;  // scene this bot was created in
         public HashSet<string> Tags = new HashSet<string>();
         public float SpeedMultiplier = 1.0f;
@@ -157,6 +159,8 @@ namespace OpenSim.Region.OptionalModules.World.NPC
         // Each region keeps its own persistent bots in its own database, so each has its own persistence manager.
         private readonly Dictionary<Scene, BotPersistenceManager> m_persistence = new Dictionary<Scene, BotPersistenceManager>();
         private bool m_consoleCommandsRegistered;
+        private readonly Dictionary<Scene, EventManager.ObjectBeingRemovedFromScene> m_removedHandlers
+            = new Dictionary<Scene, EventManager.ObjectBeingRemovedFromScene>();
 
         // Navigation arrival poll — supplies the "arrived" trigger INPCModule lacks, so
         // waypoints advance and bot_update (BOT_MOVE_COMPLETE) fires when a path finishes.
@@ -225,6 +229,30 @@ namespace OpenSim.Region.OptionalModules.World.NPC
             if (!m_enabled) return;
             lock (m_scenes) m_scenes.Add(scene);
             scene.RegisterModuleInterface<IBotManager>(this);
+
+            // A botCreateBot bot goes with the object that made it (see OnObjectBeingRemoved).
+            EventManager.ObjectBeingRemovedFromScene removed = so => OnObjectBeingRemoved(scene, so);
+            lock (m_removedHandlers) m_removedHandlers[scene] = removed;
+            scene.EventManager.OnObjectBeingRemovedFromScene += removed;
+        }
+
+        // Removing an object, or taking it into inventory, removes the botCreateBot bots it made that are not
+        // persistent. Halcyon tied no bot to its object, so this is the rule where Halcyon is silent. A script reset
+        // does not come here, a persistent bot stays (the persistence cleanup retires it when its object is gone), and
+        // an osNpcCreate NPC stays, as an OpenSim NPC outlives its object.
+        private void OnObjectBeingRemoved(Scene scene, SceneObjectGroup group)
+        {
+            List<BotData> made;
+            lock (m_bots)
+                made = m_bots.Values.Where(b => b.BotDoor && b.BotScene == scene && b.CreatorObject == group.UUID).ToList();
+            if (made.Count == 0) return;
+
+            BotPersistenceManager persistence = PersistenceFor(scene);
+            foreach (BotData bot in made)
+            {
+                if (persistence != null && persistence.IsPersistent(bot.BotID)) continue;
+                RemoveBotData(bot);
+            }
         }
 
         public void RegionLoaded(Scene scene)
@@ -261,6 +289,11 @@ namespace OpenSim.Region.OptionalModules.World.NPC
             // Save this region's persistent bot state before cleanup
             PersistenceFor(scene)?.OnRegionShutdown();
             lock (m_persistence) m_persistence.Remove(scene);
+            lock (m_removedHandlers)
+            {
+                if (m_removedHandlers.Remove(scene, out EventManager.ObjectBeingRemovedFromScene removed))
+                    scene.EventManager.OnObjectBeingRemovedFromScene -= removed;
+            }
             // Clean up bots on this scene
             lock (m_bots)
             {
@@ -480,7 +513,8 @@ namespace OpenSim.Region.OptionalModules.World.NPC
         }
 
         public UUID CreateBotInRegion(Scene scene, string firstName, string lastName, Vector3 startPos,
-            string outfitName, UUID scriptItemID, UUID ownerID, bool owned, bool senseAsAgent, bool botDoor, out string reason)
+            string outfitName, UUID scriptItemID, UUID ownerID, bool owned, bool senseAsAgent, bool botDoor,
+            UUID hostObjectID, out string reason)
         {
             reason = null;
             if (m_npcModule == null) { reason = "NPC module not available"; return UUID.Zero; }
@@ -490,6 +524,7 @@ namespace OpenSim.Region.OptionalModules.World.NPC
             // whether the owner is in that region, in another one, or away.
             UUID id = CreateBotIn(scene, UUID.Zero, firstName, lastName, startPos, outfitName, scriptItemID, ownerID,
                 owned, senseAsAgent, out reason);
+            MarkCreator(id, hostObjectID, botDoor);
             // The bot* door registers the creating script for bot_update, as Halcyon's BotManager.CreateBot did.
             if (botDoor && id != UUID.Zero && scriptItemID != UUID.Zero)
                 BotRegisterForPathUpdateEvents(id, scriptItemID, ownerID);
@@ -498,7 +533,7 @@ namespace OpenSim.Region.OptionalModules.World.NPC
 
         public UUID CreateBotWithAppearance(Scene scene, string firstName, string lastName, Vector3 startPos,
             AvatarAppearance appearance, UUID scriptItemID, UUID ownerID, bool owned, bool senseAsAgent, bool botDoor,
-            out string reason)
+            out string reason, UUID hostObjectID = default)
         {
             reason = null;
             if (m_npcModule == null) { reason = "NPC module not available"; return UUID.Zero; }
@@ -508,9 +543,20 @@ namespace OpenSim.Region.OptionalModules.World.NPC
             // creating script is in, with the notecard's wearables, whether or not the owner is here.
             UUID id = SpawnBot(scene, UUID.Zero, firstName, lastName, startPos, appearance, scriptItemID, ownerID,
                 owned, senseAsAgent, out reason);
+            MarkCreator(id, hostObjectID, botDoor);
             if (botDoor && id != UUID.Zero && scriptItemID != UUID.Zero)
                 BotRegisterForPathUpdateEvents(id, scriptItemID, ownerID);
             return id;
+        }
+
+        // Records which object a botCreateBot bot came from, so the bot goes when the object does.
+        private void MarkCreator(UUID botID, UUID hostObjectID, bool botDoor)
+        {
+            if (botID == UUID.Zero) return;
+            BotData data = GetBot(botID);
+            if (data == null) return;
+            data.CreatorObject = hostObjectID;
+            data.BotDoor = botDoor;
         }
 
         public void ChangeBotAppearance(UUID botID, AvatarAppearance appearance, UUID ownerID, out string reason)
@@ -686,7 +732,12 @@ namespace OpenSim.Region.OptionalModules.World.NPC
         {
             BotData data = GetBotWithPermission(botID, ownerID);
             if (data == null) return;
+            RemoveBotData(data);
+        }
 
+        private void RemoveBotData(BotData data)
+        {
+            UUID botID = data.BotID;
             StopAllMovement(data);
             UnsubscribeBotCollision(data);
             Scene scene = GetBotScene(data);

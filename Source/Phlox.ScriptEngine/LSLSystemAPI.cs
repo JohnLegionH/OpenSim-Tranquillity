@@ -13883,9 +13883,9 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             UUID id;
             string reason;
             if (TryOutfitNotecard(notecard, out AvatarAppearance look))
-                id = mgr.CreateBotWithAppearance(World, firstname, lastname, position, look, m_itemID, m_host.OwnerID, owned, senseAsAgent, false, out reason);
+                id = mgr.CreateBotWithAppearance(World, firstname, lastname, position, look, m_itemID, m_host.OwnerID, owned, senseAsAgent, false, out reason, m_host.ParentGroup.UUID);
             else
-                id = mgr.CreateBotInRegion(World, firstname, lastname, position, notecard ?? string.Empty, m_itemID, m_host.OwnerID, owned, senseAsAgent, false, out reason);
+                id = mgr.CreateBotInRegion(World, firstname, lastname, position, notecard ?? string.Empty, m_itemID, m_host.OwnerID, owned, senseAsAgent, false, m_host.ParentGroup.UUID, out reason);
             if (reason != null) ShoutError("osNpcCreate: " + reason);
             return id.ToString();
         }
@@ -18121,8 +18121,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 {
                     string reason;
                     string botID = (TryOutfitNotecard(outfit, out AvatarAppearance look)
-                        ? manager.CreateBotWithAppearance(World, first, last, pos, look, m_itemID, m_host.OwnerID, true, true, true, out reason)
-                        : manager.CreateBotInRegion(World, first, last, pos, outfit, m_itemID, m_host.OwnerID, true, true, true, out reason)).ToString();
+                        ? manager.CreateBotWithAppearance(World, first, last, pos, look, m_itemID, m_host.OwnerID, true, true, true, out reason, m_host.ParentGroup.UUID)
+                        : manager.CreateBotInRegion(World, first, last, pos, outfit, m_itemID, m_host.OwnerID, true, true, true, m_host.ParentGroup.UUID, out reason)).ToString();
                     if (reason == null)
                     {
                         retVal = botID;
@@ -18332,6 +18332,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 IBotManager manager = GetBotManager();
                 if (manager != null)
                     manager.RemoveOutfitFromDatabase(m_host.OwnerID, outfitName);
+                // A saved outfit is also a notecard in this object (botSetOutfit); it goes too.
+                AppearanceNotecard.Remove(m_host, World?.AssetService, outfitName);
             }
             finally
             {

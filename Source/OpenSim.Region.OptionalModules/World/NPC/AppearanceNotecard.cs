@@ -96,6 +96,22 @@ public static class AppearanceNotecard
     }
 
     /// <summary>
+    /// Removes the appearance notecard called <paramref name="name"/> from <paramref name="host"/>'s contents. A
+    /// notecard of that name that is not an appearance is left alone. Returns true when a notecard was removed.
+    /// </summary>
+    public static bool Remove(SceneObjectPart host, IAssetService assets, string name)
+    {
+        if (host is null || assets is null || string.IsNullOrWhiteSpace(name)) return false;
+
+        TaskInventoryItem item = host.Inventory.GetInventoryItem(name, (int)AssetType.Notecard);
+        if (item is null || !TryLoad(host, assets, name, out _, out _)) return false;
+
+        host.Inventory.RemoveInventoryItem(item.ItemID);
+        host.ParentGroup?.InvalidateDeepEffectivePerms();
+        return true;
+    }
+
+    /// <summary>
     /// Reads an appearance from a notecard in <paramref name="host"/>'s contents, named or given as an asset id.
     /// On failure the reason says which notecard and why.
     /// </summary>

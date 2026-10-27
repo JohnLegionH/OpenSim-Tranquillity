@@ -15,6 +15,7 @@ using OpenSim.Region.CoreModules.Avatar.AvatarFactory;
 using OpenSim.Region.CoreModules.Avatar.Chat;
 using OpenSim.Region.CoreModules.Framework.InventoryAccess;
 using OpenSim.Region.CoreModules.Framework.UserManagement;
+using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
 using OpenSim.Region.OptionalModules.World.NPC;
 using OpenSim.Tests.Common;
@@ -232,7 +233,9 @@ public class BotOutfitNotecardTests
     {
         using var h = NpcScene();
         var owner = Arrive(h);
-        SaveThenChangeTheOwner(h, owner, " botRemoveOutfit(\"Priest\");");
+        SaveThenChangeTheOwner(h, owner);
+        // botRemoveOutfit now removes the notecard too, so the memory store is emptied through the manager.
+        h.Scene.RequestModuleInterface<IBotManager>().RemoveOutfitFromDatabase(owner.Id, "Priest");
 
         Run(h, "key b = botCreateBot(\"Pri\", \"Est\", \"Priest\", llGetPos() + <2,0,0>, 0); llSay(0, \"bot=\" + (string)b);", "made");
 
