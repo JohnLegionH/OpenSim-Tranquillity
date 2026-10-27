@@ -66,17 +66,17 @@ public class LlCoverageTests
     }
 
     [Fact]
-    public void OsIwAndBotFunctionsAreInTheirOwnGroupAndNoneIsBound()
+    public void EveryOsIwAndBotMemberOfTheInterfaceIsBoundByTheOsTableAndNoneByTheLlTable()
     {
         MethodInfo[] other = typeof(ILSLSystemAPI).GetMethods()
             .Where(m => m.Name.StartsWith("os", StringComparison.Ordinal) || m.Name.StartsWith("iw", StringComparison.Ordinal) || m.Name.StartsWith("bot", StringComparison.Ordinal))
             .ToArray();
         Assert.True(other.Length > 400, "the interface has only " + other.Length + " os, iw and bot members");
-        Assert.Equal(other.Length, LlCoverage.NeedsCompilerChange.Length);
+        Assert.Equal(other.Length, OsBindings.All.Sum(f => f.Overloads.Length));
         Assert.All(LlBindings.All, f => Assert.StartsWith("ll", f.ApiName));
         foreach (string prefix in new[] { "os", "iw", "bot" })
             Assert.Equal(other.Count(m => m.Name.StartsWith(prefix, StringComparison.Ordinal)),
-                LlCoverage.NeedsCompilerChange.Count(e => e.Contains(" " + prefix)));
+                OsBindings.All.Where(f => f.ApiName.StartsWith(prefix, StringComparison.Ordinal)).Sum(f => f.Overloads.Length));
     }
 
     [Fact]

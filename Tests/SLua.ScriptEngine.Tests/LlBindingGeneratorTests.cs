@@ -30,7 +30,7 @@ public class LlBindingGeneratorTests
 
     internal static string BuiltinsPath() => Path.Combine(RepoRoot(), "Tests", "SLua.ScriptEngine.Tests", "TestData", "builtins.txt");
 
-    private static readonly string[] GeneratedNames = { "LlBindings.g.cs", "LlCoverage.g.cs", "LlServed.g.cs", "LlIndexes.g.cs", "LlBooleans.g.cs" };
+    private static readonly string[] GeneratedNames = { "LlBindings.g.cs", "LlCoverage.g.cs", "LlServed.g.cs", "LlIndexes.g.cs", "LlBooleans.g.cs", "OsBindings.g.cs" };
 
     private static string GeneratedDir() => Path.Combine(RepoRoot(), "Source", "SLua.ScriptEngine", "Bindings");
 
@@ -50,6 +50,7 @@ public class LlBindingGeneratorTests
         psi.ArgumentList.Add(Path.Combine(root, "Source", "Phlox.ScriptEngine", "LSLSystemAPI.cs"));
         psi.ArgumentList.Add(Path.Combine(root, "Source", "InWorldz.Phlox", "Glue", "SyscallShim.cs"));
         psi.ArgumentList.Add(outDir);
+        psi.ArgumentList.Add(Path.Combine(root, "Source", "InWorldz.Phlox", "Types", "Defaults.cs"));
         using Process p = Process.Start(psi);
         string output = p.StandardOutput.ReadToEnd();
         string error = p.StandardError.ReadToEnd();
