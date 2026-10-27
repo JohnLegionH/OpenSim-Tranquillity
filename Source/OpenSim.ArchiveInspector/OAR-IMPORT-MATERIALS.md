@@ -34,15 +34,18 @@ With the option on, every face that has a material in the `.glb` also gets a glT
 (a viewer without PBR shows the legacy one):
 
 * One material asset for each distinct material (asset type Material, archive file `<id>_prmat.dat`), with the id taken from the asset's bytes, so the same input
-  gives the same archive. The asset is the binary LLSD map a viewer uploads for a material: `version` `1.1`, `type` `GLTF 2.0` and `data`, the glTF text of one
-  material. The text holds the base colour factor, `metallicFactor`, `roughnessFactor`, `emissiveFactor`, `alphaMode`, `alphaCutoff`, `doubleSided` and the
-  four pictures the `.glb` material points at: base colour, normal, metallic-roughness (occlusion in red, roughness in green, metal in blue; the same texture
-  is named as `occlusionTexture`) and emissive. Factors the `.glb` leaves out take the glTF defaults.
+  gives the same archive. The asset is laid out as the Firestorm viewer writes a material: a binary LLSD map (the header line `<? LLSD/Binary ?>`, then the keys
+  `data`, `type` `GLTF 2.0` and `version` `1.1` in that order), `data` being the glTF text of one material. The text holds the base colour factor, `metallicFactor`,
+  `roughnessFactor`, `emissiveFactor` (left out while it is 0, 0, 0, as the viewer does), `alphaMode`, `alphaCutoff`, `doubleSided` and the pictures the `.glb`
+  material points at: base colour, normal, metallic-roughness (occlusion in red, roughness in green, metal in blue) and emissive. Each picture has its own image and
+  texture entry in the order base colour, normal, metallic-roughness, emissive, occlusion; the occlusion entry names the metallic-roughness picture again. Factors the
+  `.glb` leaves out take the glTF defaults.
 * The pictures are written as bare JPEG 2000 codestreams like every other texture, and a picture used twice is one asset.
 * The face reference is a block in the part's `ExtraParams` (type `0x80`: a count, then a face number and the material id for each), kept beside the mesh block.
 
 Not done: texture transforms (`KHR_texture_transform`) are not applied to a PBR face, as before for a legacy one (a note says so); a separate occlusion picture that
 is not the metallic-roughness picture is not used; material overrides (`MatOvrd`) are not written.
 
-The programs that read PBR material assets elsewhere in this package (`oar-convert`'s merge planner and `oar-export`) read the glTF text directly and do not yet
-unwrap the LLSD map, so on an archive made with `--pbr` they treat the material as unreadable.
+The programs that read PBR material assets elsewhere in this package (`oar-convert`'s merge planner and `oar-export`) take the glTF text out of the LLSD map the
+same way the viewer does (version `1.0` or `1.1`, type `GLTF 2.0`, `data` a string), so archives saved from a grid that stores materials as the viewer uploads them
+are read, and so are archives made with `--pbr`. They still read bare glTF text, which the viewer itself does not load.
