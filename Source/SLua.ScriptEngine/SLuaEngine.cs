@@ -274,6 +274,7 @@ namespace SLua.ScriptEngine
             m_scene.EventManager.OnScriptReset += OnScriptReset;
             m_scene.EventManager.OnStartScript += OnStartScript;
             m_scene.EventManager.OnStopScript += OnStopScript;
+            m_scene.EventManager.OnShutdown += OnShutdown;
             if (m_settings.WarmUp)
                 ApiWarmUp.Start(m_log);
             m_hooks = new SceneHooksA(scene, this, m_settings.PhysicsThrottle, Clock);
@@ -306,6 +307,19 @@ namespace SLua.ScriptEngine
                 text.Append('|').Append(name);
             byte[] hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text.ToString()));
             return Convert.ToHexString(hash, 0, 8).ToLowerInvariant();
+        }
+
+        /// <summary>
+        /// The simulator is shutting down: the scheduler stops, which saves every script, and the database is written out and closed.
+        /// The region's modules are not always removed on the way out, so the save does not wait for RemoveRegion.
+        /// </summary>
+        private void OnShutdown()
+        {
+            SLuaScheduler scheduler = m_scheduler;
+            m_scheduler = null;
+            try { scheduler?.Dispose(); }
+            catch (Exception e) { m_log.Error("The scripts could not be stopped and saved at shutdown: " + e.Message); }
+            CloseStateStore();
         }
 
         /// <summary>
@@ -419,6 +433,7 @@ namespace SLua.ScriptEngine
             m_scene.EventManager.OnScriptReset -= OnScriptReset;
             m_scene.EventManager.OnStartScript -= OnStartScript;
             m_scene.EventManager.OnStopScript -= OnStopScript;
+            m_scene.EventManager.OnShutdown -= OnShutdown;
             m_chat?.Unsubscribe();
             m_chat = null;
             HostServices?.AsyncCommands?.Shutdown();
