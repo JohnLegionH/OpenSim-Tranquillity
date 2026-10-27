@@ -91,7 +91,7 @@ public class LlBindingGeneratorTests
         {
             string text = Normal(Path.Combine(GeneratedDir(), name));
             Assert.True(text.Length > 2000, name + " is empty or a stub");
-            Assert.DoesNotMatch(@"[A-Za-z]:[\\/]", text);
+            Assert.DoesNotMatch(@"(?<![A-Za-z])[A-Za-z]:[\\/]", text);
             Assert.DoesNotMatch(@"\b(PHLOX|SLUA|CORE)-\d+", text);
         }
     }

@@ -14,6 +14,13 @@ namespace SLua.ScriptEngine
     internal static partial class LlBindings
     {
         /// <summary>Registers every bound function in the VM's "ll" table.</summary>
-        public static void Register(Vm vm, Func<SchedulerScript, ScriptContext> contextOf) { }
+        public static void Register(Vm vm, Func<SchedulerScript, ScriptContext> contextOf)
+        {
+            foreach (BoundFunction f in All)
+            {
+                BoundFunction function = f;
+                vm.Register("ll", function.Name, (tag, args) => function.Call(contextOf(SchedulerScript.Current), args));
+            }
+        }
     }
 }
