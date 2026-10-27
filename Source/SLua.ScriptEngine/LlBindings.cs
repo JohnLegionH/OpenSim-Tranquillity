@@ -16,17 +16,46 @@ namespace SLua.ScriptEngine
     internal static partial class LlBindings
     {
         /// <summary>The ll functions that answer a script with "not available on this engine yet": the ones the host cannot serve and the ones not bound.</summary>
-        internal static readonly System.Collections.Generic.IReadOnlyCollection<string> Unavailable = Array.Empty<string>();
+        internal static readonly System.Collections.Generic.IReadOnlyCollection<string> Unavailable = ListUnavailable();
+
+        private static string[] ListUnavailable()
+        {
+            var names = new System.Collections.Generic.SortedSet<string>(StringComparer.Ordinal);
+            foreach (string row in LlServed.NotServed) names.Add(NameOf(row));
+            foreach (string name in LlCoverage.MissingFromSeam) names.Add(name);
+            foreach (string row in LlCoverage.SignatureMismatch) names.Add(NameOf(row));
+            var list = new string[names.Count];
+            names.CopyTo(list);
+            return list;
+        }
+
+        /// <summary>The function name at the start of a generated row ("llSay: SendToWorldComm").</summary>
+        private static string NameOf(string row) => row.Substring(0, row.IndexOf(':'));
 
         /// <summary>
         /// Registers every bound function in the VM's "ll" table. With <paramref name="serviceLane"/>, the long-running (async)
         /// and service-reaching functions are registered as pausing calls whose work runs on the context's service lane while
-        /// the script waits; every other function, and those two kinds without a lane, run on the script worker.
+        /// the script waits; every other function, and those two kinds without a lane, run on the script worker. With
+        /// <paramref name="unavailable"/>, the functions in <see cref="Unavailable"/> (bound or not) are registered as errors
+        /// instead.
         /// </summary>
-        public static void Register(Vm vm, Func<SchedulerScript, ScriptContext> contextOf, bool serviceLane = false)
+        public static void Register(Vm vm, Func<SchedulerScript, ScriptContext> contextOf, bool serviceLane = false, bool unavailable = false)
         {
+            var refused = unavailable ? new System.Collections.Generic.HashSet<string>(Unavailable, StringComparer.Ordinal) : null;
+            if (refused != null)
+            {
+                // These answer the script with an error that names the function; they never reach the API or the lane.
+                foreach (string name in Unavailable)
+                {
+                    string apiName = name;
+                    vm.Register("ll", apiName.Substring(2), (tag, args) => throw new FunctionUnavailableException(apiName));
+                }
+            }
+
             foreach (BoundFunction f in All)
             {
+                if (refused != null && refused.Contains(f.ApiName))
+                    continue;
                 BoundFunction function = f;
                 if (serviceLane && function.Class is FunctionClass.Async or FunctionClass.Service)
                 {

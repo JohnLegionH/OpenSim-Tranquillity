@@ -122,12 +122,16 @@ namespace SLua.ScriptEngine
         }
 
         private readonly Dictionary<UUID, uint> m_tracked = new Dictionary<UUID, uint>();
-        private bool m_warnedNoFunctions;
 
         internal SLuaSettings Settings => m_settings;
 
         /// <summary>The lane the async and service functions run on; null before the region is added.</summary>
-        internal ServiceLane Lane => null;
+        internal ServiceLane Lane => m_lane;
+
+        private ServiceLane m_lane;
+
+        /// <summary>What each script's ll functions run against, by scheduler script id: its API, its item and the lane.</summary>
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<long, ScriptContext> m_contexts = new System.Collections.Concurrent.ConcurrentDictionary<long, ScriptContext>();
 
         /// <summary>The host side of the script functions for the region; null before the region is added.</summary>
         internal EngineHostServices HostServices { get; private set; }
@@ -193,6 +197,8 @@ namespace SLua.ScriptEngine
             // The native runtime is needed before any script can run. If it cannot be used the engine stays out of
             // the region: it logs one line and registers nothing, and the other engines carry on.
             m_enabled = m_loadRuntime(m_settings, m_log);
+            if (m_enabled)
+                m_log.Info($"ll functions: {LlServed.Served.Length} run on the script API; {LlBindings.Unavailable.Count} answer a script with \"not available on this engine yet\" ({LlServed.NotServed.Length} wait on host members this engine lacks, {LlCoverage.MissingFromSeam.Length + LlCoverage.SignatureMismatch.Length} are not bound)");
         }
 
         public void Close() { }
@@ -220,6 +226,7 @@ namespace SLua.ScriptEngine
             try
             {
                 m_scheduler = (m_schedulerFactory ?? (o => new SLuaScheduler(o)))(BuildSchedulerOptions());
+                m_lane = new ServiceLane(m_scheduler, m_settings.ServiceCallDeferral, m_settings.ServiceCallThreads, m_settings.ServiceCallTimeoutMs);
             }
             catch (Exception e)
             {
@@ -238,10 +245,22 @@ namespace SLua.ScriptEngine
         }
 
         /// <summary>
-        /// The bound-function list is empty until host functions are bound, so the stamp carries a fixed marker; it
-        /// changes with that list, which makes the cache entries of an earlier list unused.
+        /// The stamp names the bound-function list and the functions that answer "not available"; it changes with them, which
+        /// makes the cache entries of an earlier list unused.
         /// </summary>
-        internal const string BoundFunctionHash = "none";
+        internal static readonly string BoundFunctionHash = ComputeBoundFunctionHash();
+
+        private static string ComputeBoundFunctionHash()
+        {
+            var text = new System.Text.StringBuilder("ll1");
+            foreach (BoundFunction f in LlBindings.All)
+                text.Append('|').Append(f.ApiName).Append(':').Append(f.Class);
+            text.Append("|unavailable");
+            foreach (string name in LlBindings.Unavailable)
+                text.Append('|').Append(name);
+            byte[] hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text.ToString()));
+            return Convert.ToHexString(hash, 0, 8).ToLowerInvariant();
+        }
 
         /// <summary>The loader the engine runs with: the compile cache in the engine's folder (unless switched off), the region's asset service for text, scripts held as compiled bytes.</summary>
         private static IScriptLoader DefaultLoader(SLuaSettings settings, IEngineLog log, Scene scene)
@@ -273,7 +292,12 @@ namespace SLua.ScriptEngine
                 MemoryLimitBytes = m_settings.MemoryLimitKiB * 1024,
                 KillAfterPunishments = m_settings.KillAfterPunishments,
                 ErrorPauseSeconds = m_settings.ChatThrottle ? ErrorPauseSeconds : 0,
-                VmFactory = () => new Vm(watchdog),
+                VmFactory = () =>
+                {
+                    var vm = new Vm(watchdog);
+                    LlBindings.Register(vm, ContextOf, serviceLane: true, unavailable: true);
+                    return vm;
+                },
                 Log = m_log,
                 ScriptFaulted = OnScriptFaulted,
                 StateChanged = OnStateChanged,
@@ -282,6 +306,10 @@ namespace SLua.ScriptEngine
                 WorkerStopped = OnWorkerStopped,
             };
         }
+
+        /// <summary>The context of the script a function was called from, made when the script joined the scheduler.</summary>
+        private ScriptContext ContextOf(SchedulerScript script) =>
+            m_contexts.TryGetValue(script.Id, out ScriptContext context) ? context : throw new InvalidOperationException("the script is not known to the engine");
 
         /// <summary>How long GetScriptErrors waits for a compile; the region's own wait for a save is the same 15 seconds.</summary>
         internal static TimeSpan ErrorWaitTimeout = TimeSpan.FromSeconds(15);
@@ -303,8 +331,11 @@ namespace SLua.ScriptEngine
             lock (m_deferred) m_deferred.Clear();
             m_loader?.Dispose();
             m_loader = null;
+            m_lane?.Dispose();
+            m_lane = null;
             m_scheduler?.Dispose();
             m_scheduler = null;
+            m_contexts.Clear();
             lock (m_records) m_records.Clear();
             HostServices = null;
             m_scene = null;
@@ -329,11 +360,6 @@ namespace SLua.ScriptEngine
 
             lock (m_tracked) m_tracked[itemID] = localID;
             lock (m_starts) m_starts[itemID] = new StartInfo { StartParam = startParam, PostOnRez = postOnRez, StateSource = stateSource };
-            if (!m_warnedNoFunctions)
-            {
-                m_warnedNoFunctions = true;
-                m_log.Warn("A script was given to this engine, which runs scripts but does not bind the ll, os, iw or bot functions yet; a script that calls one stops with an error");
-            }
 
             SceneObjectPart part = m_scene?.GetSceneObjectPart(localID);
             m_loader?.Post(new LoadRequest
@@ -398,6 +424,7 @@ namespace SLua.ScriptEngine
             StartInfo start;
             lock (m_starts) m_starts.TryGetValue(ready.ItemID, out start);
             var record = new ScriptRecord { ItemID = ready.ItemID, LocalID = ready.LocalID, AssetID = ready.AssetID, Script = script, Start = start, StartupPending = true };
+            m_contexts[script.Id] = new ScriptContext(script, CreateScriptApi(script, ready.ItemID, ready.LocalID, UnavailableApi.Create()), ready.ItemID, m_lane);
             // The estate switch and the parcel rule decide before the script is visible or started: a script they hold back starts paused, never refused.
             record.Pause = m_policy?.ReasonsFor(ready.ItemID, ready.LocalID) ?? PauseReason.None;
             if (record.Pause != PauseReason.None)
@@ -414,7 +441,10 @@ namespace SLua.ScriptEngine
                 m_records[ready.ItemID] = record;
             }
             if (replaced != null)
+            {
                 scheduler.Remove(replaced.Script);
+                m_contexts.TryRemove(replaced.Script.Id, out _);
+            }
 
             m_policy?.Resync(ready.ItemID); // closes the window between the decision above and the record being visible
 
@@ -559,6 +589,7 @@ namespace SLua.ScriptEngine
                     return;
             }
             m_scheduler?.Remove(record.Script);
+            m_contexts.TryRemove(record.Script.Id, out _);
             ForgetEventFlags(record);
         }
 

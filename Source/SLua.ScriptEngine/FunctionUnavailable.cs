@@ -25,8 +25,14 @@ namespace SLua.ScriptEngine
     /// <summary>The script API for the functions the engine does not serve: every call is a <see cref="FunctionUnavailableException"/>.</summary>
     internal class UnavailableApi : DispatchProxy
     {
-        public static ILSLSystemAPI Create() => null;
+        public static ILSLSystemAPI Create() => Create<ILSLSystemAPI, UnavailableApi>();
 
-        protected override object Invoke(MethodInfo targetMethod, object[] args) => null;
+        protected override object Invoke(MethodInfo targetMethod, object[] args)
+        {
+            // The question whether a call needs the service has to be answerable: nothing here runs, so nothing is deferred.
+            if (targetMethod.Name == nameof(ILSLSystemAPI.NeedsService))
+                return false;
+            throw new FunctionUnavailableException(targetMethod.Name);
+        }
     }
 }

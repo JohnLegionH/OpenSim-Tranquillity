@@ -86,13 +86,16 @@ namespace SLua.ScriptEngine
         public int TimeoutMs => m_timeoutMs;
 
         /// <summary>How many calls the lane has been given.</summary>
-        public long Submitted => 0;
+        public long Submitted => Interlocked.Read(ref m_submitted);
+
+        private long m_submitted;
 
         /// <summary>Lane threads alive right now.</summary>
         public int ThreadCount => Volatile.Read(ref m_threadCount);
 
         public void Submit(LaneCall call)
         {
+            Interlocked.Increment(ref m_submitted);
             var entry = new Entry { Call = call };
             m_outstanding[entry] = 0;
             entry.Deadline = new Timer(Expire, entry, m_timeoutMs, Timeout.Infinite);

@@ -286,7 +286,9 @@ static unsafe class HostEntry
         {
             try
             {
-                var m = new Value(ValueType.String, 0, 0, "host function failed: " + e.GetType().Name + ": " + e.Message);
+                // A function the engine cannot run yet says so in its own words; any other failure carries its type.
+                string text = e is SLua.ScriptEngine.FunctionUnavailableException ? e.Message : "host function failed: " + e.GetType().Name + ": " + e.Message;
+                var m = new Value(ValueType.String, 0, 0, text);
                 Native.FromManaged(m, &rets[0], _arena ??= new Arena());
             }
             catch { }
