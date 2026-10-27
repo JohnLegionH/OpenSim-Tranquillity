@@ -5,8 +5,8 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-using System.Security.Cryptography;
 using System.Text;
+using OpenSim.Archive.Inspection;
 
 namespace OpenSim.Archive.Restore.Import;
 
@@ -51,9 +51,10 @@ internal sealed class ImportProvenance
     public void File(string path, string baseFolder) =>
         m_text.Append("  ").Append(Relative(baseFolder, path)).Append(" sha256 ").Append(Sha256(path)).Append('\n');
 
-    public static string Sha256(string path) => Convert.ToHexString(SHA256.HashData(System.IO.File.ReadAllBytes(path))).ToLowerInvariant();
+    /// <summary>The managed digest the archive tools use everywhere: the framework's hash types load the system's OpenSSL on Linux.</summary>
+    public static string Sha256(string path) => Sha256(System.IO.File.ReadAllBytes(path));
 
-    public static string Sha256(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+    public static string Sha256(byte[] bytes) => Convert.ToHexString(ManagedDigest.Sha256(bytes)).ToLowerInvariant();
 
     /// <summary>The path from the base folder, with forward slashes; a path outside the base folder is written in full.</summary>
     public static string Relative(string baseFolder, string path)
