@@ -205,12 +205,12 @@ internal static class ImportKit
     }
 
     /// <summary>Writes the model folder. With <paramref name="normalMap"/> the side material carries a normal map.</summary>
-    public static Folder Write(bool normalMap = false, PhysicsKind physics = PhysicsKind.Box, bool withPhysics = true, string name = Name, string into = null)
+    public static Folder Write(bool normalMap = false, PhysicsKind physics = PhysicsKind.Box, bool withPhysics = true, string name = Name, string into = null, int pictureSize = 8)
     {
         string folder = into ?? System.IO.Path.Combine(System.IO.Path.GetTempPath(), "import-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);
-        ImportMaterial top = new ImportMaterial { Name = "top", Color = new[] { 0.2f, 0.4f, 0.6f, 1f }, Picture = Png(200, 40, 10) };
-        ImportMaterial side = new ImportMaterial { Name = "side", Color = new[] { 1f, 1f, 1f, 1f }, Picture = Png(30, 90, 150), Normal = normalMap ? Png(128, 128, 255) : null };
+        ImportMaterial top = new ImportMaterial { Name = "top", Color = new[] { 0.2f, 0.4f, 0.6f, 1f }, Picture = Png(200, 40, 10, pictureSize) };
+        ImportMaterial side = new ImportMaterial { Name = "side", Color = new[] { 1f, 1f, 1f, 1f }, Picture = Png(30, 90, 150, pictureSize), Normal = normalMap ? Png(128, 128, 255, pictureSize) : null };
         string[] files = { name + ".glb", name + "_lod2.glb", name + "_lod1.glb", name + "_lod0.glb" };
         for (int level = 0; level < 4; level++)
         {

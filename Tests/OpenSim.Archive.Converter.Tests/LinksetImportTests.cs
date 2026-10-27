@@ -240,6 +240,8 @@ public class LinksetImportTests
         Assert.Equal("0", item.Element("InvType").Value);
         string asset = "assets/" + item.Element("AssetID").Element("UUID").Value + "_texture.jp2";
         Assert.True(oar.ContainsKey(asset), "no texture asset " + asset);
+        // the viewer reads a bare codestream only; a JP2 file shows as a grey face
+        Assert.True(oar[asset].AsSpan(0, 4).SequenceEqual(new byte[] { 0xFF, 0x4F, 0xFF, 0x51 }), "the texture asset is not a bare codestream");
         Assert.Equal(Pixels(built.BadgePng, false), Pixels(oar[asset], true));
     }
 
