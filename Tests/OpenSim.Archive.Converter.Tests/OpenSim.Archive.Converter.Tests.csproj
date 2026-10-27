@@ -17,6 +17,7 @@
     <ProjectReference Include="..\..\Source\OpenSim.Archive.Converter\OpenSim.Archive.Converter.csproj" />
     <ProjectReference Include="..\..\Source\OpenSim.Archive.ManagedHash\OpenSim.Archive.ManagedHash.csproj" />
     <ProjectReference Include="..\..\Source\OpenSim.Archive.PackagePatch\OpenSim.Archive.PackagePatch.csproj" />
+    <ProjectReference Include="..\..\Source\OpenSim.Archive.TextureFetch\OpenSim.Archive.TextureFetch.csproj" />
     <ProjectReference Include="..\..\Source\OpenSim.MeshAsset\OpenSim.MeshAsset.csproj" />
     <ProjectReference Include="..\..\Source\OpenSim.Region.PhysicsModules.Meshing\OpenSim.Region.PhysicsModules.Meshing.csproj" />
     <ProjectReference Include="..\..\Source\OpenSim.Archive.Eligibility\OpenSim.Archive.Eligibility.csproj" />
