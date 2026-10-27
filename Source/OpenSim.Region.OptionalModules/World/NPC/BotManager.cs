@@ -305,8 +305,10 @@ namespace OpenSim.Region.OptionalModules.World.NPC
             persistence.Initialize(scene, this, m_config);
             lock (m_persistence) m_persistence[scene.RegionInfo.RegionID] = persistence;
 
-            // Load and respawn persistent bots (staggered)
-            persistence.LoadPersistentBots();
+            // Load and respawn persistent bots (staggered). Not yet: the region has not loaded its parcels and objects
+            // when its modules load, and the bots need both. They come back on PrimsLoaded; a region that is already
+            // running has loaded them.
+            if (scene.IsRunning) persistence.OnPrimsLoaded();
             persistence.StartTimers();
 
             // Register console commands (once; they act on every region)

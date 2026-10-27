@@ -135,6 +135,7 @@ public class BotPersistenceRegionTests
         // Region A loads again: its bot comes back where it was saved.
         r.Bots.AddRegion(r.A.Scene);
         r.Bots.RegionLoaded(r.A.Scene);
+        r.A.Scene.EventManager.TriggerPrimsLoaded(r.A.Scene);
         Assert.True(r.A.PumpUntil(() => r.A.Scene.GetScenePresence(a) != null, Cap), "region A's bot never came back");
         var pos = r.A.Scene.GetScenePresence(a).AbsolutePosition;
         Assert.True(Math.Abs(pos.X - 40) < 2 && Math.Abs(pos.Y - 50) < 2, "region A's bot came back at " + pos);

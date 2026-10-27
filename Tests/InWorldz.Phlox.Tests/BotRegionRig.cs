@@ -74,7 +74,7 @@ internal sealed class BotRegions : IDisposable
     }
 
     /// <summary>As the simulator does on a restart: the old bot manager leaves both regions, a new one loads into them.</summary>
-    public void Restart()
+    public void Restart(bool primsLoaded = true)
     {
         Bots.RemoveRegion(A.Scene);
         Bots.RemoveRegion(B.Scene);
@@ -85,6 +85,8 @@ internal sealed class BotRegions : IDisposable
         {
             Bots.AddRegion(h.Scene);
             Bots.RegionLoaded(h.Scene);
+            // The simulator loads a region's objects after its modules; the persistent bots come back then.
+            if (primsLoaded) h.Scene.EventManager.TriggerPrimsLoaded(h.Scene);
         }
     }
 

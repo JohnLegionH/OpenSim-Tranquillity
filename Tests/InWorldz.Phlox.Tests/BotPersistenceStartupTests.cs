@@ -45,7 +45,7 @@ public class BotPersistenceStartupTests
         var (r, owner, bot) = PersistentBotOfAnObjectNotYetLoaded();
         using (r)
         {
-            r.Restart();       // the modules load; the creator object is not in the region
+            r.Restart(primsLoaded: false);       // the modules load; the creator object is not in the region
             var creator = SceneHelpers.CreateSceneObject(1, owner, "Creator ", CreatorTail);
             r.B.Scene.AddNewSceneObject(creator, false);
             r.B.Scene.EventManager.TriggerPrimsLoaded(r.B.Scene);
@@ -57,12 +57,31 @@ public class BotPersistenceStartupTests
     }
 
     [Fact]
+    public void APersistentBotIsNotBroughtBackBeforeTheRegionHasLoadedItsObjects()
+    {
+        var (r, owner, bot) = PersistentBotOfAnObjectNotYetLoaded();
+        using (r)
+        {
+            r.Restart(primsLoaded: false);
+            r.B.Scene.AddNewSceneObject(SceneHelpers.CreateSceneObject(1, owner, "Creator ", CreatorTail), false);
+
+            // Proving something does NOT happen: a window over which the bot would have been made.
+            r.B.PumpFor(TimeSpan.FromSeconds(2));
+            Assert.Null(r.B.Scene.GetScenePresence(bot));
+
+            r.B.Scene.EventManager.TriggerPrimsLoaded(r.B.Scene);
+            Assert.True(r.B.PumpUntil(() => r.B.Scene.GetScenePresence(bot) != null, Cap), "the bot never came back");
+        }
+    }
+
+    [Fact]
     public void ABotWhoseObjectIsStillMissingOnceTheObjectsAreLoadedIsRetiredAndNotBroughtBack()
     {
         var (r, _, bot) = PersistentBotOfAnObjectNotYetLoaded();
         using (r)
         {
-            r.Restart();
+            r.Restart(primsLoaded: false);
+            r.A.Scene.EventManager.TriggerPrimsLoaded(r.A.Scene);
             r.B.Scene.EventManager.TriggerPrimsLoaded(r.B.Scene);       // the objects are loaded; the creator is not among them
 
             // Proving something does NOT happen: a window over which the queued bot would have been made.
