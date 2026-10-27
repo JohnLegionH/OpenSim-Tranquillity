@@ -25,6 +25,10 @@ public sealed class EncoderFace
     public float[] Uvs = Array.Empty<float>();
     /// <summary>Three vertex numbers for each triangle.</summary>
     public uint[] Indices = Array.Empty<uint>();
+    /// <summary>For a rigged mesh, four joint numbers (numbers into the skin's joint list) for each vertex; null when the face has no weights.</summary>
+    public byte[] JointIds;
+    /// <summary>For a rigged mesh, the four weights that go with <see cref="JointIds"/> (a weight of 0 is no influence); null when the face has no weights.</summary>
+    public float[] JointWeights;
     /// <summary>True when cleaning found only triangles without area in the face and left it as it was.</summary>
     public bool KeptAsWas;
 
@@ -53,6 +57,12 @@ public sealed class EncodeOptions
     /// all of them stays as its bounding hull). Null writes the bounding hull only.
     /// </summary>
     public IReadOnlyList<IReadOnlyList<System.Numerics.Vector3>> Hulls { get; set; }
+
+    /// <summary>
+    /// The skin block of a rigged mesh. When set, every face with triangles, at every level of detail, must carry weights
+    /// (<see cref="EncoderFace.JointIds"/>); null writes an unrigged mesh.
+    /// </summary>
+    public OpenSim.MeshAsset.MeshSkin Skin { get; set; }
 }
 
 /// <summary>

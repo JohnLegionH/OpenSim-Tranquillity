@@ -116,6 +116,10 @@ public sealed class PrimFace
     public float[] Positions;
     public float[] Normals;
     public float[] Uvs;
+    /// <summary>For a rigged mesh, four joint numbers for each corner (same order as <see cref="Positions"/>); null when the face has no weights.</summary>
+    public byte[] JointIds;
+    /// <summary>For a rigged mesh, the four weights that go with <see cref="JointIds"/>; null when the face has no weights.</summary>
+    public float[] JointWeights;
     public int TriangleCount => Positions.Length / 9;
 }
 

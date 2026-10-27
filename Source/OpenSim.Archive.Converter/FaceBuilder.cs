@@ -94,15 +94,22 @@ public static class FaceBuilder
     {
         List<EncoderFace> parts = new List<EncoderFace>();
         int corners = f.Positions.Length / 3;
-        Dictionary<(int, int, int, int, int, int, int, int), uint> seen = new Dictionary<(int, int, int, int, int, int, int, int), uint>();
-        List<float> pos = new List<float>(), nor = new List<float>(), uv = new List<float>();
+        // a vertex is shared only by corners that agree in position, normal, texture coordinate and, for a rigged mesh, joints and weights
+        Dictionary<(int, int, int, int, int, int, int, int, int, int, int, int, int), uint> seen = new Dictionary<(int, int, int, int, int, int, int, int, int, int, int, int, int), uint>();
+        List<float> pos = new List<float>(), nor = new List<float>(), uv = new List<float>(), weights = new List<float>();
+        List<byte> joints = new List<byte>();
         List<uint> index = new List<uint>();
+        bool skinned = f.JointIds != null && f.JointWeights != null;
 
         void Close()
         {
-            parts.Add(new EncoderFace { Positions = pos.ToArray(), Normals = nor.ToArray(), Uvs = uv.ToArray(), Indices = index.ToArray() });
+            parts.Add(new EncoderFace
+            {
+                Positions = pos.ToArray(), Normals = nor.ToArray(), Uvs = uv.ToArray(), Indices = index.ToArray(),
+                JointIds = skinned ? joints.ToArray() : null, JointWeights = skinned ? weights.ToArray() : null
+            });
             seen.Clear();
-            pos.Clear(); nor.Clear(); uv.Clear(); index.Clear();
+            pos.Clear(); nor.Clear(); uv.Clear(); index.Clear(); joints.Clear(); weights.Clear();
         }
 
         for (int c = 0; c < corners; c++)
@@ -110,7 +117,13 @@ public static class FaceBuilder
             float px = f.Positions[c * 3], py = f.Positions[c * 3 + 1], pz = f.Positions[c * 3 + 2];
             float nx = f.Normals[c * 3], ny = f.Normals[c * 3 + 1], nz = f.Normals[c * 3 + 2];
             float u = f.Uvs[c * 2], v = 1f - f.Uvs[c * 2 + 1];
-            var key = (Bits(px), Bits(py), Bits(pz), Bits(nx), Bits(ny), Bits(nz), Bits(u), Bits(v));
+            int packedJoints = 0, w0 = 0, w1 = 0, w2 = 0, w3 = 0;
+            if (skinned)
+            {
+                packedJoints = f.JointIds[c * 4] | (f.JointIds[c * 4 + 1] << 8) | (f.JointIds[c * 4 + 2] << 16) | (f.JointIds[c * 4 + 3] << 24);
+                w0 = Bits(f.JointWeights[c * 4]); w1 = Bits(f.JointWeights[c * 4 + 1]); w2 = Bits(f.JointWeights[c * 4 + 2]); w3 = Bits(f.JointWeights[c * 4 + 3]);
+            }
+            var key = (Bits(px), Bits(py), Bits(pz), Bits(nx), Bits(ny), Bits(nz), Bits(u), Bits(v), packedJoints, w0, w1, w2, w3);
             if (!seen.TryGetValue(key, out uint at))
             {
                 at = (uint)(pos.Count / 3);
@@ -118,6 +131,12 @@ public static class FaceBuilder
                 pos.Add(px); pos.Add(py); pos.Add(pz);
                 nor.Add(nx); nor.Add(ny); nor.Add(nz);
                 uv.Add(u); uv.Add(v);
+                if (skinned)
+                    for (int k = 0; k < 4; k++)
+                    {
+                        joints.Add(f.JointIds[c * 4 + k]);
+                        weights.Add(f.JointWeights[c * 4 + k]);
+                    }
             }
             index.Add(at);
             if (index.Count % 3 == 0 && pos.Count / 3 >= SplitAtVertices && c + 1 < corners)

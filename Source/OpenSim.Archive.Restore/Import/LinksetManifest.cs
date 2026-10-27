@@ -91,7 +91,7 @@ public sealed class LinksetManifest
     public const int MaxParts = 256;
     public static readonly string[] ContentTypes = { "script", "notecard", "texture" };
 
-    private static readonly string[] ManifestKeys = { "name", "description", "pbr", "parts" };
+    private static readonly string[] ManifestKeys = { "name", "description", "pbr", "jointPositions", "parts" };
     private static readonly string[] PartKeys = { "name", "description", "folder", "base", "glb", "node", "lod2", "lod1", "lod0", "physics", "position", "rotation", "contents", "sit", "faces" };
     private static readonly string[] SourceKeys = { "glb", "node" };
     private static readonly string[] ContentKeys = { "type", "file", "name", "description" };
@@ -153,6 +153,7 @@ public sealed class LinksetManifest
             m.Name = Text(root, "name", "the manifest", required: true);
             m.Description = Text(root, "description", "the manifest", required: false) ?? string.Empty;
             m.Pbr = Flag(root, "pbr", "the manifest") ?? false;
+            m.JointPositions = Flag(root, "jointPositions", "the manifest") ?? false;
             if (!root.TryGetProperty("parts", out JsonElement parts) || parts.ValueKind != JsonValueKind.Array || parts.GetArrayLength() == 0)
                 throw new ImportException("the manifest needs \"parts\": a list with at least one part, the root part first");
             if (parts.GetArrayLength() > MaxParts)

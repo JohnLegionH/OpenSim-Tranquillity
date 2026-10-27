@@ -58,7 +58,7 @@ public static partial class ObjectImporter
         result.Provenance = provenance.ToString();
         say("read " + string.Join(", ", model.Names));
         TextureCatalog catalog = new TextureCatalog(Path.Combine(folder, "no-original-textures"));
-        BuiltPart built = BuildPart(model, catalog, result, say, null, options.Pbr);
+        BuiltPart built = BuildPart(model, catalog, result, say, null, options.Pbr, options.JointPositions);
         List<(Guid Id, byte[] Data, AssetType Type)> assets = built.Assets;
         foreach (KeyValuePair<Guid, byte[]> t in catalog.NewAssets)
             assets.Add((t.Key, t.Value, AssetType.Texture));
@@ -151,11 +151,23 @@ public static partial class ObjectImporter
     /// <summary>
     /// The mesh asset, the faces and the pictures of one part, from its four levels and its collision shape. Notes, textures and materials go to <paramref name="result"/>.
     /// </summary>
-    private static BuiltPart BuildPart(ModelLevels model, TextureCatalog catalog, ImportResult result, Action<string> say, IReadOnlyList<LinksetFace> settings = null, bool pbr = false)
+    private static BuiltPart BuildPart(ModelLevels model, TextureCatalog catalog, ImportResult result, Action<string> say, IReadOnlyList<LinksetFace> settings = null, bool pbr = false, bool jointPositions = false)
     {
         GlbFile[] files = model.Files;
         GlbNode[] nodes = model.Nodes;
         string[] fileNames = model.Names;
+
+        // a rigged part: one skin from the four files, and every file's weights in its joint numbers
+        RigPlan rig = RigBuilder.Plan(files, nodes, fileNames, jointPositions);
+        if (rig != null)
+        {
+            for (int level = 0; level < 4; level++)
+                RigBuilder.Apply(rig, level, files[level], nodes[level]);
+            string trimmed = RigBuilder.TrimNote(rig);
+            if (trimmed != null)
+                rig.Notes.Add(trimmed);
+            result.Notes.AddRange(rig.Notes);
+        }
 
         // the full mesh: one face for each primitive (each material); the part is the box around it
         PartGeometry high = PartGeometry.FromNode(files[0], nodes[0], nodes[0].Scale, true);
@@ -167,6 +179,8 @@ public static partial class ObjectImporter
             throw new ImportException(fileNames[0] + " has " + slotCount + " materials; a mesh part has at most " + MeshShape.MaxFaces + " faces");
         string[] slotNames = highPrimitives.Select(p => MaterialName(files[0], p.Material)).ToArray();
         (Vector3 size, Vector3 center) = Box(high);
+        if (rig != null)
+            RigBuilder.SetBindShape(rig, new System.Numerics.Vector3(size.X, size.Y, size.Z), new System.Numerics.Vector3(center.X, center.Y, center.Z));
         if (size.X > MaxPrimSize || size.Y > MaxPrimSize || size.Z > MaxPrimSize)
             result.Notes.Add("the part is larger than " + MaxPrimSize.ToString("0", Inv) + " m in some direction; many regions refuse a prim that size");
 
@@ -226,7 +240,7 @@ public static partial class ObjectImporter
         byte[] meshBytes;
         try
         {
-            meshBytes = new MeshAssetEncoder().Encode(highFaces, new EncodeOptions { Physics = physics, Lods = lods.Select(l => (IReadOnlyList<EncoderFace>)l).ToList(), Hulls = hulls });
+            meshBytes = new MeshAssetEncoder().Encode(highFaces, new EncodeOptions { Physics = physics, Lods = lods.Select(l => (IReadOnlyList<EncoderFace>)l).ToList(), Hulls = hulls, Skin = rig?.Skin });
         }
         catch (Exception e) when (e is InvalidOperationException || e is ArgumentException || e is OverflowException || e is IndexOutOfRangeException || e is MeshFormatException)
         {
@@ -447,8 +461,9 @@ public static partial class ObjectImporter
         {
             throw new ImportException(display + " cannot be read: " + e.Message);
         }
+        HashSet<int> skeleton = RigBuilder.SkeletonNodes(file);   // a joint has a position of its own
         foreach (GlbNode n in file.Nodes)
-            if (Moved(n))
+            if (!skeleton.Contains(n.Index) && Moved(n))
                 throw new ImportException(display + ": the node '" + n.Name + "' is moved or turned; apply the transforms in the modelling tool and export again");
         List<GlbNode> meshNodes = file.Nodes.Where(n => n.Mesh >= 0 && n.Mesh < file.Meshes.Count).ToList();
         if (meshNodes.Count == 0)
@@ -486,6 +501,12 @@ public static partial class ObjectImporter
             }
             list.AddRange(kv.Value);
             result.Materials[slot].AddRange(byPrimitive.Materials[kv.Key]);
+            if (byPrimitive.Influences.TryGetValue(kv.Key, out List<float[]> influences))
+            {
+                if (!result.Influences.TryGetValue(slot, out List<float[]> slotInfluences))
+                    result.Influences[slot] = slotInfluences = new List<float[]>();
+                slotInfluences.AddRange(influences);
+            }
         }
         return result;
     }

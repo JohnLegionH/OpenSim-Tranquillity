@@ -96,10 +96,17 @@ public static partial class ImportCheck
         List<string> notes = new List<string>();
         for (int i = 0; i < 4; i++)
             (files[i], nodes[i]) = ObjectImporter.ReadModel(Path.Combine(folder, fileNames[i]), fileNames[i], notes);
+        // a rigged part: the skin of the files, the way the import read it
+        RigPlan rig = RigBuilder.Plan(files, nodes, fileNames, options?.JointPositions ?? false);
+        if (rig != null)
+            for (int i = 0; i < 4; i++)
+                RigBuilder.Apply(rig, i, files[i], nodes[i]);
         PartGeometry highIn = PartGeometry.FromNode(files[0], nodes[0], nodes[0].Scale, true);
         List<GlbPrimitive> highPrimitives = files[0].Meshes[nodes[0].Mesh].Primitives;
         string[] slotNames = highPrimitives.Select(p => ObjectImporter.MaterialName(files[0], p.Material)).ToArray();
         (Vector3 size, Vector3 centre) = ObjectImporter.Box(highIn);
+        if (rig != null)
+            RigBuilder.SetBindShape(rig, new SysVector3(size.X, size.Y, size.Z), new SysVector3(centre.X, centre.Y, centre.Z));
         // the exporter writes the part about its own centre; the input files have their own origin
         float[] shift = { centre.X, centre.Z, -centre.Y };
         GeometryTolerance tolerance = new GeometryTolerance { Position = PositionTolerance, Normal = GeometryTolerance.DefaultNormal, Uv = UvTolerance };
@@ -122,7 +129,8 @@ public static partial class ImportCheck
             exported = GlbFile.Read(File.ReadAllBytes(glb));
             GlbNode exportedNode = exported.Nodes.FirstOrDefault(n => n.Mesh >= 0 && n.Mesh < exported.Meshes.Count)
                 ?? throw new ImportException("the exported glTF has no mesh");
-            result.Lines.Add(Compare(LevelLines[0], highIn, PartGeometry.FromNode(exported, exportedNode), shift, tolerance));
+            // a rigged part is exported in its bind pose, which already has the part's centre in it
+            result.Lines.Add(Compare(LevelLines[0], highIn, PartGeometry.FromNode(exported, exportedNode), rig != null ? new float[3] : shift, tolerance));
         }
 
         // the lower levels, read back out of the mesh asset
@@ -132,6 +140,9 @@ public static partial class ImportCheck
             PartGeometry input = ObjectImporter.PerSlot(files[level], nodes[level], fileNames[level], fileNames[0], slotNames);
             result.Lines.Add(Compare(LevelLines[level], input, FromMesh(decoded, size), shift, tolerance));
         }
+
+        if (rig != null)
+            result.Lines.Add(CompareSkin(rig, model, files, nodes));
 
         string physicsPath = Path.Combine(folder, baseName + "_physics.glb");
         if (File.Exists(physicsPath))

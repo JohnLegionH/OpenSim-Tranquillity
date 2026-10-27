@@ -16,8 +16,8 @@ namespace OpenSim.ArchiveInspector;
 internal static class ImportCommand
 {
     public const string Usage =
-@"Usage: OpenSim.ArchiveInspector oar-import <folder> --out <new.oar> --avatar <uuid> [--name <text>] [--description <text>] [--base <name>] [--position <x,y,z>] [--created <seconds>] [--pbr] [--check <folder>]
-       OpenSim.ArchiveInspector oar-import (--manifest <linkset.json> | <folder with a linkset.json>) --out <new.oar> --avatar <uuid> [--position <x,y,z>] [--created <seconds>] [--pbr] [--check <folder>]
+@"Usage: OpenSim.ArchiveInspector oar-import <folder> --out <new.oar> --avatar <uuid> [--name <text>] [--description <text>] [--base <name>] [--position <x,y,z>] [--created <seconds>] [--pbr] [--joint-positions] [--check <folder>]
+       OpenSim.ArchiveInspector oar-import (--manifest <linkset.json> | <folder with a linkset.json>) --out <new.oar> --avatar <uuid> [--position <x,y,z>] [--created <seconds>] [--pbr] [--joint-positions] [--check <folder>]
 
 Writes an archive that holds one mesh object, made from the .glb files in <folder> (the files a mesh tool writes for an upload):
   <base>.glb          the full mesh (high level of detail); one face for each material, and the pictures of the materials inside the file
@@ -38,6 +38,8 @@ The size of the object is the size of the full mesh in metres. The archive loads
   --pbr                 also write a glTF PBR material for every face that has a material in the .glb (base colour, normal, occlusion-roughness-metallic and
                         emissive pictures and the factors), beside the legacy texture and normal-map material the face always has. A manifest can ask for it
                         with ""pbr"": true.
+  --joint-positions     for a rigged mesh (a .glb with a skin): also write the joint positions of the file, so the wearer's joints move to them (the viewer's
+                        ""include joint positions""). Left out, the mesh follows the wearer's own shape. A manifest can ask for it with ""jointPositions"": true.
   --check <folder>      after writing, write the object back out to glTF in <folder> and compare it with the input: triangle counts equal
                         for every level, positions within half a millimetre, texture coordinates and pictures the same
   --manifest <file>     a linked object (see below); a folder that holds a linkset.json is read the same way
@@ -116,6 +118,9 @@ Exit codes: 0 done (and the check passed, if asked); 1 written, but the check fa
                     break;
                 case "--pbr":
                     options.Pbr = true;
+                    break;
+                case "--joint-positions":
+                    options.JointPositions = true;
                     break;
                 case "--created":
                     if (i + 1 >= args.Length || !long.TryParse(args[i + 1], NumberStyles.None, CultureInfo.InvariantCulture, out long created) || created <= 0)

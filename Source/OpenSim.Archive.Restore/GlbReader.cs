@@ -25,10 +25,15 @@ public sealed class GlbPrimitive
     public int[] Indices;
     public int Material = -1;
     public JsonObject Extras;
-    /// <summary>Four joint numbers for each vertex (JOINTS_0), as numbers into the skin's joint list; null when the primitive is not skinned.</summary>
+    /// <summary>
+    /// The joint numbers of each vertex (JOINTS_0, then JOINTS_1 and so on), as numbers into the skin's joint list: <see cref="InfluencesPerVertex"/> for
+    /// each vertex, four per attribute set. Null when the primitive is not skinned.
+    /// </summary>
     public int[] Joints;
-    /// <summary>Four weights for each vertex (WEIGHTS_0), in the order of <see cref="Joints"/>; null when the primitive is not skinned.</summary>
+    /// <summary>The weights that go with <see cref="Joints"/>, in the same order; null when the primitive is not skinned.</summary>
     public float[] Weights;
+    /// <summary>Four for each JOINTS_n/WEIGHTS_n pair the primitive has.</summary>
+    public int InfluencesPerVertex = 4;
 }
 
 public sealed class GlbMesh
@@ -174,6 +179,7 @@ public sealed class GlbFile
                         Extras = p["extras"] as JsonObject
                     };
                     int vertices = prim.Positions.Length / 3;
+                    ReadInfluences(prim, a, vertices, accessors, views, data, binAt, binLength);
                     prim.Indices = p["indices"] == null ? Enumerable.Range(0, vertices - vertices % 3).ToArray() : ReadIndices(p["indices"], accessors, views, data, binAt, binLength);
                     foreach (int i in prim.Indices)
                         if (i < 0 || i >= vertices)
@@ -197,6 +203,7 @@ public sealed class GlbFile
                     Rotation = Floats(n["rotation"], 4),
                     Scale = Floats(n["scale"], 3),
                     Mesh = n["mesh"] == null ? -1 : (int)n["mesh"],
+                    Skin = n["skin"] == null ? -1 : (int)n["skin"],
                     Extras = n["extras"] as JsonObject
                 };
                 if (n["children"] is JsonArray children)
@@ -204,7 +211,53 @@ public sealed class GlbFile
                         node.Children.Add((int)c);
                 file.Nodes.Add(node);
             }
+
+        if (root["skins"] is JsonArray skins)
+            foreach (JsonNode s in skins)
+            {
+                GlbSkin skin = new GlbSkin { Name = (string)s["name"] };
+                if (s["joints"] is JsonArray joints)
+                    foreach (JsonNode j in joints)
+                        skin.Joints.Add((int)j);
+                if (s["inverseBindMatrices"] != null)
+                {
+                    float[] all = ReadFloats(s["inverseBindMatrices"], 16, accessors, views, data, binAt, binLength);
+                    for (int i = 0; i + 16 <= all.Length; i += 16)
+                    {
+                        float[] m = new float[16];
+                        Array.Copy(all, i, m, 0, 16);
+                        skin.InverseBind.Add(m);
+                    }
+                }
+                file.Skins.Add(skin);
+            }
         return file;
+    }
+
+    /// <summary>Reads JOINTS_0/WEIGHTS_0 and any further pairs (a vertex may have more than four influences) into <paramref name="prim"/>.</summary>
+    private static void ReadInfluences(GlbPrimitive prim, JsonNode attributes, int vertices, JsonArray accessors, JsonArray views, byte[] data, int binAt, int binLength)
+    {
+        int sets = 0;
+        while (attributes["JOINTS_" + sets] != null && attributes["WEIGHTS_" + sets] != null)
+            sets++;
+        if (sets == 0)
+            return;
+        prim.InfluencesPerVertex = 4 * sets;
+        prim.Joints = new int[vertices * 4 * sets];
+        prim.Weights = new float[vertices * 4 * sets];
+        for (int set = 0; set < sets; set++)
+        {
+            float[] joints = ReadFloats(attributes["JOINTS_" + set], 4, accessors, views, data, binAt, binLength);
+            float[] weights = ReadFloats(attributes["WEIGHTS_" + set], 4, accessors, views, data, binAt, binLength);
+            if (joints.Length != vertices * 4 || weights.Length != vertices * 4)
+                throw new InvalidDataException("the joint or weight attribute " + set + " of a primitive does not have one entry for each vertex");
+            for (int v = 0; v < vertices; v++)
+                for (int k = 0; k < 4; k++)
+                {
+                    prim.Joints[v * 4 * sets + set * 4 + k] = (int)joints[v * 4 + k];
+                    prim.Weights[v * 4 * sets + set * 4 + k] = weights[v * 4 + k];
+                }
+        }
     }
 
     private static GlbMaterial ReadMaterial(JsonNode m, JsonNode root, JsonArray views, byte[] data, int binAt, int binLength)
@@ -283,7 +336,7 @@ public sealed class GlbFile
         return r;
     }
 
-    private static readonly Dictionary<string, int> s_widths = new Dictionary<string, int> { ["SCALAR"] = 1, ["VEC2"] = 2, ["VEC3"] = 3, ["VEC4"] = 4 };
+    private static readonly Dictionary<string, int> s_widths = new Dictionary<string, int> { ["SCALAR"] = 1, ["VEC2"] = 2, ["VEC3"] = 3, ["VEC4"] = 4, ["MAT4"] = 16 };
 
     private static (int offset, int stride, int count, int components, int componentType, bool normalized) Locate(JsonNode accessorIndex, JsonArray accessors, JsonArray views, int binLength)
     {

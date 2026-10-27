@@ -710,6 +710,10 @@ public sealed partial class ArchiveRestorer
             List<float[]> tris = kv.Value;
             List<int> materials = g.Materials[kv.Key];
             float[] pos = new float[tris.Count * 9], nor = new float[tris.Count * 9], uv = new float[tris.Count * 6];
+            // a rigged part: the joints and weights of each corner, four of each
+            g.Influences.TryGetValue(kv.Key, out List<float[]> influences);
+            byte[] jointIds = influences == null ? null : new byte[tris.Count * 12];
+            float[] jointWeights = influences == null ? null : new float[tris.Count * 12];
             for (int t = 0; t < tris.Count; t++)
             {
                 float[] tri = tris[t];
@@ -724,11 +728,17 @@ public sealed partial class ArchiveRestorer
                     if (len > 1e-12f) { nx /= len; ny /= len; nz /= len; }
                     nor[p] = nx; nor[p + 1] = ny; nor[p + 2] = nz;
                     uv[q] = tri[o + 6]; uv[q + 1] = tri[o + 7];
+                    if (influences != null)
+                        for (int k = 0; k < 4; k++)
+                        {
+                            jointIds[t * 12 + c * 4 + k] = (byte)influences[t][o + k];
+                            jointWeights[t * 12 + c * 4 + k] = influences[t][o + 4 + k];
+                        }
                 }
                 if (GlbFile.Bool(mat, "uvTransformBaked") == true)
                     Unbake(uv, t * 6, mat);
             }
-            primFaces.Add(new PrimFace { Number = kv.Key, Kind = PrimFaceKind.Outer, MesherNumber = kv.Key, Positions = pos, Normals = nor, Uvs = uv });
+            primFaces.Add(new PrimFace { Number = kv.Key, Kind = PrimFaceKind.Outer, MesherNumber = kv.Key, Positions = pos, Normals = nor, Uvs = uv, JointIds = jointIds, JointWeights = jointWeights });
         }
         return FaceBuilder.SlotsSplit(primFaces, faceCount, out sourceSlot);
     }

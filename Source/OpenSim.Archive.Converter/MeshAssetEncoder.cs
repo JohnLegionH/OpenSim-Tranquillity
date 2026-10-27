@@ -60,6 +60,14 @@ public sealed class MeshAssetEncoder : IMeshEncoder
             finally { LodGenerator.Trace = null; }
             Lap("levels of detail made");
         }
+        if (options?.Skin != null)
+        {
+            for (int level = 0; level < MeshAssetModel.LodCount; level++)
+                foreach (MeshFace face in model.Lod(level).Faces)
+                    if (!face.NoGeometry && face.Weights == null)
+                        throw new InvalidOperationException("a face of a rigged mesh has no weights");
+            model.Skin = options.Skin;
+        }
         PhysicsBlock.AddBoundingHull(model, fromHigh: options?.Lods != null);
         if (options?.Hulls != null)
             PhysicsBlock.AddHullList(model, options.Hulls, PhysicsBlock.ReadBoundingVerts(model.PhysicsConvex));
@@ -89,6 +97,19 @@ public sealed class MeshAssetEncoder : IMeshEncoder
         int[] indices = new int[f.Indices.Length];
         for (int i = 0; i < indices.Length; i++)
             indices[i] = checked((int)f.Indices[i]);
-        return new MeshFace { Positions = positions, Normals = normals, Uvs = uvs, Indices = indices };
+        Influence[][] weights = null;
+        if (f.JointIds != null && f.JointWeights != null)
+        {
+            weights = new Influence[n][];
+            for (int i = 0; i < n; i++)
+            {
+                List<Influence> list = new List<Influence>(4);
+                for (int k = 0; k < 4; k++)
+                    if (f.JointWeights[i * 4 + k] > 0f)
+                        list.Add(new Influence(f.JointIds[i * 4 + k], f.JointWeights[i * 4 + k]));
+                weights[i] = list.ToArray();
+            }
+        }
+        return new MeshFace { Positions = positions, Normals = normals, Uvs = uvs, Indices = indices, Weights = weights };
     }
 }

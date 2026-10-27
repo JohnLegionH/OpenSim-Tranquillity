@@ -89,7 +89,7 @@ public static partial class ObjectImporter
             say("read " + label + ": " + string.Join(", ", model.Names));
             try
             {
-                w.Built = BuildPart(model, catalog, w.Result, _ => { }, part.Faces, options.Pbr || manifest.Pbr);
+                w.Built = BuildPart(model, catalog, w.Result, _ => { }, part.Faces, options.Pbr || manifest.Pbr, options.JointPositions || manifest.JointPositions);
             }
             catch (ImportException e)
             {

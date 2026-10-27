@@ -35,6 +35,11 @@ public sealed class PartGeometry
     public SortedDictionary<int, List<float[]>> Faces { get; } = new SortedDictionary<int, List<float[]>>();
     /// <summary>For each triangle in <see cref="Faces"/>, the glTF material index of its primitive (-1 for none); same order.</summary>
     public SortedDictionary<int, List<int>> Materials { get; } = new SortedDictionary<int, List<int>>();
+    /// <summary>
+    /// For a skinned part, the influences of each triangle in <see cref="Faces"/>, same order: 24 floats, for each of the three corners four final joint
+    /// numbers and then four weights. Empty for a part that is not skinned.
+    /// </summary>
+    public SortedDictionary<int, List<float[]>> Influences { get; } = new SortedDictionary<int, List<float[]>>();
     /// <summary>Triangles whose three vertices do not all carry the same face number.</summary>
     public int MixedTriangles { get; private set; }
     /// <summary>Primitives that give no way to tell which prim face their triangles belong to.</summary>
@@ -54,6 +59,9 @@ public sealed class PartGeometry
         PartGeometry g = new PartGeometry();
         if (node.Mesh < 0 || node.Mesh >= file.Meshes.Count)
             return g;
+        // glTF: the node transform of a skinned mesh is not applied; the vertices are in the space the inverse bind matrices start from
+        if (node.Skin >= 0)
+            scale = null;
         float sx = 1f, sy = 1f, sz = 1f;
         if (scale != null)
         {
@@ -82,11 +90,24 @@ public sealed class PartGeometry
             for (int t = 0; t + 2 < p.Indices.Length; t += 3)
             {
                 float[] tri = new float[TriangleFloats];
+                float[] influence = null;
+                if (p.Joints != null)
+                {
+                    if (p.InfluencesPerVertex != 4)
+                        throw new InvalidOperationException("the skin of a primitive has not been prepared (four influences for each vertex)");
+                    influence = new float[TriangleFloats];
+                }
                 int face = primFace;
                 for (int c = 0; c < 3; c++)
                 {
                     int v = p.Indices[t + c];
                     int o = c * 8;
+                    if (influence != null)
+                        for (int k = 0; k < 4; k++)
+                        {
+                            influence[o + k] = p.Joints[v * 4 + k];
+                            influence[o + 4 + k] = p.Weights[v * 4 + k];
+                        }
                     tri[o] = p.Positions[v * 3] * sx;
                     tri[o + 1] = p.Positions[v * 3 + 1] * sy;
                     tri[o + 2] = p.Positions[v * 3 + 2] * sz;
@@ -124,6 +145,12 @@ public sealed class PartGeometry
                 }
                 list.Add(tri);
                 g.Materials[face].Add(p.Material);
+                if (influence != null)
+                {
+                    if (!g.Influences.TryGetValue(face, out List<float[]> influenceList))
+                        g.Influences[face] = influenceList = new List<float[]>();
+                    influenceList.Add(influence);
+                }
             }
         }
         return g;
