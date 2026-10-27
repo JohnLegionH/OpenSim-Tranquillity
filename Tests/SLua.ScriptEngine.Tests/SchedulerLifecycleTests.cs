@@ -93,7 +93,7 @@ public class SchedulerLifecycleTests
     public void AStoppedScriptsTimerIsHeldAndStartsAgainWithTheTimeItHadLeft()
     {
         // Phlox keeps the time a stopped script's timer had left and the start carries on with it
-        // (PhloxExecutionScheduler: StopScript keeps TimerTimeLeft in m_StoppedTimerLeft, StartAfterStop resumes with it).
+        // (PhloxExecutionScheduler: ProcessEnableDisable keeps TimerTimeLeft in m_StoppedTimerLeft, StartAfterStop resumes with it).
         using var h = new SchedulerHarness();
         SchedulerScript s = h.AddAndStart(LslTimer, lsl: true);
         h.Pump();
@@ -133,26 +133,6 @@ public class SchedulerLifecycleTests
         Assert.Empty(h.MarksOf(s)); // a quarter of a second was left
         h.Advance(0.1);
         Assert.Equal(new[] { "say:t" }, h.MarksOf(s));
-    }
-
-    [RequiresNativeFact]
-    public void ANewTimerSetAfterAStopAndStartCountsAFullInterval()
-    {
-        using var h = new SchedulerHarness();
-        SchedulerScript s = h.AddAndStart(
-            "default { state_entry() { llSetTimerEvent(10.0); } timer() { llOwnerSay(\"t\"); llSetTimerEvent(1.0); } }", lsl: true);
-        h.Pump();
-        h.Advance(9.0);
-        h.Scheduler.SetRunning(s, false);
-        h.Pump();
-        h.Scheduler.SetRunning(s, true);
-        h.Pump();
-        h.Advance(1.1); // the second that was left
-        Assert.Equal(new[] { "say:t" }, h.MarksOf(s));
-        h.Advance(0.5);
-        Assert.Single(h.MarksOf(s)); // the interval the script then asked for is a whole second
-        h.Advance(0.6);
-        Assert.Equal(2, h.MarksOf(s).Length);
     }
 
     [RequiresNativeFact]

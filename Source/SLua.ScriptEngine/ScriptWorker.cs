@@ -406,7 +406,8 @@ namespace SLua.ScriptEngine
 
         /// <summary>
         /// The Running flag changed (it is already set on the script). Off: queued events are dropped and the timer
-        /// is held; the script keeps its place in its handler. On: it carries on; a script that was never started
+        /// is held with the time it had left, which the start carries on with (Phlox: ProcessEnableDisable keeps
+        /// TimerTimeLeft in m_StoppedTimerLeft, StartAfterStop resumes with it); the script keeps its place in its handler. On: it carries on; a script that was never started
         /// starts, and one stopped by a fault starts over.
         /// </summary>
         internal void ApplyRunning(SchedulerScript s, bool running)
@@ -422,7 +423,7 @@ namespace SLua.ScriptEngine
                 }
                 s.Events.Clear();
                 s.TimerQueued = false;
-                HoldTimer(s, keepTimeLeft: false);
+                HoldTimer(s, keepTimeLeft: true); // Phlox keeps the time left across a stop, as across a pause
                 Reschedule(s);
                 return;
             }
