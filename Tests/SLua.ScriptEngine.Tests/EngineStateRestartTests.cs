@@ -135,6 +135,24 @@ public class EngineStateRestartTests
     }
 
     [RequiresNativeFact]
+    public void TheRegionsShutdownSavesTheScripts()
+    {
+        using var dir = new TempFolder();
+        UUID item = UUID.Random(), asset = UUID.Random();
+        using var store = new SqliteStateStore(Db(dir), "SLua");
+        // the timed save is an hour away, so only a save at shutdown can have written the row
+        using var rig = new EngineRig(new Dictionary<string, string> { ["StateSaveIntervalMs"] = "3600000" }, store: store);
+        rig.Rez(EngineRig.Slua(CountsEvents), item: item, asset: asset);
+        Assert.True(Marked(rig, item, "start"));
+        Assert.False(store.HasSavedState(item, asset));
+
+        rig.Scene.EventManager.TriggerShutdown();
+
+        Assert.True(store.Flush());
+        Assert.True(store.HasSavedState(item, asset));
+    }
+
+    [RequiresNativeFact]
     public void SavingCanBeSwitchedOff()
     {
         using var dir = new TempFolder();
