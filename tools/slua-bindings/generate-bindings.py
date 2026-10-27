@@ -647,6 +647,18 @@ namespace SLua.ScriptEngine
     out.append(string_array("NotDerived", "Integer parameters whose name suggests a position without saying so; they are not shifted.", not_derived))
     out.append("    }\n}\n")
     write(out_dir, "LlIndexes.g.cs", "".join(out))
+    out = [HEADER, """
+namespace SLua.ScriptEngine
+{
+    /// <summary>Which ll results are truth values (see tools/slua-bindings/generate-bindings.py).</summary>
+    internal static class LlBooleans
+    {
+"""]
+    out.append(string_array("Returns", "The ll functions whose integer result is a truth value: true or false for an SLua script.", []))
+    out.append("\n")
+    out.append(string_array("ListsNotConverted", "The ll functions whose list result holds truth values at places that depend on the request; not converted.", []))
+    out.append("    }\n}\n")
+    write(out_dir, "LlBooleans.g.cs", "".join(out))
 
 
 def write(out_dir, name, text):

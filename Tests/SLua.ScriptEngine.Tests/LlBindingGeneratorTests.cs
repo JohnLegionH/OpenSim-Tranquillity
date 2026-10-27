@@ -30,7 +30,7 @@ public class LlBindingGeneratorTests
 
     internal static string BuiltinsPath() => Path.Combine(RepoRoot(), "Tests", "SLua.ScriptEngine.Tests", "TestData", "builtins.txt");
 
-    private static readonly string[] GeneratedNames = { "LlBindings.g.cs", "LlCoverage.g.cs", "LlServed.g.cs", "LlIndexes.g.cs" };
+    private static readonly string[] GeneratedNames = { "LlBindings.g.cs", "LlCoverage.g.cs", "LlServed.g.cs", "LlIndexes.g.cs", "LlBooleans.g.cs" };
 
     private static string GeneratedDir() => Path.Combine(RepoRoot(), "Source", "SLua.ScriptEngine", "Bindings");
 

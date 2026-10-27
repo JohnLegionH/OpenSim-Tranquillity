@@ -43,7 +43,7 @@ public class AdaptedFunctionTests
     };
 
     /// <summary>The scheduler harness with the generated bindings, a fake API and a service lane.</summary>
-    private sealed class LaneRig : IDisposable
+    internal sealed class LaneRig : IDisposable
     {
         public readonly ILSLSystemAPI Api;
         public readonly FakeLslApi Fake;

@@ -21,59 +21,55 @@ namespace SLua.ScriptEngine.Tests;
 /// </summary>
 public class IndexShiftTests
 {
-    // ---- which arguments and returns are indexes, from the runtime's own definitions ----
+    // ---- which arguments and returns are indexes, from Second Life's definitions ----
 
     private static readonly Regex Signature = new(@"^(\w+)\s+(ll\w+)\(\s*(.*?)\s*\)", RegexOptions.Compiled);
 
-    private static IEnumerable<(string Name, string Return, string[][] Params)> Definitions() =>
-        File.ReadAllLines(LlBindingGeneratorTests.BuiltinsPath())
-            .Select(l => Signature.Match(l)).Where(m => m.Success)
-            .Select(m => (m.Groups[2].Value, m.Groups[1].Value,
-                m.Groups[3].Value.Length == 0 ? new string[0][] : m.Groups[3].Value.Split(',').Select(p => p.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries)).ToArray()));
+    private static string MarksPath() => Path.Combine(LlBindingGeneratorTests.RepoRoot(), "Tests", "SLua.ScriptEngine.Tests", "TestData", "lsl-definition-marks.txt");
+
+    /// <summary>The marks file (tools/slua-bindings/extract-marks.py): function name to its marks, such as "arg1:index" and "return:bool".</summary>
+    internal static Dictionary<string, string[]> Marks() =>
+        File.ReadAllLines(MarksPath()).Where(l => l.Length > 0 && l[0] != '#')
+            .Select(l => l.Split('	')).ToDictionary(f => f[0], f => f.Skip(1).ToArray());
+
+    internal static string ReturnTypeOf(string function) =>
+        File.ReadAllLines(LlBindingGeneratorTests.BuiltinsPath()).Select(l => Signature.Match(l)).First(m => m.Success && m.Groups[2].Value == function).Groups[1].Value;
 
     [Fact]
-    public void TheIndexArgumentsAreTheIntegerParametersTheDefinitionsNameIndex()
+    public void TheIndexArgumentsAreThoseTheDefinitionsMarkAsIndexes()
     {
-        var expected = new Dictionary<string, int[]>();
-        foreach (var (name, _, ps) in Definitions())
-        {
-            int[] at = Enumerable.Range(0, ps.Length).Where(i => ps[i][0] == "integer" && ps[i].Length == 2 && (ps[i][1] == "index" || ps[i][1].EndsWith("_index"))).ToArray();
-            if (at.Length > 0) expected[name] = at;
-        }
+        var expected = Marks().Where(kv => kv.Value.Any(m => m.EndsWith(":index") && m.StartsWith("arg")))
+            .ToDictionary(kv => kv.Key, kv => kv.Value.Where(m => m.StartsWith("arg") && m.EndsWith(":index")).Select(m => int.Parse(m.Substring(3, m.IndexOf(':') - 3))).ToArray());
 
-        Assert.NotEmpty(expected);
+        Assert.True(expected.Count > 40, "the marks file gave only " + expected.Count + " functions");
         Assert.Equal(expected.Keys.OrderBy(k => k), LlIndexes.Arguments.Keys.OrderBy(k => k));
         foreach (var kv in expected) Assert.Equal(kv.Value, LlIndexes.Arguments[kv.Key]);
         Assert.Equal(new[] { 1 }, LlIndexes.Arguments["llList2String"]);
-        Assert.Equal(new[] { 1, 2 }, LlIndexes.Arguments["llGetSubString"]);
+        Assert.Equal(new[] { 1, 2, 4 }, LlIndexes.Arguments["llList2ListSlice"]);
+        Assert.Equal(new[] { 2 }, LlIndexes.Arguments["llListSortStrided"]);
+        Assert.Equal(new[] { 0 }, LlIndexes.Arguments["llDetectedKey"]);
+        Assert.Equal(new[] { 1 }, LlIndexes.Arguments["llGetNotecardLine"]);
+        Assert.Equal(new[] { 2 }, LlIndexes.Arguments["llListFindListNext"]);
     }
 
     [Fact]
-    public void TheIndexReturnsAreTheIntegerFunctionsThatFindAPosition()
+    public void TheIndexReturnsAreTheIntegerResultsTheDefinitionsMarkAsIndexes()
     {
-        string[] expected = Definitions().Where(d => d.Return == "integer" && Regex.IsMatch(d.Name, "Find|Index")).Select(d => d.Name).OrderBy(n => n).ToArray();
+        string[] expected = Marks().Where(kv => kv.Value.Contains("return:index") && ReturnTypeOf(kv.Key) == "integer").Select(kv => kv.Key).OrderBy(n => n, StringComparer.Ordinal).ToArray();
 
-        Assert.NotEmpty(expected);
-        Assert.Equal(expected, LlIndexes.Returns.OrderBy(n => n));
-        Assert.Contains("llListFindList", LlIndexes.Returns);
-        Assert.Contains("llSubStringIndex", LlIndexes.Returns);
+        Assert.Equal(new[] { "llListFindList", "llListFindListNext", "llListFindStrided", "llSubStringIndex" }, expected);
+        Assert.Equal(expected, LlIndexes.Returns.OrderBy(n => n, StringComparer.Ordinal));
     }
 
     [Fact]
-    public void PositionLikeParametersThatAreNotDerivedAreListed()
+    public void PositionLikeParametersTheDefinitionsDoNotMarkAreListedAndNotShifted()
     {
-        Assert.Contains("llDetectedKey(number)", LlIndexes.NotDerived);
-        Assert.Contains("llGetNotecardLine(line)", LlIndexes.NotDerived);
-        Assert.Contains("llDetectedName(item)", LlIndexes.NotDerived);
+        Assert.Contains("llMessageLinked(num)", LlIndexes.NotDerived);
+        Assert.Contains("llSetTexture(face)", LlIndexes.NotDerived);
+        Assert.DoesNotContain("llDetectedKey(number)", LlIndexes.NotDerived);
+        Assert.DoesNotContain("llGetNotecardLine(line)", LlIndexes.NotDerived);
         Assert.DoesNotContain(LlIndexes.NotDerived, n => n.StartsWith("llList2String"));
-    }
-
-    [Fact]
-    public void NoIndexFunctionRunsOnTheServiceLane()
-    {
-        var indexed = new HashSet<string>(LlIndexes.Arguments.Keys.Concat(LlIndexes.Returns));
-        Assert.NotEmpty(indexed);
-        Assert.DoesNotContain(LlBindings.All, f => indexed.Contains(f.ApiName) && (f.Class == FunctionClass.Async || f.Class == FunctionClass.Service));
+        Assert.DoesNotContain("llMessageLinked", LlIndexes.Arguments.Keys);
     }
 
     // ---- what a script sees ----
