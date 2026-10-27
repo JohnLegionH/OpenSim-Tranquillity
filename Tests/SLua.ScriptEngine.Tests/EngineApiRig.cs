@@ -39,6 +39,43 @@ internal sealed class EngineApiRig : IDisposable
         m_fallback = fallback;
     }
 
+    private static readonly object s_warmLock = new();
+    private static bool s_warm;
+
+    /// <summary>
+    /// Calls the real API once before any script does, so the first call in a script is not the one that compiles the code (a first
+    /// call can overrun the script's run window, which the runtime punishes with a sleep and a timing test would see).
+    /// </summary>
+    private void WarmUp()
+    {
+        lock (s_warmLock)
+        {
+            if (s_warm) return;
+            s_warm = true;
+            var api = new LSLSystemAPI(Host, Object.RootPart, Object.RootPart.LocalId, UUID.Random())
+            {
+                RuntimeAccess = new EngineScriptAccess(new SchedulerScript(0, 0, new byte[0], ScriptLanguage.Slua)),
+            };
+            var ctx = new SyscallContext(UUID.Random(), SyscallContext.NextSeq());
+            ctx.Enter();
+            try
+            {
+                api.llSetPos(new Vector3(1, 1, 1));
+                api.llSay(0, "warm");
+                api.llInstantMessage(UUID.Zero.ToString(), "warm");
+                api.llEmail("someone@example.org", "s", "b");
+                api.llGetNotecardLine("none", 0);
+                api.llSetTimerEvent(1f);
+                api.llStringLength("x");
+                api.llGetPos();
+                ILSLSystemAPI router = ApiRouter.Create(api, api);
+                router.llStringLength("x");
+                router.NeedsService("llName2Key", new object[] { "x" });
+            }
+            finally { SyscallContext.Exit(); }
+        }
+    }
+
     public EngineApiRig(params (string Key, string Value)[] settings)
     {
         var source = new IniConfigSource();
@@ -52,6 +89,7 @@ internal sealed class EngineApiRig : IDisposable
         {
             SetTimer = (item, sec) => BackendCalls.Enqueue("SetTimer " + sec),
         });
+        WarmUp();
         H = new SchedulerHarness(configure: o =>
         {
             Func<Bindings.Vm> inner = o.VmFactory;

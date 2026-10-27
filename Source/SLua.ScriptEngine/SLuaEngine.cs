@@ -127,10 +127,51 @@ namespace SLua.ScriptEngine
         internal SLuaSettings Settings => m_settings;
 
         /// <summary>The host side of the script functions for the region; null before the region is added.</summary>
-        internal EngineHostServices HostServices => null;
+        internal EngineHostServices HostServices { get; private set; }
 
-        /// <summary>The script functions of one script: the real LSLSystemAPI for the functions the engine's host serves, the fallback for the rest.</summary>
-        internal Phlox.ScriptEngine.ILSLSystemAPI CreateScriptApi(SchedulerScript script, UUID itemId, uint localId, Phlox.ScriptEngine.ILSLSystemAPI fallback) => fallback;
+        private IConfigSource m_configSource;
+
+        /// <summary>
+        /// The script functions of one script: the real LSLSystemAPI, built on the engine's host services, for the functions the
+        /// host serves (<see cref="LlServed"/>), and <paramref name="fallback"/> for the rest.
+        /// </summary>
+        internal Phlox.ScriptEngine.ILSLSystemAPI CreateScriptApi(SchedulerScript script, UUID itemId, uint localId, Phlox.ScriptEngine.ILSLSystemAPI fallback)
+        {
+            EngineHostServices host = HostServices ?? throw new InvalidOperationException("the engine has no region yet");
+            var real = new Phlox.ScriptEngine.LSLSystemAPI(host, m_scene?.GetSceneObjectPart(localId), localId, itemId)
+            {
+                RuntimeAccess = new EngineScriptAccess(script),
+            };
+            return ApiRouter.Create(real, fallback);
+        }
+
+        /// <summary>What the script functions ask of the engine: the facilities the engine has, wired to its own members.</summary>
+        private EngineHostBackend BuildHostBackend() => new EngineHostBackend
+        {
+            PostScriptEvent = PostScriptEvent,
+            PostObjectEvent = PostObjectEvent,
+            HasScript = item => (HasScript(item, out bool running), running),
+            SetTimer = HostSetTimer,
+            SetItemRunningFlag = SetItemRunningFlag,
+            ResetScript = item =>
+            {
+                ScriptRecord record = RecordOf(item);
+                if (record != null) OnScriptReset(record.LocalID, item);
+            },
+            RequestParcelCheck = RecheckParcel,
+            PhysicsFrameTimeAvg = () => PhysicsFrameTimeAvg,
+        };
+
+        /// <summary>
+        /// llSetTimerEvent: the script's timer is set on its worker, so this is valid while the script is inside a call (the API
+        /// runs inside the script's host function); a timer asked for from any other thread is not set.
+        /// </summary>
+        private void HostSetTimer(UUID itemId, float seconds)
+        {
+            SchedulerScript script = RecordOf(itemId)?.Script;
+            if (script != null && ReferenceEquals(script, SchedulerScript.Current))
+                script.SetTimer(seconds);
+        }
 
         /// <summary>Where the engine sets each script's event flags on its prim; tests replace it before the region is added.</summary>
         internal IPrimEventFlags PrimFlags { get; set; }
@@ -142,6 +183,7 @@ namespace SLua.ScriptEngine
         public void Initialise(IConfigSource source)
         {
             m_settings = SLuaSettings.Read(source, m_log);
+            m_configSource = source;
             if (!m_settings.Enabled)
                 return;
 
@@ -156,6 +198,7 @@ namespace SLua.ScriptEngine
         {
             if (!m_enabled) return;
             m_scene = scene;
+            HostServices = new EngineHostServices(m_settings, scene, m_configSource, this, BuildHostBackend());
             PrimFlags ??= new ScenePrimEventFlags(scene);
             m_scene.RegisterModuleInterface<IScriptModule>(this);
             m_scene.StackModuleInterface<IScriptModule>(this);
@@ -260,6 +303,7 @@ namespace SLua.ScriptEngine
             m_scheduler?.Dispose();
             m_scheduler = null;
             lock (m_records) m_records.Clear();
+            HostServices = null;
             m_scene = null;
         }
 

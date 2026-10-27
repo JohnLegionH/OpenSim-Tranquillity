@@ -117,9 +117,11 @@ public class ServedByRealApiTests
         using var rig = new EngineApiRig(fallback, ("MinTimerInterval", "0.5"));
         SchedulerScript s = rig.H.AddAndStart("ll.SetTimerEvent(2.0)\nlocal h = ll.Listen(0, '', '', '')\nossl.Mark('handle', tostring(h))\nossl.Count()");
 
-        rig.H.Pump();
+        // The first call of the real API in a process compiles code and can overrun the script's run window, which the runtime
+        // punishes with a sleep; moving the clock past it is not what is under test.
+        for (int i = 0; i < 30 && rig.H.CountOf(s) == 0; i++) rig.H.Advance(1.0);
 
-        Assert.Equal(1, rig.H.CountOf(s));
+        Assert.True(rig.H.CountOf(s) == 1, "state " + s.State + " faulted=[" + string.Join(",", rig.H.FaultedScripts.Select(f => f.FaultMessage)) + "] errors=[" + string.Join(",", rig.H.ReportedErrors) + "] fallback=[" + string.Join(",", fallbackFake.Calls.Select(c => c.Name)) + "] backend=[" + string.Join(",", rig.BackendCalls) + "]");
         Assert.Contains("SetTimer 2", rig.BackendCalls.ToArray()); // the real API reached the engine's host
         Assert.DoesNotContain(fallbackFake.Calls, c => c.Name == "llSetTimerEvent");
         Assert.Contains(fallbackFake.Calls, c => c.Name == "llListen"); // the fallback served the listen

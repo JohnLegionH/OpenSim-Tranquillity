@@ -247,6 +247,44 @@ def read_delays(path):
     return delays
 
 
+# ---- host members, from the implementation ----
+
+# The members of the engine's host services (IScriptHostServices) that the SLua engine does not provide yet. A script function
+# that reaches one, itself or through a method it calls, cannot run on the real LSLSystemAPI with the SLua engine's host.
+LACKING_HOST_MEMBERS = (
+    "Ossl", "ListenManager", "StateManager", "AsyncCommands", "NotecardCache", "ScriptEngine", "PostDataserverToPrim",
+    "SendToWorldComm", "ExperienceGrantRestored", "ExperienceCannotRun", "SetMinEventDelay", "GetEventQueueFreeSpacePercentage",
+)
+HOST_MEMBER = re.compile(r"m_ScriptEngine\s*\??\s*\.\s*(%s)\b" % "|".join(LACKING_HOST_MEMBERS))
+IDENTIFIER = re.compile(r"\b[A-Za-z_]\w*\b")
+
+
+def read_host_needs(path):
+    """Maps each method name of LSLSystemAPI to the lacking host members it reaches, directly or through the methods it calls."""
+    methods = {}
+    for name, types, names, access, public, body in split_methods(read(path)):
+        methods.setdefault(name, []).append(body)
+    direct = {n: {m.group(1) for b in bodies for m in HOST_MEMBER.finditer(b)} for n, bodies in methods.items()}
+    callees = {n: {t for b in bodies for t in IDENTIFIER.findall(b) if t in methods and t != n} for n, bodies in methods.items()}
+    needs = {}
+
+    def reach(name):
+        # Everything reachable from the method; a cycle is walked once.
+        seen, stack, found = set(), [name], set()
+        while stack:
+            n = stack.pop()
+            if n in seen:
+                continue
+            seen.add(n)
+            found |= direct[n]
+            stack.extend(callees[n])
+        return found
+
+    for n in methods:
+        needs[n] = reach(n)
+    return needs
+
+
 # ---- call kinds, from the shims ----
 
 def read_shim_kinds(path):
@@ -292,6 +330,7 @@ def main(builtins_path, interface_path, impl_path, shim_path, out_dir):
     delays = read_delays(impl_path)
     kinds = read_shim_kinds(shim_path)
     failures = read_failures(shim_path)
+    host_needs = read_host_needs(impl_path)
 
     by_name = {}
     for ret, name, params, names in members:
@@ -356,6 +395,7 @@ def main(builtins_path, interface_path, impl_path, shim_path, out_dir):
         if cls == "Service" and name not in failures:
             sys.exit("%s is a service call but the shim has no failure value for it" % name)
     write_bindings(out_dir, rows, failures)
+    write_served(out_dir, [r[0] for r in rows], host_needs)
     write_coverage(out_dir, [r[0] for r in rows], missing, seam_only, mismatch, compiler, unplaced)
     counts = {c: sum(1 for r in rows if r[2] == c) for c in FUNCTION_CLASSES}
     print("bound %d (%s); missing from the seam %d; seam only %d; signature mismatch %d; os/iw/bot %d; unplaced %d"
@@ -422,6 +462,27 @@ namespace SLua.ScriptEngine
                    % (short, name, cls, ret, types, short, extra))
     out.append("        };\n    }\n}\n")
     write(out_dir, "LlBindings.g.cs", "".join(out))
+
+
+def write_served(out_dir, bound, host_needs):
+    served = [n for n in bound if not host_needs.get(n)]
+    not_served = ["%s: %s" % (n, ", ".join(sorted(host_needs[n]))) for n in bound if host_needs.get(n)]
+    out = [HEADER, """
+namespace SLua.ScriptEngine
+{
+    /// <summary>
+    /// Which bound functions can run on the real LSLSystemAPI with the SLua engine's host services: those that, with the methods
+    /// they call, reach none of the host members the engine does not provide yet. The others are listed with the members they
+    /// need and run on the fallback API until the engine provides them.
+    /// </summary>
+    internal static class LlServed
+    {
+"""]
+    out.append(string_array("Served", "Bound functions that run on the real API.", served))
+    out.append("\n")
+    out.append(string_array("NotServed", "Bound functions that do not, each with the host members it needs.", not_served))
+    out.append("    }\n}\n")
+    write(out_dir, "LlServed.g.cs", "".join(out))
 
 
 def failure_expr(literal):
