@@ -59,6 +59,39 @@ public class LinksetImportCommandTests
     }
 
     [Fact]
+    public void TheNotesInTheArchiveAndTheReportOnTheScreenStartWithTheToolAndItsRelease()
+    {
+        LinksetKit.Built built = LinksetKit.Write();
+        string output = ImportKit.OutputPath();
+        TextWriter saved = Console.Out;
+        StringWriter capture = new StringWriter();
+        Console.SetOut(capture);
+        try { Assert.Equal(0, ImportCommand.Run(new[] { "--manifest", built.ManifestPath, "--out", output, "--avatar", ImportKit.Avatar.ToString("D") })); }
+        finally { Console.SetOut(saved); }
+
+        Dictionary<string, byte[]> oar = ImportKit.ReadOar(output);
+        Assert.True(oar.ContainsKey("oar-import-notes.txt"), "no notes file; entries: " + string.Join(", ", oar.Keys));
+        string notes = System.Text.Encoding.UTF8.GetString(oar["oar-import-notes.txt"]);
+        Assert.StartsWith("oar-import " + ToolRelease.Version + "\n", notes);
+        Assert.Contains(notes, capture.ToString());
+    }
+
+    [Fact]
+    public void TheFolderFormOfTheCommandWritesTheNotesToo()
+    {
+        ImportKit.Folder folder = ImportKit.Write();
+        string output = ImportKit.OutputPath();
+        TextWriter saved = Console.Out;
+        Console.SetOut(new StringWriter());
+        try { Assert.Equal(0, ImportCommand.Run(new[] { folder.Path, "--out", output, "--avatar", ImportKit.Avatar.ToString("D") })); }
+        finally { Console.SetOut(saved); }
+
+        Dictionary<string, byte[]> oar = ImportKit.ReadOar(output);
+        Assert.True(oar.ContainsKey("oar-import-notes.txt"), "no notes file; entries: " + string.Join(", ", oar.Keys));
+        Assert.StartsWith("oar-import " + ToolRelease.Version + "\nsource folder: " + Path.GetFileName(folder.Path) + "\n", System.Text.Encoding.UTF8.GetString(oar["oar-import-notes.txt"]));
+    }
+
+    [Fact]
     public void TheHelpTextDocumentsTheManifest()
     {
         string help = ImportCommand.Usage;
