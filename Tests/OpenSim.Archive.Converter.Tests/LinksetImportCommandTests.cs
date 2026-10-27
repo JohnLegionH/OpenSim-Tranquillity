@@ -92,10 +92,40 @@ public class LinksetImportCommandTests
     }
 
     [Fact]
+    public void TheSameInputsAndTheSameCreatedTimeGiveTheSameArchiveBytes()
+    {
+        LinksetKit.Built built = LinksetKit.Write();
+        string avatar = ImportKit.Avatar.ToString("D");
+        string first = ImportKit.OutputPath(), second = ImportKit.OutputPath();
+        TextWriter saved = Console.Out;
+        Console.SetOut(new StringWriter());
+        try
+        {
+            Assert.Equal(0, ImportCommand.Run(new[] { "--manifest", built.ManifestPath, "--out", first, "--avatar", avatar, "--created", "1700000000" }));
+            Assert.Equal(0, ImportCommand.Run(new[] { "--manifest", built.ManifestPath, "--out", second, "--avatar", avatar, "--created", "1700000000" }));
+        }
+        finally { Console.SetOut(saved); }
+
+        Assert.Equal(File.ReadAllBytes(first), File.ReadAllBytes(second));
+        Assert.Contains("1700000000", System.Text.Encoding.UTF8.GetString(ImportKit.ReadOar(first)["archive.xml"]));
+    }
+
+    [Fact]
+    public void ACreatedTimeThatIsNotAWholeNumberOfSecondsExitsWith64AndWritesNothing()
+    {
+        LinksetKit.Built built = LinksetKit.Write();
+        string output = ImportKit.OutputPath();
+        string avatar = ImportKit.Avatar.ToString("D");
+        Assert.Equal(64, ImportCommand.Run(new[] { "--manifest", built.ManifestPath, "--out", output, "--avatar", avatar, "--created", "yesterday" }));
+        Assert.Equal(64, ImportCommand.Run(new[] { "--manifest", built.ManifestPath, "--out", output, "--avatar", avatar, "--created" }));
+        Assert.False(File.Exists(output));
+    }
+
+    [Fact]
     public void TheHelpTextDocumentsTheManifest()
     {
         string help = ImportCommand.Usage;
-        foreach (string word in new[] { "--manifest", "linkset.json", "parts", "folder", "glb", "node", "position", "rotation", "contents", "script", "notecard", "texture", "root" })
+        foreach (string word in new[] { "--created", "--manifest", "linkset.json", "parts", "folder", "glb", "node", "position", "rotation", "contents", "script", "notecard", "texture", "root" })
             Assert.Contains(word, help);
     }
 }
