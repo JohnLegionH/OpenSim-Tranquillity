@@ -134,7 +134,7 @@ namespace SLua.ScriptEngine
         /// script waits (the signature that runs decides, per call); every other function runs on the script worker. With
         /// <paramref name="unavailable"/>, the functions in <see cref="Unavailable"/> answer with an error instead.
         /// </summary>
-        public static void Register(Vm vm, Func<SchedulerScript, ScriptContext> contextOf, bool serviceLane = false, bool unavailable = false)
+        public static void Register(Vm vm, Func<SchedulerScript, ScriptContext> contextOf, bool serviceLane = false, bool unavailable = false, IEnumerable<string> refuse = null)
         {
             var refused = unavailable ? new HashSet<string>(Unavailable, StringComparer.Ordinal) : null;
             foreach (OsFunction f in All)
