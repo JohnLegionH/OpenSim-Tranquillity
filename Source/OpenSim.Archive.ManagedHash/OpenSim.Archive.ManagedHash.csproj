@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    OpenSim.Archive.ManagedHash: MD5, SHA-1 and SHA-256 as System.Security.Cryptography hash algorithms that run in managed
+    code. The framework's own classes call the system's OpenSSL on Linux. The oar tools' packages swap these in for the
+    hash objects that the OpenMetaverse libraries create when they start (see OpenSim.Archive.PackagePatch).
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyTitle>OpenSim.Archive.ManagedHash</AssemblyTitle>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Remove="nini-core" />
+    <PackageReference Remove="UtopiaSkye.OpenMetaverse" />
+    <PackageReference Remove="UtopiaSkye.OpenMetaverse.Types" />
+    <PackageReference Remove="UtopiaSkye.OpenMetaverse.StructuredData" />
+    <PackageReference Remove="UtopiaSkye.OpenMetaverse.Rendering.Meshmerizer" />
+    <PackageReference Remove="UtopiaSkye.OpenMetaverse.Rendering.Simple" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.6.2" />
+  </ItemGroup>
+</Project>
