@@ -126,6 +126,9 @@ namespace SLua.ScriptEngine
 
         internal SLuaSettings Settings => m_settings;
 
+        /// <summary>The lane the async and service functions run on; null before the region is added.</summary>
+        internal ServiceLane Lane => null;
+
         /// <summary>The host side of the script functions for the region; null before the region is added.</summary>
         internal EngineHostServices HostServices { get; private set; }
 

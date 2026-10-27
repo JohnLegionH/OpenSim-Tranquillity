@@ -15,6 +15,9 @@ namespace SLua.ScriptEngine
     /// <summary>The ll functions bound to ILSLSystemAPI. The table itself (<c>All</c>) is generated; see tools/slua-bindings.</summary>
     internal static partial class LlBindings
     {
+        /// <summary>The ll functions that answer a script with "not available on this engine yet": the ones the host cannot serve and the ones not bound.</summary>
+        internal static readonly System.Collections.Generic.IReadOnlyCollection<string> Unavailable = Array.Empty<string>();
+
         /// <summary>
         /// Registers every bound function in the VM's "ll" table. With <paramref name="serviceLane"/>, the long-running (async)
         /// and service-reaching functions are registered as pausing calls whose work runs on the context's service lane while

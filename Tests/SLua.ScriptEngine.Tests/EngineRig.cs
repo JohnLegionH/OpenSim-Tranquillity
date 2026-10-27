@@ -59,7 +59,7 @@ internal sealed class EngineRig : IDisposable
     /// <summary>The delay, in seconds, each ossl.PhySleep call asked for.</summary>
     public double[] PhySleeps { get { lock (m_marks) return m_phySleeps.ToArray(); } }
 
-    public EngineRig(Dictionary<string, string> settings = null, Action<SchedulerOptions> tweak = null, double graceMs = 100, NativeCompile compile = null, IPrimEventFlags primFlags = null)
+    public EngineRig(Dictionary<string, string> settings = null, Action<SchedulerOptions> tweak = null, double graceMs = 100, NativeCompile compile = null, IPrimEventFlags primFlags = null, bool productionFunctions = false)
     {
         RealLibrary.Load();
         Engine = new SLuaEngine(Log, (s, l) => true, null,
@@ -69,7 +69,14 @@ internal sealed class EngineRig : IDisposable
             },
             options =>
             {
-                options.VmFactory = MakeVm;
+                if (productionFunctions)
+                {
+                    // The engine's own VM, with its ll functions, plus the marking functions the tests read back.
+                    Func<Vm> production = options.VmFactory;
+                    options.VmFactory = () => { Vm vm = production(); AddTestFunctions(vm); return vm; };
+                }
+                else
+                    options.VmFactory = MakeVm;
                 tweak?.Invoke(options);
                 return Scheduler = new SLuaScheduler(options);
             },
@@ -91,6 +98,12 @@ internal sealed class EngineRig : IDisposable
     private Vm MakeVm()
     {
         var vm = new Vm(Watchdog.Default);
+        AddTestFunctions(vm);
+        return vm;
+    }
+
+    private void AddTestFunctions(Vm vm)
+    {
         vm.Register("ossl", "Count", (tag, _) => { Counts.AddOrUpdate(tag, 1, (_, n) => n + 1); return null; });
         vm.Register("ossl", "Mark", (tag, a) => { lock (m_marks) m_marks.Add($"{tag}:{a[0].S}"); return null; });
         vm.Register("ossl", "PhySleep", (tag, _) =>
@@ -113,7 +126,6 @@ internal sealed class EngineRig : IDisposable
             while (System.Diagnostics.Stopwatch.GetTimestamp() < end) { }
             return null;
         });
-        return vm;
     }
 
     /// <summary>The marks a script recorded through ossl.Mark.</summary>

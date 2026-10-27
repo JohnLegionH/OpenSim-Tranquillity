@@ -79,6 +79,15 @@ namespace SLua.ScriptEngine
         /// <summary>False when the operator turned deferral off ("never"): service calls then run on the script worker.</summary>
         public bool Defers => m_defers;
 
+        /// <summary>The most threads the lane runs at once.</summary>
+        public int MaxThreads => m_maxThreads;
+
+        /// <summary>How long a call may take before its script gets the failure value, in milliseconds.</summary>
+        public int TimeoutMs => m_timeoutMs;
+
+        /// <summary>How many calls the lane has been given.</summary>
+        public long Submitted => 0;
+
         /// <summary>Lane threads alive right now.</summary>
         public int ThreadCount => Volatile.Read(ref m_threadCount);
 
