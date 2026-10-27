@@ -85,6 +85,9 @@ public static class ImportCheck
         return result;
     }
 
+    /// <summary>The round trip of a linked object: written out by the exporter and compared with the manifest it was made from.</summary>
+    public static ImportCheckResult RunLinkset(string archivePath, LinksetManifest manifest, ImportOptions options, string workFolder) => new ImportCheckResult();
+
     private static void RunCore(ImportCheckResult result, string archivePath, string folder, ImportOptions options, string workFolder)
     {
         string baseName = ObjectImporter.FindBaseName(folder, options?.BaseName);

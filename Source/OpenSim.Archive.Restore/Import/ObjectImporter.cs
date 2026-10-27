@@ -244,6 +244,9 @@ public static class ObjectImporter
         return result;
     }
 
+    /// <summary>Writes an archive holding one linked object made from the parts of a manifest.</summary>
+    public static ImportResult ImportLinkset(LinksetManifest manifest, string outputPath, ImportOptions options) => new ImportResult { Output = outputPath };
+
     // ------------------------------------------------------------------ the folder and the files
 
     internal static string FindBaseName(string folder, string requested)

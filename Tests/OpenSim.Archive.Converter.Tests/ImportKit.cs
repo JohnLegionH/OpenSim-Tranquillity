@@ -96,7 +96,11 @@ internal static class ImportKit
     }
 
     /// <summary>A binary glTF with one primitive for each (material, geometry) pair. The materials the primitives name are written with their pictures inside the file.</summary>
-    public static byte[] Glb(IReadOnlyList<(ImportMaterial Material, Geo Geometry)> prims, bool uvs = true)
+    public static byte[] Glb(IReadOnlyList<(ImportMaterial Material, Geo Geometry)> prims, bool uvs = true) =>
+        GlbNodes(new[] { (Name: "level", Translation: (float[])null, Rotation: (float[])null, Prims: prims) }, uvs);
+
+    /// <summary>A binary glTF with several top-level mesh nodes, each with its own name, optional translation and rotation (glTF axes) and primitives.</summary>
+    public static byte[] GlbNodes(IReadOnlyList<(string Name, float[] Translation, float[] Rotation, IReadOnlyList<(ImportMaterial Material, Geo Geometry)> Prims)> nodeList, bool uvs = true)
     {
         List<byte> bin = new List<byte>();
         JsonArray views = new JsonArray(), accessors = new JsonArray(), materials = new JsonArray(), images = new JsonArray(), textures = new JsonArray(), primitives = new JsonArray();
@@ -133,6 +137,10 @@ internal static class ImportKit
             return textures.Count - 1;
         }
         Dictionary<ImportMaterial, int> done = new Dictionary<ImportMaterial, int>();
+        JsonArray nodeArray = new JsonArray(), meshArray = new JsonArray(), sceneNodes = new JsonArray();
+        foreach ((string nodeName, float[] translation, float[] rotation, IReadOnlyList<(ImportMaterial Material, Geo Geometry)> prims) in nodeList)
+        {
+        primitives = new JsonArray();
         foreach ((ImportMaterial m, Geo g) in prims)
         {
             int materialIndex = -1;
@@ -158,15 +166,22 @@ internal static class ImportKit
                 prim["material"] = materialIndex;
             primitives.Add(prim);
         }
+        meshArray.Add(new JsonObject { ["name"] = nodeName, ["primitives"] = primitives });
+        JsonObject node = new JsonObject { ["name"] = nodeName, ["mesh"] = meshArray.Count - 1 };
+        if (translation != null) node["translation"] = new JsonArray(translation.Select(x => (JsonNode)x).ToArray());
+        if (rotation != null) node["rotation"] = new JsonArray(rotation.Select(x => (JsonNode)x).ToArray());
+        nodeArray.Add(node);
+        sceneNodes.Add(nodeArray.Count - 1);
+        }
         while (bin.Count % 4 != 0)
             bin.Add(0);
         JsonObject root = new JsonObject
         {
             ["asset"] = new JsonObject { ["version"] = "2.0" },
             ["scene"] = 0,
-            ["scenes"] = new JsonArray(new JsonObject { ["nodes"] = new JsonArray(0) }),
-            ["nodes"] = new JsonArray(new JsonObject { ["name"] = "level", ["mesh"] = 0 }),
-            ["meshes"] = new JsonArray(new JsonObject { ["name"] = "level", ["primitives"] = primitives }),
+            ["scenes"] = new JsonArray(new JsonObject { ["nodes"] = sceneNodes }),
+            ["nodes"] = nodeArray,
+            ["meshes"] = meshArray,
             ["accessors"] = accessors, ["bufferViews"] = views, ["buffers"] = new JsonArray(new JsonObject { ["byteLength"] = bin.Count })
         };
         if (materials.Count > 0) root["materials"] = materials;
@@ -190,9 +205,9 @@ internal static class ImportKit
     }
 
     /// <summary>Writes the model folder. With <paramref name="normalMap"/> the side material carries a normal map.</summary>
-    public static Folder Write(bool normalMap = false, PhysicsKind physics = PhysicsKind.Box, bool withPhysics = true, string name = Name)
+    public static Folder Write(bool normalMap = false, PhysicsKind physics = PhysicsKind.Box, bool withPhysics = true, string name = Name, string into = null)
     {
-        string folder = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "import-tests", Guid.NewGuid().ToString("N"));
+        string folder = into ?? System.IO.Path.Combine(System.IO.Path.GetTempPath(), "import-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);
         ImportMaterial top = new ImportMaterial { Name = "top", Color = new[] { 0.2f, 0.4f, 0.6f, 1f }, Picture = Png(200, 40, 10) };
         ImportMaterial side = new ImportMaterial { Name = "side", Color = new[] { 1f, 1f, 1f, 1f }, Picture = Png(30, 90, 150), Normal = normalMap ? Png(128, 128, 255) : null };

@@ -38,6 +38,35 @@ public sealed class ImportLevel
     public int Faces { get; set; }
 }
 
+/// <summary>One item written into a part's contents.</summary>
+public sealed class ImportContentResult
+{
+    /// <summary>script, notecard or texture.</summary>
+    public string Type { get; set; }
+    public string Name { get; set; }
+    public Guid ItemId { get; set; }
+    public Guid AssetId { get; set; }
+}
+
+/// <summary>One part of a linked object as written.</summary>
+public sealed class ImportPartResult
+{
+    public string Name { get; set; }
+    public string Description { get; set; }
+    /// <summary>1 for the root part, then 2, 3 ... in the order of the manifest.</summary>
+    public int LinkNumber { get; set; }
+    public Guid PartId { get; set; }
+    public Guid MeshId { get; set; }
+    public Vector3 Size { get; set; }
+    /// <summary>The part's centre relative to the root part's centre, in the root part's axes (the part's OffsetPosition).</summary>
+    public Vector3 Offset { get; set; }
+    /// <summary>The part's turn relative to the root part, x, y, z, w.</summary>
+    public float[] Rotation { get; set; } = { 0f, 0f, 0f, 1f };
+    public int Triangles { get; set; }
+    public string Physics { get; set; }
+    public List<ImportContentResult> Contents { get; } = new List<ImportContentResult>();
+}
+
 /// <summary>What the importer wrote.</summary>
 public sealed class ImportResult
 {
@@ -60,6 +89,8 @@ public sealed class ImportResult
     public List<(Guid Id, string Material, string Role)> Textures { get; } = new List<(Guid, string, string)>();
     public List<Guid> Materials { get; } = new List<Guid>();
     public List<string> Notes { get; } = new List<string>();
+    /// <summary>For a linked object, each part in link order (root first); empty for the single-part import.</summary>
+    public List<ImportPartResult> Parts { get; } = new List<ImportPartResult>();
 
     public string ToText()
     {
