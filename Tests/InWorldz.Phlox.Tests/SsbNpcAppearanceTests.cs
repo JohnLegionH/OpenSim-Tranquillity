@@ -122,17 +122,17 @@ public class SsbNpcAppearanceTests
         return AvatarAppearance.BAKE_INDICES.ToDictionary(f => (int)f, f => te.FaceTextures[f]?.TextureID ?? te.DefaultTexture.TextureID);
     }
 
-    // ------------------------------------------------------------------ PART 1 (d): the dump
+    // ------------------------------------------------------------------ the clone
 
     [Fact]
-    public void AnNpcClonedFromABakedOwnerCarriesTheOwnersBakesAndIsNeverBakedItself()
+    public void OnAServerBakedRegionAnNpcClonedFromABakedOwnerCarriesNoneOfTheOwnersBakedFaces()
     {
         using var h = NpcScene();
         var region = new ServerSideBakingRegion(true, new CofHandshake());
         h.Scene.RegisterModuleInterface<IServerSideBakingRegion>(region);
 
         var owner = h.Scene.GetScenePresence(h.AddClient().AgentId);
-        var bakes = MakeBaked(owner);
+        MakeBaked(owner);
         region.RecordBake(owner.UUID, 7);
 
         var bots = h.Scene.RequestModuleInterface<IBotManager>();
@@ -142,32 +142,44 @@ public class SsbNpcAppearanceTests
         Assert.True(npc.IsNPC);
 
         foreach (int face in AvatarAppearance.BAKE_INDICES)
-        {
-            var o = owner.Appearance.Texture.FaceTextures[face]?.TextureID;
-            var n = npc.Appearance.Texture.FaceTextures[face]?.TextureID;
-            _out.WriteLine($"face {face,2}: owner={o} npc={n}");
-            Assert.Equal(bakes[face], n);                       // the clone copies the baked faces (copyBaked = true)
-        }
-        _out.WriteLine($"param[{VersionIndex}]: owner={owner.Appearance.VisualParams[VersionIndex]} npc={npc.Appearance.VisualParams[VersionIndex]}");
-        Assert.Equal(1, npc.Appearance.VisualParams[VersionIndex]); // ... and the owner's appearance-version byte with them
-
-        // the bake store is keyed by agent UUID, and the region never baked the NPC's
-        Assert.Equal(7, region.BakedCofVersion(owner.UUID));
-        Assert.Equal(-1, region.BakedCofVersion(npc.UUID));
+            Assert.Null(npc.Appearance.Texture.FaceTextures[face]);
+        Assert.Equal(1, npc.Appearance.VisualParams[VersionIndex]);   // the owner's appearance-version byte still comes along
     }
 
-    // ------------------------------------------------------------------ the wire, before and after the fix
-
     [Fact]
-    public void TheNpcsAppearanceMessageMustNotClaimAServerBakeItDoesNotHave()
+    public void OnARegionWithoutSsbAnNpcClonedFromABakedOwnerKeepsTheOwnersBakedFaces()
+    {
+        using var h = NpcScene();
+        Assert.Null(h.Scene.RequestModuleInterface<IServerSideBakingRegion>());
+
+        var owner = h.Scene.GetScenePresence(h.AddClient().AgentId);
+        var bakes = MakeBaked(owner);
+
+        var bots = h.Scene.RequestModuleInterface<IBotManager>();
+        var npcId = bots.CreateBot("Test", "Npc", owner.AbsolutePosition + new Vector3(2, 0, 0), "", UUID.Zero, owner.UUID, true, true, out string reason);
+        Assert.True(npcId != UUID.Zero, reason);
+        var npc = h.Scene.GetScenePresence(npcId);
+
+        foreach (int face in AvatarAppearance.BAKE_INDICES)
+            Assert.Equal(bakes[face], npc.Appearance.Texture.FaceTextures[face]?.TextureID);
+    }
+
+    // ------------------------------------------------------------------ the wire
+
+    /// <summary>
+    /// On a server-baked region the region bakes the NPC (ServerSideBakingModule), so its message is the one an
+    /// avatar's is: with the bake recorded, the AppearanceData block and the parameter both say 1; before the bake
+    /// lands, the parameter is not rewritten to hide the NPC from the appearance service.
+    /// </summary>
+    [Fact]
+    public void OnAServerBakedRegionTheNpcsMessageIsAnAvatarsMessage()
     {
         using var h = NpcScene();
         var region = new ServerSideBakingRegion(true, new CofHandshake());
         h.Scene.RegisterModuleInterface<IServerSideBakingRegion>(region);
 
         var owner = h.Scene.GetScenePresence(h.AddClient().AgentId);
-        var bakes = MakeBaked(owner);
-        region.RecordBake(owner.UUID, 7);
+        MakeBaked(owner);
         var observer = AddObserver(h.Scene);
 
         var bots = h.Scene.RequestModuleInterface<IBotManager>();
@@ -175,32 +187,20 @@ public class SsbNpcAppearanceTests
         Assert.True(npcId != UUID.Zero, reason);
         var npc = h.Scene.GetScenePresence(npcId);
 
-        owner.SendAppearanceToAllOtherAgents();
         npc.SendAppearanceToAllOtherAgents();
-        var forOwner = observer.LastFor(owner.UUID);
-        var forNpc = observer.LastFor(npcId);
-        _out.WriteLine($"owner: cof={forOwner.Cof} param[{VersionIndex}]={forOwner.Params[VersionIndex]}");
-        _out.WriteLine($"npc:   cof={forNpc.Cof} param[{VersionIndex}]={forNpc.Params[VersionIndex]}");
+        var before = observer.LastFor(npcId);
+        Assert.Equal(-1, before.Cof);
+        Assert.Equal(1, before.Params[VersionIndex]);
 
-        // control: the baked owner's message says 1 in both places, block and parameter, as the viewer requires
-        Assert.Equal(7, forOwner.Cof);
-        Assert.Equal(1, forOwner.Params[VersionIndex]);
-
-        // the NPC's first appearance carries the owner's real bake ids ...
-        var sent = BakedFaces(forNpc.Te);
-        foreach (int face in AvatarAppearance.BAKE_INDICES) Assert.Equal(bakes[face], sent[face]);
-        // ... no AppearanceData block, because the region never baked it ...
-        Assert.Equal(-1, forNpc.Cof);
-        // ... and therefore the parameter must say 0 too. Saying 1 here sends every viewer to the appearance
-        // service under the NPC's UUID, where there is no index and every channel is a 404.
-        Assert.Equal(0, forNpc.Params[VersionIndex]);
-
-        // the fix never touches the stored appearance: the parameter is a property of the message
-        Assert.Equal(1, npc.Appearance.VisualParams[VersionIndex]);
+        region.RecordBake(npcId, 0);
+        npc.SendAppearanceToAllOtherAgents();
+        var after = observer.LastFor(npcId);
+        Assert.Equal(0, after.Cof);
+        Assert.Equal(1, after.Params[VersionIndex]);
     }
 
     /// <summary>
-    /// The same on a region with no baking module at all: an NPC is never server-baked anywhere, so its message
+    /// A region with no baking module at all: an NPC is not server-baked there, so its message
     /// says 0 there too, while the owner's stored parameters go out untouched as they always have.
     /// </summary>
     [Fact]
