@@ -18591,10 +18591,13 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 if (type == VarType.Vector) pos = positions.GetVector3Item(i);
                 else if (type == VarType.Float || type == VarType.Integer) pos = new Vector3(positions.GetLSLFloatItem(i), 0f, 0f);
                 else return;
-                pos.X = Math.Clamp(pos.X, 0f, 256f);
-                pos.Y = Math.Clamp(pos.Y, 0f, 256f);
+                // The point is held inside the region the bot is in (Halcyon's Util.ForceValidRegionXYZ held it
+                // inside a 256 m region), whatever that region's size.
+                float edgeX = World.RegionInfo.RegionSizeX, edgeY = World.RegionInfo.RegionSizeY;
+                pos.X = Math.Clamp(pos.X, 0f, edgeX);
+                pos.Y = Math.Clamp(pos.Y, 0f, edgeY);
                 pos.Z = Math.Max(pos.Z, 0f);
-                float zmin = World.Heightmap.GetHeight(Math.Clamp(pos.X, 0f, 255.99f), Math.Clamp(pos.Y, 0f, 255.99f));
+                float zmin = World.Heightmap.GetHeight(Math.Clamp(pos.X, 0f, edgeX - 0.01f), Math.Clamp(pos.Y, 0f, edgeY - 0.01f));
                 if (pos.Z < zmin) pos.Z = zmin;
                 positionsMap.Add(pos);
             }

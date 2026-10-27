@@ -1473,9 +1473,11 @@ namespace OpenSim.Region.OptionalModules.World.NPC
             float ry = (float)(Random.Shared.NextDouble() * 2.0 - 1.0) * data.WanderDistances.Y;
             Vector3 target = data.WanderOrigin + new Vector3(rx, ry, 0);
 
-            // Clamp to region bounds
-            target.X = Math.Clamp(target.X, 0.5f, 255.5f);
-            target.Y = Math.Clamp(target.Y, 0.5f, 255.5f);
+            // Clamp to the bounds of the region the bot is in, whatever its size
+            float sizeX = scene?.RegionInfo.RegionSizeX ?? Constants.RegionSize;
+            float sizeY = scene?.RegionInfo.RegionSizeY ?? Constants.RegionSize;
+            target.X = Math.Clamp(target.X, 0.5f, sizeX - 0.5f);
+            target.Y = Math.Clamp(target.Y, 0.5f, sizeY - 0.5f);
 
             // Ensure above terrain
             if (scene != null)
