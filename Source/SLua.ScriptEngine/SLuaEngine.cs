@@ -124,6 +124,9 @@ namespace SLua.ScriptEngine
             m_messages = messages;
         }
 
+        /// <summary>Why the engine holds the script back at its start (its saved state could not be read), or null.</summary>
+        internal string HeldReasonOf(UUID itemId) => null;
+
         /// <summary>Whether the engine holds a load record for the item (a rez it accepted and has not forgotten).</summary>
         internal bool IsTracking(UUID itemID)
         {

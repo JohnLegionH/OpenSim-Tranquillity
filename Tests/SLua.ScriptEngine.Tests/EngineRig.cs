@@ -59,10 +59,10 @@ internal sealed class EngineRig : IDisposable
     /// <summary>The delay, in seconds, each ossl.PhySleep call asked for.</summary>
     public double[] PhySleeps { get { lock (m_marks) return m_phySleeps.ToArray(); } }
 
-    public EngineRig(Dictionary<string, string> settings = null, Action<SchedulerOptions> tweak = null, double graceMs = 100, NativeCompile compile = null, IPrimEventFlags primFlags = null, bool productionFunctions = false)
+    public EngineRig(Dictionary<string, string> settings = null, Action<SchedulerOptions> tweak = null, double graceMs = 100, NativeCompile compile = null, IPrimEventFlags primFlags = null, bool productionFunctions = false, ISavedStateStore store = null)
     {
         RealLibrary.Load();
-        Engine = new SLuaEngine(Log, (s, l) => true, null,
+        Engine = new SLuaEngine(Log, (s, l) => true, store,
             (s, l, scene) => Loader = new ScriptLoader(new ScriptCompiler(null, compile ?? Host.Compile, l, null), new FakeAssets(), l, ownsCompiler: true)
             {
                 UnclaimedGrace = TimeSpan.FromMilliseconds(graceMs),
@@ -147,7 +147,7 @@ internal sealed class EngineRig : IDisposable
     public static string Lsl(string body) => "//SLua:lsl\n" + body;
 
     /// <summary>Adds a script item to the object and tells the region it was rezzed; the Running flag is the item's.</summary>
-    public UUID Rez(string source, bool running = true, UUID? item = null, int startParam = 0, bool postOnRez = false, int stateSource = 0, SceneObjectPart part = null)
+    public UUID Rez(string source, bool running = true, UUID? item = null, int startParam = 0, bool postOnRez = false, int stateSource = 0, SceneObjectPart part = null, UUID? asset = null)
     {
         part ??= Object.RootPart;
         UUID id = item ?? UUID.Random();
@@ -157,7 +157,7 @@ internal sealed class EngineRig : IDisposable
             part.Inventory.AddInventoryItem(new TaskInventoryItem
             {
                 ItemID = id,
-                AssetID = UUID.Random(),
+                AssetID = asset ?? UUID.Random(),
                 Name = "Example Script " + id.ToString().Substring(0, 8),
                 OwnerID = Owner,
                 Type = (int)OpenMetaverse.AssetType.LSLText,
