@@ -5,6 +5,9 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+using CoreJ2K;
+using CoreJ2K.Configuration;
+using CoreJ2K.Skia;
 using OpenSim.Archive.Inspection;
 using OpenSim.Archive.Converter;
 using OpenSim.Framework;
@@ -54,7 +57,7 @@ internal sealed class TextureCatalog
                 return found;
             if (m_newByHash.TryGetValue(hash, out var made))
                 return made.id;
-            if (!SkiaImageUtils.TryEncodeToJ2KLossless(bitmap, out byte[] j2k) || j2k == null || j2k.Length == 0)
+            if (!TryEncodeCodestream(bitmap, out byte[] j2k) || j2k == null || j2k.Length == 0)
             {
                 problem = "the picture cannot be stored as a texture asset";
                 return null;
@@ -65,6 +68,36 @@ internal sealed class TextureCatalog
             isNew = true;
             return id;
         }
+    }
+
+    /// <summary>
+    /// A lossless JPEG 2000 codestream the viewer can decode. The viewer's decoder is created for a bare codestream only (indra/llimagej2coj/llimagej2coj.cpp,
+    /// opj_create_decompress(OPJ_CODEC_J2K)), so the file must not be wrapped in JP2 boxes, which the region's own decoder reads but the viewer shows as a grey face.
+    /// One tile, reversible, resolution-position-component order and as many wavelet levels as the viewer's discard levels need: the same shape as the bakes the
+    /// region writes (OpenSimNGC.Appearance.Baking J2kCodec.EncoderConfig), which viewers render.
+    /// </summary>
+    internal static bool TryEncodeCodestream(SKBitmap bitmap, out byte[] encoded)
+    {
+        encoded = null;
+        int levels = Math.Clamp((int)Math.Floor(Math.Log2(Math.Min(bitmap.Width, bitmap.Height))) - 2, 1, 7);
+        J2KEncoderConfiguration config = new J2KEncoderConfiguration()
+            .WithLossless()
+            .WithTiles(t => t.SetSize(bitmap.Width, bitmap.Height))
+            .WithWavelet(w => w.WithDecompositionLevels(levels))
+            .WithProgression(p => p.WithOrder(ProgressionOrder.RPCL))
+            .WithFileFormat(false);
+        // colour types other than these two are converted, so an image with alpha keeps it and one without gets it at full
+        SKBitmap working = bitmap.ColorType == SKColorType.Rgb888x || bitmap.ColorType == SKColorType.Bgra8888 ? bitmap : bitmap.Copy(SKColorType.Bgra8888);
+        try
+        {
+            encoded = working.EncodeToJ2K(config);
+        }
+        finally
+        {
+            if (!ReferenceEquals(working, bitmap))
+                working.Dispose();
+        }
+        return encoded != null && encoded.Length != 0;
     }
 
     private void Index()
