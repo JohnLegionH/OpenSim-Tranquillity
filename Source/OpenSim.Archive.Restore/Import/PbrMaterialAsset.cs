@@ -64,6 +64,9 @@ public static class PbrMaterialAsset
         if (d.MetalRoughTexture != Guid.Empty)
             pbr["metallicRoughnessTexture"] = new JsonObject { ["index"] = Texture(d.MetalRoughTexture) };
         JsonObject material = new JsonObject { ["pbrMetallicRoughness"] = pbr };
+        // the viewer reads occlusion from the red channel of the metal-roughness picture, and takes an occlusion picture that is another texture as none
+        if (d.MetalRoughTexture != Guid.Empty)
+            material["occlusionTexture"] = new JsonObject { ["index"] = Texture(d.MetalRoughTexture) };
         if (d.NormalTexture != Guid.Empty)
             material["normalTexture"] = new JsonObject { ["index"] = Texture(d.NormalTexture) };
         if (d.EmissiveTexture != Guid.Empty)

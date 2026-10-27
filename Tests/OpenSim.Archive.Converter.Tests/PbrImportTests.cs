@@ -92,6 +92,21 @@ public class PbrImportTests
         Assert.Contains("11111111-2222-4333-8444-555555555555", text);
     }
 
+    private static System.Text.Json.Nodes.JsonNode GltfText(byte[] asset) =>
+        System.Text.Json.Nodes.JsonNode.Parse(((OpenMetaverse.StructuredData.OSDMap)OpenMetaverse.StructuredData.OSDParser.Deserialize(asset))["data"].AsString());
+
+    [Fact]
+    public void TheOcclusionPictureIsTheMetalRoughPictureBecauseTheViewerTakesOcclusionFromTheSameTexture()
+    {
+        Guid orm = Guid.NewGuid();
+        System.Text.Json.Nodes.JsonNode withMr = GltfText(PbrMaterialAsset.Build(new PbrMaterialData { MetalRoughTexture = orm, BaseColorTexture = Guid.NewGuid() }));
+        System.Text.Json.Nodes.JsonNode material = withMr["materials"][0];
+        Assert.NotNull(material["occlusionTexture"]);
+        Assert.Equal((int)material["pbrMetallicRoughness"]["metallicRoughnessTexture"]["index"], (int)material["occlusionTexture"]["index"]);
+        System.Text.Json.Nodes.JsonNode without = GltfText(PbrMaterialAsset.Build(new PbrMaterialData { BaseColorTexture = Guid.NewGuid() }));
+        Assert.Null(without["materials"][0]["occlusionTexture"]);
+    }
+
     [Fact]
     public void AMaterialTextThatIsPlainGltfJsonReadsToo()
     {
