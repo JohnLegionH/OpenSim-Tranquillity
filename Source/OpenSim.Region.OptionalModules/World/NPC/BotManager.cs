@@ -445,6 +445,19 @@ namespace OpenSim.Region.OptionalModules.World.NPC
                 owned, senseAsAgent, out reason);
         }
 
+        public UUID CreateBotWithAppearance(Scene scene, string firstName, string lastName, Vector3 startPos,
+            AvatarAppearance appearance, UUID scriptItemID, UUID ownerID, bool owned, bool senseAsAgent, bool botDoor,
+            out string reason)
+        {
+            reason = null;
+            return UUID.Zero;
+        }
+
+        public void ChangeBotAppearance(UUID botID, AvatarAppearance appearance, UUID ownerID, out string reason)
+        {
+            reason = null;
+        }
+
         /// <summary>
         /// Brings a saved bot back into the region it was saved in, under the key it had, so a script that stored the
         /// key still reaches it. The bot comes back as botCreateBot made it, with the creating script registered for
@@ -526,6 +539,16 @@ namespace OpenSim.Region.OptionalModules.World.NPC
                         appearance = new AvatarAppearance();
                 }
             }
+
+            return SpawnBot(ownerScene, agentID, firstName, lastName, startPos, appearance, scriptItemID, ownerID,
+                owned, senseAsAgent, out reason);
+        }
+
+        // Makes the NPC and its BotData from an appearance already chosen.
+        private UUID SpawnBot(Scene ownerScene, UUID agentID, string firstName, string lastName, Vector3 startPos,
+            AvatarAppearance appearance, UUID scriptItemID, UUID ownerID, bool owned, bool senseAsAgent, out string reason)
+        {
+            reason = null;
 
             // The bot* door always senses as agent and is always owned; osNpcCreate chooses.
             UUID npcOwner = owned ? ownerID : UUID.Zero;

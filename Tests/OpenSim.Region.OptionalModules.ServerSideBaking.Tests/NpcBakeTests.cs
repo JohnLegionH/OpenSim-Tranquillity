@@ -190,7 +190,7 @@ public class NpcBakeTests
     private sealed record Rig(Scene Scene, ServerSideBakingModule Module, ServerSideBakingRegion Region,
         FakeAvatarService Avatars, NPCModule Npcs, ScenePresence Owner, GatedAvatarService Gate);
 
-    private static Rig Setup(bool serverBaking = true, bool cleanup = true, bool dryRun = false)
+    private static Rig Setup(bool serverBaking = true, bool cleanup = true, bool dryRun = false, bool bots = false)
     {
         var config = new IniConfigSource();
         config.AddConfig("NPC").Set("Enabled", "true");
@@ -215,8 +215,10 @@ public class NpcBakeTests
 
         var module = new ServerSideBakingModule();
         var npcs = new NPCModule();
-        SceneHelpers.SetupSceneModules(scene, config, new AvatarFactoryModule(), new UserManagementModule(), new AttachmentsModule(),
-            new BasicInventoryAccessModule(), npcs, module);
+        var modules = new List<object> { new AvatarFactoryModule(), new UserManagementModule(), new AttachmentsModule(),
+            new BasicInventoryAccessModule(), npcs, module };
+        if (bots) modules.Add(new BotManager());
+        SceneHelpers.SetupSceneModules(scene, config, modules.ToArray());
 
         var owner = SceneHelpers.AddScenePresence(scene, UUID.Random());
         owner.Appearance.Wearables = Wear(scene, owner.UUID, 200, 170, 140);
@@ -518,8 +520,9 @@ public class NpcBakeTests
     public async Task RemovingOneOfTwoNpcsInOneOutfitKeepsTheSharedBakesUntilTheSecondGoes()
     {
         var rig = Setup();
-        var (first, bakes) = MadeAndBaked(rig, Look(rig, 20, 90, 200), "One");
-        var (second, secondBakes) = MadeAndBaked(rig, Look(rig, 20, 90, 200), "Two");
+        var look = Look(rig, 20, 90, 200);
+        var (first, bakes) = MadeAndBaked(rig, new AvatarAppearance(look, true), "One");
+        var (second, secondBakes) = MadeAndBaked(rig, new AvatarAppearance(look, true), "Two");
         Assert.Equal(bakes.OrderBy(b => b), secondBakes.OrderBy(b => b));
 
         rig.Npcs.DeleteNPC(first, rig.Scene);
@@ -577,5 +580,34 @@ public class NpcBakeTests
 
         WaitFor(() => bakes.All(b => rig.Module.NpcCleanup.WouldRemove.Contains(b)), "the dry run to list the bakes at shutdown");
         Assert.All(bakes, b => Assert.True(Exists(rig, b)));
+    }
+    // ------------------------------------------------------------------ a bot made from a notecard while its owner is away
+
+    [Fact]
+    public void ABotMadeFromANotecardWhileItsOwnerIsAwayIsBakedFromTheNotecardsWearables()
+    {
+        var rig = Setup(bots: true);
+        var host = SceneHelpers.AddSceneObject(rig.Scene, "outfit box", UUID.Random()).RootPart;
+        Assert.NotNull(AppearanceNotecard.Save(host, rig.Scene.AssetService, "Priest", Look(rig, 200, 170, 140), includeHuds: false));
+        Assert.True(AppearanceNotecard.TryLoad(host, rig.Scene.AssetService, "Priest", out var outfit, out var why), why);
+        var away = UUID.Random();   // an owner with no presence in the region
+        Assert.Null(rig.Scene.GetScenePresence(away));
+        var bots = rig.Scene.RequestModuleInterface<IBotManager>();
+
+        var id = bots.CreateBotWithAppearance(rig.Scene, "Priest", "Bot", new Vector3(128, 128, 30), outfit, UUID.Zero, away,
+            owned: true, senseAsAgent: true, botDoor: true, out var reason);
+
+        Assert.True(id.IsNotZero(), "no bot was made: " + reason);
+        Assert.True(bots.IsBot(id));
+        var bot = rig.Scene.GetScenePresence(id);
+        Assert.Equal(outfit.Wearables[(int)WearableType.Skin][0], bot.Appearance.Wearables[(int)WearableType.Skin][0]);
+        WaitFor(() => rig.Region.BakedCofVersion(id) >= 0, "the bot's bake");
+        foreach (var ch in new[] { BakeChannel.Head, BakeChannel.Upper, BakeChannel.Lower })
+        {
+            var face = Face(bot, ch);
+            Assert.NotEqual(UUID.Zero, face);
+            Assert.True(Exists(rig, face), $"{ch}: the bake is not in the asset store");
+            Assert.Equal(face, Indexed(rig, id, ch));
+        }
     }
 }

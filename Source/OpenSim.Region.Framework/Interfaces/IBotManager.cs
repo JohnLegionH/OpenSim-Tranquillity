@@ -93,6 +93,22 @@ namespace OpenSim.Region.Framework.Interfaces
             string outfitName, UUID scriptItemID, UUID ownerID, bool owned, bool senseAsAgent, out string reason);
 
         /// <summary>
+        /// Makes a bot in <paramref name="scene"/> that wears <paramref name="appearance"/> (an outfit read from a
+        /// notecard). The owner need not be in the region: nothing is read from the owner's presence.
+        /// <paramref name="botDoor"/> is true for botCreateBot, which also registers the creating script for
+        /// bot_update, and false for osNpcCreate.
+        /// </summary>
+        UUID CreateBotWithAppearance(Scene scene, string firstName, string lastName, Vector3 startPos,
+            AvatarAppearance appearance, UUID scriptItemID, UUID ownerID, bool owned, bool senseAsAgent, bool botDoor,
+            out string reason);
+
+        /// <summary>
+        /// Dresses an existing bot in <paramref name="appearance"/> (an outfit read from a notecard). The caller must
+        /// be allowed to control the bot, as for <see cref="ChangeBotOutfit"/>.
+        /// </summary>
+        void ChangeBotAppearance(UUID botID, AvatarAppearance appearance, UUID ownerID, out string reason);
+
+        /// <summary>
         /// osNpcSaveAppearance's door: capture the BOT's current appearance into the caller's
         /// outfit store under <paramref name="outfitName"/> (SaveOutfitToDatabase captures the owner's).
         /// Returns the outfit's key, UUID.Zero with a reason on failure.
