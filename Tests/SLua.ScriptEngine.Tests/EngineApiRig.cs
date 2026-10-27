@@ -31,6 +31,14 @@ internal sealed class EngineApiRig : IDisposable
 
     private readonly ConcurrentDictionary<long, (LSLSystemAPI Api, UUID Item)> m_apis = new();
 
+    private readonly ILSLSystemAPI m_fallback;
+
+    /// <param name="fallback">Serves the functions the real API does not (the router sends them here); null runs every function on the real API.</param>
+    public EngineApiRig(ILSLSystemAPI fallback, params (string Key, string Value)[] settings) : this(settings)
+    {
+        m_fallback = fallback;
+    }
+
     public EngineApiRig(params (string Key, string Value)[] settings)
     {
         var source = new IniConfigSource();
@@ -63,7 +71,7 @@ internal sealed class EngineApiRig : IDisposable
             UUID id = UUID.Random();
             return (new LSLSystemAPI(Host, Object.RootPart, Object.RootPart.LocalId, id) { RuntimeAccess = new EngineScriptAccess(script) }, id);
         });
-        return new ScriptContext(script, api, item);
+        return new ScriptContext(script, m_fallback == null ? api : ApiRouter.Create(api, m_fallback), item);
     }
 
     /// <summary>A notecard item in the object, so the notecard calls find one by name.</summary>
