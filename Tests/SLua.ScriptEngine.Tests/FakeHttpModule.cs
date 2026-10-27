@@ -13,7 +13,7 @@ namespace SLua.ScriptEngine.Tests;
 
 /// <summary>
 /// The region's HTTP request module with no network: a request is answered at once with status 200 and a fixed body, and the
-/// outbound filter refuses one host name.
+/// outbound filter refuses one host name. A request can be left unanswered (<see cref="Hold"/>).
 /// </summary>
 internal sealed class FakeHttpModule : IHttpRequestModule
 {
@@ -36,13 +36,17 @@ internal sealed class FakeHttpModule : IHttpRequestModule
     private readonly ConcurrentQueue<IHttpServiceRequest> m_done = new();
     public readonly ConcurrentQueue<string> Urls = new();
 
+    /// <summary>When set, a request is accepted and never answered, so it stays in flight.</summary>
+    public bool Hold;
+
     public UUID MakeHttpRequest(string url, string parameters, string body) => UUID.Zero;
 
     public UUID StartHttpRequest(uint localID, UUID itemID, string url, List<string> parameters, Dictionary<string, string> headers, string body)
     {
         Urls.Enqueue(url);
         UUID id = UUID.Random();
-        m_done.Enqueue(new Completed { Status = 200, ResponseBody = Body, ItemID = itemID, LocalID = localID, ReqID = id });
+        if (!Hold)
+            m_done.Enqueue(new Completed { Status = 200, ResponseBody = Body, ItemID = itemID, LocalID = localID, ReqID = id });
         return id;
     }
 
