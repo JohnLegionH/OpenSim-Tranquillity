@@ -91,7 +91,7 @@ public sealed class PartGeometry
             {
                 float[] tri = new float[TriangleFloats];
                 float[] influence = null;
-                if (p.Joints != null)
+                if (p.Joints != null && node.Skin >= 0)   // a node that names no skin is not rigged, whatever its primitives carry
                 {
                     if (p.InfluencesPerVertex != 4)
                         throw new InvalidOperationException("the skin of a primitive has not been prepared (four influences for each vertex)");
