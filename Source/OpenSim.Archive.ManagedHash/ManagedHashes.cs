@@ -6,52 +6,70 @@
  */
 
 using System.Security.Cryptography;
+using Org.BouncyCastle.Crypto;
+using Org.BouncyCastle.Crypto.Digests;
 
 namespace OpenSim.Archive.ManagedHash;
 
-/// <summary>
-/// MD5 (RFC 1321) as a framework hash algorithm that runs in managed code. The framework's MD5 calls the system's OpenSSL
-/// on Linux, so a program that creates one fails to start on a system without libssl.
-/// </summary>
+// The digests are BouncyCastle's (MIT), which OpenSim.Framework already carries; each class only gives them the shape of a
+// System.Security.Cryptography hash algorithm. The framework's own MD5, SHA1 and SHA256 call the system's OpenSSL on Linux,
+// so a program that creates one fails to start on a system without libssl.
+
+/// <summary>MD5 (RFC 1321) as a framework hash algorithm that runs in managed code.</summary>
 public sealed class ManagedMD5 : MD5
 {
-    public override void Initialize()
-    {
-    }
+    private readonly IDigest digest = new MD5Digest();
 
-    protected override void HashCore(byte[] array, int ibStart, int cbSize)
-    {
-    }
+    public override void Initialize() => digest.Reset();
 
-    protected override byte[] HashFinal() => Array.Empty<byte>();
+    protected override void HashCore(byte[] array, int ibStart, int cbSize) => digest.BlockUpdate(array, ibStart, cbSize);
+
+    protected override void HashCore(ReadOnlySpan<byte> source) => digest.BlockUpdate(source);
+
+    protected override byte[] HashFinal()
+    {
+        byte[] result = new byte[digest.GetDigestSize()];
+        digest.DoFinal(result, 0);
+        return result;
+    }
 }
 
-/// <summary>SHA-1 (FIPS 180-4) in managed code; see <see cref="ManagedMD5"/>.</summary>
+/// <summary>SHA-1 (FIPS 180-4) as a framework hash algorithm that runs in managed code; see <see cref="ManagedMD5"/>.</summary>
 public sealed class ManagedSHA1 : SHA1
 {
-    public override void Initialize()
-    {
-    }
+    private readonly IDigest digest = new Sha1Digest();
 
-    protected override void HashCore(byte[] array, int ibStart, int cbSize)
-    {
-    }
+    public override void Initialize() => digest.Reset();
 
-    protected override byte[] HashFinal() => Array.Empty<byte>();
+    protected override void HashCore(byte[] array, int ibStart, int cbSize) => digest.BlockUpdate(array, ibStart, cbSize);
+
+    protected override void HashCore(ReadOnlySpan<byte> source) => digest.BlockUpdate(source);
+
+    protected override byte[] HashFinal()
+    {
+        byte[] result = new byte[digest.GetDigestSize()];
+        digest.DoFinal(result, 0);
+        return result;
+    }
 }
 
-/// <summary>SHA-256 (FIPS 180-4) in managed code; see <see cref="ManagedMD5"/>.</summary>
+/// <summary>SHA-256 (FIPS 180-4) as a framework hash algorithm that runs in managed code; see <see cref="ManagedMD5"/>.</summary>
 public sealed class ManagedSHA256 : SHA256
 {
-    public override void Initialize()
-    {
-    }
+    private readonly IDigest digest = new Sha256Digest();
 
-    protected override void HashCore(byte[] array, int ibStart, int cbSize)
-    {
-    }
+    public override void Initialize() => digest.Reset();
 
-    protected override byte[] HashFinal() => Array.Empty<byte>();
+    protected override void HashCore(byte[] array, int ibStart, int cbSize) => digest.BlockUpdate(array, ibStart, cbSize);
+
+    protected override void HashCore(ReadOnlySpan<byte> source) => digest.BlockUpdate(source);
+
+    protected override byte[] HashFinal()
+    {
+        byte[] result = new byte[digest.GetDigestSize()];
+        digest.DoFinal(result, 0);
+        return result;
+    }
 }
 
 /// <summary>
