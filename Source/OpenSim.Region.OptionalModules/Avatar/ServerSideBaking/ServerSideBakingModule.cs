@@ -68,6 +68,9 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
     public int BakeSize { get; private set; } = 1024;
     public double BakeQuality { get; private set; } = 0.85;
 
+    /// <summary>The bakes the NPCs of this simulator hold between them.</summary>
+    public NpcBakeShare NpcBakes { get; } = new();
+
     public string Name => "ServerSideBakingModule";
     public Type ReplaceableInterface => null;
 
