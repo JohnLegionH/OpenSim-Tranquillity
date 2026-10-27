@@ -4,6 +4,8 @@
     <AssemblyName>oar-texfetch</AssemblyName>
     <AssemblyTitle>oar-texfetch</AssemblyTitle>
     <Nullable>disable</Nullable>
+    <!-- the published program makes its hash objects in managed code, so an http login starts on a Linux without libssl (see the targets file) -->
+    <PatchHashObjects>true</PatchHashObjects>
     <!-- no ICU library is needed on Linux; the login library asks for a culture by name when it starts, which invariant mode allows only with this -->
     <InvariantGlobalization>true</InvariantGlobalization>
     <PredefinedCulturesOnly>false</PredefinedCulturesOnly>
@@ -18,4 +20,5 @@
     <!-- the release number the oar tools print: one constant for every program -->
     <Compile Include="../OpenSim.ArchiveInspector/ToolRelease.cs" Link="ToolRelease.cs" />
   </ItemGroup>
+  <Import Project="../OpenSim.Archive.PackagePatch/PatchHashObjects.targets" />
 </Project>

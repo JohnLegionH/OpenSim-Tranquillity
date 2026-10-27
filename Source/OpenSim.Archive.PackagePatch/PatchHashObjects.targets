@@ -1,0 +1,41 @@
+<Project>
+
+  <!--
+    Imported by the projects that publish an oar tool as a self-contained program (set PatchHashObjects to true there).
+    The OpenMetaverse and LibreMetaverse libraries create MD5, SHA-1 and SHA-256 objects from the framework's classes when
+    their Utils class starts, and on Linux those call the system's OpenSSL: a program that only uses a UUID aborts on a system
+    without libssl. Before the publish copies or bundles them, this target runs OpenSim.Archive.PackagePatch on each of those
+    libraries and publishes the patched copy, which makes the same objects from OpenSim.Archive.ManagedHash. The libraries in
+    the NuGet cache are not touched.
+  -->
+
+  <ItemGroup Condition="'$(PatchHashObjects)' == 'true'">
+    <!-- built for the machine that publishes, whatever runtime the program is published for -->
+    <ProjectReference Include="$(MSBuildThisFileDirectory)OpenSim.Archive.PackagePatch.csproj"
+                      ReferenceOutputAssembly="false"
+                      Private="false"
+                      GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained;PublishSingleFile;EnableCompressionInSingleFile" />
+    <!-- the patched libraries call it, so the program carries it -->
+    <ProjectReference Include="$(MSBuildThisFileDirectory)../OpenSim.Archive.ManagedHash/OpenSim.Archive.ManagedHash.csproj" />
+  </ItemGroup>
+
+  <Target Name="PatchHashObjects" AfterTargets="ComputeResolvedFilesToPublishList" Condition="'$(PatchHashObjects)' == 'true'">
+    <PropertyGroup>
+      <_PatchToolDll>$(MSBuildThisFileDirectory)bin/$(Configuration)/net10.0/OpenSim.Archive.PackagePatch.dll</_PatchToolDll>
+      <_PatchedHashFolder>$(MSBuildProjectDirectory)/$(IntermediateOutputPath)patched-hash/</_PatchedHashFolder>
+      <_PatchDotnet>$(DOTNET_HOST_PATH)</_PatchDotnet>
+      <_PatchDotnet Condition="'$(_PatchDotnet)' == ''">dotnet</_PatchDotnet>
+    </PropertyGroup>
+    <ItemGroup>
+      <_HashPatchInput Include="@(ResolvedFileToPublish)"
+                       Condition="'%(Filename)%(Extension)' == 'OpenMetaverse.Types.dll' Or '%(Filename)%(Extension)' == 'LibreMetaverse.Types.dll' Or '%(Filename)%(Extension)' == 'LibreMetaverse.dll'" />
+    </ItemGroup>
+    <MakeDir Directories="$(_PatchedHashFolder)" />
+    <Exec Command="&quot;$(_PatchDotnet)&quot; &quot;$(_PatchToolDll)&quot; &quot;%(_HashPatchInput.FullPath)&quot; &quot;$(_PatchedHashFolder)%(_HashPatchInput.Filename)%(_HashPatchInput.Extension)&quot;" Condition="'@(_HashPatchInput)' != ''" />
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(_HashPatchInput)" />
+      <ResolvedFileToPublish Include="@(_HashPatchInput->'$(_PatchedHashFolder)%(Filename)%(Extension)')" />
+    </ItemGroup>
+  </Target>
+
+</Project>

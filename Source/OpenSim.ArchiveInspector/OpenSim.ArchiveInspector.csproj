@@ -64,6 +64,12 @@
     <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.151.1" />
   </ItemGroup>
 
+  <!-- the published programs make their hash objects in managed code, so they start on a Linux without libssl (see the targets file) -->
+  <PropertyGroup Condition="'$(OarExportExe)' == 'true' Or '$(OarConvertExe)' == 'true' Or '$(OarRestoreExe)' == 'true' Or '$(OarImportExe)' == 'true'">
+    <PatchHashObjects>true</PatchHashObjects>
+  </PropertyGroup>
+  <Import Project="../OpenSim.Archive.PackagePatch/PatchHashObjects.targets" />
+
   <ItemGroup>
     <InternalsVisibleTo Include="OpenSim.Archive.GltfExport.Tests" />
     <InternalsVisibleTo Include="OpenSim.Archive.Converter.Tests" />
