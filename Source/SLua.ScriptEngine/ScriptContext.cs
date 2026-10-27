@@ -5,6 +5,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+using OpenMetaverse;
 using Phlox.ScriptEngine;
 
 namespace SLua.ScriptEngine
@@ -17,11 +18,15 @@ namespace SLua.ScriptEngine
     /// </summary>
     internal sealed class ScriptContext
     {
-        public ScriptContext(SchedulerScript script, ILSLSystemAPI api)
+        public ScriptContext(SchedulerScript script, ILSLSystemAPI api, UUID itemId = default)
         {
             Script = script;
             Api = api;
+            ItemId = itemId;
         }
+
+        /// <summary>The script item the API serves. The API's own delay and result calls are recognised by it (Phlox: SyscallContext.ItemId).</summary>
+        public UUID ItemId { get; }
 
         public SchedulerScript Script { get; }
 
