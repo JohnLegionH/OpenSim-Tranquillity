@@ -229,7 +229,7 @@ namespace SLua.ScriptEngine
             m_chat = new EngineChat(scene, m_configSource, m_settings, PostScriptEvent, TellOwnerOf);
             HostServices.Chat = m_chat;
             HostServices.ScriptEngine = this;
-            HostServices.AsyncCommands = new Phlox.ScriptEngine.AsyncCommand.AsyncCommandManager(this);
+            HostServices.AsyncCommands = new Phlox.ScriptEngine.AsyncCommand.AsyncCommandManager(this) { HostServices = HostServices }; // the plugins read the engine's settings (the HTTP caps) from its host services
             m_chat.Subscribe();
             PrimFlags ??= new ScenePrimEventFlags(scene);
             m_scene.RegisterModuleInterface<IScriptModule>(this);
