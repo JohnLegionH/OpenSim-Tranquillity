@@ -7,6 +7,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Text;
 using InWorldz.Phlox.VM;
 using SLua.ScriptEngine.Bindings;
 
@@ -67,8 +69,55 @@ namespace SLua.ScriptEngine
         /// <summary>The runtime's own state of the script (slua_serialize); empty for a script a fault stopped.</summary>
         public byte[] Native = Array.Empty<byte>();
 
-        /// <summary>The record as bytes.</summary>
-        public byte[] Encode() => Array.Empty<byte>();
+        private const string Mark = "SLSR";
+        private const string Trailer = "END!";
+
+        /// <summary>The record as bytes: the mark and layout, the engine, the fields in the order above, and a trailer that tells a record cut short.</summary>
+        public byte[] Encode()
+        {
+            using var stream = new MemoryStream();
+            using (var w = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true))
+            {
+                w.Write(Encoding.ASCII.GetBytes(Mark));
+                w.Write(FormatVersion);
+                w.Write(Engine ?? "");
+                w.Write((int)Language);
+                w.Write(Running);
+                w.Write(Faulted);
+                w.Write(FaultKind);
+                w.Write(FaultMessage ?? "");
+                w.Write(LslState);
+                w.Write(TimerInterval);
+                w.Write(TimerLeft);
+                w.Write(SluaTimer);
+                w.Write(SleepLeft);
+                w.Write(MinEventDelay);
+                w.Write(NextEventIn);
+                w.Write(Events.Count);
+                foreach (SavedEvent e in Events)
+                {
+                    w.Write(e.EventIndex);
+                    WriteValues(w, e.Args);
+                }
+                w.Write(Listens.Count);
+                foreach (ActiveListen l in Listens)
+                {
+                    w.Write(l.Handle);
+                    w.Write(l.Channel);
+                    WriteText(w, l.Name);
+                    WriteText(w, l.Key);
+                    WriteText(w, l.Message);
+                    w.Write(l.Inactive);
+                    w.Write(l.RegexBitfield);
+                    WriteText(w, l.HostKey);
+                }
+                w.Write(Native?.Length ?? 0);
+                if (Native != null)
+                    w.Write(Native);
+                w.Write(Encoding.ASCII.GetBytes(Trailer));
+            }
+            return stream.ToArray();
+        }
 
         /// <summary>
         /// The record in these bytes, or null with the reason in <paramref name="problem"/>: bytes that are not a record, a record of
@@ -77,7 +126,166 @@ namespace SLua.ScriptEngine
         public static ScriptStateRecord Decode(byte[] data, string engine, out string problem)
         {
             problem = null;
-            return null;
+            if (data == null || data.Length < Mark.Length + 4)
+            {
+                problem = "it is too short to be a saved script record";
+                return null;
+            }
+            if (Encoding.ASCII.GetString(data, 0, Mark.Length) != Mark)
+            {
+                problem = "it is not a saved script record";
+                return null;
+            }
+            int layout = BitConverter.ToInt32(data, Mark.Length);
+            if (layout != FormatVersion)
+            {
+                problem = $"it has layout {layout}, this engine reads layout {FormatVersion}";
+                return null;
+            }
+            try
+            {
+                using var r = new BinaryReader(new MemoryStream(data, Mark.Length + 4, data.Length - Mark.Length - 4), Encoding.UTF8);
+                string owner = r.ReadString();
+                if (owner != engine)
+                {
+                    problem = $"it was written by the engine '{owner}', this is '{engine}'";
+                    return null;
+                }
+                var record = new ScriptStateRecord { Engine = owner };
+                record.Language = (ScriptLanguage)r.ReadInt32();
+                record.Running = r.ReadBoolean();
+                record.Faulted = r.ReadBoolean();
+                record.FaultKind = r.ReadInt32();
+                record.FaultMessage = r.ReadString();
+                record.LslState = r.ReadInt32();
+                record.TimerInterval = r.ReadDouble();
+                record.TimerLeft = r.ReadDouble();
+                record.SluaTimer = r.ReadDouble();
+                record.SleepLeft = r.ReadDouble();
+                record.MinEventDelay = r.ReadDouble();
+                record.NextEventIn = r.ReadDouble();
+                int events = r.ReadInt32();
+                CheckCount(events, r);
+                for (int i = 0; i < events; i++)
+                    record.Events.Add(new SavedEvent { EventIndex = r.ReadInt32(), Args = ReadValues(r) });
+                int listens = r.ReadInt32();
+                CheckCount(listens, r);
+                for (int i = 0; i < listens; i++)
+                {
+                    record.Listens.Add(new ActiveListen
+                    {
+                        Handle = r.ReadInt32(),
+                        Channel = r.ReadInt32(),
+                        Name = ReadText(r),
+                        Key = ReadText(r),
+                        Message = ReadText(r),
+                        Inactive = r.ReadBoolean(),
+                        RegexBitfield = r.ReadInt32(),
+                        HostKey = ReadText(r),
+                    });
+                }
+                int native = r.ReadInt32();
+                CheckCount(native, r);
+                record.Native = r.ReadBytes(native);
+                if (record.Native.Length != native)
+                    throw new EndOfStreamException();
+                byte[] trailer = r.ReadBytes(Trailer.Length);
+                if (Encoding.ASCII.GetString(trailer) != Trailer)
+                    throw new EndOfStreamException();
+                return record;
+            }
+            catch (Exception e) when (e is EndOfStreamException || e is IOException || e is ArgumentException || e is FormatException || e is OverflowException)
+            {
+                problem = "it was cut short or damaged (" + e.GetType().Name + ")";
+                return null;
+            }
+        }
+
+        /// <summary>A count read from the bytes cannot be more than the bytes left, which stops a damaged length from asking for memory.</summary>
+        private static void CheckCount(int count, BinaryReader r)
+        {
+            if (count < 0 || count > r.BaseStream.Length - r.BaseStream.Position)
+                throw new FormatException("a length is larger than the record");
+        }
+
+        private static void WriteText(BinaryWriter w, string text)
+        {
+            w.Write(text != null);
+            if (text != null)
+                w.Write(text);
+        }
+
+        private static string ReadText(BinaryReader r) => r.ReadBoolean() ? r.ReadString() : null;
+
+        private static void WriteValues(BinaryWriter w, Value[] values)
+        {
+            w.Write(values?.Length ?? 0);
+            if (values == null)
+                return;
+            foreach (Value v in values)
+                WriteValue(w, v);
+        }
+
+        private static Value[] ReadValues(BinaryReader r)
+        {
+            int count = r.ReadInt32();
+            CheckCount(count, r);
+            if (count == 0)
+                return Array.Empty<Value>();
+            var values = new Value[count];
+            for (int i = 0; i < count; i++)
+                values[i] = ReadValue(r);
+            return values;
+        }
+
+        private static void WriteValue(BinaryWriter w, Value v)
+        {
+            w.Write((byte)v.Type);
+            switch (v.Type)
+            {
+                case Bindings.ValueType.Nil:
+                    break;
+                case Bindings.ValueType.Bool:
+                case Bindings.ValueType.Int:
+                    w.Write(v.I);
+                    break;
+                case Bindings.ValueType.Number:
+                    w.Write(v.N);
+                    break;
+                case Bindings.ValueType.String:
+                case Bindings.ValueType.Key:
+                    WriteText(w, v.S);
+                    break;
+                case Bindings.ValueType.Vector:
+                    w.Write(v.X); w.Write(v.Y); w.Write(v.Z);
+                    break;
+                case Bindings.ValueType.Rotation:
+                    w.Write(v.X); w.Write(v.Y); w.Write(v.Z); w.Write(v.W);
+                    break;
+                case Bindings.ValueType.List:
+                    WriteValues(w, v.Items);
+                    break;
+                default:
+                    throw new ArgumentException("a value of type " + v.Type + " cannot be saved");
+            }
+        }
+
+        private static Value ReadValue(BinaryReader r)
+        {
+            var type = (Bindings.ValueType)r.ReadByte();
+            switch (type)
+            {
+                case Bindings.ValueType.Nil: return Value.Nil;
+                case Bindings.ValueType.Bool: return new Value(type, r.ReadInt64());
+                case Bindings.ValueType.Int: return Value.Int(r.ReadInt64());
+                case Bindings.ValueType.Number: return Value.Num(r.ReadDouble());
+                case Bindings.ValueType.String: return new Value(type, 0, 0, ReadText(r));
+                case Bindings.ValueType.Key: return Value.Key(ReadText(r));
+                case Bindings.ValueType.Vector: return Value.Vec(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
+                case Bindings.ValueType.Rotation: return Value.Rot(r.ReadSingle(), r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
+                case Bindings.ValueType.List: return Value.List(ReadValues(r));
+                default: throw new FormatException("an unknown value type " + (int)type);
+            }
         }
     }
 }
