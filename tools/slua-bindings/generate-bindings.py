@@ -265,6 +265,14 @@ def read_shim_kinds(path):
     return kinds
 
 
+# What the script receives when a deferred call passes its deadline: the failure argument of the shim's Defer call.
+FAILURE = re.compile(r'\bDefer\(self, "(ll\w+)", [^\n]*, (null|"[^"]*"|-?\d+|new LSLList\(\)), (?:true|false)\);')
+
+
+def read_failures(path):
+    return {m.group(1): m.group(2) for m in FAILURE.finditer(read(path))}
+
+
 # ---- matching ----
 
 def matches(builtin, member):
@@ -283,6 +291,7 @@ def main(builtins_path, interface_path, impl_path, shim_path, out_dir):
     members = read_interface(interface_path)
     delays = read_delays(impl_path)
     kinds = read_shim_kinds(shim_path)
+    failures = read_failures(shim_path)
 
     by_name = {}
     for ret, name, params, names in members:
@@ -343,7 +352,10 @@ def main(builtins_path, interface_path, impl_path, shim_path, out_dir):
             unplaced.append("%s: %s (%s)" % (name, reason, cls))
         rows.append((name, builtin, cls, delay_ms, delay_arg))
 
-    write_bindings(out_dir, rows)
+    for name, builtin, cls, _, _ in rows:
+        if cls == "Service" and name not in failures:
+            sys.exit("%s is a service call but the shim has no failure value for it" % name)
+    write_bindings(out_dir, rows, failures)
     write_coverage(out_dir, [r[0] for r in rows], missing, seam_only, mismatch, compiler, unplaced)
     counts = {c: sum(1 for r in rows if r[2] == c) for c in FUNCTION_CLASSES}
     print("bound %d (%s); missing from the seam %d; seam only %d; signature mismatch %d; os/iw/bot %d; unplaced %d"
@@ -369,7 +381,7 @@ def esc(s):
     return s.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def write_bindings(out_dir, rows):
+def write_bindings(out_dir, rows, failures):
     out = [HEADER, """
 // The long-running and service-lane call kinds below follow Halcyon's script functions as Phlox carries them (SyscallShim
 // RunAsync and Defer), and a function is classed as delayed when LSLSystemAPI asks for a ScriptSleep. The table holds no delay
@@ -394,14 +406,28 @@ namespace SLua.ScriptEngine
         else:
             out.append("            return new[] { LslMarshal.%s(%s) };\n" % (MARSHAL_OUT[ret], call))
         out.append("        }\n\n")
+        if cls == "Service":
+            # The arguments as the shim passes them to the deferral question (ISyscallDeferralAdvisor.NeedsService).
+            out.append("        private static object[] %sArgs(ReadOnlySpan<Value> a)\n        {\n" % short)
+            out.append('            LslMarshal.Arity(a, %d, "%s");\n' % (len(params), short))
+            out.append("            return new object[] { %s };\n        }\n\n" % args)
     out.append("        internal static readonly BoundFunction[] All = new BoundFunction[]\n        {\n")
     for name, (ret, params), cls, delay_ms, delay_arg in rows:
         short = name[2:]
         types = "new string[0]" if not params else "new[] { %s }" % ", ".join('"%s"' % p for p in params)
-        out.append('            new BoundFunction("%s", "%s", FunctionClass.%s, "%s", %s, %s),\n'
-                   % (short, name, cls, ret, types, short))
+        extra = ""
+        if cls == "Service":
+            extra = ", %s, %sArgs" % (failure_expr(failures[name]), short)
+        out.append('            new BoundFunction("%s", "%s", FunctionClass.%s, "%s", %s, %s%s),\n'
+                   % (short, name, cls, ret, types, short, extra))
     out.append("        };\n    }\n}\n")
     write(out_dir, "LlBindings.g.cs", "".join(out))
+
+
+def failure_expr(literal):
+    if literal == "new LSLList()":
+        return "new InWorldz.Phlox.Types.LSLList()"
+    return literal
 
 
 def string_array(name, doc, items):

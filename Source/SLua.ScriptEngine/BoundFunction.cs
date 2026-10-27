@@ -31,12 +31,17 @@ namespace SLua.ScriptEngine
 
     internal delegate Value[] BoundCall(ScriptContext context, ReadOnlySpan<Value> args);
 
+    /// <summary>The arguments of a call as LSLSystemAPI takes them, for the question whether the call needs the service.</summary>
+    internal delegate object[] BoundArgs(ReadOnlySpan<Value> args);
+
     /// <summary>One ll function bound to its ILSLSystemAPI method.</summary>
     internal sealed class BoundFunction
     {
         public BoundFunction(string name, string apiName, FunctionClass functionClass,
-            string returnType, string[] paramTypes, BoundCall call)
+            string returnType, string[] paramTypes, BoundCall call, object failureValue = null, BoundArgs apiArgs = null)
         {
+            FailureValue = failureValue;
+            ApiArgs = apiArgs;
             Name = name;
             ApiName = apiName;
             Class = functionClass;
@@ -54,7 +59,10 @@ namespace SLua.ScriptEngine
         public FunctionClass Class { get; }
 
         /// <summary>What the script receives when a service call passes its deadline (Phlox: the failure value of the shim's Defer call): null for a call with no value, else a string, an integer or a list.</summary>
-        public object FailureValue => null;
+        public object FailureValue { get; }
+
+        /// <summary>The call's arguments as LSLSystemAPI takes them; set for the service functions, which are asked whether they need the service first.</summary>
+        public BoundArgs ApiArgs { get; }
 
         /// <summary>The LSL return type: void, integer, float, string, key, vector, rotation or list.</summary>
         public string ReturnType { get; }

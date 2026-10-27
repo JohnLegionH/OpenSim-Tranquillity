@@ -405,6 +405,24 @@ namespace SLua.ScriptEngine
         }
 
         /// <summary>
+        /// The answer of a call on the service lane. Only the script still waiting for that call takes it: an answer for an
+        /// earlier call (the script was reset, or the deadline already answered it and the script has moved on) is dropped,
+        /// as Phlox drops a return whose sequence number is not the script's current one (ProcessSyscallReturns).
+        /// </summary>
+        internal void CompleteWait(SchedulerScript s, int seq, Value[] result, double delaySeconds, Exception fault)
+        {
+            if (!s.Waiting || s.State == ScriptRunState.Removed)
+                return;
+            if (seq >= 0 && seq != s.WaitSeq)
+                return;
+            s.WaitResult = result;
+            s.WaitDelay = delaySeconds;
+            s.WaitFault = fault;
+            s.Waiting = false;
+            Reschedule(s);
+        }
+
+        /// <summary>
         /// The Running flag changed (it is already set on the script). Off: queued events are dropped and the timer
         /// is held with the time it had left, which the start carries on with (Phlox: ProcessEnableDisable keeps
         /// TimerTimeLeft in m_StoppedTimerLeft, StartAfterStop resumes with it); the script keeps its place in its handler. On: it carries on; a script that was never started
@@ -500,6 +518,8 @@ namespace SLua.ScriptEngine
             s.SleepGen++;
             s.Waiting = false;
             s.WaitResult = null;
+            s.WaitDelay = 0;
+            s.WaitFault = null;
             s.AskedSeconds = 0;
             s.SetHandlers(0, false);
             s.Windows = null;

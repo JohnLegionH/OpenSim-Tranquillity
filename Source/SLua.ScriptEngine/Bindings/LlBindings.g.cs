@@ -67,6 +67,12 @@ namespace SLua.ScriptEngine
             return new[] { LslMarshal.Of(c.Api.llAgentInExperience(LslMarshal.Key(a, 0, "AgentInExperience"))) };
         }
 
+        private static object[] AgentInExperienceArgs(ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 1, "AgentInExperience");
+            return new object[] { LslMarshal.Key(a, 0, "AgentInExperience") };
+        }
+
         private static Value[] AllowInventoryDrop(ScriptContext c, ReadOnlySpan<Value> a)
         {
             LslMarshal.Arity(a, 1, "AllowInventoryDrop");
@@ -272,6 +278,12 @@ namespace SLua.ScriptEngine
             return new[] { LslMarshal.OfKey(c.Api.llCreateKeyValue(LslMarshal.String(a, 0, "CreateKeyValue"), LslMarshal.String(a, 1, "CreateKeyValue"))) };
         }
 
+        private static object[] CreateKeyValueArgs(ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 2, "CreateKeyValue");
+            return new object[] { LslMarshal.String(a, 0, "CreateKeyValue"), LslMarshal.String(a, 1, "CreateKeyValue") };
+        }
+
         private static Value[] CreateLink(ScriptContext c, ReadOnlySpan<Value> a)
         {
             LslMarshal.Arity(a, 2, "CreateLink");
@@ -292,6 +304,12 @@ namespace SLua.ScriptEngine
             return new[] { LslMarshal.OfKey(c.Api.llDataSizeKeyValue()) };
         }
 
+        private static object[] DataSizeKeyValueArgs(ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 0, "DataSizeKeyValue");
+            return new object[] {  };
+        }
+
         private static Value[] DeleteCharacter(ScriptContext c, ReadOnlySpan<Value> a)
         {
             LslMarshal.Arity(a, 0, "DeleteCharacter");
@@ -303,6 +321,12 @@ namespace SLua.ScriptEngine
         {
             LslMarshal.Arity(a, 1, "DeleteKeyValue");
             return new[] { LslMarshal.OfKey(c.Api.llDeleteKeyValue(LslMarshal.String(a, 0, "DeleteKeyValue"))) };
+        }
+
+        private static object[] DeleteKeyValueArgs(ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 1, "DeleteKeyValue");
+            return new object[] { LslMarshal.String(a, 0, "DeleteKeyValue") };
         }
 
         private static Value[] DeleteSubList(ScriptContext c, ReadOnlySpan<Value> a)
@@ -443,6 +467,12 @@ namespace SLua.ScriptEngine
             LslMarshal.Arity(a, 4, "Dialog");
             c.Api.llDialog(LslMarshal.Key(a, 0, "Dialog"), LslMarshal.String(a, 1, "Dialog"), LslMarshal.List(a, 2, "Dialog"), LslMarshal.Int(a, 3, "Dialog"));
             return null;
+        }
+
+        private static object[] DialogArgs(ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 4, "Dialog");
+            return new object[] { LslMarshal.Key(a, 0, "Dialog"), LslMarshal.String(a, 1, "Dialog"), LslMarshal.List(a, 2, "Dialog"), LslMarshal.Int(a, 3, "Dialog") };
         }
 
         private static Value[] Die(ScriptContext c, ReadOnlySpan<Value> a)
@@ -692,6 +722,12 @@ namespace SLua.ScriptEngine
             return new[] { LslMarshal.OfString(c.Api.llGetDisplayName(LslMarshal.Key(a, 0, "GetDisplayName"))) };
         }
 
+        private static object[] GetDisplayNameArgs(ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 1, "GetDisplayName");
+            return new object[] { LslMarshal.Key(a, 0, "GetDisplayName") };
+        }
+
         private static Value[] GetEnergy(ScriptContext c, ReadOnlySpan<Value> a)
         {
             LslMarshal.Arity(a, 0, "GetEnergy");
@@ -714,6 +750,12 @@ namespace SLua.ScriptEngine
         {
             LslMarshal.Arity(a, 1, "GetExperienceDetails");
             return new[] { LslMarshal.Of(c.Api.llGetExperienceDetails(LslMarshal.Key(a, 0, "GetExperienceDetails"))) };
+        }
+
+        private static object[] GetExperienceDetailsArgs(ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 1, "GetExperienceDetails");
+            return new object[] { LslMarshal.Key(a, 0, "GetExperienceDetails") };
         }
 
         private static Value[] GetExperienceErrorMessage(ScriptContext c, ReadOnlySpan<Value> a)
@@ -949,6 +991,12 @@ namespace SLua.ScriptEngine
         {
             LslMarshal.Arity(a, 2, "GetNotecardLineSync");
             return new[] { LslMarshal.OfString(c.Api.llGetNotecardLineSync(LslMarshal.String(a, 0, "GetNotecardLineSync"), LslMarshal.Int(a, 1, "GetNotecardLineSync"))) };
+        }
+
+        private static object[] GetNotecardLineSyncArgs(ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 2, "GetNotecardLineSync");
+            return new object[] { LslMarshal.String(a, 0, "GetNotecardLineSync"), LslMarshal.Int(a, 1, "GetNotecardLineSync") };
         }
 
         private static Value[] GetNumberOfNotecardLines(ScriptContext c, ReadOnlySpan<Value> a)
@@ -1353,6 +1401,12 @@ namespace SLua.ScriptEngine
             return new[] { LslMarshal.OfString(c.Api.llGetUsername(LslMarshal.Key(a, 0, "GetUsername"))) };
         }
 
+        private static object[] GetUsernameArgs(ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 1, "GetUsername");
+            return new object[] { LslMarshal.Key(a, 0, "GetUsername") };
+        }
+
         private static Value[] GetVel(ScriptContext c, ReadOnlySpan<Value> a)
         {
             LslMarshal.Arity(a, 0, "GetVel");
@@ -1521,10 +1575,22 @@ namespace SLua.ScriptEngine
             return new[] { LslMarshal.OfKey(c.Api.llKeyCountKeyValue()) };
         }
 
+        private static object[] KeyCountKeyValueArgs(ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 0, "KeyCountKeyValue");
+            return new object[] {  };
+        }
+
         private static Value[] KeysKeyValue(ScriptContext c, ReadOnlySpan<Value> a)
         {
             LslMarshal.Arity(a, 2, "KeysKeyValue");
             return new[] { LslMarshal.OfKey(c.Api.llKeysKeyValue(LslMarshal.Int(a, 0, "KeysKeyValue"), LslMarshal.Int(a, 1, "KeysKeyValue"))) };
+        }
+
+        private static object[] KeysKeyValueArgs(ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 2, "KeysKeyValue");
+            return new object[] { LslMarshal.Int(a, 0, "KeysKeyValue"), LslMarshal.Int(a, 1, "KeysKeyValue") };
         }
 
         private static Value[] Linear2sRGB(ScriptContext c, ReadOnlySpan<Value> a)
@@ -1929,6 +1995,12 @@ namespace SLua.ScriptEngine
             return new[] { LslMarshal.OfKey(c.Api.llName2Key(LslMarshal.String(a, 0, "Name2Key"))) };
         }
 
+        private static object[] Name2KeyArgs(ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 1, "Name2Key");
+            return new object[] { LslMarshal.String(a, 0, "Name2Key") };
+        }
+
         private static Value[] NavigateTo(ScriptContext c, ReadOnlySpan<Value> a)
         {
             LslMarshal.Arity(a, 2, "NavigateTo");
@@ -2076,6 +2148,12 @@ namespace SLua.ScriptEngine
             return new[] { LslMarshal.OfKey(c.Api.llReadKeyValue(LslMarshal.String(a, 0, "ReadKeyValue"))) };
         }
 
+        private static object[] ReadKeyValueArgs(ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 1, "ReadKeyValue");
+            return new object[] { LslMarshal.String(a, 0, "ReadKeyValue") };
+        }
+
         private static Value[] RefreshPrimURL(ScriptContext c, ReadOnlySpan<Value> a)
         {
             LslMarshal.Arity(a, 0, "RefreshPrimURL");
@@ -2185,6 +2263,12 @@ namespace SLua.ScriptEngine
             return null;
         }
 
+        private static object[] RequestExperiencePermissionsArgs(ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 2, "RequestExperiencePermissions");
+            return new object[] { LslMarshal.Key(a, 0, "RequestExperiencePermissions"), LslMarshal.String(a, 1, "RequestExperiencePermissions") };
+        }
+
         private static Value[] RequestInventoryData(ScriptContext c, ReadOnlySpan<Value> a)
         {
             LslMarshal.Arity(a, 1, "RequestInventoryData");
@@ -2198,6 +2282,12 @@ namespace SLua.ScriptEngine
             return null;
         }
 
+        private static object[] RequestPermissionsArgs(ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 2, "RequestPermissions");
+            return new object[] { LslMarshal.Key(a, 0, "RequestPermissions"), LslMarshal.Int(a, 1, "RequestPermissions") };
+        }
+
         private static Value[] RequestSecureURL(ScriptContext c, ReadOnlySpan<Value> a)
         {
             LslMarshal.Arity(a, 0, "RequestSecureURL");
@@ -2208,6 +2298,12 @@ namespace SLua.ScriptEngine
         {
             LslMarshal.Arity(a, 2, "RequestSimulatorData");
             return new[] { LslMarshal.OfKey(c.Api.llRequestSimulatorData(LslMarshal.String(a, 0, "RequestSimulatorData"), LslMarshal.Int(a, 1, "RequestSimulatorData"))) };
+        }
+
+        private static object[] RequestSimulatorDataArgs(ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 2, "RequestSimulatorData");
+            return new object[] { LslMarshal.String(a, 0, "RequestSimulatorData"), LslMarshal.Int(a, 1, "RequestSimulatorData") };
         }
 
         private static Value[] RequestURL(ScriptContext c, ReadOnlySpan<Value> a)
@@ -3077,6 +3173,12 @@ namespace SLua.ScriptEngine
             return null;
         }
 
+        private static object[] TargetedEmailArgs(ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 3, "TargetedEmail");
+            return new object[] { LslMarshal.Int(a, 0, "TargetedEmail"), LslMarshal.String(a, 1, "TargetedEmail"), LslMarshal.String(a, 2, "TargetedEmail") };
+        }
+
         private static Value[] TeleportAgent(ScriptContext c, ReadOnlySpan<Value> a)
         {
             LslMarshal.Arity(a, 4, "TeleportAgent");
@@ -3084,11 +3186,23 @@ namespace SLua.ScriptEngine
             return null;
         }
 
+        private static object[] TeleportAgentArgs(ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 4, "TeleportAgent");
+            return new object[] { LslMarshal.Key(a, 0, "TeleportAgent"), LslMarshal.String(a, 1, "TeleportAgent"), LslMarshal.Vector(a, 2, "TeleportAgent"), LslMarshal.Vector(a, 3, "TeleportAgent") };
+        }
+
         private static Value[] TeleportAgentGlobalCoords(ScriptContext c, ReadOnlySpan<Value> a)
         {
             LslMarshal.Arity(a, 4, "TeleportAgentGlobalCoords");
             c.Api.llTeleportAgentGlobalCoords(LslMarshal.Key(a, 0, "TeleportAgentGlobalCoords"), LslMarshal.Vector(a, 1, "TeleportAgentGlobalCoords"), LslMarshal.Vector(a, 2, "TeleportAgentGlobalCoords"), LslMarshal.Vector(a, 3, "TeleportAgentGlobalCoords"));
             return null;
+        }
+
+        private static object[] TeleportAgentGlobalCoordsArgs(ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 4, "TeleportAgentGlobalCoords");
+            return new object[] { LslMarshal.Key(a, 0, "TeleportAgentGlobalCoords"), LslMarshal.Vector(a, 1, "TeleportAgentGlobalCoords"), LslMarshal.Vector(a, 2, "TeleportAgentGlobalCoords"), LslMarshal.Vector(a, 3, "TeleportAgentGlobalCoords") };
         }
 
         private static Value[] TeleportAgentHome(ScriptContext c, ReadOnlySpan<Value> a)
@@ -3161,6 +3275,12 @@ namespace SLua.ScriptEngine
         {
             LslMarshal.Arity(a, 4, "UpdateKeyValue");
             return new[] { LslMarshal.OfKey(c.Api.llUpdateKeyValue(LslMarshal.String(a, 0, "UpdateKeyValue"), LslMarshal.String(a, 1, "UpdateKeyValue"), LslMarshal.Int(a, 2, "UpdateKeyValue"), LslMarshal.String(a, 3, "UpdateKeyValue"))) };
+        }
+
+        private static object[] UpdateKeyValueArgs(ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 4, "UpdateKeyValue");
+            return new object[] { LslMarshal.String(a, 0, "UpdateKeyValue"), LslMarshal.String(a, 1, "UpdateKeyValue"), LslMarshal.Int(a, 2, "UpdateKeyValue"), LslMarshal.String(a, 3, "UpdateKeyValue") };
         }
 
         private static Value[] VecDist(ScriptContext c, ReadOnlySpan<Value> a)
@@ -3258,7 +3378,7 @@ namespace SLua.ScriptEngine
             new BoundFunction("AddToLandPassList", "llAddToLandPassList", FunctionClass.Delayed, "void", new[] { "key", "float" }, AddToLandPassList),
             new BoundFunction("AdjustDamage", "llAdjustDamage", FunctionClass.NonBlocking, "void", new[] { "integer", "float" }, AdjustDamage),
             new BoundFunction("AdjustSoundVolume", "llAdjustSoundVolume", FunctionClass.Delayed, "void", new[] { "float" }, AdjustSoundVolume),
-            new BoundFunction("AgentInExperience", "llAgentInExperience", FunctionClass.Service, "integer", new[] { "key" }, AgentInExperience),
+            new BoundFunction("AgentInExperience", "llAgentInExperience", FunctionClass.Service, "integer", new[] { "key" }, AgentInExperience, 0, AgentInExperienceArgs),
             new BoundFunction("AllowInventoryDrop", "llAllowInventoryDrop", FunctionClass.NonBlocking, "void", new[] { "integer" }, AllowInventoryDrop),
             new BoundFunction("AngleBetween", "llAngleBetween", FunctionClass.NonBlocking, "float", new[] { "rotation", "rotation" }, AngleBetween),
             new BoundFunction("ApplyImpulse", "llApplyImpulse", FunctionClass.Unplaced, "void", new[] { "vector", "integer" }, ApplyImpulse),
@@ -3290,12 +3410,12 @@ namespace SLua.ScriptEngine
             new BoundFunction("ComputeHash", "llComputeHash", FunctionClass.NonBlocking, "string", new[] { "string", "string" }, ComputeHash),
             new BoundFunction("Cos", "llCos", FunctionClass.NonBlocking, "float", new[] { "float" }, Cos),
             new BoundFunction("CreateCharacter", "llCreateCharacter", FunctionClass.NonBlocking, "void", new[] { "list" }, CreateCharacter),
-            new BoundFunction("CreateKeyValue", "llCreateKeyValue", FunctionClass.Service, "key", new[] { "string", "string" }, CreateKeyValue),
+            new BoundFunction("CreateKeyValue", "llCreateKeyValue", FunctionClass.Service, "key", new[] { "string", "string" }, CreateKeyValue, "00000000-0000-0000-0000-000000000000", CreateKeyValueArgs),
             new BoundFunction("CreateLink", "llCreateLink", FunctionClass.Unplaced, "void", new[] { "key", "integer" }, CreateLink),
             new BoundFunction("Damage", "llDamage", FunctionClass.Async, "void", new[] { "key", "float", "integer" }, Damage),
-            new BoundFunction("DataSizeKeyValue", "llDataSizeKeyValue", FunctionClass.Service, "key", new string[0], DataSizeKeyValue),
+            new BoundFunction("DataSizeKeyValue", "llDataSizeKeyValue", FunctionClass.Service, "key", new string[0], DataSizeKeyValue, "00000000-0000-0000-0000-000000000000", DataSizeKeyValueArgs),
             new BoundFunction("DeleteCharacter", "llDeleteCharacter", FunctionClass.NonBlocking, "void", new string[0], DeleteCharacter),
-            new BoundFunction("DeleteKeyValue", "llDeleteKeyValue", FunctionClass.Service, "key", new[] { "string" }, DeleteKeyValue),
+            new BoundFunction("DeleteKeyValue", "llDeleteKeyValue", FunctionClass.Service, "key", new[] { "string" }, DeleteKeyValue, "00000000-0000-0000-0000-000000000000", DeleteKeyValueArgs),
             new BoundFunction("DeleteSubList", "llDeleteSubList", FunctionClass.NonBlocking, "list", new[] { "list", "integer", "integer" }, DeleteSubList),
             new BoundFunction("DeleteSubString", "llDeleteSubString", FunctionClass.NonBlocking, "string", new[] { "string", "integer", "integer" }, DeleteSubString),
             new BoundFunction("DerezObject", "llDerezObject", FunctionClass.NonBlocking, "integer", new[] { "key", "integer" }, DerezObject),
@@ -3318,7 +3438,7 @@ namespace SLua.ScriptEngine
             new BoundFunction("DetectedTouchUV", "llDetectedTouchUV", FunctionClass.NonBlocking, "vector", new[] { "integer" }, DetectedTouchUV),
             new BoundFunction("DetectedType", "llDetectedType", FunctionClass.NonBlocking, "integer", new[] { "integer" }, DetectedType),
             new BoundFunction("DetectedVel", "llDetectedVel", FunctionClass.NonBlocking, "vector", new[] { "integer" }, DetectedVel),
-            new BoundFunction("Dialog", "llDialog", FunctionClass.Service, "void", new[] { "key", "string", "list", "integer" }, Dialog),
+            new BoundFunction("Dialog", "llDialog", FunctionClass.Service, "void", new[] { "key", "string", "list", "integer" }, Dialog, null, DialogArgs),
             new BoundFunction("Die", "llDie", FunctionClass.NonBlocking, "void", new string[0], Die),
             new BoundFunction("DumpList2String", "llDumpList2String", FunctionClass.NonBlocking, "string", new[] { "list", "string" }, DumpList2String),
             new BoundFunction("EdgeOfWorld", "llEdgeOfWorld", FunctionClass.NonBlocking, "integer", new[] { "vector", "vector" }, EdgeOfWorld),
@@ -3358,11 +3478,11 @@ namespace SLua.ScriptEngine
             new BoundFunction("GetDate", "llGetDate", FunctionClass.NonBlocking, "string", new string[0], GetDate),
             new BoundFunction("GetDayLength", "llGetDayLength", FunctionClass.NonBlocking, "integer", new string[0], GetDayLength),
             new BoundFunction("GetDayOffset", "llGetDayOffset", FunctionClass.NonBlocking, "integer", new string[0], GetDayOffset),
-            new BoundFunction("GetDisplayName", "llGetDisplayName", FunctionClass.Service, "string", new[] { "key" }, GetDisplayName),
+            new BoundFunction("GetDisplayName", "llGetDisplayName", FunctionClass.Service, "string", new[] { "key" }, GetDisplayName, "", GetDisplayNameArgs),
             new BoundFunction("GetEnergy", "llGetEnergy", FunctionClass.NonBlocking, "float", new string[0], GetEnergy),
             new BoundFunction("GetEnv", "llGetEnv", FunctionClass.NonBlocking, "string", new[] { "string" }, GetEnv),
             new BoundFunction("GetEnvironment", "llGetEnvironment", FunctionClass.NonBlocking, "list", new[] { "vector", "list" }, GetEnvironment),
-            new BoundFunction("GetExperienceDetails", "llGetExperienceDetails", FunctionClass.Service, "list", new[] { "key" }, GetExperienceDetails),
+            new BoundFunction("GetExperienceDetails", "llGetExperienceDetails", FunctionClass.Service, "list", new[] { "key" }, GetExperienceDetails, new InWorldz.Phlox.Types.LSLList(), GetExperienceDetailsArgs),
             new BoundFunction("GetExperienceErrorMessage", "llGetExperienceErrorMessage", FunctionClass.NonBlocking, "string", new[] { "integer" }, GetExperienceErrorMessage),
             new BoundFunction("GetForce", "llGetForce", FunctionClass.NonBlocking, "vector", new string[0], GetForce),
             new BoundFunction("GetFreeMemory", "llGetFreeMemory", FunctionClass.NonBlocking, "integer", new string[0], GetFreeMemory),
@@ -3401,7 +3521,7 @@ namespace SLua.ScriptEngine
             new BoundFunction("GetMoonRotation", "llGetMoonRotation", FunctionClass.NonBlocking, "rotation", new string[0], GetMoonRotation),
             new BoundFunction("GetNextEmail", "llGetNextEmail", FunctionClass.Async, "void", new[] { "string", "string" }, GetNextEmail),
             new BoundFunction("GetNotecardLine", "llGetNotecardLine", FunctionClass.NonBlocking, "key", new[] { "string", "integer" }, GetNotecardLine),
-            new BoundFunction("GetNotecardLineSync", "llGetNotecardLineSync", FunctionClass.Service, "string", new[] { "string", "integer" }, GetNotecardLineSync),
+            new BoundFunction("GetNotecardLineSync", "llGetNotecardLineSync", FunctionClass.Service, "string", new[] { "string", "integer" }, GetNotecardLineSync, "\n\n\n", GetNotecardLineSyncArgs),
             new BoundFunction("GetNumberOfNotecardLines", "llGetNumberOfNotecardLines", FunctionClass.Unplaced, "key", new[] { "string" }, GetNumberOfNotecardLines),
             new BoundFunction("GetNumberOfPrims", "llGetNumberOfPrims", FunctionClass.NonBlocking, "integer", new string[0], GetNumberOfPrims),
             new BoundFunction("GetNumberOfSides", "llGetNumberOfSides", FunctionClass.NonBlocking, "integer", new string[0], GetNumberOfSides),
@@ -3468,7 +3588,7 @@ namespace SLua.ScriptEngine
             new BoundFunction("GetTorque", "llGetTorque", FunctionClass.NonBlocking, "vector", new string[0], GetTorque),
             new BoundFunction("GetUnixTime", "llGetUnixTime", FunctionClass.NonBlocking, "integer", new string[0], GetUnixTime),
             new BoundFunction("GetUsedMemory", "llGetUsedMemory", FunctionClass.NonBlocking, "integer", new string[0], GetUsedMemory),
-            new BoundFunction("GetUsername", "llGetUsername", FunctionClass.Service, "string", new[] { "key" }, GetUsername),
+            new BoundFunction("GetUsername", "llGetUsername", FunctionClass.Service, "string", new[] { "key" }, GetUsername, "", GetUsernameArgs),
             new BoundFunction("GetVel", "llGetVel", FunctionClass.NonBlocking, "vector", new string[0], GetVel),
             new BoundFunction("GetVisualParams", "llGetVisualParams", FunctionClass.NonBlocking, "list", new[] { "key", "list" }, GetVisualParams),
             new BoundFunction("GetWallclock", "llGetWallclock", FunctionClass.NonBlocking, "float", new string[0], GetWallclock),
@@ -3495,8 +3615,8 @@ namespace SLua.ScriptEngine
             new BoundFunction("JsonSetValue", "llJsonSetValue", FunctionClass.NonBlocking, "string", new[] { "string", "list", "string" }, JsonSetValue),
             new BoundFunction("JsonValueType", "llJsonValueType", FunctionClass.NonBlocking, "string", new[] { "string", "list" }, JsonValueType),
             new BoundFunction("Key2Name", "llKey2Name", FunctionClass.NonBlocking, "string", new[] { "key" }, Key2Name),
-            new BoundFunction("KeyCountKeyValue", "llKeyCountKeyValue", FunctionClass.Service, "key", new string[0], KeyCountKeyValue),
-            new BoundFunction("KeysKeyValue", "llKeysKeyValue", FunctionClass.Service, "key", new[] { "integer", "integer" }, KeysKeyValue),
+            new BoundFunction("KeyCountKeyValue", "llKeyCountKeyValue", FunctionClass.Service, "key", new string[0], KeyCountKeyValue, "00000000-0000-0000-0000-000000000000", KeyCountKeyValueArgs),
+            new BoundFunction("KeysKeyValue", "llKeysKeyValue", FunctionClass.Service, "key", new[] { "integer", "integer" }, KeysKeyValue, "00000000-0000-0000-0000-000000000000", KeysKeyValueArgs),
             new BoundFunction("Linear2sRGB", "llLinear2sRGB", FunctionClass.NonBlocking, "vector", new[] { "vector" }, Linear2sRGB),
             new BoundFunction("LinkAdjustSoundVolume", "llLinkAdjustSoundVolume", FunctionClass.NonBlocking, "void", new[] { "integer", "float" }, LinkAdjustSoundVolume),
             new BoundFunction("LinkParticleSystem", "llLinkParticleSystem", FunctionClass.NonBlocking, "void", new[] { "integer", "list" }, LinkParticleSystem),
@@ -3559,7 +3679,7 @@ namespace SLua.ScriptEngine
             new BoundFunction("ModPow", "llModPow", FunctionClass.NonBlocking, "integer", new[] { "integer", "integer", "integer" }, ModPow),
             new BoundFunction("ModifyLand", "llModifyLand", FunctionClass.NonBlocking, "void", new[] { "integer", "integer" }, ModifyLand),
             new BoundFunction("MoveToTarget", "llMoveToTarget", FunctionClass.NonBlocking, "void", new[] { "vector", "float" }, MoveToTarget),
-            new BoundFunction("Name2Key", "llName2Key", FunctionClass.Service, "key", new[] { "string" }, Name2Key),
+            new BoundFunction("Name2Key", "llName2Key", FunctionClass.Service, "key", new[] { "string" }, Name2Key, "00000000-0000-0000-0000-000000000000", Name2KeyArgs),
             new BoundFunction("NavigateTo", "llNavigateTo", FunctionClass.NonBlocking, "void", new[] { "vector", "list" }, NavigateTo),
             new BoundFunction("OffsetTexture", "llOffsetTexture", FunctionClass.Delayed, "void", new[] { "float", "float", "integer" }, OffsetTexture),
             new BoundFunction("OpenRemoteDataChannel", "llOpenRemoteDataChannel", FunctionClass.Delayed, "void", new string[0], OpenRemoteDataChannel),
@@ -3581,7 +3701,7 @@ namespace SLua.ScriptEngine
             new BoundFunction("PreloadSound", "llPreloadSound", FunctionClass.Delayed, "void", new[] { "string" }, PreloadSound),
             new BoundFunction("Pursue", "llPursue", FunctionClass.NonBlocking, "void", new[] { "key", "list" }, Pursue),
             new BoundFunction("PushObject", "llPushObject", FunctionClass.Unplaced, "void", new[] { "key", "vector", "vector", "integer" }, PushObject),
-            new BoundFunction("ReadKeyValue", "llReadKeyValue", FunctionClass.Service, "key", new[] { "string" }, ReadKeyValue),
+            new BoundFunction("ReadKeyValue", "llReadKeyValue", FunctionClass.Service, "key", new[] { "string" }, ReadKeyValue, "00000000-0000-0000-0000-000000000000", ReadKeyValueArgs),
             new BoundFunction("RefreshPrimURL", "llRefreshPrimURL", FunctionClass.NonBlocking, "void", new string[0], RefreshPrimURL),
             new BoundFunction("RegionSay", "llRegionSay", FunctionClass.Unplaced, "void", new[] { "integer", "string" }, RegionSay),
             new BoundFunction("RegionSayTo", "llRegionSayTo", FunctionClass.Unplaced, "void", new[] { "key", "integer", "string" }, RegionSayTo),
@@ -3597,11 +3717,11 @@ namespace SLua.ScriptEngine
             new BoundFunction("ReplaceAgentEnvironment", "llReplaceAgentEnvironment", FunctionClass.NonBlocking, "integer", new[] { "key", "float", "string" }, ReplaceAgentEnvironment),
             new BoundFunction("ReplaceEnvironment", "llReplaceEnvironment", FunctionClass.NonBlocking, "integer", new[] { "vector", "string", "integer", "integer", "integer" }, ReplaceEnvironment),
             new BoundFunction("ReplaceSubString", "llReplaceSubString", FunctionClass.NonBlocking, "string", new[] { "string", "string", "string", "integer" }, ReplaceSubString),
-            new BoundFunction("RequestExperiencePermissions", "llRequestExperiencePermissions", FunctionClass.Service, "void", new[] { "key", "string" }, RequestExperiencePermissions),
+            new BoundFunction("RequestExperiencePermissions", "llRequestExperiencePermissions", FunctionClass.Service, "void", new[] { "key", "string" }, RequestExperiencePermissions, null, RequestExperiencePermissionsArgs),
             new BoundFunction("RequestInventoryData", "llRequestInventoryData", FunctionClass.NonBlocking, "key", new[] { "string" }, RequestInventoryData),
-            new BoundFunction("RequestPermissions", "llRequestPermissions", FunctionClass.Service, "void", new[] { "key", "integer" }, RequestPermissions),
+            new BoundFunction("RequestPermissions", "llRequestPermissions", FunctionClass.Service, "void", new[] { "key", "integer" }, RequestPermissions, null, RequestPermissionsArgs),
             new BoundFunction("RequestSecureURL", "llRequestSecureURL", FunctionClass.NonBlocking, "key", new string[0], RequestSecureURL),
-            new BoundFunction("RequestSimulatorData", "llRequestSimulatorData", FunctionClass.Service, "key", new[] { "string", "integer" }, RequestSimulatorData),
+            new BoundFunction("RequestSimulatorData", "llRequestSimulatorData", FunctionClass.Service, "key", new[] { "string", "integer" }, RequestSimulatorData, "00000000-0000-0000-0000-000000000000", RequestSimulatorDataArgs),
             new BoundFunction("RequestURL", "llRequestURL", FunctionClass.NonBlocking, "key", new string[0], RequestURL),
             new BoundFunction("RequestUserKey", "llRequestUserKey", FunctionClass.NonBlocking, "key", new[] { "string" }, RequestUserKey),
             new BoundFunction("ResetAnimationOverride", "llResetAnimationOverride", FunctionClass.NonBlocking, "void", new[] { "string" }, ResetAnimationOverride),
@@ -3730,9 +3850,9 @@ namespace SLua.ScriptEngine
             new BoundFunction("Target", "llTarget", FunctionClass.NonBlocking, "integer", new[] { "vector", "float" }, Target),
             new BoundFunction("TargetOmega", "llTargetOmega", FunctionClass.NonBlocking, "void", new[] { "vector", "float", "float" }, TargetOmega),
             new BoundFunction("TargetRemove", "llTargetRemove", FunctionClass.NonBlocking, "void", new[] { "integer" }, TargetRemove),
-            new BoundFunction("TargetedEmail", "llTargetedEmail", FunctionClass.Service, "void", new[] { "integer", "string", "string" }, TargetedEmail),
-            new BoundFunction("TeleportAgent", "llTeleportAgent", FunctionClass.Service, "void", new[] { "key", "string", "vector", "vector" }, TeleportAgent),
-            new BoundFunction("TeleportAgentGlobalCoords", "llTeleportAgentGlobalCoords", FunctionClass.Service, "void", new[] { "key", "vector", "vector", "vector" }, TeleportAgentGlobalCoords),
+            new BoundFunction("TargetedEmail", "llTargetedEmail", FunctionClass.Service, "void", new[] { "integer", "string", "string" }, TargetedEmail, null, TargetedEmailArgs),
+            new BoundFunction("TeleportAgent", "llTeleportAgent", FunctionClass.Service, "void", new[] { "key", "string", "vector", "vector" }, TeleportAgent, null, TeleportAgentArgs),
+            new BoundFunction("TeleportAgentGlobalCoords", "llTeleportAgentGlobalCoords", FunctionClass.Service, "void", new[] { "key", "vector", "vector", "vector" }, TeleportAgentGlobalCoords, null, TeleportAgentGlobalCoordsArgs),
             new BoundFunction("TeleportAgentHome", "llTeleportAgentHome", FunctionClass.Async, "void", new[] { "key" }, TeleportAgentHome),
             new BoundFunction("TextBox", "llTextBox", FunctionClass.Delayed, "void", new[] { "key", "string", "integer" }, TextBox),
             new BoundFunction("ToLower", "llToLower", FunctionClass.NonBlocking, "string", new[] { "string" }, ToLower),
@@ -3743,7 +3863,7 @@ namespace SLua.ScriptEngine
             new BoundFunction("UnSit", "llUnSit", FunctionClass.NonBlocking, "void", new[] { "key" }, UnSit),
             new BoundFunction("UnescapeURL", "llUnescapeURL", FunctionClass.NonBlocking, "string", new[] { "string" }, UnescapeURL),
             new BoundFunction("UpdateCharacter", "llUpdateCharacter", FunctionClass.NonBlocking, "void", new[] { "list" }, UpdateCharacter),
-            new BoundFunction("UpdateKeyValue", "llUpdateKeyValue", FunctionClass.Service, "key", new[] { "string", "string", "integer", "string" }, UpdateKeyValue),
+            new BoundFunction("UpdateKeyValue", "llUpdateKeyValue", FunctionClass.Service, "key", new[] { "string", "string", "integer", "string" }, UpdateKeyValue, "00000000-0000-0000-0000-000000000000", UpdateKeyValueArgs),
             new BoundFunction("VecDist", "llVecDist", FunctionClass.NonBlocking, "float", new[] { "vector", "vector" }, VecDist),
             new BoundFunction("VecMag", "llVecMag", FunctionClass.NonBlocking, "float", new[] { "vector" }, VecMag),
             new BoundFunction("VecNorm", "llVecNorm", FunctionClass.NonBlocking, "vector", new[] { "vector" }, VecNorm),

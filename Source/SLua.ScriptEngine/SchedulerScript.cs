@@ -130,6 +130,13 @@ namespace SLua.ScriptEngine
         internal bool WaitRequested;
         internal bool Waiting;
         internal Value[] WaitResult;
+
+        /// <summary>Worker only: the number of the call the script waits for (-1 when the wait has none); an answer for another call is dropped.</summary>
+        internal int WaitSeq = -1;
+
+        /// <summary>Worker only: the delay the answer to the waited call carries, in seconds, and the fault it carries, if any.</summary>
+        internal double WaitDelay;
+        internal Exception WaitFault;
         internal double AskedSeconds;
         internal double SluaTimer;
         internal ScriptWorker Worker;
@@ -248,6 +255,35 @@ namespace SLua.ScriptEngine
         {
             RequireCurrent();
             WaitRequested = true;
+            WaitSeq = -1;
+        }
+
+        /// <summary>For a pausing call's start function: as <see cref="BeginWait()"/>, for the call with this sequence number; only that call's answer ends the wait.</summary>
+        public void BeginWait(int seq)
+        {
+            RequireCurrent();
+            WaitRequested = true;
+            WaitSeq = seq;
+        }
+
+        /// <summary>For a pausing call's start function that finished the call itself: the take function returns these values, after the delay (seconds), with no wait in between.</summary>
+        public void CompleteInline(Value[] result, double delaySeconds)
+        {
+            RequireCurrent();
+            WaitResult = result;
+            WaitDelay = delaySeconds;
+            WaitFault = null;
+        }
+
+        /// <summary>For a pausing call's take function: what the call was answered with, and clears it.</summary>
+        public (Value[] Result, double DelaySeconds, Exception Fault) TakeOutcome()
+        {
+            RequireCurrent();
+            var outcome = (WaitResult ?? Array.Empty<Value>(), WaitDelay, WaitFault);
+            WaitResult = null;
+            WaitDelay = 0;
+            WaitFault = null;
+            return outcome;
         }
 
         /// <summary>For a pausing call's take function: the values the call was completed with, or none.</summary>

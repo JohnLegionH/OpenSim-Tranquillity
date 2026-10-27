@@ -133,7 +133,8 @@ namespace SLua.ScriptEngine
             script.Worker.Enqueue(() => script.Worker.CompleteWait(script, result));
 
         /// <summary>Delivers the answer of a call on the service lane: only if the script is still waiting for that call.</summary>
-        internal void CompleteWait(SchedulerScript script, int seq, Value[] result, double delaySeconds, Exception fault) { }
+        internal void CompleteWait(SchedulerScript script, int seq, Value[] result, double delaySeconds, Exception fault) =>
+            script.Worker.Enqueue(() => script.Worker.CompleteWait(script, seq, result, delaySeconds, fault));
 
         /// <summary>
         /// Does the pending work of every worker once, as of <paramref name="now"/>, on the calling thread. For a

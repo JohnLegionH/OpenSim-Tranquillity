@@ -292,17 +292,18 @@ public class ServiceLaneTests
         using var gate = new ManualResetEventSlim();
         int finished = 0;
         rig.Fake.Returns("NeedsService", true);
-        rig.Fake.Runs("llName2Key", a => { gate.Wait(TimeSpan.FromSeconds(10)); Interlocked.Exchange(ref finished, 1); return KeyOf("late-key"); });
-        SchedulerScript s = rig.H.AddAndStart("ossl.Mark('r', tostring(ll.Name2Key('a')))\nossl.Count()");
+        // llGetNotecardLineSync answers three newlines when it is late (Phlox: Defer in Shim_llGetNotecardLineSync), not an empty value
+        rig.Fake.Runs("llGetNotecardLineSync", a => { gate.Wait(TimeSpan.FromSeconds(10)); Interlocked.Exchange(ref finished, 1); return "the late line"; });
+        SchedulerScript s = rig.H.AddAndStart("ossl.Mark('r', ll.GetNotecardLineSync('card', 0))\nossl.Count()");
 
         Assert.True(rig.PumpUntil(() => rig.H.CountOf(s) == 1), Diag(rig));
-        Assert.Equal(new[] { "r:" + ZeroKey }, Marks(rig, s));
+        Assert.Equal(new[] { "r:\n\n\n" }, Marks(rig, s));
 
         gate.Set();
         Assert.True(SchedulerHarness.WaitFor(() => Volatile.Read(ref finished) == 1));
         for (int i = 0; i < 5; i++) { rig.H.Pump(); Thread.Sleep(10); }
 
-        Assert.Equal(new[] { "r:" + ZeroKey }, Marks(rig, s));
+        Assert.Equal(new[] { "r:\n\n\n" }, Marks(rig, s));
         Assert.Equal(1, rig.H.CountOf(s));
         Assert.Empty(rig.H.FaultedScripts);
     }
@@ -310,23 +311,37 @@ public class ServiceLaneTests
     [RequiresNativeFact]
     public void AnAnswerForACallTheScriptHasMovedPastIsDropped()
     {
-        using var rig = new LaneRig(timeoutMs: 150);
-        using var gate = new ManualResetEventSlim();
-        int calls = 0;
+        using var rig = new LaneRig(timeoutMs: 1500);
+        using var first = new ManualResetEventSlim();
+        using var second = new ManualResetEventSlim();
+        int calls = 0, firstFinished = 0;
         rig.Fake.Returns("NeedsService", true);
         rig.Fake.Runs("llName2Key", a =>
         {
-            if (Interlocked.Increment(ref calls) == 1) { gate.Wait(TimeSpan.FromSeconds(10)); return KeyOf("stale-key"); }
-            return KeyOf("fresh-key");
+            if (Interlocked.Increment(ref calls) == 1)
+            {
+                first.Wait(TimeSpan.FromSeconds(10));
+                Interlocked.Exchange(ref firstFinished, 1);
+                return KeyOf("stale");
+            }
+            second.Wait(TimeSpan.FromSeconds(10));
+            return KeyOf("fresh");
         });
         SchedulerScript s = rig.H.AddAndStart("ossl.Mark('first', tostring(ll.Name2Key('a')))\nossl.Mark('second', tostring(ll.Name2Key('b')))\nossl.Count()");
 
-        // the first call passes its deadline, the second is answered; the first one's late answer must not land in the second
-        Assert.True(rig.PumpUntil(() => rig.H.CountOf(s) == 1), Diag(rig));
-        gate.Set();
-        for (int i = 0; i < 10; i++) { rig.H.Pump(); Thread.Sleep(10); }
+        // the first call passes its deadline and the script goes on to the second, which is still being worked on
+        Assert.True(rig.PumpUntil(() => rig.CallsOf("llName2Key") == 2 && Marks(rig, s).Length == 1 && s.State == ScriptRunState.Waiting), Diag(rig));
 
-        Assert.Equal(new[] { "first:" + ZeroKey, "second:" + KeyOf("fresh-key") }, Marks(rig, s));
+        // the first call's answer arrives now, while the script waits for the second
+        first.Set();
+        Assert.True(SchedulerHarness.WaitFor(() => Volatile.Read(ref firstFinished) == 1));
+        for (int i = 0; i < 5; i++) { rig.H.Pump(); Thread.Sleep(10); }
+        Assert.Equal(ScriptRunState.Waiting, s.State);
+        Assert.Equal(new[] { "first:" + ZeroKey }, Marks(rig, s));
+
+        second.Set();
+        Assert.True(rig.PumpUntil(() => rig.H.CountOf(s) == 1), Diag(rig));
+        Assert.Equal(new[] { "first:" + ZeroKey, "second:" + KeyOf("fresh") }, Marks(rig, s));
     }
 
     [RequiresNativeFact]
