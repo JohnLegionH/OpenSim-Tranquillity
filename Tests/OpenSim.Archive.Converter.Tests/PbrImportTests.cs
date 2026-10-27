@@ -102,7 +102,8 @@ public class PbrImportTests
         System.Text.Json.Nodes.JsonNode withMr = GltfText(PbrMaterialAsset.Build(new PbrMaterialData { MetalRoughTexture = orm, BaseColorTexture = Guid.NewGuid() }));
         System.Text.Json.Nodes.JsonNode material = withMr["materials"][0];
         Assert.NotNull(material["occlusionTexture"]);
-        Assert.Equal((int)material["pbrMetallicRoughness"]["metallicRoughnessTexture"]["index"], (int)material["occlusionTexture"]["index"]);
+        Assert.Equal(orm, PbrViewerFormatTests.ViewerTexture(withMr, material["pbrMetallicRoughness"]["metallicRoughnessTexture"]));
+        Assert.Equal(orm, PbrViewerFormatTests.ViewerTexture(withMr, material["occlusionTexture"]));
         System.Text.Json.Nodes.JsonNode without = GltfText(PbrMaterialAsset.Build(new PbrMaterialData { BaseColorTexture = Guid.NewGuid() }));
         Assert.Null(without["materials"][0]["occlusionTexture"]);
     }
