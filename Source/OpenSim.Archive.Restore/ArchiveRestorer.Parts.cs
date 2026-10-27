@@ -230,7 +230,7 @@ public sealed partial class ArchiveRestorer
         string description = Clean(GlbFile.Str(node.Node.Extras, "description") ?? string.Empty);
         run.Rewriter.AddPart(new PartInsertion(rootId, read =>
         {
-            string xml = NewPartXml(read, run, rootId, id, name, description, linkNum, position, rotation, size, textureEntry, creator);
+            string xml = NewPartXml(read, run.GroupShift.TryGetValue(rootId, out Func<float[], float[]> moved) ? moved : null, id, name, description, linkNum, position, rotation, size, textureEntry, creator);
             return PartXml.Edit(xml, id, MeshShape.Edits(faceCount, meshId, null));
         }));
         run.AddedParts.Add(id);
@@ -295,7 +295,7 @@ public sealed partial class ArchiveRestorer
     /// A new part, written as this server writes a plain prim: no scripts, contents, particles, sounds or hover text. Its owner,
     /// creator, group and permissions are the root part's (read from the object file), so it belongs to whoever owns the build.
     /// </summary>
-    private static string NewPartXml(Func<string, string> read, Run run, Guid rootId, Guid id, string name, string description, int linkNum,
+    internal static string NewPartXml(Func<string, string> read, Func<float[], float[]> groupShift, Guid id, string name, string description, int linkNum,
         float[] position, float[] rotation, Vector3 size, byte[] textureEntry, Guid creator)
     {
         string Value(string path, string fallback) => string.IsNullOrEmpty(read(path)) ? fallback : read(path);
@@ -305,8 +305,8 @@ public sealed partial class ArchiveRestorer
         string lastOwner = Value("LastOwnerID/UUID", owner);
         string rezzer = Value("RezzerID/UUID", owner);
         float[] groupAt = { Parse(read("GroupPosition/X")), Parse(read("GroupPosition/Y")), Parse(read("GroupPosition/Z")) };
-        if (run.GroupShift.TryGetValue(rootId, out Func<float[], float[]> moved))
-            groupAt = moved(groupAt);
+        if (groupShift != null)
+            groupAt = groupShift(groupAt);
 
         StringBuilder sb = new StringBuilder();
         sb.Append("<SceneObjectPart xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\">");

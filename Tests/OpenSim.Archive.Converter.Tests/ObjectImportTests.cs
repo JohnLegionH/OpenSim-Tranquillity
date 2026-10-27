@@ -43,9 +43,10 @@ public class ObjectImportTests
 
     private static int Triangles(MeshLod level) => level.Faces.Where(f => !f.NoGeometry).Sum(f => f.Indices.Length / 3);
 
-    private static byte[] Pixels(byte[] encoded)
+    private static byte[] Pixels(byte[] encoded, bool jpeg2000 = false)
     {
-        Assert.True(SkiaImageUtils.TryDecodeFromBytes(encoded, out SKBitmap bitmap) && bitmap != null);
+        SKBitmap bitmap;
+        Assert.True((jpeg2000 ? SkiaImageUtils.TryDecodeFromJ2K(encoded, out bitmap) : SkiaImageUtils.TryDecodeFromBytes(encoded, out bitmap)) && bitmap != null);
         using (bitmap)
         using (SKBitmap rgba = bitmap.Copy(SKColorType.Rgba8888))
             return rgba.Bytes;
@@ -145,7 +146,7 @@ public class ObjectImportTests
         {
             string asset = "assets/" + face.TextureID + "_texture.jp2";
             Assert.True(oar.ContainsKey(asset), "no texture asset " + asset);
-            Assert.Equal(Pixels(material.Picture), Pixels(oar[asset]));
+            Assert.Equal(Pixels(material.Picture), Pixels(oar[asset], jpeg2000: true));
         }
         Assert.Equal(2, result.Textures.Count(t => t.Role == "picture"));
     }
@@ -171,7 +172,7 @@ public class ObjectImportTests
         Assert.NotEqual(UUID.Zero, normal);
         Assert.Equal(UUID.Zero, map["SpecMap"].AsUUID());
         Assert.Equal(0u, map["DiffuseAlphaMode"].AsUInteger());
-        Assert.Equal(Pixels(folder.Side.Normal), Pixels(oar["assets/" + normal + "_texture.jp2"]));
+        Assert.Equal(Pixels(folder.Side.Normal), Pixels(oar["assets/" + normal + "_texture.jp2"], jpeg2000: true));
         Assert.Contains(result.Textures, t => t.Role == "normal map" && t.Id == normal.Guid);
         Assert.Equal(new[] { side.MaterialID.Guid }, result.Materials);
     }

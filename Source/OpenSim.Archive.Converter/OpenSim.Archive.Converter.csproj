@@ -22,5 +22,6 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="OpenSim.Archive.Converter.Tests" />
+    <InternalsVisibleTo Include="OpenSim.Archive.Restore" />
   </ItemGroup>
 </Project>

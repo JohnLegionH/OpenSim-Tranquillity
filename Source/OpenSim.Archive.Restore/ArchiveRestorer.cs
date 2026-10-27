@@ -701,7 +701,7 @@ public sealed partial class ArchiveRestorer
     /// the part's size. A face of 65 532 vertices or more is split as the viewer's uploader splits it
     /// (<see cref="FaceBuilder.SlotsSplit"/>); <paramref name="sourceSlot"/> says which slot each resulting face came from.
     /// </summary>
-    private static List<EncoderFace> BuildFaces(PartGeometry g, GlbFile user, Vector3 size, Vector3 center, int faceCount, out List<int> sourceSlot)
+    internal static List<EncoderFace> BuildFaces(PartGeometry g, GlbFile user, Vector3 size, Vector3 center, int faceCount, out List<int> sourceSlot)
     {
         float sx = size.X != 0 ? size.X : 1f, sy = size.Y != 0 ? size.Y : 1f, sz = size.Z != 0 ? size.Z : 1f;
         List<PrimFace> primFaces = new List<PrimFace>();

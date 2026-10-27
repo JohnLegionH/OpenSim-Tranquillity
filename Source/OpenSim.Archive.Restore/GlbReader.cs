@@ -54,6 +54,8 @@ public sealed class GlbMaterial
     public string AlphaMode = "OPAQUE";
     /// <summary>The encoded base colour image (PNG or JPEG) the material points at; null when it has none or the image is a file next to the .glb.</summary>
     public byte[] Image;
+    /// <summary>The encoded normal map image the material points at; null when it has none.</summary>
+    public byte[] NormalImage;
     /// <summary>The material gives a picture an offset, scale or rotation (the KHR_texture_transform extension).</summary>
     public bool HasTextureTransform;
 }
@@ -191,34 +193,42 @@ public sealed class GlbFile
         foreach (JsonNode info in new[] { tex, m["pbrMetallicRoughness"]?["metallicRoughnessTexture"], m["normalTexture"], m["occlusionTexture"], m["emissiveTexture"] })
             if (info?["extensions"]?["KHR_texture_transform"] != null)
                 result.HasTextureTransform = true;
+        result.Image = ReadImage(tex, root, views, data, binAt, binLength);
+        result.NormalImage = ReadImage(m["normalTexture"], root, views, data, binAt, binLength);
+        return result;
+    }
+
+    /// <summary>The encoded image a texture reference (baseColorTexture, normalTexture) points at, or null when it names none or the image cannot be read.</summary>
+    private static byte[] ReadImage(JsonNode tex, JsonNode root, JsonArray views, byte[] data, int binAt, int binLength)
+    {
         if (tex?["index"] == null)
-            return result;
+            return null;
         try
         {
             JsonNode texture = root["textures"]?[(int)tex["index"]];
             JsonNode image = texture?["source"] == null ? null : root["images"]?[(int)texture["source"]];
             if (image == null)
-                return result;
+                return null;
             if (image["bufferView"] != null)
             {
                 JsonNode view = views[(int)image["bufferView"]];
                 int offset = view["byteOffset"] == null ? 0 : (int)view["byteOffset"], length = (int)view["byteLength"];
                 if (binAt >= 0 && offset >= 0 && length >= 0 && (long)offset + length <= binLength)
-                    result.Image = data.AsSpan(binAt + offset, length).ToArray();
+                    return data.AsSpan(binAt + offset, length).ToArray();
             }
             else if (image["uri"] is JsonNode uri && ((string)uri).StartsWith("data:", StringComparison.Ordinal))
             {
                 string text = (string)uri;
                 int comma = text.IndexOf(',');
                 if (comma > 0 && text.Substring(0, comma).EndsWith(";base64", StringComparison.Ordinal))
-                    result.Image = Convert.FromBase64String(text.Substring(comma + 1));
+                    return Convert.FromBase64String(text.Substring(comma + 1));
             }
         }
         catch (Exception e) when (e is InvalidCastException || e is ArgumentOutOfRangeException || e is FormatException || e is NullReferenceException)
         {
             // a material that names an image that cannot be read has no image
         }
-        return result;
+        return null;
     }
 
     private static float[] Floats(JsonNode n, int count)
