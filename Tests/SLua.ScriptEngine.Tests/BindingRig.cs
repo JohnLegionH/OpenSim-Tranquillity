@@ -30,6 +30,7 @@ internal sealed class BindingRig : IDisposable
             {
                 Bindings.Vm vm = inner();
                 LlBindings.Register(vm, script => new ScriptContext(script, Api));
+                OsBindings.Register(vm, script => new ScriptContext(script, Api));
                 return vm;
             };
         });
