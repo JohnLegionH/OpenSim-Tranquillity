@@ -67,7 +67,7 @@ public class BotOutfitNotecardTests
         var sp = h.Scene.GetScenePresence(client.AgentId);
         h.Prim.OwnerID = sp.UUID;
         var shape = UUID.Random();
-        sp.Appearance.Wearables[(int)WearableType.Shape].Add(UUID.Random(), shape);
+        sp.Appearance.Wearables[(int)WearableType.Shape].Wear(UUID.Random(), shape);
         sp.Appearance.VisualParams[Marker] = Saved;
         return new Owner(h, sp, shape);
     }
@@ -127,7 +127,9 @@ public class BotOutfitNotecardTests
 
         Run(h, "botSetOutfit(\"Priest\");", "done");
 
-        var data = h.Scene.AssetService.Get(NotecardNamed(h.Prim, "Priest").AssetID.ToString()).Data;
+        var item = NotecardNamed(h.Prim, "Priest");
+        Assert.NotNull(item);
+        var data = h.Scene.AssetService.Get(item.AssetID.ToString()).Data;
         var text = Encoding.UTF8.GetString(data);
         Assert.StartsWith("Linden text version 2\n{\nLLEmbeddedItems version 1\n{\ncount 0\n}\nText length ", text);
         Assert.EndsWith("}", text);
@@ -179,8 +181,7 @@ public class BotOutfitNotecardTests
     {
         Run(h, "botSetOutfit(\"Priest\");" + extra, "saved");
         owner.Presence.Appearance.VisualParams[Marker] = Changed;
-        owner.Presence.Appearance.Wearables[(int)WearableType.Shape].Clear();
-        owner.Presence.Appearance.Wearables[(int)WearableType.Shape].Add(UUID.Random(), UUID.Random());
+        owner.Presence.Appearance.Wearables[(int)WearableType.Shape].Wear(UUID.Random(), UUID.Random());
     }
 
     [Fact]

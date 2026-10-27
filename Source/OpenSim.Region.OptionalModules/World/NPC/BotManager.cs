@@ -450,12 +450,28 @@ namespace OpenSim.Region.OptionalModules.World.NPC
             out string reason)
         {
             reason = null;
-            return UUID.Zero;
+            if (m_npcModule == null) { reason = "NPC module not available"; return UUID.Zero; }
+            if (scene == null || appearance == null) { reason = "No region or appearance to make the bot from"; return UUID.Zero; }
+
+            // The outfit came from a notecard, so the owner is not consulted: the bot is made in the region the
+            // creating script is in, with the notecard's wearables, whether or not the owner is here.
+            UUID id = SpawnBot(scene, UUID.Zero, firstName, lastName, startPos, appearance, scriptItemID, ownerID,
+                owned, senseAsAgent, out reason);
+            if (botDoor && id != UUID.Zero && scriptItemID != UUID.Zero)
+                BotRegisterForPathUpdateEvents(id, scriptItemID, ownerID);
+            return id;
         }
 
         public void ChangeBotAppearance(UUID botID, AvatarAppearance appearance, UUID ownerID, out string reason)
         {
             reason = null;
+            if (appearance == null) { reason = "No appearance"; return; }
+            BotData data = GetBotWithPermission(botID, ownerID);
+            if (data == null) { reason = "Bot not found or no permission"; return; }
+
+            Scene scene = GetBotScene(data);
+            if (scene != null)
+                m_npcModule.SetNPCAppearance(botID, appearance, scene);
         }
 
         /// <summary>

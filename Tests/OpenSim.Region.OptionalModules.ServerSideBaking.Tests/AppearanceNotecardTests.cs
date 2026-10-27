@@ -38,8 +38,8 @@ public class AppearanceNotecardTests
     {
         var look = new AvatarAppearance();
         look.VisualParams[Marker] = marker;
-        look.Wearables[(int)WearableType.Shape].Add(UUID.Random(), UUID.Random());
-        look.Wearables[(int)WearableType.Skin].Add(UUID.Random(), UUID.Random());
+        look.Wearables[(int)WearableType.Shape].Wear(UUID.Random(), UUID.Random());
+        look.Wearables[(int)WearableType.Skin].Wear(UUID.Random(), UUID.Random());
         return look;
     }
 
@@ -98,8 +98,8 @@ public class AppearanceNotecardTests
     {
         var rig = Setup();
         var look = Look();
-        look.Wearables[(int)WearableType.Hair].Add(UUID.Random(), UUID.Random());
-        look.Wearables[(int)WearableType.Tattoo].Add(UUID.Random(), UUID.Random());
+        look.Wearables[(int)WearableType.Hair].Wear(UUID.Random(), UUID.Random());
+        look.Wearables[(int)WearableType.Tattoo].Wear(UUID.Random(), UUID.Random());
         AppearanceNotecard.Save(rig.Host, rig.Assets, "Priest", look, includeHuds: false);
 
         Assert.True(AppearanceNotecard.TryLoad(rig.Host, rig.Assets, "Priest", out var loaded, out var reason), reason);

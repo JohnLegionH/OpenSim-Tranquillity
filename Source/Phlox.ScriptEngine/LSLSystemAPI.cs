@@ -11768,6 +11768,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (mgr == null) return UUID.Zero.ToString();
             mgr.SaveOutfitToDatabase(agentId, notecard, out string reason);
             if (reason != null) { ShoutError("osAgentSaveAppearance: " + reason); return UUID.Zero.ToString(); }
+            WriteOutfitNotecard("osAgentSaveAppearance", notecard, sp, includeHuds != 0);
             return OpenSim.Region.OptionalModules.World.NPC.BotManager.OutfitKey(agentId, notecard).ToString();
         }
 
@@ -12805,6 +12806,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             var mgr = NpcMgr(); if (mgr == null || m_host == null) return UUID.Zero.ToString();
             mgr.SaveOutfitToDatabase(m_host.OwnerID, notecard, out string reason);
             if (reason != null) { ShoutError("osOwnerSaveAppearance: " + reason); return UUID.Zero.ToString(); }
+            WriteOutfitNotecard("osOwnerSaveAppearance", notecard, World?.GetScenePresence(m_host.OwnerID), includeHuds != 0);
             return OpenSim.Region.OptionalModules.World.NPC.BotManager.OutfitKey(m_host.OwnerID, notecard).ToString();
         }
 
@@ -13878,17 +13880,43 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 return UUID.Zero.ToString();
             }
             // OS_NPC_OBJECT_GROUP: BotManager's CreateNPC call carries no group - accepted, not applied.
-            UUID id = mgr.CreateBot(firstname, lastname, position, notecard ?? string.Empty, m_itemID, m_host.OwnerID, owned, senseAsAgent, out string reason);
+            UUID id;
+            string reason;
+            if (TryOutfitNotecard(notecard, out AvatarAppearance look))
+                id = mgr.CreateBotWithAppearance(World, firstname, lastname, position, look, m_itemID, m_host.OwnerID, owned, senseAsAgent, false, out reason);
+            else
+                id = mgr.CreateBot(firstname, lastname, position, notecard ?? string.Empty, m_itemID, m_host.OwnerID, owned, senseAsAgent, out reason);
             if (reason != null) ShoutError("osNpcCreate: " + reason);
             return id.ToString();
         }
 
-        private string NpcSaveOutfit(string npc, string notecard)
+        private string NpcSaveOutfit(string npc, string notecard, bool includeHuds)
         {
             var mgr = NpcMgr(); if (mgr == null || !NpcKey(npc, out UUID id)) return UUID.Zero.ToString();
             UUID key = mgr.SaveBotOutfit(id, notecard, m_host.OwnerID, out string reason);
             if (reason != null) ShoutError("osNpcSaveAppearance: " + reason);
+            else WriteOutfitNotecard("osNpcSaveAppearance", notecard, World?.GetScenePresence(id), includeHuds);
             return key.ToString();
+        }
+
+        // A saved outfit is an appearance notecard in the calling object's contents (AppearanceNotecard). The outfit
+        // name is the notecard's name. With no notecard of that name the name goes to the owner's in-memory outfit
+        // store, as it did before notecards; a notecard that is not an appearance is said so and treated the same.
+        private bool TryOutfitNotecard(string name, out AvatarAppearance look)
+        {
+            look = null;
+            if (string.IsNullOrWhiteSpace(name) || m_host == null || World == null) return false;
+            if (m_host.Inventory.GetInventoryItem(name, (int)AssetType.Notecard) == null) return false;
+            if (AppearanceNotecard.TryLoad(m_host, World.AssetService, name, out look, out string why)) return true;
+            ShoutError(why);
+            return false;
+        }
+
+        private void WriteOutfitNotecard(string function, string name, ScenePresence who, bool includeHuds)
+        {
+            if (who?.Appearance == null) { ShoutError(function + ": no avatar here to write the notecard '" + name + "' from"); return; }
+            if (AppearanceNotecard.Save(m_host, World.AssetService, name, who.Appearance, includeHuds) == null)
+                ShoutError(function + ": the notecard '" + name + "' could not be written");
         }
 
         private void NpcMove(string npc, Vector3 target, TravelMode mode)
@@ -13930,14 +13958,14 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public string osNpcSaveAppearance(string npc, string notecard)
         {
             OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcSaveAppearance");
-            return NpcSaveOutfit(npc, notecard);
+            return NpcSaveOutfit(npc, notecard, true);   // as OSSL_Api's two-argument form: HUDs are included
         }
 
         /// <summary>OSSL_Api.cs:2980 - High (key osNpcSaveAppearance).</summary>
         public string osNpcSaveAppearance(string npc, string notecard, int includeHuds)
         {
             OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcSaveAppearance");
-            return NpcSaveOutfit(npc, notecard);   // includeHuds: the outfit store keeps the whole appearance
+            return NpcSaveOutfit(npc, notecard, includeHuds != 0);
         }
 
         /// <summary>OSSL_Api.cs:3005 - High (key osNpcLoadAppearance).</summary>
@@ -13945,7 +13973,11 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcLoadAppearance");
             var mgr = NpcMgr(); if (mgr == null || !NpcKey(npc, out UUID id)) return;
-            mgr.ChangeBotOutfit(id, notecard, m_host.OwnerID, out string reason);
+            string reason;
+            if (TryOutfitNotecard(notecard, out AvatarAppearance look))
+                mgr.ChangeBotAppearance(id, look, m_host.OwnerID, out reason);
+            else
+                mgr.ChangeBotOutfit(id, notecard, m_host.OwnerID, out reason);
             if (reason != null) ShoutError("osNpcLoadAppearance: " + reason);
         }
 
@@ -18096,7 +18128,9 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 if (manager != null)
                 {
                     string reason;
-                    string botID = manager.CreateBot(first, last, pos, outfit, m_itemID, m_host.OwnerID, out reason).ToString();
+                    string botID = (TryOutfitNotecard(outfit, out AvatarAppearance look)
+                        ? manager.CreateBotWithAppearance(World, first, last, pos, look, m_itemID, m_host.OwnerID, true, true, true, out reason)
+                        : manager.CreateBot(first, last, pos, outfit, m_itemID, m_host.OwnerID, out reason)).ToString();
                     if (reason == null)
                     {
                         retVal = botID;
@@ -18287,6 +18321,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     manager.SaveOutfitToDatabase(m_host.OwnerID, outfitName, out reason);
                     if (reason != null)
                         ShoutError(reason);
+                    else
+                        WriteOutfitNotecard("botSetOutfit", outfitName, World?.GetScenePresence(m_host.OwnerID), false);   // a bot has no use for the owner's HUDs
                 }
             }
             finally
@@ -18324,7 +18360,10 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 if (manager != null)
                 {
                     string reason;
-                    manager.ChangeBotOutfit(id, outfitName, m_host.OwnerID, out reason);
+                    if (TryOutfitNotecard(outfitName, out AvatarAppearance look))
+                        manager.ChangeBotAppearance(id, look, m_host.OwnerID, out reason);
+                    else
+                        manager.ChangeBotOutfit(id, outfitName, m_host.OwnerID, out reason);
                     if (reason != null)
                         ShoutError(reason);
                 }
