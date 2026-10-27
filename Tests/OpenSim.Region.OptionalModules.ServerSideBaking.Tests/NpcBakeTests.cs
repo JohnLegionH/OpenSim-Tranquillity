@@ -108,17 +108,53 @@ public class NpcBakeShareTests
     }
 
     [Fact]
-    public void AnNpcThatLeavesDeletesNothingAndItsBakesStayAvailable()
+    public void AnNpcThatLeavesHandsBackTheBakesNobodyElseHolds()
     {
         var share = new NpcBakeShare();
         var asset = UUID.Random();
         share.NoteStored(BakeChannel.Head, HashOne, asset);
         share.Hold(NpcA, BakeChannel.Head, HashOne, asset);
 
-        share.Drop(NpcA);
+        var released = share.Release(NpcA);
 
+        Assert.Equal(new[] { asset }, released);
+        Assert.False(share.TryFind(BakeChannel.Head, HashOne, out _), "a bake handed back for deletion is still offered for reuse");
+    }
+
+    [Fact]
+    public void AnNpcThatLeavesKeepsTheBakesAnotherNpcStillHolds()
+    {
+        var share = new NpcBakeShare();
+        var asset = UUID.Random();
+        share.NoteStored(BakeChannel.Head, HashOne, asset);
+        share.Hold(NpcA, BakeChannel.Head, HashOne, asset);
+        share.Hold(NpcB, BakeChannel.Head, HashOne, asset);
+
+        Assert.Empty(share.Release(NpcA));
         Assert.True(share.TryFind(BakeChannel.Head, HashOne, out var found));
         Assert.Equal(asset, found);
+        Assert.Equal(new[] { asset }, share.Release(NpcB));
+    }
+
+    [Fact]
+    public void AnNpcThatLeavesDoesNotHandBackABakeThisProcessDidNotStore()
+    {
+        var share = new NpcBakeShare();
+        share.Hold(NpcA, BakeChannel.Head, HashOne, UUID.Random());   // read from a stored index, never stored here
+
+        Assert.Empty(share.Release(NpcA));
+    }
+
+    [Fact]
+    public void ReleasingTheSameNpcTwiceHandsBackNothingTheSecondTime()
+    {
+        var share = new NpcBakeShare();
+        var asset = UUID.Random();
+        share.NoteStored(BakeChannel.Head, HashOne, asset);
+        share.Hold(NpcA, BakeChannel.Head, HashOne, asset);
+        share.Release(NpcA);
+
+        Assert.Empty(share.Release(NpcA));
     }
 }
 
@@ -154,7 +190,7 @@ public class NpcBakeTests
     private sealed record Rig(Scene Scene, ServerSideBakingModule Module, ServerSideBakingRegion Region,
         FakeAvatarService Avatars, NPCModule Npcs, ScenePresence Owner, GatedAvatarService Gate);
 
-    private static Rig Setup(bool serverBaking = true)
+    private static Rig Setup(bool serverBaking = true, bool cleanup = true, bool dryRun = false)
     {
         var config = new IniConfigSource();
         config.AddConfig("NPC").Set("Enabled", "true");
@@ -162,6 +198,8 @@ public class NpcBakeTests
         var appearance = config.AddConfig(ServerSideBakingModule.ConfigSection);
         appearance.Set("ServerSideBaking", serverBaking ? "true" : "false");
         appearance.Set("BakeSize", "512");
+        if (!cleanup) appearance.Set("NpcBakeCleanup", "false");
+        if (dryRun) appearance.Set("NpcBakeCleanupDryRun", "true");
 
         var scene = new SceneHelpers().SetupScene("npc bake scene", UUID.Random(), 1000, 1000, 256, 256, config);
         var avatars = new FakeAvatarService();
@@ -428,5 +466,116 @@ public class NpcBakeTests
         Assert.True(rig.Npcs.SetNPCAppearance(two, Look(rig, 90, 20, 60), rig.Scene));
         WaitFor(() => Face(rig.Scene.GetScenePresence(two), BakeChannel.Head) != shared, "the second NPC's new bake");
         WaitFor(() => !Exists(rig, shared), "the bake no NPC uses to go");
+    }
+
+    // ------------------------------------------------------------------ cleanup: an NPC goes, its bakes go
+
+    private static (UUID Npc, List<UUID> Bakes) MadeAndBaked(Rig rig, AvatarAppearance look, string last = "Npc")
+    {
+        var npcId = MakeNpc(rig, look, last);
+        WaitFor(() => rig.Region.BakedCofVersion(npcId) >= 0, "the NPC's bake");
+        var npc = rig.Scene.GetScenePresence(npcId);
+        var bakes = Enum.GetValues<BakeChannel>().Select(ch => Face(npc, ch)).Where(id => !id.IsZero()).Distinct().ToList();
+        Assert.NotEmpty(bakes);
+        return (npcId, bakes);
+    }
+
+    [Fact]
+    public void AnNpcBakeIsStoredWithItsHashAndTheNpcMark()
+    {
+        var rig = Setup();
+        var (npcId, bakes) = MadeAndBaked(rig, Look(rig, 200, 170, 140));
+
+        foreach (var bake in bakes)
+            Assert.True(NpcBakeMark.IsMarked(rig.Scene.AssetService.GetMetadata(bake.ToString())), $"bake {bake} of {npcId} is not marked as an NPC bake");
+    }
+
+    [Fact]
+    public async Task AnOwnersBakeIsStoredWithoutTheNpcMark()
+    {
+        var rig = Setup();
+        await BakeOwner(rig);
+
+        foreach (var bake in BakeOrchestratorFaces(rig.Owner))
+            Assert.False(NpcBakeMark.IsMarked(rig.Scene.AssetService.GetMetadata(bake.ToString())), "an avatar's bake carries the NPC mark");
+    }
+
+    [Fact]
+    public async Task RemovingAnNpcDeletesItsBakesAndLeavesTheOwnersAlone()
+    {
+        var rig = Setup();
+        await BakeOwner(rig);
+        var ownerBakes = BakeOrchestratorFaces(rig.Owner);
+        var (npcId, bakes) = MadeAndBaked(rig, new AvatarAppearance(rig.Owner.Appearance, true));
+
+        rig.Npcs.DeleteNPC(npcId, rig.Scene);
+
+        WaitFor(() => bakes.All(b => !Exists(rig, b)), "the removed NPC's bakes to go");
+        Assert.All(ownerBakes, b => Assert.True(Exists(rig, b), "removing an NPC deleted the owner's bake"));
+    }
+
+    [Fact]
+    public async Task RemovingOneOfTwoNpcsInOneOutfitKeepsTheSharedBakesUntilTheSecondGoes()
+    {
+        var rig = Setup();
+        var (first, bakes) = MadeAndBaked(rig, Look(rig, 20, 90, 200), "One");
+        var (second, secondBakes) = MadeAndBaked(rig, Look(rig, 20, 90, 200), "Two");
+        Assert.Equal(bakes.OrderBy(b => b), secondBakes.OrderBy(b => b));
+
+        rig.Npcs.DeleteNPC(first, rig.Scene);
+        await Task.Delay(1500);   // a "did not happen" window: the shared bakes must stay
+        Assert.All(bakes, b => Assert.True(Exists(rig, b), "a bake the second NPC still holds was deleted"));
+
+        rig.Npcs.DeleteNPC(second, rig.Scene);
+        WaitFor(() => bakes.All(b => !Exists(rig, b)), "the shared bakes to go with the last NPC");
+    }
+
+    [Fact]
+    public async Task WithTheCleanupOffRemovingAnNpcDeletesNothing()
+    {
+        var rig = Setup(cleanup: false);
+        var (npcId, bakes) = MadeAndBaked(rig, Look(rig, 200, 170, 140));
+
+        rig.Npcs.DeleteNPC(npcId, rig.Scene);
+        await Task.Delay(1500);   // a "did not happen" window
+
+        Assert.All(bakes, b => Assert.True(Exists(rig, b), "the cleanup is off and a bake was deleted"));
+        Assert.Empty(rig.Module.NpcCleanup.Removed);
+    }
+
+    [Fact]
+    public void InDryRunRemovingAnNpcDeletesNothingAndListsWhatItWouldDelete()
+    {
+        var rig = Setup(dryRun: true);
+        var (npcId, bakes) = MadeAndBaked(rig, Look(rig, 200, 170, 140));
+
+        rig.Npcs.DeleteNPC(npcId, rig.Scene);
+
+        WaitFor(() => bakes.All(b => rig.Module.NpcCleanup.WouldRemove.Contains(b)), "the dry run to list the NPC's bakes");
+        Assert.All(bakes, b => Assert.True(Exists(rig, b), "a dry run deleted a bake"));
+        Assert.Empty(rig.Module.NpcCleanup.Removed);
+    }
+
+    [Fact]
+    public void ARegionShuttingDownCleansUpTheNpcsStillThere()
+    {
+        var rig = Setup();
+        var (_, bakes) = MadeAndBaked(rig, Look(rig, 200, 170, 140));
+
+        rig.Scene.EventManager.TriggerSceneShuttingDown(rig.Scene);
+
+        WaitFor(() => bakes.All(b => !Exists(rig, b)), "the bakes of the NPCs left at shutdown to go");
+    }
+
+    [Fact]
+    public void ARegionShuttingDownInDryRunListsTheBakesOfTheNpcsStillThere()
+    {
+        var rig = Setup(dryRun: true);
+        var (_, bakes) = MadeAndBaked(rig, Look(rig, 200, 170, 140));
+
+        rig.Scene.EventManager.TriggerSceneShuttingDown(rig.Scene);
+
+        WaitFor(() => bakes.All(b => rig.Module.NpcCleanup.WouldRemove.Contains(b)), "the dry run to list the bakes at shutdown");
+        Assert.All(bakes, b => Assert.True(Exists(rig, b)));
     }
 }

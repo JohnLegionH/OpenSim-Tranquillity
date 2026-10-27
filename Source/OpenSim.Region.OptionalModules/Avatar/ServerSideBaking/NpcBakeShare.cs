@@ -84,6 +84,11 @@ public sealed class NpcBakeShare
         }
     }
 
+    /// <summary>
+    /// The NPC is gone. Its holds are let go; returns the assets that nobody holds now and that this process stored.
+    /// </summary>
+    public IReadOnlyList<UUID> Release(UUID npc) => new List<UUID>();
+
     /// <summary>The NPC is gone. Its hold is let go; its bakes stay stored and findable for the next NPC in that outfit.</summary>
     public void Drop(UUID npc)
     {

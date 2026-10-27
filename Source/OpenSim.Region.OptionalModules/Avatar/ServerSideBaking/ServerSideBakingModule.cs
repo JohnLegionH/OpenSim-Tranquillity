@@ -71,6 +71,15 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
     /// <summary>The bakes the NPCs of this simulator hold between them.</summary>
     public NpcBakeShare NpcBakes { get; } = new();
 
+    /// <summary>Whether an NPC's bakes are deleted when it goes ([Appearance] NpcBakeCleanup).</summary>
+    public bool NpcBakeCleanupEnabled { get; private set; }
+
+    /// <summary>Whether the cleanup only logs what it would delete ([Appearance] NpcBakeCleanupDryRun).</summary>
+    public bool NpcBakeCleanupDryRun { get; private set; }
+
+    /// <summary>The cleanup of removed NPCs' bakes.</summary>
+    public NpcBakeCleanup NpcCleanup { get; private set; } = new(null, false, false);
+
     public string Name => "ServerSideBakingModule";
     public Type ReplaceableInterface => null;
 
