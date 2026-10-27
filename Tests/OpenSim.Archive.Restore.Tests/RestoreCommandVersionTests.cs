@@ -20,6 +20,6 @@ public class RestoreCommandVersionTests
         Console.SetOut(capture);
         try { Assert.Equal(0, RestoreCommand.Run(new[] { "--version" })); }
         finally { Console.SetOut(saved); }
-        Assert.Contains("oar-restore 0.2", capture.ToString());
+        Assert.Contains("oar-restore " + ToolRelease.Version, capture.ToString());
     }
 }

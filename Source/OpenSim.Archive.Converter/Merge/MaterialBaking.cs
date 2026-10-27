@@ -5,9 +5,9 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-using System.Security.Cryptography;
 using OpenMetaverse;
 using OpenMetaverse.StructuredData;
+using OpenSim.Archive.Inspection;
 using OpenSim.Framework;
 
 namespace OpenSim.Archive.Converter.Merge;
@@ -115,7 +115,7 @@ internal static class MaterialBaking
         LLSDxmlEncode2.AddElem("AlphaMaskCutoff", (byte)map["AlphaMaskCutoff"].AsUInteger(), sb);
         LLSDxmlEncode2.AddEndMap(sb);
         byte[] bytes = LLSDxmlEncode2.EndToBytes(sb);
-        using MD5 md5 = MD5.Create();
-        return (new UUID(md5.ComputeHash(bytes), 0).Guid, bytes);
+        // the digest comes from our own managed code: the framework's MD5 loads the system's OpenSSL, which a minimal Linux image does not have
+        return (new UUID(ManagedDigest.Md5(bytes), 0).Guid, bytes);
     }
 }
