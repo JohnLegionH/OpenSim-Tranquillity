@@ -14,8 +14,9 @@ rigged part:
 * **All four levels of detail carry a skin.** A level may weight fewer joints than the full mesh; it may not weight a joint the full mesh does not.
 * **The joints are named as the viewer names them.** The bones are the deform bones of the Second Life skeleton, those with an `m` prefix (`mPelvis`,
   `mTorso`, `mChest`, `mShoulderLeft` ...). The collision volume names (`PELVIS`, `L_UPPER_LEG` ...), the attachment point names and the aliases the viewer
-  accepts for a bone (`hip` for `mPelvis`) are accepted too. **A skin with any other bone stops the file**, and the message lists them: export only the
-  deform bones. (Animation controls and helper bones of a body rig are not joints of the viewer's skeleton.)
+  accepts for a bone (`hip` for `mPelvis`) are accepted too. **A bone that is no joint of the viewer's skeleton and carries weight stops the file**, and the
+  message lists those bones: export only the deform bones. A bone that is no joint and carries **no** weight (an animation control or a helper bone) is left
+  out with a warning in the notes. (The viewer's own glTF loader drops such a bone the same way, from the skin it uploads.)
 * **Every vertex has weight.** A vertex with none would follow the pelvis, so the file is stopped and the number of such vertices is reported.
 * **At most 110 joints** carry weight (the viewer's limit for one mesh). A vertex keeps its **four heaviest influences**, renormalised to add up to one;
   influences under 0.001 are dropped (the viewer clamps a stored weight to that floor). Both are reported in the notes when they happen.
@@ -27,10 +28,19 @@ rigged part:
 
 * **The skin block**: the joint names, one inverse bind matrix for each, and the **bind shape matrix**, which scales the unit box the vertices are stored in
   up to the part's size and moves it to the part's centre. The viewer draws a rigged mesh with this matrix and does not use the part's own scale.
+* **The model is turned to face the avatar when it lies a quarter turn off.** The avatar's left is its +y axis. A character modelled facing +z in glTF (the usual
+  export of a Blender model that faces -y) has its left on +x and would stand sideways. When the file has a left and a right joint (`mShoulderLeft` and
+  `mShoulderRight`, the hips, the knees ...), the vertices, normals, inverse bind matrices, skeleton nodes and the collision shape are turned together, in whole
+  quarter turns about the vertical axis, until the left joints lie on the avatar's left; a note says by how much. The viewer's own glTF loader does the same for
+  one case, a model turned a quarter, which it recognises from the shoulders. A model with no such pair is left as it is. The whole file is turned, so a file
+  shared by several parts turns all of them.
 * **Inverse bind matrices of bones are rebuilt from the joint's rest position.** The viewer's bones are never turned or scaled, but a modelling tool's bones
-  often are (a Blender bone points along its length), and a matrix that carries that turn bends the mesh. For each bone (an `m` joint) only the position of
-  the joint in the file is used; a note names the bones whose rest frame was turned. A collision volume or attachment point keeps the file's matrix
-  (changed to the viewer's axes), because the viewer's own volumes are turned and scaled.
+  often are (a Blender bone points along its length), and a matrix that carries that turn bends the mesh. For each bone (an `m` joint) the matrix is the move
+  from the joint's rest position in the file (after the turn above), with no turn of its own; a note names the bones whose rest frame was turned. This is what
+  the viewer's glTF loader writes for a bone (`buildOverrideMatrix` in `indra/newview/gltf/llgltfloader.cpp`): the position of the joint in the file, in the
+  avatar's axes, relative to the avatar's joint above it. The matrices are not taken from the avatar's default skeleton, so a garment weighted to the same
+  joints as a body uploaded through the viewer sits on the body whatever the body's skeleton looks like. A collision volume or attachment point keeps the file's
+  matrix (changed to the viewer's axes); the viewer's loader also scales a collision volume by its own scale, which is not done here (use the `m` bones).
 * **The weights**: for every level of detail, per vertex up to four (joint, weight) pairs, the weight in 16 bits, in the numbers of the skin's joint list.
   Joints that no vertex of any level uses are left out of the list.
 * **Joint positions are left out.** The wearer's joints then stay where the wearer's shape puts them, so a worn garment resizes with the wearer's sliders.

@@ -34,6 +34,7 @@ public class RiggedOrientationTests
         ExtraJoints = Shoulders,
         ExtraJointWorld = new[] { left, right },
         Fixed = new[] { 0f, 0f, 0f, 1f, 0f },   // every vertex rides the left shoulder
+        SlabOffset = new Vector2(0.07f, 0.03f),  // off the vertical axis, so that a half turn moves it
     };
 
     private sealed class Run
@@ -121,6 +122,10 @@ public class RiggedOrientationTests
         bool swapped = quarterTurns % 2 == 1;
         Assert.Equal(swapped ? 0.1f : 0.4f, bind.M11, 3);
         Assert.Equal(swapped ? 0.4f : 0.1f, bind.M22, 3);
+        Vector3 centre = Placed(new Vector3(0.07f, RigKit.SlabCentreY, 0.03f), quarterTurns);
+        Assert.Equal(centre.X, bind.M41, 3);
+        Assert.Equal(centre.Y, bind.M42, 3);
+        Assert.Equal(centre.Z, bind.M43, 3);
     }
 
     [Fact]

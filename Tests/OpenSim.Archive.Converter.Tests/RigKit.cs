@@ -45,6 +45,8 @@ internal static class RigKit
         public bool ZeroWeightVertex;
         /// <summary>The joints of the lowest level are replaced: this joint (a default-joint number) is given a name no other level has.</summary>
         public string LowestLevelOnlyJoint;
+        /// <summary>The slab's centre in the file's x and z (0 and 0 by default); a slab off the vertical axis shows a turn of two quarters, which a centred one hides.</summary>
+        public Vector2 SlabOffset;
         /// <summary>Leave the inverse bind matrices out of the skin.</summary>
         public bool OmitInverseBind;
         /// <summary>The mesh node does not name the skin, though the primitive keeps its JOINTS_0 and WEIGHTS_0 (a rigged mesh exported again as a plain one).</summary>
@@ -96,7 +98,7 @@ internal static class RigKit
     public static byte[] Glb(Options o, int level)
     {
         ImportKit.Geo g = new ImportKit.Geo();
-        ImportKit.AddBox(g, ImportKit.GridPerLevel[level], _ => true, 0f, SlabCentreY, 0f, 0.2f, SlabHalfY, 0.05f);
+        ImportKit.AddBox(g, ImportKit.GridPerLevel[level], _ => true, o.SlabOffset.X, SlabCentreY, o.SlabOffset.Y, 0.2f, SlabHalfY, 0.05f);
         int vertices = g.Pos.Count / 3;
         int jointCount = 3 + o.ExtraJoints.Length;
         int[] order = o.Orders?[level] ?? Enumerable.Range(0, jointCount).ToArray();
