@@ -70,8 +70,7 @@ public class ChatAndListenTests
     {
         Assert.All(MovedOntoTheRealApi, n => Assert.Contains(n, LlServed.Served));
         Assert.DoesNotContain(LlServed.NotServed, r => r.Contains("ListenManager") || r.Contains("SendToWorldComm") && !r.StartsWith("llHTTPRequest"));
-        // llHTTPRequest also needs the asynchronous command plugins and the event queue figure: it stays where it was
-        Assert.Contains(LlServed.NotServed, r => r.StartsWith("llHTTPRequest:") && r.Contains("AsyncCommands"));
+        Assert.Contains("llHTTPRequest", LlServed.Served);   // with the asynchronous command plugins
     }
 
     // ---- hearing ----

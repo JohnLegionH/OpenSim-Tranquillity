@@ -17,8 +17,10 @@ namespace SLua.ScriptEngine
     internal sealed class EngineStateTracker : IScriptStateTracker
     {
         /// <summary>How many times a script has reported a change.</summary>
-        public long Changes => 0;
+        public long Changes => System.Threading.Interlocked.Read(ref m_changes);
 
-        public void ScriptChanged(IScriptRuntimeAccess script) { }
+        private long m_changes;
+
+        public void ScriptChanged(IScriptRuntimeAccess script) => System.Threading.Interlocked.Increment(ref m_changes);
     }
 }

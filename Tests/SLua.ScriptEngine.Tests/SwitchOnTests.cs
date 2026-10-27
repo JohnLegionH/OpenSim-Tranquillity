@@ -33,10 +33,10 @@ public class SwitchOnTests
         ILSLSystemAPI api = UnavailableApi.Create();
         Assert.NotNull(api);
 
-        var e = Assert.Throws<FunctionUnavailableException>(() => api.llSensorRemove());
-        Assert.Contains("llSensorRemove", e.Message);
+        var e = Assert.Throws<FunctionUnavailableException>(() => api.llRequestExperiencePermissions("", ""));
+        Assert.Contains("llRequestExperiencePermissions", e.Message);
         Assert.Contains("is not available on this engine yet", e.Message);
-        Assert.Equal("llSensorRemove", e.Function);
+        Assert.Equal("llRequestExperiencePermissions", e.Function);
         Assert.False(api.NeedsService("llName2Key", new object[] { "x" }));
     }
 
@@ -48,10 +48,10 @@ public class SwitchOnTests
         foreach (string name in LlCoverage.MissingFromSeam) expected.Add(name);
         foreach (string row in LlCoverage.SignatureMismatch) expected.Add(row.Substring(0, row.IndexOf(':')));
 
-        Assert.Equal(27, expected.Count);
+        Assert.Equal(18, expected.Count);
         Assert.Equal(expected.OrderBy(n => n), LlBindings.Unavailable.OrderBy(n => n));
-        Assert.Contains("llSensorRemove", LlBindings.Unavailable);
-        Assert.Contains("llRequestPermissions", LlBindings.Unavailable);
+        Assert.Contains("llRequestExperiencePermissions", LlBindings.Unavailable);
+        Assert.Contains("llGetExperienceDetails", LlBindings.Unavailable);
         Assert.DoesNotContain("llAbs", LlBindings.Unavailable);
     }
 
@@ -72,11 +72,11 @@ public class SwitchOnTests
     public void AnUnservedFunctionCanBeCaughtWithPcallAndTheMessageNamesIt()
     {
         using var rig = new EngineRig(productionFunctions: true);
-        UUID item = rig.Rez(Slua("local ok, err = pcall(function() ll.SensorRemove() end)\nossl.Mark('caught=' .. tostring(ok) .. ' ' .. tostring(err))\nossl.Mark('after')"));
+        UUID item = rig.Rez(Slua("local ok, err = pcall(function() ll.RequestExperiencePermissions('00000000-0000-0000-0000-000000000000', '') end)\nossl.Mark('caught=' .. tostring(ok) .. ' ' .. tostring(err))\nossl.Mark('after')"));
 
         string caught = MarkOf(rig, item, "caught=");
         Assert.StartsWith("caught=false", caught);
-        Assert.Contains("SensorRemove", caught);
+        Assert.Contains("RequestExperiencePermissions", caught);
         Assert.Contains("is not available on this engine yet", caught);
         Assert.Equal("after", MarkOf(rig, item, "after"));
         Assert.Empty(rig.Messages.Shouts);
@@ -86,11 +86,11 @@ public class SwitchOnTests
     public void AFunctionTheEngineDoesNotBindAnswersTheSameWay()
     {
         using var rig = new EngineRig(productionFunctions: true);
-        UUID item = rig.Rez(Slua("local ok, err = pcall(function() ll.ReleaseControls() end)\nossl.Mark('caught=' .. tostring(ok) .. ' ' .. tostring(err))"));
+        UUID item = rig.Rez(Slua("local ok, err = pcall(function() ll.GetExperienceDetails('00000000-0000-0000-0000-000000000000') end)\nossl.Mark('caught=' .. tostring(ok) .. ' ' .. tostring(err))"));
 
         string caught = MarkOf(rig, item, "caught=");
         Assert.StartsWith("caught=false", caught);
-        Assert.Contains("ReleaseControls", caught);
+        Assert.Contains("GetExperienceDetails", caught);
         Assert.Contains("is not available on this engine yet", caught);
     }
 
@@ -98,10 +98,10 @@ public class SwitchOnTests
     public void AnUncaughtUnservedCallStopsAnSLuaScriptAndTellsTheOwnerOnce()
     {
         using var rig = new EngineRig(productionFunctions: true);
-        UUID item = rig.Rez(Slua("ossl.Mark('before')\nll.SensorRemove()\nossl.Mark('never')"));
+        UUID item = rig.Rez(Slua("ossl.Mark('before')\nll.RequestExperiencePermissions('00000000-0000-0000-0000-000000000000', '')\nossl.Mark('never')"));
 
         Assert.True(SchedulerHarness.WaitFor(() => rig.Messages.Shouts.Length >= 1));
-        Assert.Contains("SensorRemove", rig.Messages.Shouts[0].Text);
+        Assert.Contains("RequestExperiencePermissions", rig.Messages.Shouts[0].Text);
         Assert.Contains("is not available on this engine yet", rig.Messages.Shouts[0].Text);
         Assert.False(rig.ItemOf(item).ScriptRunning);
 
@@ -114,10 +114,10 @@ public class SwitchOnTests
     public void AnUncaughtUnservedCallStopsAnLslScriptAndTellsTheOwnerOnce()
     {
         using var rig = new EngineRig(productionFunctions: true);
-        UUID item = rig.Rez(Lsl("default { state_entry() { llOwnerSay(\"before\"); llSensorRemove(); llOwnerSay(\"never\"); } }"));
+        UUID item = rig.Rez(Lsl("default { state_entry() { llOwnerSay(\"before\"); llRequestExperiencePermissions(NULL_KEY, \"\"); llOwnerSay(\"never\"); } }"));
 
         Assert.True(SchedulerHarness.WaitFor(() => rig.Messages.Shouts.Length >= 1));
-        Assert.Contains("SensorRemove", rig.Messages.Shouts[0].Text);
+        Assert.Contains("RequestExperiencePermissions", rig.Messages.Shouts[0].Text);
         Assert.Contains("is not available on this engine yet", rig.Messages.Shouts[0].Text);
         Assert.False(rig.ItemOf(item).ScriptRunning);
 
@@ -168,14 +168,14 @@ public class SwitchOnTests
     public void TheEngineLogsOneStartLineWithTheCountsAndNoLinePerFunction()
     {
         using var rig = new EngineRig(productionFunctions: true);
-        UUID item = rig.Rez(Slua("pcall(function() ll.SensorRemove() end)\npcall(function() ll.ReleaseControls() end)\nossl.Mark('done')"));
+        UUID item = rig.Rez(Slua("pcall(function() ll.RequestExperiencePermissions('00000000-0000-0000-0000-000000000000', '') end)\npcall(function() ll.GetExperienceDetails('00000000-0000-0000-0000-000000000000') end)\nossl.Mark('done')"));
         MarkOf(rig, item, "done");
 
-        string[] counts = rig.Log.Lines.Where(l => l.Contains("502") && l.Contains("27")).ToArray();
+        string[] counts = rig.Log.Lines.Where(l => l.Contains("511") && l.Contains("18")).ToArray();
         Assert.Single(counts);
         Assert.StartsWith("INFO ", counts[0]);
         Assert.Empty(rig.Log.Warnings);
-        Assert.DoesNotContain(rig.Log.Lines, l => l.Contains("llSensorRemove") || l.Contains("does not bind"));
+        Assert.DoesNotContain(rig.Log.Lines, l => l.Contains("llRequestExperiencePermissions") || l.Contains("does not bind"));
     }
 
     [Fact]

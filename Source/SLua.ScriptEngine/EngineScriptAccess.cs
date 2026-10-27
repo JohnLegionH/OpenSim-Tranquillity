@@ -30,7 +30,33 @@ namespace SLua.ScriptEngine
         {
             m_script = script;
             ScriptState = new RuntimeState(0); // the full constructor: llListen keeps the script's listens in the state (ActiveListens)
+            // llDetected* read the event being handled from the state (RunningEvent.DetectVars), as they do for a Phlox script.
+            script.DetectedChanged = detected => ScriptState.RunningEvent = detected == null ? null : new PostedEvent { DetectVars = Array.ConvertAll(detected, Detect) };
         }
+
+        private static DetectVariables Detect(DetectedRecord d) => d == null ? new DetectVariables() : new DetectVariables
+        {
+            Key = d.Key,
+            Name = d.Name,
+            Owner = d.Owner,
+            Group = d.Group,
+            Pos = d.Position,
+            Rot = d.Rotation,
+            Vel = d.Velocity,
+            LinkNumber = d.LinkNumber,
+            Type = d.Type,
+            Grab = d.OffsetPos,
+            TouchFace = d.TouchFace,
+            TouchUV = d.TouchUV,
+            TouchST = d.TouchST,
+            TouchNormal = d.TouchNormal,
+            TouchBinormal = d.TouchBinormal,
+            TouchPos = d.TouchPos,
+            Damage = d.Damage,
+            DamageType = d.DamageType,
+            OriginalDamage = d.OriginalDamage,
+            AdjustDamage = d.AdjustDamage,
+        };
 
         public RuntimeState ScriptState { get; }
 

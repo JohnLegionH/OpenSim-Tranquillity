@@ -96,6 +96,11 @@ namespace SLua.ScriptEngine
 
         private readonly Dictionary<UUID, StartInfo> m_starts = new Dictionary<UUID, StartInfo>();
 
+        /// <summary>The script functions of each script, for the ends of a script (reset, change of state, unload) that release what the functions hold.</summary>
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<UUID, Phlox.ScriptEngine.LSLSystemAPI> m_realApis = new System.Collections.Concurrent.ConcurrentDictionary<UUID, Phlox.ScriptEngine.LSLSystemAPI>();
+
+        private Phlox.ScriptEngine.LSLSystemAPI RealApiOf(UUID itemId) => m_realApis.TryGetValue(itemId, out Phlox.ScriptEngine.LSLSystemAPI api) ? api : null;
+
         /// <summary>Events held for items whose script has not finished loading, as Halcyon's DeferredEventManager does.</summary>
         private sealed class DeferredList
         {
@@ -153,6 +158,7 @@ namespace SLua.ScriptEngine
             {
                 RuntimeAccess = new EngineScriptAccess(script),
             };
+            m_realApis[itemId] = real;
             return ApiRouter.Create(real, fallback);
         }
 
@@ -222,6 +228,8 @@ namespace SLua.ScriptEngine
             HostServices = new EngineHostServices(m_settings, scene, m_configSource, this, BuildHostBackend());
             m_chat = new EngineChat(scene, m_configSource, m_settings, PostScriptEvent, TellOwnerOf);
             HostServices.Chat = m_chat;
+            HostServices.ScriptEngine = this;
+            HostServices.AsyncCommands = new Phlox.ScriptEngine.AsyncCommand.AsyncCommandManager(this);
             m_chat.Subscribe();
             PrimFlags ??= new ScenePrimEventFlags(scene);
             m_scene.RegisterModuleInterface<IScriptModule>(this);
@@ -344,6 +352,7 @@ namespace SLua.ScriptEngine
             m_scene.EventManager.OnStopScript -= OnStopScript;
             m_chat?.Unsubscribe();
             m_chat = null;
+            HostServices?.AsyncCommands?.Shutdown();
             m_hooks?.Unsubscribe();
             m_hooks = null;
             m_policy?.Unsubscribe();
@@ -429,6 +438,7 @@ namespace SLua.ScriptEngine
             lock (m_tracked) m_tracked.Remove(itemID);
             ForgetPending(itemID);
             m_loader?.Disown(itemID);
+            UnloadApi(itemID);
             DropRecord(itemID);
             m_chat?.Listens.Forget(itemID); // an unload ends the script's listens, after the script has stopped
         }
@@ -548,7 +558,10 @@ namespace SLua.ScriptEngine
             // A change to another state releases the script's listens (wiki: State); the first state is not a change.
             int was = Interlocked.Exchange(ref record.LastState, script.CurrentState);
             if (was != -1 && was != script.CurrentState)
+            {
                 m_chat?.Listens.Remove(record.ItemID);
+                RealApiOf(record.ItemID)?.OnStateChange(); // a sensor goes with the state; a request and a URL stay (wiki State, as Phlox)
+            }
             ApplyEventFlags(record, script.CurrentState, script.Running);
         }
 
@@ -627,6 +640,13 @@ namespace SLua.ScriptEngine
             lock (m_records) return m_records.TryGetValue(itemID, out ScriptRecord r) ? r : null;
         }
 
+        /// <summary>The script is leaving the engine: its sensors, requests and URLs end, and the controls it took are let go.</summary>
+        private void UnloadApi(UUID itemID)
+        {
+            if (m_realApis.TryRemove(itemID, out Phlox.ScriptEngine.LSLSystemAPI api))
+                api.OnScriptUnloaded(InWorldz.Phlox.Types.ScriptUnloadReason.Unloaded, InWorldz.Phlox.VM.RuntimeState.LocalDisableFlag.None);
+        }
+
         private void DropRecord(UUID itemID)
         {
             ScriptRecord record;
@@ -655,6 +675,7 @@ namespace SLua.ScriptEngine
             lock (m_tracked) m_tracked.Remove(itemID);
             ForgetPending(itemID);
             m_loader?.Disown(itemID);
+            UnloadApi(itemID);
             DropRecord(itemID);
             m_chat?.Listens.Forget(itemID); // an unload ends the script's listens
             OnScriptRemoved?.Invoke(itemID);
@@ -666,6 +687,7 @@ namespace SLua.ScriptEngine
             if (record == null)
                 return;
             m_chat?.Listens.Remove(itemID); // a reset removes the script's listens
+            RealApiOf(itemID)?.OnScriptReset(); // and its sensors and requests, and ends its permissions and the controls taken under them
             if (record.Script.Killed)
                 SetItemRunningFlag(record.LocalID, itemID, true); // a reset is what starts a script a fault stopped
             m_scheduler?.Reset(record.Script);

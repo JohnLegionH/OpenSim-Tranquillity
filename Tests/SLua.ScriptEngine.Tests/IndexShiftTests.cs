@@ -182,7 +182,7 @@ public class IndexShiftTests
     public void TheUnavailableFunctionsAreInTheLlcompatTableToo()
     {
         using var rig = new EngineRig(productionFunctions: true);
-        UUID item = rig.Rez(Slua("local ok, err = pcall(function() llcompat.SensorRemove() end) ossl.Mark('r=' .. tostring(err))"));
+        UUID item = rig.Rez(Slua("local ok, err = pcall(function() llcompat.RequestExperiencePermissions('00000000-0000-0000-0000-000000000000', '') end) ossl.Mark('r=' .. tostring(err))"));
 
         Assert.True(SchedulerHarness.WaitFor(() => rig.MarksOf(item).Any(m => m.StartsWith("r="))));
         Assert.Contains("is not available on this engine yet", rig.MarksOf(item).First(m => m.StartsWith("r=")));

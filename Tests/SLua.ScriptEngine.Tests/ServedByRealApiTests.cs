@@ -32,7 +32,7 @@ public class ServedByRealApiTests
     /// <summary>The host members the engine does not provide yet; a function that reaches one is not served.</summary>
     private static readonly string[] Lacking =
     {
-        "Ossl", "StateManager", "AsyncCommands", "ScriptEngine",
+        "Ossl",
         "ExperienceGrantRestored", "ExperienceCannotRun",
     };
 
@@ -49,7 +49,7 @@ public class ServedByRealApiTests
         Assert.Empty(served.Intersect(notServed));
         Assert.Equal(served.Length, served.Distinct().Count());
         Assert.True(served.Length > 400, "only " + served.Length + " functions are served");
-        Assert.True(notServed.Length > 10, "only " + notServed.Length + " functions are not served");
+        Assert.True(notServed.Length > 0, "only " + notServed.Length + " functions are not served");
     }
 
     [Fact]
@@ -70,7 +70,7 @@ public class ServedByRealApiTests
         string[] served = LlServed.Served;
         string[] notServed = LlServed.NotServed.Select(NameOf).ToArray();
 
-        Assert.All(new[] { "llRequestPermissions", "llStartAnimation", "llSensor", "llHTTPRequest" },
+        Assert.All(new[] { "llRequestExperiencePermissions", "llGetExperienceDetails" },
             n => Assert.Contains(n, notServed));
         Assert.All(new[] { "llGetPos", "llSetPos", "llSetTimerEvent", "llResetScript", "llStringLength", "llName2Key", "llInstantMessage", "llListen", "llListenRemove", "llSay" },
             n => Assert.Contains(n, served));
@@ -86,14 +86,14 @@ public class ServedByRealApiTests
         ILSLSystemAPI router = ApiRouter.Create(real, fallback);
         realFake.Returns("llStringLength", 11);
         fallbackFake.Returns("llStringLength", 22);
-        realFake.Returns("llHTTPRequest", "33");
-        fallbackFake.Returns("llHTTPRequest", "44");
+        realFake.Returns("llTransferOwnership", 33);
+        fallbackFake.Returns("llTransferOwnership", 44);
 
         Assert.Equal(11, router.llStringLength("x"));
-        Assert.Equal("44", router.llHTTPRequest("https://example.org/", new InWorldz.Phlox.Types.LSLList(), ""));
+        Assert.Equal(44, router.llTransferOwnership("00000000-0000-0000-0000-000000000000"));
 
         Assert.Equal(new[] { "llStringLength" }, realFake.Calls.Select(c => c.Name).ToArray());
-        Assert.Equal(new[] { "llHTTPRequest" }, fallbackFake.Calls.Select(c => c.Name).ToArray());
+        Assert.Equal(new[] { "llTransferOwnership" }, fallbackFake.Calls.Select(c => c.Name).ToArray());
     }
 
     [Fact]
@@ -106,16 +106,15 @@ public class ServedByRealApiTests
         fallbackFake.Returns("NeedsService", false);
 
         Assert.True(router.NeedsService("llName2Key", new object[] { "x" }));
-        Assert.False(router.NeedsService("llHTTPRequest", new object[0]));
+        Assert.False(router.NeedsService("llTransferOwnership", new object[0]));
     }
 
     [RequiresNativeFact]
     public void AScriptsServedAndUnservedCallsRunOnTheRealApiAndTheFallbackRespectively()
     {
         (ILSLSystemAPI fallback, FakeLslApi fallbackFake) = FakeLslApi.Create();
-        fallbackFake.Returns("llHTTPRequest", "6b3f1d52-8a47-4e0b-9c61-2f5d7e8a9b10");
-        using var rig = new EngineApiRig(fallback, ("MinTimerInterval", "0.5"));
-        SchedulerScript s = rig.H.AddAndStart("ll.SetTimerEvent(2.0)\nlocal h = ll.HTTPRequest('https://example.org/', {}, '')\nossl.Mark('handle', tostring(h))\nossl.Count()");
+                using var rig = new EngineApiRig(fallback, ("MinTimerInterval", "0.5"));
+        SchedulerScript s = rig.H.AddAndStart("ll.SetTimerEvent(2.0)\nll.RequestExperiencePermissions('00000000-0000-0000-0000-000000000000', '')\nossl.Count()");
 
         // The first call of the real API in a process compiles code and can overrun the script's run window, which the runtime
         // punishes with a sleep; moving the clock past it is not what is under test.
@@ -124,8 +123,7 @@ public class ServedByRealApiTests
         Assert.True(rig.H.CountOf(s) == 1, "state " + s.State + " faulted=[" + string.Join(",", rig.H.FaultedScripts.Select(f => f.FaultMessage)) + "] errors=[" + string.Join(",", rig.H.ReportedErrors) + "] fallback=[" + string.Join(",", fallbackFake.Calls.Select(c => c.Name)) + "] backend=[" + string.Join(",", rig.BackendCalls) + "]");
         Assert.Contains("SetTimer 2", rig.BackendCalls.ToArray()); // the real API reached the engine's host
         Assert.DoesNotContain(fallbackFake.Calls, c => c.Name == "llSetTimerEvent");
-        Assert.Contains(fallbackFake.Calls, c => c.Name == "llHTTPRequest"); // the fallback served the request
-        Assert.Equal(new[] { "handle:6b3f1d52-8a47-4e0b-9c61-2f5d7e8a9b10" }, rig.H.MarksOf(s));
+        Assert.Contains(fallbackFake.Calls, c => c.Name == "llRequestExperiencePermissions"); // the fallback served the request
     }
 
     // ---- the tripwire ----
@@ -146,7 +144,7 @@ public class ServedByRealApiTests
         public Scene World => m_inner.World;
         public IConfigSource ConfigSource => m_inner.ConfigSource;
         public IScriptModule ScriptModule => m_inner.ScriptModule;
-        public IScriptEngine ScriptEngine => Trip("ScriptEngine", m_inner.ScriptEngine);
+        public IScriptEngine ScriptEngine => m_inner.ScriptEngine;
         public ServiceCallDeferralMode ServiceCallDeferral => m_inner.ServiceCallDeferral;
         public bool AllowGodFunctions => m_inner.AllowGodFunctions;
         public bool AutomaticLinkPermission => m_inner.AutomaticLinkPermission;
@@ -165,8 +163,8 @@ public class ServedByRealApiTests
         public int PhysicsFrameTimeAvg => m_inner.PhysicsFrameTimeAvg;
         public IScriptOsslChecks Ossl => Trip("Ossl", m_inner.Ossl);
         public IScriptListenService ListenManager => m_inner.ListenManager;
-        public IScriptStateTracker StateManager => Trip("StateManager", m_inner.StateManager);
-        public AsyncCommandManager AsyncCommands => Trip("AsyncCommands", m_inner.AsyncCommands);
+        public IScriptStateTracker StateManager => m_inner.StateManager;
+        public AsyncCommandManager AsyncCommands => m_inner.AsyncCommands;
 
         public void SysReturn(UUID itemId, object retValue, int delay) => m_inner.SysReturn(itemId, retValue, delay);
         public void SysReturnSequenced(UUID itemId, object retValue, int delay, int seq) => m_inner.SysReturnSequenced(itemId, retValue, delay, seq);

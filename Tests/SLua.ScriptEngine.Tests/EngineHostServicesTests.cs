@@ -128,7 +128,7 @@ public class EngineHostServicesTests
 
         Assert.Null(host.Ossl);
         Assert.Null(host.ListenManager);
-        Assert.Null(host.StateManager);
+        Assert.NotNull(host.StateManager);
         Assert.Null(host.AsyncCommands);
     }
 

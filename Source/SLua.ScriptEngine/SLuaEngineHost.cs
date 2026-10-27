@@ -33,7 +33,7 @@ namespace SLua.ScriptEngine
 
         IScriptModule IScriptEngine.ScriptModule => this;
 
-        IConfig IScriptEngine.Config => m_configSource?.Configs[EngineIdentity.ConfigSection];
+        IConfig IScriptEngine.Config => m_configSource == null ? null : m_configSource.Configs[EngineIdentity.ConfigSection] ?? m_configSource.AddConfig(EngineIdentity.ConfigSection);
 
         IConfigSource IScriptEngine.ConfigSource => m_configSource;
 

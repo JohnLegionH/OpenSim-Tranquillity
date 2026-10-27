@@ -167,7 +167,20 @@ namespace SLua.ScriptEngine
         /// until the next dispatch, a state change or a reset; null when the event carried none. Worker thread only,
         /// as host functions run on it.
         /// </summary>
-        internal DetectedRecord[] CurrentDetected;
+        internal DetectedRecord[] CurrentDetected
+        {
+            get => m_currentDetected;
+            set
+            {
+                m_currentDetected = value;
+                DetectedChanged?.Invoke(value);
+            }
+        }
+
+        private DetectedRecord[] m_currentDetected;
+
+        /// <summary>Told whenever <see cref="CurrentDetected"/> changes: the script functions (llDetected*) read the same objects through the script's runtime access.</summary>
+        internal Action<DetectedRecord[]> DetectedChanged;
 
         /// <summary>Detected objects of the event being handled; 0 outside an event that carries any.</summary>
         internal int DetectedCount => CurrentDetected?.Length ?? 0;

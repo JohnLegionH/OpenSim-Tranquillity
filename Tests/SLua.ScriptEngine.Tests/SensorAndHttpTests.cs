@@ -112,11 +112,16 @@ public class SensorAndHttpTests
     public void AResetOrAnUnloadEndsAScriptsRepeatingSensor()
     {
         using EngineRig rig = RigWithTarget(out _);
-        string repeat = "ll.SensorRepeat('Nobody Here', NULL_KEY, " + Passive + ", 20.0, PI, 30.0)\nossl.Mark('ready')\n";
+        // the sensor is set in answer to an event, so the restart a reset causes does not set it again
+        string repeat = "LLEvents:on('changed', function() ll.SensorRepeat('Nobody Here', NULL_KEY, " + Passive + ", 20.0, PI, 30.0) ossl.Mark('armed') end)\nossl.Mark('ready')\n";
         UUID reset = rig.Rez(Slua(repeat));
         UUID unload = rig.Rez(Slua(repeat));
-        Heard(rig, reset, "ready");
-        Heard(rig, unload, "ready");
+        foreach (UUID item in new[] { reset, unload })
+        {
+            Heard(rig, item, "ready");
+            Assert.True(rig.Engine.PostScriptEvent(item, "changed", new object[] { 1 }));
+            Heard(rig, item, "armed");
+        }
         Assert.NotEmpty(Sensors(rig, reset));
         Assert.NotEmpty(Sensors(rig, unload));
 
@@ -154,7 +159,7 @@ public class SensorAndHttpTests
         rig.Scene.RegisterModuleInterface<IHttpRequestModule>(http);
         UUID item = rig.Rez(Slua("local q = ll.HTTPRequest('https://" + FakeHttpModule.RefusedHost + "/x', {}, '')\nossl.Mark('key=[' .. tostring(q) .. ']')\n"));
 
-        Heard(rig, item, "key=[]");
+        Heard(rig, item, "key=[00000000-0000-0000-0000-000000000000]");   // SL: NULL_KEY when a request is refused
         Assert.Empty(http.Urls);
     }
 }

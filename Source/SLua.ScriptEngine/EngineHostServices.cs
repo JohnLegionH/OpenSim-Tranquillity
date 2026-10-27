@@ -24,8 +24,7 @@ namespace SLua.ScriptEngine
     /// call's result). The settings come from <see cref="SLuaSettings"/>; the calls are served by the
     /// <see cref="EngineHostBackend"/> the engine fills in.
     ///
-    /// The services the Phlox engine owns and the SLua engine does not have yet (the OSSL gate,
-    /// the state manager, the asynchronous command plugins) are null, which the interface allows;
+    /// The services the Phlox engine owns and the SLua engine does not have yet (the OSSL gate) are null, which the interface allows;
     /// the script functions that need one are the ones not yet served by the real API.
     /// </summary>
     internal sealed class EngineHostServices : IScriptHostServices
@@ -47,8 +46,8 @@ namespace SLua.ScriptEngine
         public IConfigSource ConfigSource { get; }
         public IScriptModule ScriptModule { get; }
 
-        /// <summary>The engine as the asynchronous command plugins know it (their interface is Phlox's); the SLua engine has none.</summary>
-        public IScriptEngine ScriptEngine => null;
+        /// <summary>The engine as one of the region's script engines: the asynchronous command plugins and the end of a script's resources name it.</summary>
+        public IScriptEngine ScriptEngine { get; internal set; }
 
         public ServiceCallDeferralMode ServiceCallDeferral => m_settings.ServiceCallDeferral switch
         {
@@ -80,8 +79,13 @@ namespace SLua.ScriptEngine
         internal EngineChat Chat { get; set; }
 
         public IScriptListenService ListenManager => Chat?.Listens;
-        public IScriptStateTracker StateManager => null;
-        public AsyncCommandManager AsyncCommands => null;
+        /// <summary>Told when a script's state changes outside an event of its own; the count is what a save of script state will read.</summary>
+        internal EngineStateTracker Tracker { get; } = new EngineStateTracker();
+
+        public IScriptStateTracker StateManager => Tracker;
+
+        /// <summary>The sensor, HTTP request and XML-RPC plugins (Phlox's), built on the engine; set once the region is added.</summary>
+        public AsyncCommandManager AsyncCommands { get; internal set; }
 
         /// <summary>
         /// Inside a call that runs for this script on the service lane, the result is recorded on the call's context and
