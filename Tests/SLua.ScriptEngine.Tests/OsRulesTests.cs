@@ -34,7 +34,7 @@ public class OsGateTests
     private static string Call(EngineApiRig rig, string expression)
     {
         SchedulerScript s = rig.H.AddAndStart("local ok, r = pcall(function() return " + expression + " end)\nossl.Mark('r', tostring(ok) .. '|' .. tostring(r))");
-        rig.H.Pump();
+        Assert.True(SchedulerHarness.WaitFor(() => { rig.H.Pump(); return rig.H.MarksOf(s).Any(m => m.StartsWith("r:")); }, -1), "the script said nothing");
         return rig.H.MarksOf(s).Single(m => m.StartsWith("r:")).Substring(2);
     }
 
@@ -113,7 +113,7 @@ public class OsGateTests
         SchedulerScript s;
         try { s = rig.H.AddAndStart("default { state_entry() { osGetSimulatorVersion(); } }", lsl: true); }
         catch (Bindings.SluaException e) { Assert.Fail("the script did not compile: " + e.Message); return; }
-        rig.H.Pump();
+        Assert.True(SchedulerHarness.WaitFor(() => { rig.H.Pump(); return !rig.H.FaultedScripts.IsEmpty; }, -1), "the script did not fault");
         SchedulerScript faulted = Assert.Single(rig.H.FaultedScripts);
         Assert.Contains(DeniedByLevel, faulted.FaultMessage);
     }
@@ -232,7 +232,7 @@ public class OsRulesTests
             };
         });
         SchedulerScript script = h.AddAndStart("local ok, e = pcall(ossl.SHA256, 'abc')\nossl.Mark('r', tostring(ok) .. '|' .. tostring(e))\nossl.Mark('g', tostring(pcall(ossl.GetGridName)))");
-        h.Pump();
+        Assert.True(SchedulerHarness.WaitFor(() => { h.Pump(); return h.MarksOf(script).Any(m => m.StartsWith("g:")); }, -1), "the script said nothing");
         string[] marks = h.MarksOf(script);
         Assert.Contains(marks, m => m.StartsWith("r:false|") && m.Contains("osSHA256 is not available on this engine yet"));
         Assert.Contains("g:true", marks);
@@ -263,7 +263,7 @@ public class OsRulesTests
     {
         using var rig = new BindingRig();
         SchedulerScript s = rig.H.AddAndStart("ossl.StringSubString('abcdef', 1)\nll.GetSubString('abcdef', 1, 2)");
-        rig.H.Pump();
+        Assert.True(SchedulerHarness.WaitFor(() => { rig.H.Pump(); return rig.CallsOf("llGetSubString") > 0; }, -1), "the script made no call");
 
         Assert.Equal(1, rig.Fake.Calls.Single(c => c.Name == "osStringSubString").Args[1]);
         Assert.Equal(0, rig.Fake.Calls.Single(c => c.Name == "llGetSubString").Args[1]);

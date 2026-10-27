@@ -19,10 +19,21 @@ namespace SLua.ScriptEngine
     /// </summary>
     internal class ApiRouter : DispatchProxy
     {
-        private static readonly HashSet<string> s_served = new HashSet<string>(LlServed.Served, StringComparer.Ordinal);
+        private static readonly HashSet<string> s_served = BuildServed();
 
-        /// <summary>Whether the function runs on the real API (a stub for now: nothing is known to be served).</summary>
-        internal static bool Serves(string function) => false;
+        /// <summary>The ll functions the engine's host can serve, and every os, iw and bot function except those it refuses as not available.</summary>
+        private static HashSet<string> BuildServed()
+        {
+            var served = new HashSet<string>(LlServed.Served, StringComparer.Ordinal);
+            var refused = new HashSet<string>(OsBindings.Unavailable, StringComparer.Ordinal);
+            foreach (OsFunction f in OsBindings.All)
+                if (!refused.Contains(f.ApiName))
+                    served.Add(f.ApiName);
+            return served;
+        }
+
+        /// <summary>Whether the function runs on the real API.</summary>
+        internal static bool Serves(string function) => s_served.Contains(function);
 
         private ILSLSystemAPI m_real;
         private ILSLSystemAPI m_fallback;
