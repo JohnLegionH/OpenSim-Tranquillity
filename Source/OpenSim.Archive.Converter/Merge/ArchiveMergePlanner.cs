@@ -492,7 +492,7 @@ public static class MergePlanFiles
     public static string ArchiveJson(MergePlan plan)
     {
         using MemoryStream ms = new MemoryStream();
-        using (Utf8JsonWriter w = new Utf8JsonWriter(ms, new JsonWriterOptions { Indented = true }))
+        using (Utf8JsonWriter w = new Utf8JsonWriter(ms, new JsonWriterOptions { Indented = true, NewLine = "\n" }))
         {
             w.WriteStartObject();
             w.WriteNumber("version", plan.Version);
@@ -544,7 +544,7 @@ public static class MergePlanFiles
     public static string LinksetJson(LinksetPlan plan)
     {
         using MemoryStream ms = new MemoryStream();
-        using (Utf8JsonWriter w = new Utf8JsonWriter(ms, new JsonWriterOptions { Indented = true }))
+        using (Utf8JsonWriter w = new Utf8JsonWriter(ms, new JsonWriterOptions { Indented = true, NewLine = "\n" }))
         {
             w.WriteStartObject();
             w.WriteNumber("version", 1);
@@ -664,7 +664,8 @@ public static class MergePlanFiles
         foreach (LinksetPlan l in plan.Linksets)
             sb.AppendLine("    " + (l.Name ?? "").PadRight(40) + l.PartsBefore.ToString().PadLeft(5) + " -> " + l.PartsAfter.ToString().PadLeft(4)
                 + (l.LockedBy.Length > 0 ? "  locked: " + l.LockedBy : ""));
-        return sb.ToString();
+        // line feeds on every platform, so a plan folder has the same bytes wherever it was written
+        return sb.ToString().Replace("\r\n", "\n");
     }
 
     private static string LinksetFileName(MergePlan plan, LinksetPlan l)

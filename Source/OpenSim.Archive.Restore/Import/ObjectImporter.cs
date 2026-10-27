@@ -51,6 +51,11 @@ public static partial class ObjectImporter
         string baseName = FindBaseName(folder, options.BaseName);
         ImportResult result = new ImportResult { Output = outputPath };
         ModelLevels model = ReadFolderModel(folder, baseName, result.Notes);
+        ImportProvenance provenance = new ImportProvenance(options.ToolVersion);
+        provenance.SourceFolder(folder);
+        foreach (string file in FolderModelFiles(folder, model))
+            provenance.File(file, folder);
+        result.Provenance = provenance.ToString();
         say("read " + string.Join(", ", model.Names));
         TextureCatalog catalog = new TextureCatalog(Path.Combine(folder, "no-original-textures"));
         BuiltPart built = BuildPart(model, catalog, result, say);
@@ -87,7 +92,7 @@ public static partial class ObjectImporter
         result.Size = new SysVector3(size.X, size.Y, size.Z);
         result.Centre = new SysVector3(centre.X, centre.Y, centre.Z);
         WriteArchive(outputPath, created, ArchiveConstants.CreateOarObjectPath(FileSafe(name), new UUID(partId), centre),
-            Encoding.UTF8.GetBytes(objectXml), assets);
+            Encoding.UTF8.GetBytes(objectXml), assets, provenance.ToBytes());
         result.Written = true;
         say("wrote " + outputPath);
         return result;
@@ -450,7 +455,16 @@ public static partial class ObjectImporter
 
     // ------------------------------------------------------------------ the archive
 
-    private static void WriteArchive(string outputPath, long created, string objectPath, byte[] objectXml, List<(Guid Id, byte[] Data, AssetType Type)> assets)
+    /// <summary>The .glb files a model folder was read from: the four levels in order, then the collision shape when the folder has one.</summary>
+    internal static List<string> FolderModelFiles(string folder, ModelLevels model)
+    {
+        List<string> files = model.Names.Select(n => Path.Combine(folder, n)).ToList();
+        if (model.PhysicsFile != null)
+            files.Add(Path.Combine(folder, model.PhysicsName));
+        return files;
+    }
+
+    private static void WriteArchive(string outputPath, long created, string objectPath, byte[] objectXml, List<(Guid Id, byte[] Data, AssetType Type)> assets, byte[] notes)
     {
         string control = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<archive major_version=\"0\" minor_version=\"8\">\n  <creation_info>\n    <datetime>" + created.ToString(Inv) +
             "</datetime>\n  </creation_info>\n  <assets_included>True</assets_included>\n</archive>";
@@ -466,6 +480,7 @@ public static partial class ObjectImporter
                     throw new ImportException("the archive format has no file extension for asset type " + type);
                 tar.WriteFile(ArchiveConstants.ASSETS_PATH + id.ToString("D") + extension, data);
             }
+            tar.WriteFile(ImportProvenance.ArchiveEntry, notes);
             tar.Finish();
         }
         byte[] bytes = packed.ToArray();

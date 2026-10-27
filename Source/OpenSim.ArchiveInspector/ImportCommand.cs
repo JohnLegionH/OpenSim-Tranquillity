@@ -66,7 +66,7 @@ Exit codes: 0 done (and the check passed, if asked); 1 written, but the check fa
     public static int Run(string[] args)
     {
         string folder = null, outPath = null, checkFolder = null, manifestPath = null;
-        ImportOptions options = new ImportOptions { Progress = m => Console.Error.WriteLine(m) };
+        ImportOptions options = new ImportOptions { Progress = m => Console.Error.WriteLine(m), ToolVersion = ToolRelease.Version };
         bool haveAvatar = false;
 
         for (int i = 0; i < args.Length; i++)

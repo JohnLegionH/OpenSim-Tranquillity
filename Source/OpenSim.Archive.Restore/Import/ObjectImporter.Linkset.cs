@@ -41,6 +41,7 @@ public static partial class ObjectImporter
         public LinksetPart Part;
         public ImportResult Result = new ImportResult();
         public BuiltPart Built;
+        public ModelLevels Model;
         public NodePlace Place;
         public Guid Id;
         public SysVector3 Offset;
@@ -84,6 +85,7 @@ public static partial class ObjectImporter
             {
                 throw new ImportException(label + ": " + e.Message);
             }
+            w.Model = model;
             say("read " + label + ": " + string.Join(", ", model.Names));
             try
             {
@@ -117,6 +119,13 @@ public static partial class ObjectImporter
         }
         foreach (KeyValuePair<Guid, byte[]> t in catalog.NewAssets)
             assets[t.Key] = (t.Value, AssetType.Texture);
+
+        // where the archive came from, written into it and into the run report
+        ImportProvenance provenance = new ImportProvenance(options.ToolVersion);
+        provenance.Manifest(manifest.SourceFile, manifest.Folder, manifest.SourceSha256);
+        for (int i = 0; i < work.Count; i++)
+            AddProvenance(provenance, i + 1, work[i], manifest.Folder);
+        result.Provenance = provenance.ToString();
 
         // the object
         string objectName = Limit(Clean(string.IsNullOrWhiteSpace(manifest.Name) ? root.Part.Name : manifest.Name), MaxNameChars);
@@ -179,7 +188,7 @@ public static partial class ObjectImporter
         result.MeshBytes = root.Built.MeshBytes;
 
         List<(Guid Id, byte[] Data, AssetType Type)> assetList = assets.Select(kv => (kv.Key, kv.Value.Data, kv.Value.Type)).ToList();
-        WriteArchive(outputPath, created, ArchiveConstants.CreateOarObjectPath(FileSafe(objectName), new UUID(root.Id), groupAt), Encoding.UTF8.GetBytes(objectXml), assetList);
+        WriteArchive(outputPath, created, ArchiveConstants.CreateOarObjectPath(FileSafe(objectName), new UUID(root.Id), groupAt), Encoding.UTF8.GetBytes(objectXml), assetList, provenance.ToBytes());
         result.Written = true;
         say("wrote " + outputPath);
         return result;
@@ -218,6 +227,31 @@ public static partial class ObjectImporter
             result[i] = (position + SysVector3.Transform(centres[i], rotation) - centres[0], rotation);
         }
         return result;
+    }
+
+    /// <summary>A part's heading (its source folder, or its .glb and node) and, under it, each file it was made from and each file in its contents.</summary>
+    private static void AddProvenance(ImportProvenance provenance, int linkNumber, LinksetPartWork w, string baseFolder)
+    {
+        ModelSource high = w.Part.Model;
+        List<string> files = new List<string>();
+        string name = Limit(Clean(w.Part.Name), MaxNameChars);
+        if (high.IsFolder)
+        {
+            provenance.Part(linkNumber, name, "folder " + ImportProvenance.Relative(baseFolder, high.Folder));
+            files.AddRange(FolderModelFiles(high.Folder, w.Model));
+        }
+        else
+        {
+            provenance.Part(linkNumber, name, "glb " + ImportProvenance.Relative(baseFolder, high.Glb) + " node '" + high.Node + "'");
+            foreach (ModelSource s in new[] { high, w.Part.Lod2, w.Part.Lod1, w.Part.Lod0, w.Part.Physics })
+                if (s != null)
+                    files.Add(s.Glb);
+        }
+        files.AddRange(w.Part.Contents.Select(c => c.File));
+        HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string file in files)
+            if (seen.Add(Path.GetFullPath(file)))
+                provenance.File(file, baseFolder);
     }
 
     internal static string FolderBase(ModelSource source) => FindBaseName(source.Folder, source.Base);

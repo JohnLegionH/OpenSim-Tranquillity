@@ -26,6 +26,8 @@ public sealed class ImportOptions
     /// <summary>Creation time in seconds since 1970; 0 takes the current time.</summary>
     public long Created { get; set; }
     public Action<string> Progress { get; set; }
+    /// <summary>The release of the tool that runs the import; written first in the provenance text. Empty leaves the line out.</summary>
+    public string ToolVersion { get; set; } = string.Empty;
 }
 
 /// <summary>One level of detail of the written mesh.</summary>
@@ -91,6 +93,8 @@ public sealed class ImportResult
     public List<string> Notes { get; } = new List<string>();
     /// <summary>For a linked object, each part in link order (root first); empty for the single-part import.</summary>
     public List<ImportPartResult> Parts { get; } = new List<ImportPartResult>();
+    /// <summary>Where the archive came from: the manifest, each part's source and the SHA-256 of every input file. The archive holds the same text as its notes.</summary>
+    public string Provenance { get; set; } = string.Empty;
 
     public string ToText()
     {
@@ -111,6 +115,7 @@ public sealed class ImportResult
             }
             foreach (string n in Notes)
                 sb.Append("note: ").Append(n).Append('\n');
+            sb.Append(Provenance);
             return sb.ToString();
         }
         sb.Append("object '").Append(Name).Append("' (").Append(ObjectId.ToString("D")).Append(") written to ").Append(Output).Append('\n');
@@ -130,6 +135,7 @@ public sealed class ImportResult
             sb.Append("  material ").Append(m.ToString("D")).Append(" (normal map)\n");
         foreach (string n in Notes)
             sb.Append("note: ").Append(n).Append('\n');
+        sb.Append(Provenance);
         return sb.ToString();
     }
 }

@@ -70,18 +70,27 @@ public sealed class LinksetManifest
     public string Description { get; set; } = string.Empty;
     /// <summary>The folder the manifest's relative paths are read from.</summary>
     public string Folder { get; set; }
+    /// <summary>The manifest file this was read from and the SHA-256 of its bytes; null when it was parsed from text.</summary>
+    public string SourceFile { get; set; }
+    public string SourceSha256 { get; set; }
     public List<LinksetPart> Parts { get; } = new List<LinksetPart>();
 
     /// <summary>Reads a manifest file; its relative paths are read from the folder it is in.</summary>
     public static LinksetManifest Load(string path)
     {
-        string text;
-        try { text = File.ReadAllText(path); }
+        byte[] bytes;
+        try { bytes = File.ReadAllBytes(path); }
         catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
         {
             throw new ImportException("the manifest '" + path + "' cannot be read: " + e.Message);
         }
-        return Parse(text, Path.GetDirectoryName(Path.GetFullPath(path)));
+        string text;
+        using (StreamReader reader = new StreamReader(new MemoryStream(bytes), System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true))
+            text = reader.ReadToEnd();
+        LinksetManifest manifest = Parse(text, Path.GetDirectoryName(Path.GetFullPath(path)));
+        manifest.SourceFile = Path.GetFullPath(path);
+        manifest.SourceSha256 = ImportProvenance.Sha256(bytes);
+        return manifest;
     }
 
     /// <summary>Reads manifest text; <paramref name="folder"/> is where its relative paths start.</summary>
