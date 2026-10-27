@@ -45,6 +45,8 @@ internal static class RigKit
         public string LowestLevelOnlyJoint;
         /// <summary>Leave the inverse bind matrices out of the skin.</summary>
         public bool OmitInverseBind;
+        /// <summary>The mesh node does not name the skin, though the primitive keeps its JOINTS_0 and WEIGHTS_0 (a rigged mesh exported again as a plain one).</summary>
+        public bool NodeWithoutSkin;
         /// <summary>Write the joints and weights as unsigned shorts and normalised unsigned shorts instead of bytes and floats.</summary>
         public bool WideAttributes;
     }
@@ -199,7 +201,10 @@ internal static class RigKit
         }
         // an extra joint sits under the chest; the list above gives the chest its children
         int meshNode = nodes.Count;
-        nodes.Add(new JsonObject { ["name"] = "slab", ["mesh"] = 0, ["skin"] = 0 });
+        JsonObject slabNode = new JsonObject { ["name"] = "slab", ["mesh"] = 0 };
+        if (!o.NodeWithoutSkin)
+            slabNode["skin"] = 0;
+        nodes.Add(slabNode);
 
         float[] ibm = new float[jointCount * 16];
         for (int k = 0; k < jointCount; k++)

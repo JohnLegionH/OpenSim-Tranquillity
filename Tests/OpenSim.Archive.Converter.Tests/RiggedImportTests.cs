@@ -162,6 +162,22 @@ public class RiggedImportTests
         Assert.All(mesh.High.Faces, f => Assert.Null(f.Weights));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AMeshWhoseNodeNamesNoSkinIsImportedAsAnUnriggedMeshWhateverItsPrimitivesCarry(bool moreThanFourInfluences)
+    {
+        RigKit.Options kit = new RigKit.Options { NodeWithoutSkin = true };
+        if (moreThanFourInfluences)
+        {
+            kit.ExtraJoints = new[] { "mSpine1", "mSpine2" };
+            kit.Fixed = new[] { 0.4f, 0.25f, 0.15f, 0.12f, 0.08f };
+        }
+        Run run = Import(kit);
+        Assert.Null(run.Mesh.Skin);
+        Assert.All(run.Mesh.High.Faces, f => Assert.Null(f.Weights));
+    }
+
     // ---- the weights
 
     private static void AssertWeightsOfEveryLevel(Run run, string[] names, float tolerance)
