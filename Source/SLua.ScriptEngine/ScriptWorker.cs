@@ -10,6 +10,8 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
+using InWorldz.Phlox.VM;
+using OpenMetaverse;
 using SLua.ScriptEngine.Bindings;
 
 namespace SLua.ScriptEngine
@@ -217,6 +219,8 @@ namespace SLua.ScriptEngine
                 }
                 m_floors.Dequeue();
             }
+            if (m_anyDirty && m_options.StateSink != null)
+                due = Math.Min(due, m_nextSave);
             if (double.IsPositiveInfinity(due))
                 return Timeout.Infinite;
             double ms = Math.Ceiling((due - m_options.Clock.Now) * 1000.0);
@@ -230,6 +234,7 @@ namespace SLua.ScriptEngine
             Interlocked.Increment(ref m_passes);
             DrainCommands();
             WakeDue(Now());
+            SaveDueStates(Now());
 
             // A pass ends when every script that was runnable at its start has had a turn, or when the time budget
             // is spent. The scripts that did not get their turn are still at the front of the ring, ahead of the
@@ -337,6 +342,8 @@ namespace SLua.ScriptEngine
                 return;
             try
             {
+                if (TryRestore(s))
+                    return;
                 s.Native.Start();
             }
             catch (Exception e)
@@ -346,6 +353,7 @@ namespace SLua.ScriptEngine
             }
             s.Started = true;
             s.NeedsStep = true;
+            MarkDirty(s);
             Reschedule(s);
         }
 
@@ -412,6 +420,7 @@ namespace SLua.ScriptEngine
                 return;
             }
             s.Events.Enqueue(new QueuedEvent(eventIndex, args, detected));
+            MarkDirty(s);
             Reschedule(s, front: s.State == ScriptRunState.Idle);
         }
 
@@ -452,6 +461,7 @@ namespace SLua.ScriptEngine
         {
             if (s.State == ScriptRunState.Removed || s.State == ScriptRunState.Loading)
                 return;
+            MarkDirty(s);
             if (!running)
             {
                 if (s.Events.Count > 0)
@@ -573,6 +583,8 @@ namespace SLua.ScriptEngine
             }
             m_scripts[s.Id] = s;
             SetState(s, ScriptRunState.Created);
+            s.RestoreRecord = null;
+            MarkDirty(s);
             if (s.Running)
                 StartScript(s);
             else
@@ -633,6 +645,7 @@ namespace SLua.ScriptEngine
 
         internal void SetTimerFor(SchedulerScript s, double seconds)
         {
+            MarkDirty(s);
             RemoveQueuedTimer(s);
             s.TimerHeldLeft = -1; // a new timer replaces the time a pause kept
             if (seconds <= 0)
@@ -698,6 +711,7 @@ namespace SLua.ScriptEngine
             }
             // The next tick is one interval from now: a long gap is one tick, not a burst.
             ArmTimer(s, now + s.TimerInterval);
+            MarkDirty(s);
             Reschedule(s, front: s.State == ScriptRunState.Idle);
         }
 
@@ -716,6 +730,7 @@ namespace SLua.ScriptEngine
         private void RunTurn(SchedulerScript s)
         {
             double quanta = m_options.QuantaMs / 1000.0;
+            MarkDirty(s);
             bool dispatching = !s.NeedsStep && s.Events.Count > 0;
             double floorAtStart = s.MinEventDelay;   // a floor set by this very handler counts from the next one
             QueuedEvent ev = default;
@@ -1013,6 +1028,7 @@ namespace SLua.ScriptEngine
         {
             s.Fault = kind;
             s.FaultMessage = message;
+            MarkDirty(s);
             s.Killed = true; // stays stopped until reset or its Running flag is set again
             s.Running = false;
             s.Events.Clear();
@@ -1022,6 +1038,194 @@ namespace SLua.ScriptEngine
             SetState(s, ScriptRunState.Faulted);
             try { m_options.ScriptFaulted?.Invoke(s); }
             catch (Exception e) { m_log?.Error("the fault callback failed: " + e.Message); }
+        }
+
+        // ---- saved state ----
+
+        private bool m_anyDirty;
+        private double m_nextSave;
+
+        /// <summary>The script changed since its last save; the next timed save takes it. Scripts with no item to save under are not counted.</summary>
+        private void MarkDirty(SchedulerScript s)
+        {
+            if (m_options.StateSink == null || s.ItemId == UUID.Zero)
+                return;
+            s.StateDirty = true;
+            if (!m_anyDirty)
+            {
+                m_anyDirty = true;
+                m_nextSave = Now() + m_options.StateSaveIntervalMs / 1000.0;
+            }
+        }
+
+        private void SaveDueStates(double now)
+        {
+            if (m_anyDirty && m_options.StateSink != null && now >= m_nextSave)
+                SaveStates(onlyChanged: true);
+        }
+
+        /// <summary>
+        /// Captures the scripts and hands their records to the sink, which writes them off this thread. The timed save takes only the
+        /// scripts that changed; the save at shutdown takes every started script, because the times left in a record are as of the
+        /// moment it was written. A script that cannot be captured now (it waits for a call to come back) keeps its change mark and is
+        /// tried again at the next save.
+        /// </summary>
+        private void SaveStates(bool onlyChanged)
+        {
+            m_anyDirty = false;
+            IScriptStateSink sink = m_options.StateSink;
+            if (sink == null)
+                return;
+            foreach (SchedulerScript s in new List<SchedulerScript>(m_scripts.Values))
+            {
+                if (s.ItemId == UUID.Zero || s.StateHeld != null || s.State == ScriptRunState.Removed || s.State == ScriptRunState.Loading)
+                    continue;
+                if (onlyChanged && !s.StateDirty)
+                    continue;
+                try
+                {
+                    byte[] state = CaptureState(s);
+                    if (state == null)
+                    {
+                        if (s.Started || s.Killed)
+                        {
+                            s.StateDirty = true;
+                            m_anyDirty = true;
+                        }
+                        continue;
+                    }
+                    sink.Save(s.ItemId, s.AssetId, state);
+                    s.StateDirty = false;
+                }
+                catch (Exception e)
+                {
+                    m_log?.Error($"script {s.ItemId}: its state could not be captured: {e.Message}");
+                    s.StateDirty = true;
+                    m_anyDirty = true;
+                }
+            }
+            if (m_anyDirty)
+                m_nextSave = Now() + m_options.StateSaveIntervalMs / 1000.0;
+        }
+
+        /// <summary>The script's record as bytes, or null when it cannot be captured now.</summary>
+        private byte[] CaptureState(SchedulerScript s)
+        {
+            if (s.Waiting || s.Dispatching)
+                return null;
+            if (!s.Killed && (s.Native == null || !s.Started))
+                return null;
+            double now = Now();
+            var record = new ScriptStateRecord
+            {
+                Engine = m_options.EngineName,
+                Language = s.Language,
+                Running = s.Running,
+                Faulted = s.Killed,
+                FaultKind = (int)s.Fault,
+                FaultMessage = s.FaultMessage ?? "",
+                LslState = s.CurrentState,
+                TimerInterval = s.TimerInterval,
+                SluaTimer = s.SluaTimer,
+                MinEventDelay = s.MinEventDelay,
+            };
+            if (s.TimerInterval > 0)
+                record.TimerLeft = s.TimerArmed ? Math.Max(0, s.TimerDue - now) : (s.TimerHeldLeft >= 0 ? s.TimerHeldLeft : s.TimerInterval);
+            if (s.SleepUntil > now)
+                record.SleepLeft = s.SleepUntil - now;
+            if (s.NextEventAt > now)
+                record.NextEventIn = s.NextEventAt - now;
+            foreach (QueuedEvent e in s.Events)
+                record.Events.Add(new SavedEvent { EventIndex = e.EventIndex, Args = e.Args ?? Array.Empty<Value>() });
+            ActiveListen[] listens = s.ListenSnapshot?.Invoke();
+            if (listens != null)
+                record.Listens.AddRange(listens);
+            if (!s.Killed)
+                record.Native = s.Native.Serialize();
+            return record.Encode();
+        }
+
+        /// <summary>Puts the saved state back instead of starting the script. False: nothing was restored and the script is to start fresh.</summary>
+        private bool TryRestore(SchedulerScript s)
+        {
+            ScriptStateRecord record = s.RestoreRecord;
+            s.RestoreRecord = null;
+            if (record == null)
+                return false;
+            if (record.Faulted)
+            {
+                // A fault stopped the script before the save: it stays stopped, with the reason it was given (reset or set running again starts it).
+                s.Started = true;
+                s.CurrentState = record.LslState;
+                Fault(s, (FaultKind)record.FaultKind, record.FaultMessage);
+                return true;
+            }
+
+            bool restored;
+            try
+            {
+                restored = s.Native.Restore(record.Native);
+            }
+            catch (Exception e)
+            {
+                RejectState(s, "the runtime could not read the saved state (" + e.Message + ")");
+                return false;
+            }
+            s.Started = true;
+            s.NeedsStep = true;
+            if (!restored)
+            {
+                // The runtime started the script fresh (another build or another set of host functions); its old state stays on record.
+                RejectState(s, "the runtime refused the saved state (saved by another runtime build or with another set of host functions) and the script started fresh");
+                MarkDirty(s);
+                Reschedule(s);
+                return true;
+            }
+
+            double now = Now();
+            s.CurrentState = record.LslState;
+            s.NotHandled = 0;
+            s.Running = record.Running;
+            s.SluaTimer = record.SluaTimer;
+            s.MinEventDelay = record.MinEventDelay;
+            if (record.NextEventIn > 0)
+                s.NextEventAt = now + record.NextEventIn;
+            if (record.SleepLeft > 0)
+                s.SleepUntil = now + record.SleepLeft;
+            if (record.TimerInterval > 0)
+            {
+                s.TimerInterval = record.TimerInterval;
+                if (s.Running)
+                    ArmTimer(s, now + Math.Max(0, record.TimerLeft));
+                else
+                    s.TimerHeldLeft = Math.Max(0, record.TimerLeft);
+            }
+            if (s.Running)
+            {
+                int timer = TimerEvent();
+                foreach (SavedEvent e in record.Events)
+                {
+                    if (s.Events.Count >= m_options.MaxEventQueue)
+                        break;
+                    s.Events.Enqueue(new QueuedEvent(e.EventIndex, e.Args));
+                    if (e.EventIndex == timer)
+                        s.TimerQueued = true;
+                }
+            }
+            try { s.ListenRestore?.Invoke(record.Listens.ToArray()); }
+            catch (Exception e) { m_log?.Error($"script {s.ItemId}: its listens could not be put back: {e.Message}"); }
+            if (s.Language == ScriptLanguage.Slua)
+                ReadHandlers(s);
+            MarkDirty(s);
+            Reschedule(s);
+            return true;
+        }
+
+        private void RejectState(SchedulerScript s, string reason)
+        {
+            m_log?.Warn($"script {s.ItemId}: {reason}; the old state is set aside");
+            try { m_options.StateSink?.Reject(s.ItemId, reason); }
+            catch (Exception e) { m_log?.Error($"script {s.ItemId}: its state could not be set aside: {e.Message}"); }
         }
 
         // ---- stopping ----
@@ -1043,6 +1247,8 @@ namespace SLua.ScriptEngine
 
         private void Cleanup()
         {
+            try { SaveStates(onlyChanged: false); }
+            catch (Exception e) { m_log?.Error("the scripts' state could not be saved at shutdown: " + e.Message); }
             foreach (SchedulerScript s in new List<SchedulerScript>(m_scripts.Values))
             {
                 try { Free(s); }

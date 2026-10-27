@@ -30,10 +30,55 @@ namespace SLua.ScriptEngine
         public string Reason;
     }
 
-    /// <summary>Reads a script's saved state when it joins the scheduler (stub: always fresh).</summary>
+    /// <summary>
+    /// Looks for a script's saved state when it joins the scheduler. A record of this engine for the item and asset is restored. No
+    /// row, or a row another engine wrote, is a fresh start and the row is left as it is. Bytes that are no record are moved to the
+    /// rejected table with the reason and the script starts fresh. A store that cannot be read is retried; when the retries are used
+    /// up the script is held with the reason and its row untouched, because a script started fresh over a row it could not read
+    /// would write its own state over that row at the next save.
+    /// </summary>
     internal static class StateJoin
     {
-        public static StateLoadResult Load(SqliteStateStore store, string engine, UUID item, UUID asset, int retries, int retryDelayMs, Action<int> wait, IEngineLog log) =>
-            new StateLoadResult { Kind = StateLoadKind.Fresh };
+        public static StateLoadResult Load(SqliteStateStore store, string engine, UUID item, UUID asset, int retries, int retryDelayMs, Action<int> wait, IEngineLog log)
+        {
+            byte[] saved = null;
+            ScriptStateLoadException failure = null;
+            for (int attempt = 0; attempt <= Math.Max(0, retries); attempt++)
+            {
+                try
+                {
+                    saved = store.Load(item, asset);
+                    failure = null;
+                    break;
+                }
+                catch (ScriptStateLoadException e)
+                {
+                    failure = e;
+                    if (attempt < retries)
+                        wait?.Invoke(retryDelayMs);
+                }
+            }
+            if (failure != null)
+            {
+                string why = $"its saved state could not be read ({failure.InnerException?.Message ?? failure.Message}); the script is held and its saved state is left as it is";
+                log?.Error($"Script {item}: {why}");
+                return new StateLoadResult { Kind = StateLoadKind.Held, Reason = why };
+            }
+            if (saved == null)
+                return new StateLoadResult { Kind = StateLoadKind.Fresh };
+
+            switch (ScriptStateRecord.Inspect(saved, engine, out ScriptStateRecord record, out string problem))
+            {
+                case ScriptStateRecord.RecordReading.Ok:
+                    return new StateLoadResult { Kind = StateLoadKind.Restore, Record = record };
+                case ScriptStateRecord.RecordReading.OtherEngine:
+                    log?.Warn($"Script {item}: the saved state is another engine's ({problem}); the script starts fresh and that state is left alone");
+                    return new StateLoadResult { Kind = StateLoadKind.Fresh, Reason = problem };
+                default:
+                    log?.Warn($"Script {item}: the saved state cannot be used ({problem}); it is set aside and the script starts fresh");
+                    store.Reject(item, problem);
+                    return new StateLoadResult { Kind = StateLoadKind.Fresh, Reason = problem };
+            }
+        }
     }
 }

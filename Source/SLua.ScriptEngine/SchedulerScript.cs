@@ -131,6 +131,8 @@ namespace SLua.ScriptEngine
         internal Script Native;
         internal ImageLease Lease;
         internal bool Started;
+        /// <summary>Worker only: the script changed since its state was last handed to the sink.</summary>
+        internal bool StateDirty;
         internal bool NeedsStep;
         internal bool InRing;
         internal readonly Queue<QueuedEvent> Events = new Queue<QueuedEvent>();

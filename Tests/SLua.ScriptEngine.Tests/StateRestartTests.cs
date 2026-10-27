@@ -83,6 +83,13 @@ public class StateRestartTests
         }
     }
 
+    /// <summary>Moves the clock in half seconds: one jump of a long time fires a timer once, as a stall of the real clock would.</summary>
+    private static void Run(SchedulerHarness h, double seconds)
+    {
+        for (double done = 0; done < seconds - 1e-9; done += 0.5)
+            h.Advance(0.5);
+    }
+
     private const string Counter = @"counter = 0
 ossl.Mark('main', 'ran')
 LLEvents:on('timer', function() counter = counter + 1; ossl.Mark('n', counter) end)
@@ -95,15 +102,15 @@ ll.SetTimerEvent(10.0)
         using var w = new World();
         UUID item = UUID.Random();
         SchedulerScript s = w.Start(item, Counter);
-        w.H.Advance(35);
+        Run(w.H, 35);
         Assert.Equal(new[] { "main:ran", "n:1", "n:2", "n:3" }, w.H.MarksOf(s)); // ticks at 10, 20 and 30; 5 seconds were left to the next
 
         w.Restart();
         SchedulerScript back = w.Start(item, Counter);
         Assert.Empty(w.H.MarksOf(back)); // the main chunk did not run again
-        w.H.Advance(4.5);
+        Run(w.H, 4.5);
         Assert.Empty(w.H.MarksOf(back)); // the tick is not a whole interval away
-        w.H.Advance(1.0);
+        Run(w.H, 1.0);
         Assert.Equal(new[] { "n:4" }, w.H.MarksOf(back)); // 5 seconds after the save, and the count went on
     }
 
@@ -123,14 +130,14 @@ state two
         using var w = new World();
         UUID item = UUID.Random();
         SchedulerScript s = w.Start(item, TwoStates, lsl: true);
-        w.H.Advance(9);
+        Run(w.H, 9);
         Assert.Equal(new[] { "say:entry", "say:two", "say:t6", "say:t7" }, w.H.MarksOf(s));
 
         w.Restart();
         SchedulerScript back = w.Start(item, TwoStates, lsl: true);
-        w.H.Advance(2.5);
+        Run(w.H, 2.5);
         Assert.Empty(w.H.MarksOf(back)); // 3 seconds were left on the timer
-        w.H.Advance(1.0);
+        Run(w.H, 1.0);
         Assert.Equal(new[] { "say:t8" }, w.H.MarksOf(back)); // state two's timer handler, with n as it was; neither state_entry ran again
     }
 
@@ -149,14 +156,14 @@ ll.SetTimerEvent(1.0)
         using var w = new World();
         UUID item = UUID.Random();
         SchedulerScript s = w.Start(item, Sleeper);
-        w.H.Advance(4);
+        Run(w.H, 4);
         Assert.Equal(new[] { "a:before" }, w.H.MarksOf(s)); // asleep since 1, until 11: 7 seconds left
 
         w.Restart();
         SchedulerScript back = w.Start(item, Sleeper);
-        w.H.Advance(6.5);
+        Run(w.H, 6.5);
         Assert.Empty(w.H.MarksOf(back));
-        w.H.Advance(1.0);
+        Run(w.H, 1.0);
         Assert.Equal(new[] { "b:after" }, w.H.MarksOf(back));
     }
 
@@ -181,7 +188,7 @@ end)
 
         w.Restart();
         SchedulerScript back = w.Start(item, Queued);
-        w.H.Advance(101);
+        Run(w.H, 101);
         Assert.Equal(new[] { "d:two", "d:three" }, w.H.MarksOf(back));
     }
 
@@ -195,13 +202,13 @@ ll.SetTimerEvent(1.0)
         using var w = new World();
         UUID item = UUID.Random();
         SchedulerScript s = w.Start(item, Faulting);
-        w.H.Advance(2);
+        Run(w.H, 2);
         Assert.True(s.Killed);
         Assert.Contains("boom", s.FaultMessage);
 
         w.Restart();
         SchedulerScript back = w.Start(item, Faulting);
-        w.H.Advance(5);
+        Run(w.H, 5);
 
         Assert.True(back.Killed);
         Assert.False(back.Running);
@@ -217,21 +224,21 @@ ll.SetTimerEvent(1.0)
         using var w = new World();
         UUID item = UUID.Random();
         SchedulerScript s = w.Start(item, Counter);
-        w.H.Advance(14); // one tick, 6 seconds to the next
+        Run(w.H, 14); // one tick, 6 seconds to the next
         w.H.Scheduler.SetRunning(s, false);
         w.H.Pump();
         Assert.Equal(new[] { "main:ran", "n:1" }, w.H.MarksOf(s));
 
         w.Restart();
         SchedulerScript back = w.Start(item, Counter);
-        w.H.Advance(30);
+        Run(w.H, 30);
         Assert.False(back.Running);
         Assert.Empty(w.H.MarksOf(back));
 
         w.H.Scheduler.SetRunning(back, true);
-        w.H.Advance(5.5);
+        Run(w.H, 5.5);
         Assert.Empty(w.H.MarksOf(back)); // the timer carries on with the 6 seconds it kept
-        w.H.Advance(1.0);
+        Run(w.H, 1.0);
         Assert.Equal(new[] { "n:2" }, w.H.MarksOf(back));
     }
 
@@ -261,15 +268,18 @@ ll.SetTimerEvent(1.0)
         w.Start(ticking, "LLEvents:on('timer', function() ossl.Count() end)\nll.SetTimerEvent(1.0)\n");
         w.Start(idle, "local x = 1\n");
 
-        w.H.Advance(2.1);
+        // the scripts changed when they started; the first save comes one interval later, and a second one only for the script that kept changing
+        for (int second = 0; second < 3; second++)
+            Run(w.H, 1.0);
         Assert.True(w.Store.Flush());
         Assert.Equal(2, w.Store.WritesDone); // both were new
         Assert.NotNull(w.Store.Load(ticking, w.Asset));
         Assert.NotNull(w.Store.Load(idle, w.Asset));
 
-        w.H.Advance(2.1);
+        for (int second = 0; second < 3; second++)
+            Run(w.H, 1.0);
         Assert.True(w.Store.Flush());
-        Assert.Equal(3, w.Store.WritesDone); // only the one whose timer ran
+        Assert.Equal(4, w.Store.WritesDone); // two more saves, each of the one script whose timer kept running; the idle one was not written again
 
         long before = w.Store.WritesDone;
         w.H.Dispose(); // the scheduler stops: it saves every script
@@ -288,7 +298,7 @@ ll.SetTimerEvent(1.0)
         using var w = new World();
         UUID item = UUID.Random();
         w.Start(item, Counter);
-        w.H.Advance(11);
+        Run(w.H, 11);
         w.Restart();
         // damage the runtime's part of the saved record
         ScriptStateRecord saved = ScriptStateRecord.Decode(w.Store.Load(item, w.Asset), "SLua", out string why);
@@ -311,7 +321,7 @@ ll.SetTimerEvent(1.0)
         using var w = new World();
         UUID item = UUID.Random();
         w.Start(item, Counter);
-        w.H.Advance(11);
+        Run(w.H, 11);
         w.Restart();
         ScriptStateRecord saved = ScriptStateRecord.Decode(w.Store.Load(item, w.Asset), "SLua", out string why);
         Assert.True(saved != null, "the stopped scheduler saved the script: " + why);

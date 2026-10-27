@@ -123,24 +123,41 @@ namespace SLua.ScriptEngine
         /// The record in these bytes, or null with the reason in <paramref name="problem"/>: bytes that are not a record, a record of
         /// another layout, one that was cut short, and one that another engine wrote.
         /// </summary>
-        public static ScriptStateRecord Decode(byte[] data, string engine, out string problem)
+        public static ScriptStateRecord Decode(byte[] data, string engine, out string problem) =>
+            Inspect(data, engine, out ScriptStateRecord record, out problem) == RecordReading.Ok ? record : null;
+
+        /// <summary>What reading saved bytes found.</summary>
+        internal enum RecordReading
         {
+            Ok,
+
+            /// <summary>A record, but another engine wrote it: not this engine's to read or to throw away.</summary>
+            OtherEngine,
+
+            /// <summary>Not a record this engine can read: damaged, cut short, or of another layout.</summary>
+            Unreadable,
+        }
+
+        /// <summary>Reads the bytes and says why they could not be read, telling a record of another engine from bytes that are no record at all.</summary>
+        internal static RecordReading Inspect(byte[] data, string engine, out ScriptStateRecord record, out string problem)
+        {
+            record = null;
             problem = null;
             if (data == null || data.Length < Mark.Length + 4)
             {
                 problem = "it is too short to be a saved script record";
-                return null;
+                return RecordReading.Unreadable;
             }
             if (Encoding.ASCII.GetString(data, 0, Mark.Length) != Mark)
             {
                 problem = "it is not a saved script record";
-                return null;
+                return RecordReading.Unreadable;
             }
             int layout = BitConverter.ToInt32(data, Mark.Length);
             if (layout != FormatVersion)
             {
                 problem = $"it has layout {layout}, this engine reads layout {FormatVersion}";
-                return null;
+                return RecordReading.Unreadable;
             }
             try
             {
@@ -149,9 +166,9 @@ namespace SLua.ScriptEngine
                 if (owner != engine)
                 {
                     problem = $"it was written by the engine '{owner}', this is '{engine}'";
-                    return null;
+                    return RecordReading.OtherEngine;
                 }
-                var record = new ScriptStateRecord { Engine = owner };
+                record = new ScriptStateRecord { Engine = owner };
                 record.Language = (ScriptLanguage)r.ReadInt32();
                 record.Running = r.ReadBoolean();
                 record.Faulted = r.ReadBoolean();
@@ -192,12 +209,13 @@ namespace SLua.ScriptEngine
                 byte[] trailer = r.ReadBytes(Trailer.Length);
                 if (Encoding.ASCII.GetString(trailer) != Trailer)
                     throw new EndOfStreamException();
-                return record;
+                return RecordReading.Ok;
             }
             catch (Exception e) when (e is EndOfStreamException || e is IOException || e is ArgumentException || e is FormatException || e is OverflowException)
             {
+                record = null;
                 problem = "it was cut short or damaged (" + e.GetType().Name + ")";
-                return null;
+                return RecordReading.Unreadable;
             }
         }
 
