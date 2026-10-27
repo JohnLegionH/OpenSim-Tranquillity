@@ -60,6 +60,9 @@ namespace SLua.ScriptEngine
         public int StateSaveIntervalMs { get; private set; } = 2500;
         public bool CompileCache { get; private set; } = true;
 
+        /// <summary>Compile the script API's code on a background thread when the engine starts, once per process.</summary>
+        public bool WarmUp { get; private set; } = true;
+
         /// <summary>"auto", "always" or "never".</summary>
         public string ServiceCallDeferral { get; private set; } = "auto";
 
