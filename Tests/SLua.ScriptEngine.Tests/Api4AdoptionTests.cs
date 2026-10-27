@@ -71,6 +71,7 @@ public class Api4AdoptionTests
     public void ARefusalNamesThisEngineAndPhloxAndTellsTheScripterToRemoveTheHeader()
     {
         RealLibrary.Load();
+        using var noList = new NoHostList(); // the refusal is the library's answer when its host gave it no list of os, iw and bot functions
         CompileResult r = new ScriptCompiler().Compile("//SLua:lsl\n" + OsCallingLsl);
         Assert.True(r.Refused);
         string message = string.Join("\n", r.Errors.Select(e => e.Message));
@@ -85,6 +86,7 @@ public class Api4AdoptionTests
     public void ARefusalOfAScriptWithNoHeaderDoesNotTellTheScripterToRemoveOne()
     {
         RealLibrary.Load();
+        using var noList = new NoHostList();
         CompileResult r = new ScriptCompiler().Compile(OsCallingLsl);
         Assert.True(r.Refused);
         string message = string.Join("\n", r.Errors.Select(e => e.Message));

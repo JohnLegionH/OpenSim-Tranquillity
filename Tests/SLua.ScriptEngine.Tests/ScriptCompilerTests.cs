@@ -120,10 +120,12 @@ public class ScriptCompilerTests
     // ---- LSL that calls os*, iw* or bot* is refused, naming the functions and the Phlox engine ----
 
     [RequiresNativeFact]
-    public void LslCallingOsIwOrBotFunctionsIsRefusedNamingEachAndPhlox()
+    public void LslCallingOsIwOrBotFunctionsIsRefusedNamingEachAndPhloxWhenTheLibraryHasNoHostList()
     {
+        RealLibrary.Load();
+        using var noList = new NoHostList();
         string source = "default\n{\n    state_entry()\n    {\n        osGetGridName();\n        iwFoo();\n        botBar();\n    }\n}\n";
-        CompileResult r = Compile(source);
+        CompileResult r = new ScriptCompiler().Compile(source); // not Compile(): that loads the library again, which gives it the list
         Assert.False(r.Success);
         Assert.True(r.Refused);
         Assert.Null(r.Asset);
@@ -132,6 +134,20 @@ public class ScriptCompilerTests
         Assert.Contains("iwFoo", message);
         Assert.Contains("botBar", message);
         Assert.Contains("Phlox", message);
+    }
+
+    [RequiresNativeFact]
+    public void WithTheHostListAnOsFunctionCompilesAndAnUnknownOneIsAnOrdinaryErrorNamingIt()
+    {
+        OsBindings.ApplyHostList();
+        Assert.True(Compile("default\n{\n    state_entry()\n    {\n        osGetGridName();\n    }\n}\n").Success);
+
+        CompileResult r = Compile("default\n{\n    state_entry()\n    {\n        osGetGridName();\n        iwFoo();\n    }\n}\n");
+        Assert.False(r.Success);
+        Assert.False(r.Refused);
+        string message = string.Join("\n", r.Errors.Select(e => e.Message));
+        Assert.Contains("iwFoo", message);
+        Assert.DoesNotContain("osGetGridName", message);
     }
 
     [RequiresNativeFact]

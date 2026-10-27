@@ -121,13 +121,26 @@ public class ScriptLoaderTests
     }
 
     [RequiresNativeFact]
-    public void TheRefusalOfAnOsFunctionInLslReachesTheEditor()
+    public void TheRefusalOfAnOsFunctionInLslReachesTheEditorWhenTheLibraryHasNoHostList()
     {
-        using var rig = new Rig();
+        using var rig = new Rig(); // loads the library, which gives it the list
+        using var noList = new NoHostList();
         UUID item = UUID.Random();
         List<string> errors = rig.Load(item, "default\n{\n    state_entry()\n    {\n        osGetGridName();\n    }\n}\n");
         Assert.Contains("osGetGridName", Assert.Single(errors));
         Assert.Contains("Phlox", errors[0]);
+    }
+
+    [RequiresNativeFact]
+    public void TheErrorOfAnUnknownOsFunctionInLslReachesTheEditorWithItsName()
+    {
+        OsBindings.ApplyHostList();
+        using var rig = new Rig();
+        UUID item = UUID.Random();
+        List<string> errors = rig.Load(item, "default\n{\n    state_entry()\n    {\n        osGetGridName();\n        osNoSuchThing();\n    }\n}\n");
+        string error = Assert.Single(errors);
+        Assert.Contains("osNoSuchThing", error);
+        Assert.DoesNotContain("osGetGridName", error);
     }
 
     [RequiresNativeFact]
