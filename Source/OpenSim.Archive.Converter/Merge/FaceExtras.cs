@@ -148,12 +148,15 @@ public static class PbrFaceData
         }
     }
 
-    /// <summary>Reads a PBR material asset (glTF JSON): its alpha mode is blend, and the largest scale its KHR_texture_transform entries give.</summary>
+    /// <summary>Reads a PBR material asset (the viewer's map around glTF JSON, or bare glTF JSON): its alpha mode is blend, and the largest scale its KHR_texture_transform entries give.</summary>
     public static PbrMaterialInfo ReadMaterial(byte[] asset)
     {
+        byte[] text = PbrMaterialText.Unwrap(asset);
+        if (text == null)
+            return null;
         try
         {
-            using JsonDocument doc = JsonDocument.Parse(asset);
+            using JsonDocument doc = JsonDocument.Parse(text);
             bool blend = false;
             float scale = 1f;
             if (doc.RootElement.TryGetProperty("materials", out JsonElement materials) && materials.ValueKind == JsonValueKind.Array && materials.GetArrayLength() > 0)

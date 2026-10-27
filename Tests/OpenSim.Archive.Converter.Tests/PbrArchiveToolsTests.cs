@@ -141,11 +141,11 @@ public class PbrArchiveToolsTests
         string folder = Path.Combine(dir, "out", b.Folder);
         JsonElement manifest = JsonDocument.Parse(File.ReadAllText(Path.Combine(folder, "manifest.json"))).RootElement;
         JsonElement[] roles = manifest.GetProperty("textures").EnumerateArray().Where(t => t.GetProperty("role").GetString().StartsWith("pbr-")).ToArray();
-        Assert.Equal(new[] { "pbr-base-color", "pbr-emissive", "pbr-metallic-roughness", "pbr-normal" }, roles.Select(t => t.GetProperty("role").GetString()).Distinct().OrderBy(x => x));
+        Assert.Equal(new[] { "pbr-base-color", "pbr-emissive", "pbr-metallic-roughness", "pbr-normal", "pbr-occlusion" }, roles.Select(t => t.GetProperty("role").GetString()).Distinct().OrderBy(x => x));
         Assert.All(roles, t => Assert.Equal("embedded", t.GetProperty("status").GetString()));
 
         JsonElement root = GlbJson(File.ReadAllBytes(Path.Combine(folder, b.File)));
-        JsonElement m = root.GetProperty("materials").EnumerateArray().First(x => x.GetProperty("extras").TryGetProperty("pbr", out JsonElement p) && p.TryGetProperty("textures", out _));
+        JsonElement m = root.GetProperty("materials").EnumerateArray().First(x => x.TryGetProperty("emissiveTexture", out _) && x.GetProperty("extras").TryGetProperty("pbr", out _));
         Assert.True(m.GetProperty("pbrMetallicRoughness").TryGetProperty("baseColorTexture", out _));
         Assert.True(m.GetProperty("pbrMetallicRoughness").TryGetProperty("metallicRoughnessTexture", out _));
         Assert.True(m.TryGetProperty("normalTexture", out _));

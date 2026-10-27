@@ -8,6 +8,7 @@
 using System.Text;
 using System.Text.Json.Nodes;
 using OpenMetaverse.StructuredData;
+using OpenSim.Archive.Inspection;
 
 namespace OpenSim.Archive.Restore.Import;
 
@@ -44,34 +45,33 @@ public static class PbrMaterialAsset
 
     public static byte[] Build(PbrMaterialData d)
     {
+        // The viewer writes one image and one texture for each picture a material uses, in the order base colour, normal, metallic-roughness, emissive and
+        // occlusion, and none for a picture it does not use (LLGLTFMaterial::writeToModel and writeToTexture). Occlusion is the metallic-roughness picture.
         JsonArray images = new JsonArray(), textures = new JsonArray();
-        int Texture(Guid id)
+        JsonObject Texture(Guid id)
         {
-            string uri = id.ToString("D");
-            for (int i = 0; i < images.Count; i++)
-                if ((string)images[i]["uri"] == uri)
-                    return i;
-            images.Add(new JsonObject { ["uri"] = uri });
+            images.Add(new JsonObject { ["uri"] = id.ToString("D") });
             textures.Add(new JsonObject { ["source"] = images.Count - 1 });
-            return images.Count - 1;
+            return new JsonObject { ["index"] = textures.Count - 1 };
         }
         JsonObject pbr = new JsonObject
         {
             ["baseColorFactor"] = Array(d.BaseColor), ["metallicFactor"] = d.Metallic, ["roughnessFactor"] = d.Roughness
         };
-        if (d.BaseColorTexture != Guid.Empty)
-            pbr["baseColorTexture"] = new JsonObject { ["index"] = Texture(d.BaseColorTexture) };
-        if (d.MetalRoughTexture != Guid.Empty)
-            pbr["metallicRoughnessTexture"] = new JsonObject { ["index"] = Texture(d.MetalRoughTexture) };
         JsonObject material = new JsonObject { ["pbrMetallicRoughness"] = pbr };
-        // the viewer reads occlusion from the red channel of the metal-roughness picture, and takes an occlusion picture that is another texture as none
-        if (d.MetalRoughTexture != Guid.Empty)
-            material["occlusionTexture"] = new JsonObject { ["index"] = Texture(d.MetalRoughTexture) };
+        if (d.BaseColorTexture != Guid.Empty)
+            pbr["baseColorTexture"] = Texture(d.BaseColorTexture);
         if (d.NormalTexture != Guid.Empty)
-            material["normalTexture"] = new JsonObject { ["index"] = Texture(d.NormalTexture) };
+            material["normalTexture"] = Texture(d.NormalTexture);
+        if (d.MetalRoughTexture != Guid.Empty)
+            pbr["metallicRoughnessTexture"] = Texture(d.MetalRoughTexture);
         if (d.EmissiveTexture != Guid.Empty)
-            material["emissiveTexture"] = new JsonObject { ["index"] = Texture(d.EmissiveTexture) };
-        material["emissiveFactor"] = Array(d.Emissive);
+            material["emissiveTexture"] = Texture(d.EmissiveTexture);
+        if (d.MetalRoughTexture != Guid.Empty)
+            material["occlusionTexture"] = Texture(d.MetalRoughTexture);
+        // the viewer leaves the emissive factor out while it is the default (0, 0, 0)
+        if (d.Emissive.Any(v => v != 0f))
+            material["emissiveFactor"] = Array(d.Emissive);
         material["alphaMode"] = d.AlphaMode;
         material["alphaCutoff"] = d.AlphaCutoff;
         material["doubleSided"] = d.DoubleSided;
@@ -82,7 +82,8 @@ public static class PbrMaterialAsset
             root["textures"] = textures;
         }
         root["materials"] = new JsonArray(material);
-        OSDMap map = new OSDMap { ["version"] = Version, ["type"] = Type, ["data"] = root.ToJsonString() };
+        // the viewer's formatter writes a map's keys in sorted order (llsdserialize.cpp, LLSDBinaryFormatter::format_impl)
+        OSDMap map = new OSDMap { ["data"] = root.ToJsonString(), ["type"] = Type, ["version"] = Version };
         byte[] body = OSDParser.SerializeLLSDBinary(map, false);
         byte[] result = new byte[Header.Length + body.Length];
         Header.CopyTo(result, 0);
@@ -93,22 +94,11 @@ public static class PbrMaterialAsset
     /// <summary>The material in an asset, or null when the bytes are neither the viewer's map nor glTF text, or hold no material.</summary>
     public static PbrMaterialData Parse(byte[] asset)
     {
-        if (asset == null || asset.Length == 0 || asset.Length > 4 * 1024 * 1024)
-            return null;
         try
         {
-            string text;
-            int first = 0;
-            while (first < asset.Length && (asset[first] == ' ' || asset[first] == '\n' || asset[first] == '\r' || asset[first] == '\t'))
-                first++;
-            if (first < asset.Length && asset[first] == '{')
-                text = Encoding.UTF8.GetString(asset);
-            else
-            {
-                if (OSDParser.Deserialize(asset) is not OSDMap map || map["data"].Type != OSDType.String)
-                    return null;
-                text = map["data"].AsString();
-            }
+            byte[] text = PbrMaterialText.Unwrap(asset);
+            if (text == null)
+                return null;
             JsonNode root = JsonNode.Parse(text);
             JsonArray images = root?["images"] as JsonArray, textures = root?["textures"] as JsonArray;
             if (root?["materials"] is not JsonArray materials || materials.Count == 0 || materials[0] is not JsonObject m)

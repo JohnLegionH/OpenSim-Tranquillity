@@ -134,9 +134,10 @@ internal sealed class PbrMaterial
 
     public IEnumerable<UUID> All => new[] { BaseColor, Normal, MetallicRoughness, Emissive, Occlusion }.Where(u => u != UUID.Zero);
 
-    public static PbrMaterial Parse(byte[] text)
+    public static PbrMaterial Parse(byte[] asset)
     {
-        if (text == null || text.Length == 0 || text.Length > 4 * 1024 * 1024)
+        byte[] text = PbrMaterialText.Unwrap(asset);
+        if (text == null)
             return null;
         try
         {
@@ -428,7 +429,7 @@ internal static class FaceMaterials
                 AssetBlob blob = ctx.Assets?.Get(pbrId);
                 pbr["materialStatus"] = blob != null ? "read" : "missing-from-archive";
                 if (blob?.Bytes != null && blob.Bytes.Length <= 256 * 1024)
-                    pbr["material"] = Encoding.UTF8.GetString(blob.Bytes);
+                    pbr["material"] = Encoding.UTF8.GetString(PbrMaterialText.Unwrap(blob.Bytes) ?? blob.Bytes);
                 if (blob != null)
                     ctx.Copies[pbrId] = blob;
                 PbrMaterial parsed = blob != null ? PbrMaterial.Parse(blob.Bytes) : null;
