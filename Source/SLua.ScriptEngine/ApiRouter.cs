@@ -21,6 +21,9 @@ namespace SLua.ScriptEngine
     {
         private static readonly HashSet<string> s_served = new HashSet<string>(LlServed.Served, StringComparer.Ordinal);
 
+        /// <summary>Whether the function runs on the real API (a stub for now: nothing is known to be served).</summary>
+        internal static bool Serves(string function) => false;
+
         private ILSLSystemAPI m_real;
         private ILSLSystemAPI m_fallback;
 
