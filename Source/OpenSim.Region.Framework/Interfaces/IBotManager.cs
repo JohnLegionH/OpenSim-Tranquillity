@@ -93,6 +93,15 @@ namespace OpenSim.Region.Framework.Interfaces
             string outfitName, UUID scriptItemID, UUID ownerID, bool owned, bool senseAsAgent, out string reason);
 
         /// <summary>
+        /// Makes a bot in <paramref name="scene"/>, the region of the script that makes it, whether the owner is in that
+        /// region, in another one, or away. The look is the named outfit, else the owner's current look, else (owner
+        /// away) the owner's stored look with its worn items resolved to their assets. <paramref name="botDoor"/> is
+        /// true for botCreateBot, which also registers the creating script for bot_update, and false for osNpcCreate.
+        /// </summary>
+        UUID CreateBotInRegion(Scene scene, string firstName, string lastName, Vector3 startPos,
+            string outfitName, UUID scriptItemID, UUID ownerID, bool owned, bool senseAsAgent, bool botDoor, out string reason);
+
+        /// <summary>
         /// Makes a bot in <paramref name="scene"/> that wears <paramref name="appearance"/> (an outfit read from a
         /// notecard). The owner need not be in the region: nothing is read from the owner's presence.
         /// <paramref name="botDoor"/> is true for botCreateBot, which also registers the creating script for

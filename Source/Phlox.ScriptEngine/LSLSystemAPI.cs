@@ -13885,7 +13885,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (TryOutfitNotecard(notecard, out AvatarAppearance look))
                 id = mgr.CreateBotWithAppearance(World, firstname, lastname, position, look, m_itemID, m_host.OwnerID, owned, senseAsAgent, false, out reason);
             else
-                id = mgr.CreateBot(firstname, lastname, position, notecard ?? string.Empty, m_itemID, m_host.OwnerID, owned, senseAsAgent, out reason);
+                id = mgr.CreateBotInRegion(World, firstname, lastname, position, notecard ?? string.Empty, m_itemID, m_host.OwnerID, owned, senseAsAgent, false, out reason);
             if (reason != null) ShoutError("osNpcCreate: " + reason);
             return id.ToString();
         }
@@ -18105,17 +18105,9 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return World.RequestModuleInterface<IBotManager>();
         }
 
-        private BotPersistenceManager _botPersistence;
+        // The persistence manager of the region this script is in; each region keeps its own persistent bots.
         private BotPersistenceManager GetBotPersistence()
-        {
-            if (_botPersistence == null)
-            {
-                IBotManager mgr = GetBotManager();
-                if (mgr is BotManager bm)
-                    _botPersistence = bm.PersistenceManager;
-            }
-            return _botPersistence;
-        }
+            => GetBotManager() is BotManager bm ? bm.PersistenceFor(World) : null;
 
         public void botCreateBot(string first, string last, string outfit, Vector3 pos, int options)
         {
@@ -18130,7 +18122,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     string reason;
                     string botID = (TryOutfitNotecard(outfit, out AvatarAppearance look)
                         ? manager.CreateBotWithAppearance(World, first, last, pos, look, m_itemID, m_host.OwnerID, true, true, true, out reason)
-                        : manager.CreateBot(first, last, pos, outfit, m_itemID, m_host.OwnerID, out reason)).ToString();
+                        : manager.CreateBotInRegion(World, first, last, pos, outfit, m_itemID, m_host.OwnerID, true, true, true, out reason)).ToString();
                     if (reason == null)
                     {
                         retVal = botID;

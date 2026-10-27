@@ -154,7 +154,9 @@ namespace OpenSim.Region.OptionalModules.World.NPC
         private INPCModule m_npcModule;
         private bool m_enabled;
         private IConfigSource m_config;
-        private BotPersistenceManager m_persistence;
+        // Each region keeps its own persistent bots in its own database, so each has its own persistence manager.
+        private readonly Dictionary<Scene, BotPersistenceManager> m_persistence = new Dictionary<Scene, BotPersistenceManager>();
+        private bool m_consoleCommandsRegistered;
 
         // Navigation arrival poll — supplies the "arrived" trigger INPCModule lacks, so
         // waypoints advance and bot_update (BOT_MOVE_COMPLETE) fires when a path finishes.
@@ -171,10 +173,32 @@ namespace OpenSim.Region.OptionalModules.World.NPC
             scriptEvents.collision_start | scriptEvents.collision | scriptEvents.collision_end |
             scriptEvents.land_collision_start | scriptEvents.land_collision | scriptEvents.land_collision_end;
 
+        /// <summary>The persistence manager of one region (null when the region has not loaded, or this module is off).</summary>
+        public BotPersistenceManager PersistenceFor(Scene scene)
+        {
+            if (scene == null) return null;
+            lock (m_persistence)
+                return m_persistence.TryGetValue(scene, out BotPersistenceManager pm) ? pm : null;
+        }
+
         /// <summary>
-        /// Public accessor for script API to reach persistence manager.
+        /// The persistence manager of the first region loaded. For a caller that has only one region; one that has a
+        /// region in hand asks <see cref="PersistenceFor"/>.
         /// </summary>
-        public BotPersistenceManager PersistenceManager => m_persistence;
+        public BotPersistenceManager PersistenceManager
+        {
+            get
+            {
+                lock (m_scenes)
+                    return m_scenes.Count > 0 ? PersistenceFor(m_scenes[0]) : null;
+            }
+        }
+
+        private List<BotPersistenceManager> AllPersistence()
+        {
+            lock (m_persistence)
+                return m_persistence.Values.ToList();
+        }
 
         #region ISharedRegionModule
 
@@ -214,23 +238,29 @@ namespace OpenSim.Region.OptionalModules.World.NPC
                 return;
             }
 
-            // Initialize bot persistence
-            m_persistence = new BotPersistenceManager();
-            m_persistence.Initialize(scene, this, m_config);
+            // Initialize bot persistence: this region's own, with its own database
+            var persistence = new BotPersistenceManager();
+            persistence.Initialize(scene, this, m_config);
+            lock (m_persistence) m_persistence[scene] = persistence;
 
             // Load and respawn persistent bots (staggered)
-            m_persistence.LoadPersistentBots();
-            m_persistence.StartTimers();
+            persistence.LoadPersistentBots();
+            persistence.StartTimers();
 
-            // Register console commands
-            RegisterConsoleCommands(scene);
+            // Register console commands (once; they act on every region)
+            if (!m_consoleCommandsRegistered)
+            {
+                m_consoleCommandsRegistered = true;
+                RegisterConsoleCommands(scene);
+            }
         }
 
         public void RemoveRegion(Scene scene)
         {
             if (!m_enabled) return;
-            // Save persistent bot state before cleanup
-            m_persistence?.OnRegionShutdown();
+            // Save this region's persistent bot state before cleanup
+            PersistenceFor(scene)?.OnRegionShutdown();
+            lock (m_persistence) m_persistence.Remove(scene);
             // Clean up bots on this scene
             lock (m_bots)
             {
@@ -430,7 +460,11 @@ namespace OpenSim.Region.OptionalModules.World.NPC
             return botID;
         }
 
-        /// <summary>The osNpcCreate door. Same bot, same BotData; ownership and sensing per the OS_NPC_* flags.</summary>
+        /// <summary>
+        /// The osNpcCreate door. Same bot, same BotData; ownership and sensing per the OS_NPC_* flags. For a caller with
+        /// no region of its own: the bot is made in the region the owner is in (the first region if the owner is in
+        /// none). A script's call goes through <see cref="CreateBotInRegion"/>.
+        /// </summary>
         public UUID CreateBot(string firstName, string lastName, Vector3 startPos,
             string outfitName, UUID scriptItemID, UUID ownerID, bool owned, bool senseAsAgent, out string reason)
         {
@@ -443,6 +477,23 @@ namespace OpenSim.Region.OptionalModules.World.NPC
 
             return CreateBotIn(ownerScene, UUID.Zero, firstName, lastName, startPos, outfitName, scriptItemID, ownerID,
                 owned, senseAsAgent, out reason);
+        }
+
+        public UUID CreateBotInRegion(Scene scene, string firstName, string lastName, Vector3 startPos,
+            string outfitName, UUID scriptItemID, UUID ownerID, bool owned, bool senseAsAgent, bool botDoor, out string reason)
+        {
+            reason = null;
+            if (m_npcModule == null) { reason = "NPC module not available"; return UUID.Zero; }
+            if (scene == null) { reason = "No region to make the bot in"; return UUID.Zero; }
+
+            // The bot is made in the region of the script that makes it, as Halcyon's per-region bot manager made it,
+            // whether the owner is in that region, in another one, or away.
+            UUID id = CreateBotIn(scene, UUID.Zero, firstName, lastName, startPos, outfitName, scriptItemID, ownerID,
+                owned, senseAsAgent, out reason);
+            // The bot* door registers the creating script for bot_update, as Halcyon's BotManager.CreateBot did.
+            if (botDoor && id != UUID.Zero && scriptItemID != UUID.Zero)
+                BotRegisterForPathUpdateEvents(id, scriptItemID, ownerID);
+            return id;
         }
 
         public UUID CreateBotWithAppearance(Scene scene, string firstName, string lastName, Vector3 startPos,
@@ -511,6 +562,42 @@ namespace OpenSim.Region.OptionalModules.World.NPC
             return false;
         }
 
+        // The owner's presence where the owner is a root agent, in any region of this simulator; null if away.
+        private ScenePresence FindRootPresence(UUID agentID)
+        {
+            lock (m_scenes)
+            {
+                foreach (Scene s in m_scenes)
+                {
+                    ScenePresence sp = s.GetScenePresence(agentID);
+                    if (sp != null && !sp.IsChildAgent) return sp;
+                }
+            }
+            return null;
+        }
+
+        // A stored appearance can name a worn item without its asset. The asset is what the region bakes from and what
+        // a viewer fetches, so it is read from the owner's inventory, as the avatar factory does when it saves a look.
+        // An item the inventory cannot give is left as it is.
+        private static void ResolveWearables(Scene scene, UUID ownerID, AvatarAppearance appearance)
+        {
+            IInventoryService inventory = scene.InventoryService;
+            if (inventory == null) return;
+
+            AvatarWearable[] wearables = appearance.Wearables;
+            for (int type = 0; type < wearables.Length; type++)
+            {
+                for (int i = 0; i < wearables[type].Count; i++)
+                {
+                    WearableItem worn = wearables[type][i];
+                    if (worn.ItemID.IsZero() || !worn.AssetID.IsZero()) continue;
+                    InventoryItemBase item = inventory.GetItem(ownerID, worn.ItemID);
+                    if (item != null && !item.AssetID.IsZero())
+                        wearables[type].Add(worn.ItemID, item.AssetID);
+                }
+            }
+        }
+
         // Makes the bot in the given scene; agentID is the key to give it, or UUID.Zero for a new random key.
         private UUID CreateBotIn(Scene ownerScene, UUID agentID, string firstName, string lastName, Vector3 startPos,
             string outfitName, UUID scriptItemID, UUID ownerID, bool owned, bool senseAsAgent, out string reason)
@@ -535,15 +622,15 @@ namespace OpenSim.Region.OptionalModules.World.NPC
 
             if (appearance == null)
             {
-                // Clone the owner's current appearance -- must be root agent
-                ScenePresence ownerSP = ownerScene.GetScenePresence(ownerID);
-                if (ownerSP != null && !ownerSP.IsChildAgent)
+                // Clone the owner's current appearance -- must be a root agent, in this region or another one
+                ScenePresence ownerSP = FindRootPresence(ownerID);
+                if (ownerSP != null)
                 {
                     appearance = new AvatarAppearance(ownerSP.Appearance, true);
                 }
                 else
                 {
-                    // Owner is a child agent or not present -- try avatar service
+                    // Owner is away -- the stored appearance, with the worn items resolved to their assets
                     IAvatarService avatarService = ownerScene.RequestModuleInterface<IAvatarService>();
                     if (avatarService != null)
                     {
@@ -553,6 +640,7 @@ namespace OpenSim.Region.OptionalModules.World.NPC
                     }
                     if (appearance == null)
                         appearance = new AvatarAppearance();
+                    ResolveWearables(ownerScene, ownerID, appearance);
                 }
             }
 
@@ -608,8 +696,8 @@ namespace OpenSim.Region.OptionalModules.World.NPC
             lock (m_bots)
                 m_bots.Remove(botID);
 
-            // Notify persistence manager
-            m_persistence?.OnBotRemoved(botID);
+            // Notify the persistence manager of the region the bot was in
+            PersistenceFor(scene)?.OnBotRemoved(botID);
         }
 
         public bool IsBot(UUID userID)
@@ -1862,25 +1950,26 @@ namespace OpenSim.Region.OptionalModules.World.NPC
             MainConsole.Instance.Commands.AddCommand(
                 "BotPersistence", true, "list persistent bots",
                 "list persistent bots",
-                "List all active persistent bots in this region",
+                "List the active persistent bots of every region",
                 HandleListPersistentBots);
 
             MainConsole.Instance.Commands.AddCommand(
                 "BotPersistence", true, "clear persistent bots",
                 "clear persistent bots [owner_uuid]",
-                "Clear all persistent bots, or only those owned by owner_uuid",
+                "Clear the persistent bots of every region, or only those owned by owner_uuid",
                 HandleClearPersistentBots);
         }
 
         private void HandleListPersistentBots(string module, string[] args)
         {
-            if (m_persistence == null)
+            var regions = AllPersistence();
+            if (regions.Count == 0)
             {
                 MainConsole.Instance.Output("Bot persistence is not enabled.");
                 return;
             }
 
-            var bots = m_persistence.ListActiveBots();
+            var bots = regions.SelectMany(pm => pm.ListActiveBots()).ToList();
             if (bots.Count == 0)
             {
                 MainConsole.Instance.Output("No active persistent bots.");
@@ -1907,7 +1996,8 @@ namespace OpenSim.Region.OptionalModules.World.NPC
 
         private void HandleClearPersistentBots(string module, string[] args)
         {
-            if (m_persistence == null)
+            var regions = AllPersistence();
+            if (regions.Count == 0)
             {
                 MainConsole.Instance.Output("Bot persistence is not enabled.");
                 return;
@@ -1915,12 +2005,12 @@ namespace OpenSim.Region.OptionalModules.World.NPC
 
             if (args.Length > 3 && UUID.TryParse(args[3], out UUID ownerID))
             {
-                int count = m_persistence.ClearOwnerPersistentBots(ownerID);
+                int count = regions.Sum(pm => pm.ClearOwnerPersistentBots(ownerID));
                 MainConsole.Instance.Output($"Cleared {count} persistent bots for owner {ownerID}");
             }
             else
             {
-                int count = m_persistence.ClearAllPersistentBots();
+                int count = regions.Sum(pm => pm.ClearAllPersistentBots());
                 MainConsole.Instance.Output($"Cleared {count} persistent bots");
             }
         }
