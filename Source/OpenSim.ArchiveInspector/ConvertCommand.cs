@@ -126,8 +126,8 @@ Exit codes: 0 the check passed, 1 the parity check failed or a mesh failed its v
             if (reportDir != null)
             {
                 Directory.CreateDirectory(reportDir);
-                File.WriteAllText(Path.Combine(reportDir, "convert-report.txt"), text);
-                File.WriteAllText(Path.Combine(reportDir, "convert-report.json"), result.ToJson());
+                ReportFile.Write(Path.Combine(reportDir, "convert-report.txt"), text);
+                ReportFile.Write(Path.Combine(reportDir, "convert-report.json"), result.ToJson());
             }
             return result.Pass ? 0 : 1;
         }
@@ -155,7 +155,7 @@ Exit codes: 0 the check passed, 1 the parity check failed or a mesh failed its v
             if (reportDir != null)
             {
                 Directory.CreateDirectory(reportDir);
-                File.WriteAllText(Path.Combine(reportDir, "merge-report.txt"), text + Environment.NewLine + MergePlanFiles.ReportText(result.Plan));
+                ReportFile.Write(Path.Combine(reportDir, "merge-report.txt"), text + Environment.NewLine + MergePlanFiles.ReportText(result.Plan));
             }
             return 0;
         }
@@ -178,7 +178,7 @@ Exit codes: 0 the check passed, 1 the parity check failed or a mesh failed its v
             if (reportDir != null)
             {
                 Directory.CreateDirectory(reportDir);
-                File.WriteAllText(Path.Combine(reportDir, "merge-report.txt"), text);
+                ReportFile.Write(Path.Combine(reportDir, "merge-report.txt"), text);
             }
             return 0;
         }

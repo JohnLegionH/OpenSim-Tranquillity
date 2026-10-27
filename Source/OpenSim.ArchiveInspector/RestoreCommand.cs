@@ -132,10 +132,10 @@ Exit codes: 0 done and the new archive passed the check against the original; 1 
                 string dir = Path.GetDirectoryName(Path.GetFullPath(reportPath));
                 if (!string.IsNullOrEmpty(dir))
                     Directory.CreateDirectory(dir);
-                File.WriteAllText(reportPath, text);
-                File.WriteAllText(reportPath + ".json", result.ToJson());
+                ReportFile.Write(reportPath, text);
+                ReportFile.Write(reportPath + ".json", result.ToJson());
                 if (result.PlanJson != null)
-                    File.WriteAllText(reportPath + ".plan.json", result.PlanJson);
+                    ReportFile.Write(reportPath + ".plan.json", result.PlanJson);
             }
             return result.ExitCode;
         }
