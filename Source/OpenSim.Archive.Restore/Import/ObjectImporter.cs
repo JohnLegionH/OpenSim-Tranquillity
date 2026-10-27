@@ -246,7 +246,7 @@ public static class ObjectImporter
 
     // ------------------------------------------------------------------ the folder and the files
 
-    private static string FindBaseName(string folder, string requested)
+    internal static string FindBaseName(string folder, string requested)
     {
         if (!string.IsNullOrWhiteSpace(requested))
             return requested;
@@ -261,7 +261,7 @@ public static class ObjectImporter
         throw new ImportException(plain.Count == 0 ? "the folder has no .glb model files" : "the folder holds several models (" + string.Join(", ", plain) + "); name the model with --base");
     }
 
-    private static (GlbFile File, GlbNode Node) ReadModel(string path, string display, List<string> notes)
+    internal static (GlbFile File, GlbNode Node) ReadModel(string path, string display, List<string> notes)
     {
         GlbFile file;
         try { file = GlbFile.Read(File.ReadAllBytes(path)); }
@@ -284,11 +284,11 @@ public static class ObjectImporter
         (n.Translation != null && n.Translation.Any(v => Math.Abs(v) > 1e-6f)) ||
         (n.Rotation != null && n.Rotation.Length >= 3 && (Math.Abs(n.Rotation[0]) > 1e-6f || Math.Abs(n.Rotation[1]) > 1e-6f || Math.Abs(n.Rotation[2]) > 1e-6f));
 
-    private static string MaterialName(GlbFile file, int index) =>
+    internal static string MaterialName(GlbFile file, int index) =>
         index < 0 || index >= file.Materials.Count ? string.Empty : string.IsNullOrEmpty(file.Materials[index].Name) ? "material " + index.ToString(Inv) : file.Materials[index].Name;
 
     /// <summary>A lower level with its triangles moved to the face (the slot) of the full mesh that has the same material name.</summary>
-    private static PartGeometry PerSlot(GlbFile file, GlbNode node, string display, string highDisplay, string[] slotNames)
+    internal static PartGeometry PerSlot(GlbFile file, GlbNode node, string display, string highDisplay, string[] slotNames)
     {
         PartGeometry byPrimitive = PartGeometry.FromNode(file, node, node.Scale, true);
         List<GlbPrimitive> primitives = file.Meshes[node.Mesh].Primitives;
@@ -313,7 +313,7 @@ public static class ObjectImporter
     }
 
     /// <summary>The box around the triangles in the viewer axes (glTF x, y, z are the viewer x, -z, y): its size, never under 1 cm, and its centre.</summary>
-    private static (Vector3 Size, Vector3 Centre) Box(PartGeometry g)
+    internal static (Vector3 Size, Vector3 Centre) Box(PartGeometry g)
     {
         float[] min = { float.MaxValue, float.MaxValue, float.MaxValue }, max = { float.MinValue, float.MinValue, float.MinValue };
         foreach (List<float[]> tris in g.Faces.Values)

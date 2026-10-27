@@ -16,7 +16,7 @@ namespace OpenSim.ArchiveInspector;
 internal static class ImportCommand
 {
     public const string Usage =
-@"Usage: OpenSim.ArchiveInspector oar-import <folder> --out <new.oar> --avatar <uuid> [--name <text>] [--description <text>] [--base <name>] [--position <x,y,z>] [--check <work folder>]
+@"Usage: OpenSim.ArchiveInspector oar-import <folder> --out <new.oar> --avatar <uuid> [--name <text>] [--description <text>] [--base <name>] [--position <x,y,z>] [--check <folder>]
 
 Writes an archive that holds one mesh object, made from the .glb files in <folder> (the files a mesh tool writes for an upload):
   <base>.glb          the full mesh (high level of detail); one face for each material, and the pictures of the materials inside the file
