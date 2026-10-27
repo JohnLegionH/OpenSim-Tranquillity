@@ -126,6 +126,12 @@ namespace SLua.ScriptEngine
 
         internal SLuaSettings Settings => m_settings;
 
+        /// <summary>The host side of the script functions for the region; null before the region is added.</summary>
+        internal EngineHostServices HostServices => null;
+
+        /// <summary>The script functions of one script: the real LSLSystemAPI for the functions the engine's host serves, the fallback for the rest.</summary>
+        internal Phlox.ScriptEngine.ILSLSystemAPI CreateScriptApi(SchedulerScript script, UUID itemId, uint localId, Phlox.ScriptEngine.ILSLSystemAPI fallback) => fallback;
+
         /// <summary>Where the engine sets each script's event flags on its prim; tests replace it before the region is added.</summary>
         internal IPrimEventFlags PrimFlags { get; set; }
 
