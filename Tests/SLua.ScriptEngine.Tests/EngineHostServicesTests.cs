@@ -122,11 +122,11 @@ public class EngineHostServicesTests
     }
 
     [Fact]
-    public void TheServicesOnlyPhloxOwnsAreAbsent()
+    public void TheServicesTheEngineHasNotYetBeenGivenAreAbsentAndTheOsslGateIsPresent()
     {
         var host = new EngineHostServices(Settings(), null, null, null, new EngineHostBackend());
 
-        Assert.Null(host.Ossl);
+        Assert.NotNull(host.Ossl);
         Assert.Null(host.ListenManager);
         Assert.NotNull(host.StateManager);
         Assert.Null(host.AsyncCommands);

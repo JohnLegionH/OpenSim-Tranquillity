@@ -132,15 +132,18 @@ namespace SLua.ScriptEngine
         /// signature from the call's arguments. With <paramref name="serviceLane"/>, a function with a long-running or
         /// service-reaching signature is registered as a pausing call whose work runs on the context's service lane while the
         /// script waits (the signature that runs decides, per call); every other function runs on the script worker. With
-        /// <paramref name="unavailable"/>, the functions in <see cref="Unavailable"/> answer with an error instead.
+        /// <paramref name="unavailable"/>, the functions in <see cref="Unavailable"/> answer with an error instead, and so do the
+        /// functions named in <paramref name="refuse"/>.
         /// </summary>
         public static void Register(Vm vm, Func<SchedulerScript, ScriptContext> contextOf, bool serviceLane = false, bool unavailable = false, IEnumerable<string> refuse = null)
         {
-            var refused = unavailable ? new HashSet<string>(Unavailable, StringComparer.Ordinal) : null;
+            var refused = new HashSet<string>(unavailable ? Unavailable : Array.Empty<string>(), StringComparer.Ordinal);
+            if (refuse != null)
+                refused.UnionWith(refuse);
             foreach (OsFunction f in All)
             {
                 OsFunction function = f;
-                if (refused != null && refused.Contains(function.ApiName))
+                if (refused.Contains(function.ApiName))
                 {
                     vm.Register(function.Table, function.Name, (tag, args) => throw new FunctionUnavailableException(function.ApiName));
                     continue;

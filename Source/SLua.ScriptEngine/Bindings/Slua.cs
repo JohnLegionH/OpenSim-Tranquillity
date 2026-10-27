@@ -285,6 +285,17 @@ static unsafe class HostEntry
     // arena per thread, emptied at the start of the next call on that thread, is enough.
     [ThreadStatic] static Arena _arena;
 
+    /// <summary>
+    /// The text of a call the script functions refused, as Phlox gives it to the script's owner (an OSSL permission denial is a
+    /// VMException whose message is the whole text), or null for any other failure.
+    /// </summary>
+    static string ScriptDenial(Exception e)
+    {
+        for (Exception x = e; x != null; x = x.InnerException)
+            if (x is InWorldz.Phlox.VM.VMException) return x.Message;
+        return null;
+    }
+
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(System.Runtime.CompilerServices.CallConvCdecl) })]
     public static int Call(void* user, int fnId, long tag, Native.SluaValue* args, int nargs, Native.SluaValue* rets, int maxRets)
     {
@@ -309,7 +320,7 @@ static unsafe class HostEntry
             try
             {
                 // A function the engine cannot run yet says so in its own words; any other failure carries its type.
-                string text = e is SLua.ScriptEngine.FunctionUnavailableException ? e.Message : "host function failed: " + e.GetType().Name + ": " + e.Message;
+                string text = e is SLua.ScriptEngine.FunctionUnavailableException ? e.Message : ScriptDenial(e) ?? "host function failed: " + e.GetType().Name + ": " + e.Message;
                 var m = new Value(ValueType.String, 0, 0, text);
                 Native.FromManaged(m, &rets[0], _arena ??= new Arena());
             }

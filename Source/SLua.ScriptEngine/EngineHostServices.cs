@@ -24,7 +24,7 @@ namespace SLua.ScriptEngine
     /// call's result). The settings come from <see cref="SLuaSettings"/>; the calls are served by the
     /// <see cref="EngineHostBackend"/> the engine fills in.
     ///
-    /// The services the Phlox engine owns and the SLua engine does not have yet (the OSSL gate) are null, which the interface allows;
+    /// The services the Phlox engine owns and the SLua engine does not have are null, which the interface allows;
     /// the script functions that need one are the ones not yet served by the real API.
     /// </summary>
     internal sealed class EngineHostServices : IScriptHostServices
@@ -39,6 +39,8 @@ namespace SLua.ScriptEngine
             ConfigSource = config;
             ScriptModule = module;
             m_backend = backend ?? new EngineHostBackend();
+            // The OSSL permission gate is Phlox's, reading the same [OSSL] keys; with no [OSSL] section it reads this engine's own.
+            Ossl = new OsslGate(config, EngineIdentity.ConfigSection);
         }
 
         public string Name => EngineIdentity.EngineName;
@@ -74,7 +76,7 @@ namespace SLua.ScriptEngine
         public PhloxNotecardCache NotecardCache { get; } = new PhloxNotecardCache();
         public int PhysicsFrameTimeAvg => m_backend.PhysicsFrameTimeAvg?.Invoke() ?? 0;
 
-        public IScriptOsslChecks Ossl => null;
+        public IScriptOsslChecks Ossl { get; }
         /// <summary>The engine's chat: its listen registry and the way to the region's world communication; set once the region is added.</summary>
         internal EngineChat Chat { get; set; }
 
