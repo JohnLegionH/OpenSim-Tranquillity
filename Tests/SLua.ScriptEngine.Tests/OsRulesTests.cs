@@ -239,6 +239,25 @@ public class OsRulesTests
         Assert.DoesNotContain(fake.Calls, c => c.Name == "osSHA256");
     }
 
+    [Fact]
+    public void TheRouterSendsOsIwAndBotCallsToTheRealApiAndKeepsTheFallbackForTheFunctionsTheEngineCannotServe()
+    {
+        var (real, realFake) = FakeLslApi.Create();
+        var (fallback, fallbackFake) = FakeLslApi.Create();
+        ILSLSystemAPI router = ApiRouter.Create(real, fallback);
+
+        router.osSHA256("abc");
+        router.iwFormatTime(0, 1, "%H");
+        router.botIsBot("k");
+        router.NeedsService("osKey2Name", new object[] { "k" });
+        router.llStringLength("x"); // an ll function that is served still goes the same way
+
+        Assert.Equal(new[] { "osSHA256", "iwFormatTime", "botIsBot", "NeedsService", "llStringLength" }, realFake.Calls.Select(c => c.Name));
+        Assert.Empty(fallbackFake.Calls);
+        foreach (string name in OsBindings.Unavailable)
+            Assert.False(ApiRouter.Serves(name), name + " cannot be served and must go to the fallback");
+    }
+
     [RequiresNativeFact]
     public void PositionsAreNotShiftedForAnOsFunctionWhereTheLlTableShiftsThem()
     {
