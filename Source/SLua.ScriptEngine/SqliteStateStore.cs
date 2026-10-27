@@ -23,6 +23,16 @@ namespace SLua.ScriptEngine
         public UUID ItemId { get; }
     }
 
+    /// <summary>Where the scheduler hands the state it captures, and the rows it asks to be taken out of use.</summary>
+    internal interface IScriptStateSink
+    {
+        /// <summary>Queues the state for writing; the caller does not wait for the database.</summary>
+        void Save(UUID itemId, UUID assetId, byte[] state);
+
+        /// <summary>Moves the item's row out of use with the reason (the script starts fresh and the old state stays on record).</summary>
+        void Reject(UUID itemId, string reason);
+    }
+
     /// <summary>
     /// The engine's own database of saved script state: one SQLite file in write-ahead mode, kept apart from every other engine's
     /// (a script that moves to another engine keeps its row here untouched), with a row per item and engine. The design follows what
@@ -32,7 +42,7 @@ namespace SLua.ScriptEngine
     /// "no state", because a script started fresh over a row it could not read destroys that row at its next save.
     /// A row that cannot be used is moved to a second table with its reason, never overwritten.
     /// </summary>
-    internal sealed class SqliteStateStore : ISavedStateStore, IDisposable
+    internal sealed class SqliteStateStore : ISavedStateStore, IScriptStateSink, IDisposable
     {
         // Every write of every store in the process takes this lock, so there is one writer at a time.
         private static readonly object s_writerLock = new object();

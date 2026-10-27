@@ -91,6 +91,15 @@ namespace SLua.ScriptEngine
 
         public ISchedulerClock Clock { get; set; } = new MonotonicClock();
 
+        /// <summary>Where a script's saved state goes; null saves nothing.</summary>
+        public IScriptStateSink StateSink { get; set; }
+
+        /// <summary>The engine that owns the records the scheduler writes.</summary>
+        public string EngineName { get; set; } = EngineIdentity.EngineName;
+
+        /// <summary>How often the scripts that changed are saved, in milliseconds on the scheduler's clock.</summary>
+        public int StateSaveIntervalMs { get; set; } = 2500;
+
         /// <summary>False: no threads are started and the caller pumps <see cref="SLuaScheduler.DoWork"/> (tests).</summary>
         public bool RunThreads { get; set; } = true;
 

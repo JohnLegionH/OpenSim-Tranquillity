@@ -8,6 +8,8 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
+using InWorldz.Phlox.VM;
+using OpenMetaverse;
 using SLua.ScriptEngine.Bindings;
 
 namespace SLua.ScriptEngine
@@ -101,6 +103,22 @@ namespace SLua.ScriptEngine
 
         public FaultKind Fault { get; internal set; }
         public string FaultMessage { get; internal set; }
+
+        /// <summary>The inventory item and asset the script's saved state is kept under; empty for a script that saves nothing.</summary>
+        internal UUID ItemId;
+        internal UUID AssetId;
+
+        /// <summary>The saved state to restore when the script starts (set by the engine before the start); null for a fresh start.</summary>
+        internal ScriptStateRecord RestoreRecord;
+
+        /// <summary>Why the script was held and not started: its saved state could not be read. A held script saves nothing, so its row stays as it is.</summary>
+        internal string StateHeld;
+
+        /// <summary>The script's listens, for the record the scheduler writes; null for a script with none to save.</summary>
+        internal Func<ActiveListen[]> ListenSnapshot;
+
+        /// <summary>Given the listens of a restored script before it runs, so the engine can register them again.</summary>
+        internal Action<ActiveListen[]> ListenRestore;
 
         /// <summary>The timer interval in force, seconds; 0 for none.</summary>
         public double TimerInterval { get; internal set; }
