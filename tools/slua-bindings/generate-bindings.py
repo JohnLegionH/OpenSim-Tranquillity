@@ -535,6 +535,10 @@ namespace SLua.ScriptEngine
     out.append(string_array("NeedsCompilerChange", "The os, iw and bot members of the interface. Not bound: the compiler does not know them yet.", compiler))
     out.append("\n")
     out.append(string_array("Unplaced", "Bound functions whose delay the generator could not read, with the class they were given.", unplaced))
+    out.append("\n")
+    out.append(string_array("Adapted", "Runtime functions bound through an adapter, each with the source of the conversion.", []))
+    out.append("\n")
+    out.append(string_array("PhloxGaps", "Runtime functions Phlox does not implement as the runtime defines them, each with the reason.", []))
     out.append("    }\n}\n")
     write(out_dir, "LlCoverage.g.cs", "".join(out))
 

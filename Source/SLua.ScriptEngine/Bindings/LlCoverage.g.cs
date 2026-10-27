@@ -1069,5 +1069,15 @@ namespace SLua.ScriptEngine
             "llShout: its delay is applied inside ChatSleep, which depends on a setting or a condition (Unplaced)",
             "llWhisper: its delay is applied inside ChatSleep, which depends on a setting or a condition (Unplaced)",
         };
+
+        /// <summary>Runtime functions bound through an adapter, each with the source of the conversion.</summary>
+        internal static readonly string[] Adapted = new string[]
+        {
+        };
+
+        /// <summary>Runtime functions Phlox does not implement as the runtime defines them, each with the reason.</summary>
+        internal static readonly string[] PhloxGaps = new string[]
+        {
+        };
     }
 }
