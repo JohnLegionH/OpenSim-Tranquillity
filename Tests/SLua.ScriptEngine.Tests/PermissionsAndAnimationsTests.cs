@@ -130,6 +130,34 @@ public class PermissionsAndAnimationsTests
     }
 
     [RequiresNativeFact]
+    public void ASitterIsGrantedTheSittersImplicitSetAndPlaysAnAnimationButTheAttachBitIsNotInIt()
+    {
+        using var rig = new EngineRig(productionFunctions: true);
+        ScenePresence sitter = SceneHelpers.AddScenePresence(rig.Scene, UUID.Random());
+        sitter.AbsolutePosition = rig.Object.AbsolutePosition + new Vector3(1, 1, 0);   // within sit range
+        sitter.HandleAgentRequestSit(sitter.ControllingClient, sitter.UUID, rig.Object.RootPart.UUID, Vector3.Zero);
+        Assert.True(rig.Object.HasSittingAvatar(sitter.UUID), "the avatar did not sit");
+        UUID animation = UUID.Random();
+        rig.Object.RootPart.Inventory.AddInventoryItem(new TaskInventoryItem
+        {
+            ItemID = UUID.Random(), AssetID = animation, Name = "wave", OwnerID = Owner,
+            Type = (int)OpenMetaverse.AssetType.Animation, InvType = (int)OpenMetaverse.InventoryType.Animation,
+        }, false);
+        const int sitterSet = TakeControls | TriggerAnimation | 0x400 | 0x800;
+        UUID granted = rig.Rez(Slua(
+            "LLEvents:on('run_time_permissions', function(p) ossl.Mark('perm=' .. p) ll.StartAnimation('wave') end)\n" +
+            "ll.RequestPermissions('" + sitter.UUID + "', " + sitterSet + ")\n"));
+        UUID attach = rig.Rez(Slua(PermHandler + "ll.RequestPermissions('" + sitter.UUID + "', " + Attach + ")\nossl.Mark('asked')\n"));
+
+        Heard(rig, granted, "perm=" + sitterSet);
+        Assert.True(SchedulerHarness.WaitFor(() => sitter.Animator.Animations.HasAnimation(animation)), "the animation never played: " + Diag(rig, granted));
+        Heard(rig, attach, "asked");
+        Thread.Sleep(600);   // a real wait: it proves no grant arrives for a bit a sitter is not given
+        Assert.DoesNotContain(rig.MarksOf(attach), m => m.StartsWith("perm="));
+        Assert.Equal(0, rig.ItemOf(attach).PermsMask);
+    }
+
+    [RequiresNativeFact]
     public void AResetEndsTheGrant()
     {
         using var rig = new EngineRig(productionFunctions: true);
