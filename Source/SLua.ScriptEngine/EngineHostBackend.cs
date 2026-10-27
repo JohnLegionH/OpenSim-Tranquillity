@@ -28,6 +28,9 @@ namespace SLua.ScriptEngine
         public Action<UUID> RequestParcelCheck;
         public Func<UUID, float> EventQueueFreeSpacePercentage;
 
+        /// <summary>Average of the region's last physics frame times in milliseconds; null answers 0.</summary>
+        public Func<int> PhysicsFrameTimeAvg;
+
         /// <summary>Where a call's return goes when it arrives outside the call's own thread (a sequenced return from the service lane).</summary>
         public Action<UUID, object, int, int> SyscallReturn;
     }

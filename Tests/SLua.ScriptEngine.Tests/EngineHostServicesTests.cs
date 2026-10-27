@@ -245,6 +245,7 @@ public class EngineHostServicesTests
     [RequiresNativeFact]
     public void EachScriptHasItsOwnRuntimeStateAndListsTheEventsItHandles()
     {
+        Assert.True(NativeRuntime.Load(new NativeRuntimeOptions()).Ok);
         var one = new SchedulerScript(1, 0, new byte[0], ScriptLanguage.Slua);
         var two = new SchedulerScript(2, 0, new byte[0], ScriptLanguage.Slua);
         var a = new EngineScriptAccess(one);
