@@ -44,9 +44,9 @@ public class NativeLibraryTests
     {
         RuntimeLoadResult r = NativeRuntime.Load(new NativeRuntimeOptions());
         Assert.True(r.Ok, r.Message);
-        Assert.Equal(4, r.ApiVersion);
-        Assert.Equal(4, Host.ApiVersion());
-        Assert.Contains("api=4", Host.Version());
+        Assert.Equal(5, r.ApiVersion);
+        Assert.Equal(5, Host.ApiVersion());
+        Assert.Contains("api=5", Host.Version());
         Assert.True(File.Exists(r.LibraryPath));
     }
 

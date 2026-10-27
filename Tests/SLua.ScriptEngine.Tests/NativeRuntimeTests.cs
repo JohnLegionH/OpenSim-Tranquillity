@@ -117,15 +117,15 @@ public class NativeRuntimeTests
         Assert.False(r.Ok);
         Assert.Equal(3, r.ApiVersion);
         Assert.Contains("API version 3", r.Message);
-        Assert.Contains("requires 4", r.Message);
+        Assert.Contains("requires 5", r.Message);
     }
 
     [Fact]
     public void TheRequiredApiVersionIsOk()
     {
-        var r = NativeRuntime.Load(Options(version: () => 4));
+        var r = NativeRuntime.Load(Options(version: () => 5));
         Assert.True(r.Ok, r.Message);
-        Assert.Equal(4, r.ApiVersion);
+        Assert.Equal(5, r.ApiVersion);
     }
 
     [Fact]

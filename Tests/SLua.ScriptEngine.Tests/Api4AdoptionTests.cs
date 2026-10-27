@@ -33,28 +33,28 @@ public class Api4AdoptionTests
     // ---- a. API 4 is required ----
 
     [Fact]
-    public void TheEngineRequiresApiVersionFour() => Assert.Equal(4, NativeRuntime.RequiredApiVersion);
+    public void TheEngineRequiresApiVersionFive() => Assert.Equal(5, NativeRuntime.RequiredApiVersion);
 
     [Theory]
     [InlineData(3)]
-    [InlineData(5)]
+    [InlineData(4)]
     public void ALibraryOfAnotherApiVersionIsRefusedNamingBothVersions(int version)
     {
         RuntimeLoadResult r = NativeRuntime.Load(OptionsReporting(version));
         Assert.False(r.Ok);
         Assert.Contains($"API version {version}", r.Message);
-        Assert.Contains("requires 4", r.Message);
+        Assert.Contains("requires 5", r.Message);
     }
 
     [Fact]
-    public void ALibraryOfApiVersionFourIsAccepted() => Assert.True(NativeRuntime.Load(OptionsReporting(4)).Ok);
+    public void ALibraryOfApiVersionFiveIsAccepted() => Assert.True(NativeRuntime.Load(OptionsReporting(5)).Ok);
 
     [RequiresNativeFact]
     public void TheRealLibraryReportsApiVersionFourAndTheStepResultIsThirtyTwoBytes()
     {
         RealLibrary.Load();
-        Assert.Equal(4, Host.ApiVersion());
-        Assert.Contains("api=4", Host.Version());
+        Assert.Equal(5, Host.ApiVersion());
+        Assert.Contains("api=5", Host.Version());
         Assert.Equal(32, Host.NativeStructSize(1));
     }
 
