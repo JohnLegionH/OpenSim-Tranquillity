@@ -26,7 +26,7 @@ namespace OpenSim.Archive.Restore.Import;
 /// files. The mesh asset is written by the same encoder the converter and the restore use; a face is one material of the full mesh, and a lower level
 /// puts each of its materials in the face of the same material name (a level that leaves a material out leaves that face empty).
 /// </summary>
-public static class ObjectImporter
+public static partial class ObjectImporter
 {
     private const string BlankTexture = "5748decc-f629-461c-9a36-a35a221fe21f";
     private const string PlywoodTexture = "89556747-24cb-43ed-920b-47caed15465f";
@@ -49,18 +49,105 @@ public static class ObjectImporter
             throw new ImportException("the output '" + outputPath + "' already exists; it is never overwritten");
 
         string baseName = FindBaseName(folder, options.BaseName);
-        string[] fileNames = { baseName + ".glb", baseName + "_lod2.glb", baseName + "_lod1.glb", baseName + "_lod0.glb" };
         ImportResult result = new ImportResult { Output = outputPath };
-        GlbFile[] files = new GlbFile[4];
-        GlbNode[] nodes = new GlbNode[4];
+        ModelLevels model = ReadFolderModel(folder, baseName, result.Notes);
+        say("read " + string.Join(", ", model.Names));
+        TextureCatalog catalog = new TextureCatalog(Path.Combine(folder, "no-original-textures"));
+        BuiltPart built = BuildPart(model, catalog, result, say);
+        List<(Guid Id, byte[] Data, AssetType Type)> assets = built.Assets;
+        foreach (KeyValuePair<Guid, byte[]> t in catalog.NewAssets)
+            assets.Add((t.Key, t.Value, AssetType.Texture));
+        (Vector3 size, Vector3 center, List<EncoderFace> highFaces, Guid meshId, int shapeType, Primitive.TextureEntry te) = (built.Size, built.Centre, built.HighFaces, built.MeshId, built.ShapeType, built.TextureEntry);
+
+        // the object: one part, alone, so link number 0 and no offset
+        string name = Clean(string.IsNullOrWhiteSpace(options.Name) ? baseName : options.Name);
+        if (name.Length > 63)
+            name = name.Substring(0, 63);
+        string description = Clean(options.Description ?? string.Empty);
+        long created = options.Created != 0 ? options.Created : DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        Vector3 centre = new Vector3(options.Position.X + center.X, options.Position.Y + center.Y, options.Position.Z + center.Z);
+        Guid partId = MeshId.FromBytes(Encoding.UTF8.GetBytes("oar-import|" + meshId.ToString("D") + "|" + name + "|" + options.Avatar.ToString("D")));
+        string avatar = options.Avatar.ToString("D");
+        Dictionary<string, string> values = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["OwnerID/UUID"] = avatar, ["LastOwnerID/UUID"] = avatar, ["RezzerID/UUID"] = avatar,
+            ["BaseMask"] = FullPermissions, ["OwnerMask"] = FullPermissions, ["NextOwnerMask"] = FullPermissions,
+            ["CreationDate"] = created.ToString(Inv),
+            ["GroupPosition/X"] = Text(centre.X), ["GroupPosition/Y"] = Text(centre.Y), ["GroupPosition/Z"] = Text(centre.Z)
+        };
+        string part = ArchiveRestorer.NewPartXml(path => values.TryGetValue(path, out string v) ? v : null, null, partId, name, description, 0,
+            new float[] { 0f, 0f, 0f }, new float[] { 0f, 0f, 0f, 1f }, size, te.GetBytes(), options.Avatar);
+        List<ElementEdit> edits = new List<ElementEdit>(MeshShape.Edits(highFaces.Count, meshId, null));
+        edits.Add(ElementEdit.SetText("PhysicsShapeType", shapeType.ToString(Inv)));
+        part = PartXml.Edit(part, partId, edits);
+        string objectXml = "<SceneObjectGroup>" + part + "<OtherParts /></SceneObjectGroup>";
+
+        result.Name = name;
+        result.ObjectId = partId;
+        result.Size = new SysVector3(size.X, size.Y, size.Z);
+        result.Centre = new SysVector3(centre.X, centre.Y, centre.Z);
+        WriteArchive(outputPath, created, ArchiveConstants.CreateOarObjectPath(FileSafe(name), new UUID(partId), centre),
+            Encoding.UTF8.GetBytes(objectXml), assets);
+        result.Written = true;
+        say("wrote " + outputPath);
+        return result;
+    }
+
+    // ------------------------------------------------------------------ one part
+
+    /// <summary>The files of one model: the four levels of detail, and the collision shape when there is one.</summary>
+    internal sealed class ModelLevels
+    {
+        public GlbFile[] Files = new GlbFile[4];
+        public GlbNode[] Nodes = new GlbNode[4];
+        /// <summary>What each level is called in messages (a file name, or a file and node).</summary>
+        public string[] Names = new string[4];
+        public GlbFile PhysicsFile;
+        public GlbNode PhysicsNode;
+        public string PhysicsName;
+        /// <summary>The note to add when there is no collision shape.</summary>
+        public string NoPhysicsNote;
+    }
+
+    private sealed class BuiltPart
+    {
+        public Vector3 Size, Centre;
+        public List<EncoderFace> HighFaces;
+        public Guid MeshId;
+        public long MeshBytes;
+        public int ShapeType;
+        public Primitive.TextureEntry TextureEntry;
+        public List<(Guid Id, byte[] Data, AssetType Type)> Assets;
+    }
+
+    internal static ModelLevels ReadFolderModel(string folder, string baseName, List<string> notes)
+    {
+        string[] fileNames = { baseName + ".glb", baseName + "_lod2.glb", baseName + "_lod1.glb", baseName + "_lod0.glb" };
+        ModelLevels m = new ModelLevels { Names = fileNames };
         for (int i = 0; i < 4; i++)
         {
             string path = Path.Combine(folder, fileNames[i]);
             if (!File.Exists(path))
                 throw new ImportException("the " + LevelNames[i] + " level of detail '" + fileNames[i] + "' is not in the folder" + (i == 0 ? string.Empty : "; a mesh with all four levels is needed"));
-            (files[i], nodes[i]) = ReadModel(path, fileNames[i], result.Notes);
+            (m.Files[i], m.Nodes[i]) = ReadModel(path, fileNames[i], notes);
         }
-        say("read " + string.Join(", ", fileNames));
+        string physicsPath = Path.Combine(folder, baseName + "_physics.glb");
+        m.PhysicsName = baseName + "_physics.glb";
+        if (File.Exists(physicsPath))
+            (m.PhysicsFile, m.PhysicsNode) = ReadModel(physicsPath, m.PhysicsName, notes);
+        else
+            m.NoPhysicsNote = m.PhysicsName + " is not in the folder; the part collides as the bounding hull of its mesh";
+        return m;
+    }
+
+    /// <summary>
+    /// The mesh asset, the faces and the pictures of one part, from its four levels and its collision shape. Notes, textures and materials go to <paramref name="result"/>.
+    /// </summary>
+    private static BuiltPart BuildPart(ModelLevels model, TextureCatalog catalog, ImportResult result, Action<string> say)
+    {
+        GlbFile[] files = model.Files;
+        GlbNode[] nodes = model.Nodes;
+        string[] fileNames = model.Names;
 
         // the full mesh: one face for each primitive (each material); the part is the box around it
         PartGeometry high = PartGeometry.FromNode(files[0], nodes[0], nodes[0].Scale, true);
@@ -96,13 +183,11 @@ public static class ObjectImporter
         PhysicsGeometry physics = null;
         List<IReadOnlyList<SysVector3>> hulls = null;
         int shapeType = ShapeTypeConvex;
-        string physicsPath = Path.Combine(folder, baseName + "_physics.glb");
-        if (File.Exists(physicsPath))
+        if (model.PhysicsFile != null)
         {
-            (GlbFile pf, GlbNode pn) = ReadModel(physicsPath, baseName + "_physics.glb", result.Notes);
-            PartGeometry pg = PartGeometry.FromNode(pf, pn, pn.Scale, true);
+            PartGeometry pg = PartGeometry.FromNode(model.PhysicsFile, model.PhysicsNode, model.PhysicsNode.Scale, true);
             if (pg.TriangleCount == 0)
-                throw new ImportException(baseName + "_physics.glb has no triangles");
+                throw new ImportException(model.PhysicsName + " has no triangles");
             (List<SysVector3> points, PhysicsGeometry mesh) = PhysicsFrom(pg, size, center);
             if (IsConvex(pg))
             {
@@ -117,7 +202,7 @@ public static class ObjectImporter
             if (hulls == null)
             {
                 if (mesh.VertexCount > 65535)
-                    throw new ImportException(baseName + "_physics.glb has " + mesh.VertexCount + " vertices; the asset stores 16-bit indices");
+                    throw new ImportException(model.PhysicsName + " has " + mesh.VertexCount + " vertices; the asset stores 16-bit indices");
                 physics = mesh;
                 shapeType = ShapeTypePrim;
                 result.Physics = "triangle mesh";
@@ -127,7 +212,7 @@ public static class ObjectImporter
         else
         {
             result.Physics = "bounding hull";
-            result.Notes.Add(baseName + "_physics.glb is not in the folder; the part collides as the bounding hull of its mesh");
+            result.Notes.Add(model.NoPhysicsNote);
         }
 
         byte[] meshBytes;
@@ -149,7 +234,6 @@ public static class ObjectImporter
 
         // the pictures and the normal maps
         List<(Guid Id, byte[] Data, AssetType Type)> assets = new List<(Guid, byte[], AssetType)> { (meshId, meshBytes, AssetType.Mesh) };
-        TextureCatalog catalog = new TextureCatalog(Path.Combine(folder, "no-original-textures"));
         Primitive.TextureEntry te = new Primitive.TextureEntry(new UUID(PlywoodTexture));
         HashSet<Guid> materialsDone = new HashSet<Guid>();
         for (int face = 0; face < highFaces.Count; face++)
@@ -207,45 +291,8 @@ public static class ObjectImporter
                 }
             }
         }
-        foreach (KeyValuePair<Guid, byte[]> t in catalog.NewAssets)
-            assets.Add((t.Key, t.Value, AssetType.Texture));
-
-        // the object: one part, alone, so link number 0 and no offset
-        string name = Clean(string.IsNullOrWhiteSpace(options.Name) ? baseName : options.Name);
-        if (name.Length > 63)
-            name = name.Substring(0, 63);
-        string description = Clean(options.Description ?? string.Empty);
-        long created = options.Created != 0 ? options.Created : DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        Vector3 centre = new Vector3(options.Position.X + center.X, options.Position.Y + center.Y, options.Position.Z + center.Z);
-        Guid partId = MeshId.FromBytes(Encoding.UTF8.GetBytes("oar-import|" + meshId.ToString("D") + "|" + name + "|" + options.Avatar.ToString("D")));
-        string avatar = options.Avatar.ToString("D");
-        Dictionary<string, string> values = new Dictionary<string, string>(StringComparer.Ordinal)
-        {
-            ["OwnerID/UUID"] = avatar, ["LastOwnerID/UUID"] = avatar, ["RezzerID/UUID"] = avatar,
-            ["BaseMask"] = FullPermissions, ["OwnerMask"] = FullPermissions, ["NextOwnerMask"] = FullPermissions,
-            ["CreationDate"] = created.ToString(Inv),
-            ["GroupPosition/X"] = Text(centre.X), ["GroupPosition/Y"] = Text(centre.Y), ["GroupPosition/Z"] = Text(centre.Z)
-        };
-        string part = ArchiveRestorer.NewPartXml(path => values.TryGetValue(path, out string v) ? v : null, null, partId, name, description, 0,
-            new float[] { 0f, 0f, 0f }, new float[] { 0f, 0f, 0f, 1f }, size, te.GetBytes(), options.Avatar);
-        List<ElementEdit> edits = new List<ElementEdit>(MeshShape.Edits(highFaces.Count, meshId, null));
-        edits.Add(ElementEdit.SetText("PhysicsShapeType", shapeType.ToString(Inv)));
-        part = PartXml.Edit(part, partId, edits);
-        string objectXml = "<SceneObjectGroup>" + part + "<OtherParts /></SceneObjectGroup>";
-
-        result.Name = name;
-        result.ObjectId = partId;
-        result.Size = new SysVector3(size.X, size.Y, size.Z);
-        result.Centre = new SysVector3(centre.X, centre.Y, centre.Z);
-        WriteArchive(outputPath, created, ArchiveConstants.CreateOarObjectPath(FileSafe(name), new UUID(partId), centre),
-            Encoding.UTF8.GetBytes(objectXml), assets);
-        result.Written = true;
-        say("wrote " + outputPath);
-        return result;
+        return new BuiltPart { Size = size, Centre = center, HighFaces = highFaces, MeshId = meshId, MeshBytes = meshBytes.Length, ShapeType = shapeType, TextureEntry = te, Assets = assets };
     }
-
-    /// <summary>Writes an archive holding one linked object made from the parts of a manifest.</summary>
-    public static ImportResult ImportLinkset(LinksetManifest manifest, string outputPath, ImportOptions options) => new ImportResult { Output = outputPath };
 
     // ------------------------------------------------------------------ the folder and the files
 

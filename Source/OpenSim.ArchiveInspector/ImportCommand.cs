@@ -17,6 +17,7 @@ internal static class ImportCommand
 {
     public const string Usage =
 @"Usage: OpenSim.ArchiveInspector oar-import <folder> --out <new.oar> --avatar <uuid> [--name <text>] [--description <text>] [--base <name>] [--position <x,y,z>] [--check <folder>]
+       OpenSim.ArchiveInspector oar-import (--manifest <linkset.json> | <folder with a linkset.json>) --out <new.oar> --avatar <uuid> [--position <x,y,z>] [--check <folder>]
 
 Writes an archive that holds one mesh object, made from the .glb files in <folder> (the files a mesh tool writes for an upload):
   <base>.glb          the full mesh (high level of detail); one face for each material, and the pictures of the materials inside the file
@@ -34,12 +35,37 @@ The size of the object is the size of the full mesh in metres. The archive loads
   --position <x,y,z>    where the model's origin lands in the region, in metres (default 128,128,25)
   --check <folder>      after writing, write the object back out to glTF in <folder> and compare it with the input: triangle counts equal
                         for every level, positions within half a millimetre, texture coordinates and pictures the same
+  --manifest <file>     a linked object (see below); a folder that holds a linkset.json is read the same way
 The input files are only read.
+
+A linked object: a JSON manifest, linkset.json, lists the parts, root part first, and the folder it is in is where its relative paths start.
+  {
+    ""name"": ""Test House"", ""description"": ""text"",
+    ""parts"": [
+      { ""name"": ""Shell"", ""description"": ""the walls"", ""folder"": ""shell"",
+        ""contents"": [ { ""type"": ""notecard"", ""file"": ""readme.txt"", ""name"": ""Read me"" } ] },
+      { ""name"": ""Door"", ""glb"": ""building.glb"", ""node"": ""Door"", ""position"": [0.3, 0.2, 0], ""rotation"": [0, 0, 0, 1],
+        ""contents"": [ { ""type"": ""script"", ""file"": ""door.lsl"", ""name"": ""Door script"" } ] },
+      { ""name"": ""Window"", ""glb"": ""building.glb"", ""node"": ""Window"" }
+    ]
+  }
+  A part is made from one source: ""folder"" (a mesh tool output folder with its four levels and collision shape, as above; ""base"" names the model when the folder holds
+  more than one) or ""glb"" and ""node"" (one mesh node of a .glb file; the other levels and the collision shape are the nodes named in ""lod2"", ""lod1"", ""lod0"" and
+  ""physics"", each ""{ glb, node }"", and without them every level is the full mesh and the part collides as its bounding hull).
+  The first part is the root and link number 1: its model origin is the origin of the object, so it has no ""position"" and cannot be turned. Every other part sits
+  relative to the root part: ""position"" is where its model origin lands, in metres in the viewer axes (x east, y north, z up), and ""rotation"" is its turn as x, y, z, w.
+  A node source without them takes its node place in the file (as seen from the root part node when both are nodes of one file); a folder source takes 0, 0, 0 and no turn.
+  A building is one manifest: the shell is the root, each door leaf and window a part.
+  ""contents"" puts items into the part: ""script"" (LSL text, set running; the region compiles it when the object loads), ""notecard"" (a text file) or ""texture""
+  (a PNG or JPEG picture, stored as a JPEG 2000 codestream the viewer can decode), each with a ""file"" and an optional ""name"" and ""description"". Creator and owner are the
+  avatar, with full permission on parts and items. Unknown keys are refused by name.
+  The check for a linked object writes the archive out with the exporter and compares link order, names, descriptions, places and turns (half a millimetre), triangle
+  counts and contents (scripts byte for byte, notecard text, texture pixels) with the manifest and the files.
 Exit codes: 0 done (and the check passed, if asked); 1 written, but the check failed; 2 the folder cannot be imported, nothing written; 64 bad command line.";
 
     public static int Run(string[] args)
     {
-        string folder = null, outPath = null, checkFolder = null;
+        string folder = null, outPath = null, checkFolder = null, manifestPath = null;
         ImportOptions options = new ImportOptions { Progress = m => Console.Error.WriteLine(m) };
         bool haveAvatar = false;
 
@@ -70,6 +96,10 @@ Exit codes: 0 done (and the check passed, if asked); 1 written, but the check fa
                     if (i + 1 >= args.Length) return Fail("--base needs a name");
                     options.BaseName = args[++i];
                     break;
+                case "--manifest":
+                    if (i + 1 >= args.Length || args[i + 1].StartsWith("--", StringComparison.Ordinal)) return Fail("--manifest needs a file");
+                    manifestPath = args[++i];
+                    break;
                 case "--check":
                     if (i + 1 >= args.Length) return Fail("--check needs a folder");
                     checkFolder = args[++i];
@@ -96,9 +126,14 @@ Exit codes: 0 done (and the check passed, if asked); 1 written, but the check fa
                     break;
             }
         }
-        if (folder == null) return Fail("no folder given");
+        if (manifestPath != null && folder != null) return Fail("give the folder or --manifest, not both");
+        if (manifestPath == null && folder != null && File.Exists(Path.Combine(folder, "linkset.json")))
+            manifestPath = Path.Combine(folder, "linkset.json");
+        if (manifestPath == null && folder == null) return Fail("no folder given");
         if (outPath == null) return Fail("--out is needed");
         if (!haveAvatar) return Fail("--avatar is needed");
+        if (manifestPath != null)
+            return RunLinkset(manifestPath, outPath, checkFolder, options);
 
         ImportResult result;
         try
@@ -120,6 +155,33 @@ Exit codes: 0 done (and the check passed, if asked); 1 written, but the check fa
         if (checkFolder == null)
             return 0;
         ImportCheckResult check = ImportCheck.Run(outPath, folder, options, checkFolder);
+        Console.Out.Write(check.ToText());
+        return check.Passed ? 0 : 1;
+    }
+
+    private static int RunLinkset(string manifestPath, string outPath, string checkFolder, ImportOptions options)
+    {
+        ImportResult result;
+        LinksetManifest manifest;
+        try
+        {
+            manifest = LinksetManifest.Load(manifestPath);
+            result = ObjectImporter.ImportLinkset(manifest, outPath, options);
+        }
+        catch (ImportException e)
+        {
+            Console.Error.WriteLine("oar-import: " + Sanitize.Text(e.Message));
+            return 2;
+        }
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine("oar-import: " + Sanitize.Text(e.Message));
+            return 2;
+        }
+        Console.Out.Write(result.ToText());
+        if (checkFolder == null)
+            return 0;
+        ImportCheckResult check = ImportCheck.RunLinkset(outPath, manifest, options, checkFolder);
         Console.Out.Write(check.ToText());
         return check.Passed ? 0 : 1;
     }

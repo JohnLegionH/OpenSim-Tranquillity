@@ -96,6 +96,23 @@ public sealed class ImportResult
     {
         CultureInfo c = CultureInfo.InvariantCulture;
         StringBuilder sb = new StringBuilder();
+        if (Parts.Count > 0)
+        {
+            sb.Append("linked object '").Append(Name).Append("' (").Append(Parts.Count.ToString(c)).Append(Parts.Count == 1 ? " part" : " parts").Append(", root ").Append(ObjectId.ToString("D")).Append(") written to ").Append(Output).Append('\n');
+            foreach (ImportPartResult p in Parts)
+            {
+                sb.Append("  ").Append(p.LinkNumber.ToString(c)).Append(" '").Append(p.Name).Append("': size ").Append(p.Size.X.ToString("0.###", c)).Append(" x ").Append(p.Size.Y.ToString("0.###", c)).Append(" x ").Append(p.Size.Z.ToString("0.###", c))
+                  .Append(" m, ").Append(p.Triangles.ToString(c)).Append(" triangles, physics ").Append(p.Physics);
+                if (p.LinkNumber > 1)
+                    sb.Append(", at <").Append(p.Offset.X.ToString("0.###", c)).Append(", ").Append(p.Offset.Y.ToString("0.###", c)).Append(", ").Append(p.Offset.Z.ToString("0.###", c)).Append("> from the root");
+                sb.Append('\n');
+                foreach (ImportContentResult item in p.Contents)
+                    sb.Append("      ").Append(item.Type).Append(" '").Append(item.Name).Append("' (").Append(item.AssetId.ToString("D")).Append(")\n");
+            }
+            foreach (string n in Notes)
+                sb.Append("note: ").Append(n).Append('\n');
+            return sb.ToString();
+        }
         sb.Append("object '").Append(Name).Append("' (").Append(ObjectId.ToString("D")).Append(") written to ").Append(Output).Append('\n');
         sb.Append("size ").Append(Size.X.ToString("0.###", c)).Append(" x ").Append(Size.Y.ToString("0.###", c)).Append(" x ").Append(Size.Z.ToString("0.###", c))
           .Append(" m, centre at <").Append(Centre.X.ToString("0.###", c)).Append(", ").Append(Centre.Y.ToString("0.###", c)).Append(", ").Append(Centre.Z.ToString("0.###", c)).Append(">, ")

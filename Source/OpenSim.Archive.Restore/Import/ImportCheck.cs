@@ -63,7 +63,7 @@ public sealed class ImportCheckResult
 /// back (every level of detail, the physics shape, the normal map), and each is compared with the files it was made from: triangle counts equal,
 /// positions within half a millimetre, texture coordinates and pictures the same.
 /// </summary>
-public static class ImportCheck
+public static partial class ImportCheck
 {
     /// <summary>Position difference, in metres, the round trip may show (half a millimetre).</summary>
     public const float PositionTolerance = 0.0005f;
@@ -84,9 +84,6 @@ public static class ImportCheck
         result.Passed = result.Lines.Count > 0 && result.Lines.All(l => l.Ok);
         return result;
     }
-
-    /// <summary>The round trip of a linked object: written out by the exporter and compared with the manifest it was made from.</summary>
-    public static ImportCheckResult RunLinkset(string archivePath, LinksetManifest manifest, ImportOptions options, string workFolder) => new ImportCheckResult();
 
     private static void RunCore(ImportCheckResult result, string archivePath, string folder, ImportOptions options, string workFolder)
     {
