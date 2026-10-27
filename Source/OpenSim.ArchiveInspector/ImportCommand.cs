@@ -16,8 +16,8 @@ namespace OpenSim.ArchiveInspector;
 internal static class ImportCommand
 {
     public const string Usage =
-@"Usage: OpenSim.ArchiveInspector oar-import <folder> --out <new.oar> --avatar <uuid> [--name <text>] [--description <text>] [--base <name>] [--position <x,y,z>] [--check <folder>]
-       OpenSim.ArchiveInspector oar-import (--manifest <linkset.json> | <folder with a linkset.json>) --out <new.oar> --avatar <uuid> [--position <x,y,z>] [--check <folder>]
+@"Usage: OpenSim.ArchiveInspector oar-import <folder> --out <new.oar> --avatar <uuid> [--name <text>] [--description <text>] [--base <name>] [--position <x,y,z>] [--created <seconds>] [--check <folder>]
+       OpenSim.ArchiveInspector oar-import (--manifest <linkset.json> | <folder with a linkset.json>) --out <new.oar> --avatar <uuid> [--position <x,y,z>] [--created <seconds>] [--check <folder>]
 
 Writes an archive that holds one mesh object, made from the .glb files in <folder> (the files a mesh tool writes for an upload):
   <base>.glb          the full mesh (high level of detail); one face for each material, and the pictures of the materials inside the file
@@ -33,6 +33,8 @@ The size of the object is the size of the full mesh in metres. The archive loads
   --description <text>  the object's description
   --base <name>         the file name prefix, when the folder holds more than one model
   --position <x,y,z>    where the model's origin lands in the region, in metres (default 128,128,25)
+  --created <seconds>   the creation time written into the archive and the object, in seconds since 1970 (default: now). Give the same value with the same
+                        input files to get the same archive, byte for byte.
   --check <folder>      after writing, write the object back out to glTF in <folder> and compare it with the input: triangle counts equal
                         for every level, positions within half a millimetre, texture coordinates and pictures the same
   --manifest <file>     a linked object (see below); a folder that holds a linkset.json is read the same way
@@ -103,6 +105,12 @@ Exit codes: 0 done (and the check passed, if asked); 1 written, but the check fa
                 case "--check":
                     if (i + 1 >= args.Length) return Fail("--check needs a folder");
                     checkFolder = args[++i];
+                    break;
+                case "--created":
+                    if (i + 1 >= args.Length || !long.TryParse(args[i + 1], NumberStyles.None, CultureInfo.InvariantCulture, out long created) || created <= 0)
+                        return Fail("--created needs a time in whole seconds since 1970");
+                    options.Created = created;
+                    i++;
                     break;
                 case "--position":
                     string[] parts = i + 1 < args.Length ? args[i + 1].Split(',') : Array.Empty<string>();
