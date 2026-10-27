@@ -13,6 +13,7 @@
 // Exit codes: 0 every texture was served, 1 some texture was not, 2 could not log in or bad arguments.
 using LibreMetaverse;
 using LibreMetaverse.Assets;
+using OpenSim.Archive.TextureFetch;
 using OpenSim.ArchiveInspector;
 
 const string PasswordVariable = "OAR_CHECK_PASSWORD";
@@ -40,6 +41,12 @@ for (int i = 0; i < args.Length; i++)
 }
 if (loginUri == null || first == null || last == null || region == null || outDir == null || ids.Count == 0)
     return Usage();
+string tlsProblem = TlsPrerequisite.Check(loginUri, OperatingSystem.IsLinux(), TlsPrerequisite.OpenSslAvailable);
+if (tlsProblem != null)
+{
+    Console.Error.WriteLine(tlsProblem);
+    return 2;
+}
 string password = Environment.GetEnvironmentVariable(PasswordVariable);
 if (string.IsNullOrEmpty(password))
 {
