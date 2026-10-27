@@ -53,7 +53,7 @@ namespace SLua.ScriptEngine
     internal static class NativeRuntime
     {
         /// <summary>The C API version this engine is written for; a library reporting any other is not used.</summary>
-        public const int RequiredApiVersion = 4;
+        public const int RequiredApiVersion = 5;
 
         private const string ImportName = "slua_shim";
         private static readonly object s_lock = new object();

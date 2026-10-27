@@ -50,7 +50,7 @@ public class Api4AdoptionTests
     public void ALibraryOfApiVersionFiveIsAccepted() => Assert.True(NativeRuntime.Load(OptionsReporting(5)).Ok);
 
     [RequiresNativeFact]
-    public void TheRealLibraryReportsApiVersionFourAndTheStepResultIsThirtyTwoBytes()
+    public void TheRealLibraryReportsApiVersionFiveAndTheStepResultIsThirtyTwoBytes()
     {
         RealLibrary.Load();
         Assert.Equal(5, Host.ApiVersion());

@@ -90,6 +90,28 @@ public static unsafe class Host
         Check("slua_set_engine_identity", Native.slua_set_engine_identity(engineName, altEngineName, altEngineHeader));
     }
 
+    /// <summary>
+    /// Gives the LSL compiler the functions the host supplies (os*, iw* and bot* functions), one per line in the form of the
+    /// runtime's builtins.txt, for example <c>integer osAddOne( integer n )</c>. A name may be listed once for each of its
+    /// signatures. Replaces any earlier list; null or empty removes it. Throws <see cref="SluaException"/> with the library's
+    /// message when a line is refused.
+    /// </summary>
+    public static void SetHostFunctions(string definitions)
+    {
+        Init();
+        byte* err = null;
+        int rc = Native.slua_set_host_functions(definitions, &err);
+        try
+        {
+            if (rc != 0)
+                throw new SluaException("slua_set_host_functions", rc, err != null ? Marshal.PtrToStringUTF8((IntPtr)err) : null);
+        }
+        finally
+        {
+            if (err != null) Native.slua_free(err);
+        }
+    }
+
     /// <summary>The engine name the library holds (empty when none was set).</summary>
     public static string EngineName
     {

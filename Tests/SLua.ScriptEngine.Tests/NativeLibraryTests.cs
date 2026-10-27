@@ -40,7 +40,7 @@ public class NativeLibraryTests
     }
 
     [RequiresNativeFact]
-    public void TheRealLibraryLoadsFromSluaShimPathAndReportsApiVersionFour()
+    public void TheRealLibraryLoadsFromSluaShimPathAndReportsApiVersionFive()
     {
         RuntimeLoadResult r = NativeRuntime.Load(new NativeRuntimeOptions());
         Assert.True(r.Ok, r.Message);

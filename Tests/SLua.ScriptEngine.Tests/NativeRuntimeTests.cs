@@ -131,7 +131,7 @@ public class NativeRuntimeTests
     [Fact]
     public void AVersionAboveTheRequiredOneIsAlsoRefused()
     {
-        Assert.False(NativeRuntime.Load(Options(version: () => 5)).Ok);
+        Assert.False(NativeRuntime.Load(Options(version: () => 6)).Ok);
     }
 
     [Fact]
