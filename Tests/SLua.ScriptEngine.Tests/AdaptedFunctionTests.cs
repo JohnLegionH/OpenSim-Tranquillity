@@ -229,4 +229,19 @@ public class AdaptedFunctionTests
         Assert.Equal(gaps.OrderBy(n => n, StringComparer.Ordinal),
             LlCoverage.MissingFromSeam.Concat(LlCoverage.SignatureMismatch.Select(r => r.Substring(0, r.IndexOf(':')))).OrderBy(n => n, StringComparer.Ordinal));
     }
+
+    [Fact]
+    public void EveryRuntimeFunctionRunsOnTheRealApiWaitsOnANamedHostMemberOrIsANamedPhloxGap()
+    {
+        string[] names = File.ReadAllLines(LlBindingGeneratorTests.BuiltinsPath())
+            .Select(l => System.Text.RegularExpressions.Regex.Match(l, @"^\w+\s+(ll\w+)\(")).Where(m => m.Success).Select(m => m.Groups[1].Value).ToArray();
+        string[] waiting = LlServed.NotServed.Select(r => r.Substring(0, r.IndexOf(':'))).ToArray();
+        string[] gaps = LlCoverage.PhloxGaps.Select(r => r.Substring(0, r.IndexOf(':'))).ToArray();
+
+        Assert.Empty(LlServed.Served.Intersect(waiting));
+        Assert.Empty(LlServed.Served.Intersect(gaps));
+        Assert.Empty(waiting.Intersect(gaps));
+        Assert.All(LlServed.NotServed, r => Assert.True(r.IndexOf(':') > 0 && r.Length > r.IndexOf(':') + 2, "no host member named: " + r));
+        Assert.Equal(names.OrderBy(n => n, StringComparer.Ordinal), LlServed.Served.Concat(waiting).Concat(gaps).OrderBy(n => n, StringComparer.Ordinal));
+    }
 }
