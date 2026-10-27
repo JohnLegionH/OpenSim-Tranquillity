@@ -97,7 +97,8 @@ public static partial class ImportCheck
         for (int i = 0; i < 4; i++)
             (files[i], nodes[i]) = ObjectImporter.ReadModel(Path.Combine(folder, fileNames[i]), fileNames[i], notes);
         // a rigged part: the skin of the files, the way the import read it
-        RigPlan rig = RigBuilder.Plan(files, nodes, fileNames, options?.JointPositions ?? false);
+        int quarterTurns = RigBuilder.Orient(files, nodes, null, notes);   // a model the import turned is compared with the files turned the same way
+        RigPlan rig = RigBuilder.Plan(files, nodes, fileNames, options?.JointPositions ?? false, quarterTurns);
         if (rig != null)
             for (int i = 0; i < 4; i++)
                 RigBuilder.Apply(rig, i, files[i], nodes[i]);
@@ -146,7 +147,7 @@ public static partial class ImportCheck
 
         string physicsPath = Path.Combine(folder, baseName + "_physics.glb");
         if (File.Exists(physicsPath))
-            result.Lines.Add(ComparePhysics(model, physicsPath, size, shift, tolerance, notes));
+            result.Lines.Add(ComparePhysics(model, physicsPath, size, shift, tolerance, notes, quarterTurns));
 
         // the pictures, face by face: the exported glTF against the input
         for (int slot = 0; slot < highPrimitives.Count; slot++)
@@ -275,9 +276,11 @@ public static partial class ImportCheck
 
     // ------------------------------------------------------------------ the physics shape
 
-    private static CheckLine ComparePhysics(MeshAssetModel model, string physicsPath, Vector3 size, float[] shift, GeometryTolerance tolerance, List<string> notes)
+    private static CheckLine ComparePhysics(MeshAssetModel model, string physicsPath, Vector3 size, float[] shift, GeometryTolerance tolerance, List<string> notes, int quarterTurns)
     {
         (GlbFile file, GlbNode node) = ObjectImporter.ReadModel(physicsPath, Path.GetFileName(physicsPath), notes);
+        if (quarterTurns != 0)
+            RigBuilder.TurnGeometry(file, quarterTurns);
         PartGeometry input = PartGeometry.FromNode(file, node, node.Scale, true);
         CheckLine line = new CheckLine { What = "physics shape" };
         List<SysVector3> inputPoints = Shifted(input, shift).Faces.Values.SelectMany(l => l).SelectMany(t => new[] { new SysVector3(t[0], t[1], t[2]), new SysVector3(t[8], t[9], t[10]), new SysVector3(t[16], t[17], t[18]) }).Distinct().ToList();

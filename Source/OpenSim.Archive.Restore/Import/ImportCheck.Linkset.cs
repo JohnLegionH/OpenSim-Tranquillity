@@ -75,6 +75,7 @@ public static partial class ImportCheck
             ObjectImporter.ModelLevels model = part.Model.IsFolder
                 ? ObjectImporter.ReadFolderModel(part.Model.Folder, ObjectImporter.FolderBase(part.Model), notes)
                 : ObjectImporter.ReadNodeModel(part, label, cache, notes, out place);
+            RigBuilder.Orient(model.Files, model.Nodes, model.PhysicsFile, notes);   // as the import did
             PartGeometry high = PartGeometry.FromNode(model.Files[0], model.Nodes[0], model.Nodes[0].Scale, true);
             (Vector3 size, Vector3 centre) = ObjectImporter.Box(high);
             inputTriangles.Add(high.TriangleCount);

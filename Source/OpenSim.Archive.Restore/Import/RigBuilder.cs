@@ -217,6 +217,19 @@ internal static class RigBuilder
         return quarterTurns;
     }
 
+    /// <summary>Turns the vertices and normals of every mesh of a file (a collision shape read on its own, after the model it belongs to was turned).</summary>
+    public static void TurnGeometry(GlbFile file, int quarterTurns)
+    {
+        HashSet<GlbPrimitive> done = new HashSet<GlbPrimitive>();
+        foreach (GlbMesh mesh in file.Meshes)
+            foreach (GlbPrimitive prim in mesh.Primitives)
+                if (done.Add(prim))
+                {
+                    TurnVectors(prim.Positions, quarterTurns);
+                    TurnVectors(prim.Normals, quarterTurns);
+                }
+    }
+
     private static void TurnVectors(float[] v, int quarterTurns)
     {
         if (v == null)
