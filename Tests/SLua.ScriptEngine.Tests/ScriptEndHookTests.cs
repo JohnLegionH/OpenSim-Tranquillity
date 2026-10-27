@@ -160,6 +160,28 @@ public class ScriptEndHookTests
     }
 
     [RequiresNativeFact]
+    public void AStartWhileTheEstateSwitchIsOnLeavesTheSensorOffUntilTheSwitchIsOff()
+    {
+        using var rig = new EngineRig(productionFunctions: true);
+        UUID item = ArmedRepeatingScript(rig);
+        rig.Scene.EventManager.TriggerStopScript(rig.LocalId, item);
+        Assert.True(SchedulerHarness.WaitFor(() => Sensors(rig, item).Length == 0));
+        rig.Scene.RegionInfo.RegionSettings.DisableScripts = true;
+        rig.Engine.Policy.RegionSettingsChanged();
+
+        rig.Scene.EventManager.TriggerStartScript(rig.LocalId, item);
+        Assert.True(SchedulerHarness.WaitFor(() => rig.Engine.GetScriptState(item)));
+
+        Thread.Sleep(800);   // a real wait: the estate switch still holds the script, so the start does not bring the sensor back
+        Assert.Empty(Sensors(rig, item));
+
+        rig.Scene.RegionInfo.RegionSettings.DisableScripts = false;
+        rig.Engine.Policy.RegionSettingsChanged();
+
+        ComesBack(rig, item);
+    }
+
+    [RequiresNativeFact]
     public void ACrossingThatEndsWhileTheEstateSwitchIsOnLeavesTheSensorOff()
     {
         using var rig = new EngineRig(productionFunctions: true);
