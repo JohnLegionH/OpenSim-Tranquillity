@@ -266,7 +266,7 @@ def read_delays(path):
 # that reaches one, itself or through a method it calls, cannot run on the real LSLSystemAPI with the SLua engine's host.
 LACKING_HOST_MEMBERS = (
     "Ossl", "StateManager", "AsyncCommands", "ScriptEngine",
-    "ExperienceGrantRestored", "ExperienceCannotRun", "SetMinEventDelay", "GetEventQueueFreeSpacePercentage",
+    "ExperienceGrantRestored", "ExperienceCannotRun",
 )
 HOST_MEMBER = re.compile(r"m_ScriptEngine\s*\??\s*\.\s*(%s)\b" % "|".join(LACKING_HOST_MEMBERS))
 IDENTIFIER = re.compile(r"\b[A-Za-z_]\w*\b")

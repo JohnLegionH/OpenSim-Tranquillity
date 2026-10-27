@@ -152,13 +152,15 @@ public class LinkMessageAndQueueTests
         UUID busy = rig.Rez(Slua("LLEvents:on('changed', function(c) ossl.Mark('in') ll.Sleep(30) end)\nossl.Mark('ready')\n"));
         Heard(rig, busy, "ready");
         Assert.True(rig.Engine.PostScriptEvent(busy, "changed", new object[] { 1 }));
-        Heard(rig, busy, "in");   // the first event is being handled; none of the others has been
+        Heard(rig, busy, "in");   // an event is being handled; it holds the script for 30 seconds
+        Assert.True(SchedulerHarness.WaitFor(() => rig.Engine.HostServices.GetEventQueueFreeSpacePercentage(busy) > 0.9f), "never settled");
+        float before = rig.Engine.HostServices.GetEventQueueFreeSpacePercentage(busy);
         for (int i = 0; i < 32; i++)
             Assert.True(rig.Engine.PostScriptEvent(busy, "changed", new object[] { 1 }));
 
-        // 32 of 64 wait: half the queue is free
-        Assert.True(SchedulerHarness.WaitFor(() => Math.Abs(rig.Engine.HostServices.GetEventQueueFreeSpacePercentage(busy) - 0.5f) < 0.001f),
-            "free space " + rig.Engine.HostServices.GetEventQueueFreeSpacePercentage(busy));
+        // 32 more of the 64 wait: half the queue less is free
+        Assert.True(SchedulerHarness.WaitFor(() => Math.Abs(before - rig.Engine.HostServices.GetEventQueueFreeSpacePercentage(busy) - 0.5f) < 0.001f),
+            "free space " + rig.Engine.HostServices.GetEventQueueFreeSpacePercentage(busy) + " from " + before);
 
         for (int i = 0; i < 100; i++)
             rig.Engine.PostScriptEvent(busy, "changed", new object[] { 1 });

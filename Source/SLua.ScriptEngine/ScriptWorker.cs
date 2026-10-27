@@ -56,6 +56,9 @@ namespace SLua.ScriptEngine
         private int m_cycleLeft;
         private readonly PriorityQueue<(SchedulerScript Script, long Gen), double> m_sleepers = new PriorityQueue<(SchedulerScript, long), double>();
         private readonly PriorityQueue<(SchedulerScript Script, long Gen), double> m_timers = new PriorityQueue<(SchedulerScript, long), double>();
+
+        // Scripts holding an event back until their llMinEventDelay floor has passed.
+        private readonly PriorityQueue<(SchedulerScript Script, long Gen), double> m_floors = new PriorityQueue<(SchedulerScript, long), double>();
         private double m_now;
 
         // Read from any thread.
@@ -205,6 +208,15 @@ namespace SLua.ScriptEngine
                 }
                 m_timers.Dequeue();
             }
+            while (m_floors.TryPeek(out var e, out double d))
+            {
+                if (e.Script.FloorGen == e.Gen && e.Script.FloorHeld && e.Script.State != ScriptRunState.Removed && e.Script.State != ScriptRunState.Faulted)
+                {
+                    due = Math.Min(due, d);
+                    break;
+                }
+                m_floors.Dequeue();
+            }
             if (double.IsPositiveInfinity(due))
                 return Timeout.Infinite;
             double ms = Math.Ceiling((due - m_options.Clock.Now) * 1000.0);
@@ -268,6 +280,14 @@ namespace SLua.ScriptEngine
                 if (e.Script.SleepGen != e.Gen || e.Script.State != ScriptRunState.Sleeping)
                     continue;
                 e.Script.SleepUntil = 0;
+                Reschedule(e.Script);
+            }
+            while (m_floors.TryPeek(out var e, out double due) && due <= now)
+            {
+                m_floors.Dequeue();
+                if (e.Script.FloorGen != e.Gen || !e.Script.FloorHeld)
+                    continue;
+                e.Script.FloorHeld = false;
                 Reschedule(e.Script);
             }
             while (m_timers.TryPeek(out var e, out double due) && due <= now)
@@ -506,6 +526,10 @@ namespace SLua.ScriptEngine
             if (s.State == ScriptRunState.Removed || s.State == ScriptRunState.Loading)
                 return;
             s.Events.Clear();
+            s.MinEventDelay = 0;
+            s.NextEventAt = 0;
+            s.FloorHeld = false;
+            s.FloorGen++;
             s.CurrentDetected = null;
             s.CurrentState = 0;
             s.NotHandled = 0;
@@ -591,6 +615,21 @@ namespace SLua.ScriptEngine
         }
 
         // ---- host function support (called on this worker's thread, inside a step) ----
+
+        /// <summary>llMinEventDelay, on the worker. A floor of 0 or less lifts it, and lets a script that waits at the floor go on at once.</summary>
+        internal void SetMinEventDelay(SchedulerScript s, double seconds)
+        {
+            s.MinEventDelay = seconds > 0 ? seconds : 0;
+            if (s.MinEventDelay > 0)
+                return;
+            s.NextEventAt = 0;
+            if (s.FloorHeld)
+            {
+                s.FloorHeld = false;
+                s.FloorGen++;
+                Reschedule(s);
+            }
+        }
 
         internal void SetTimerFor(SchedulerScript s, double seconds)
         {
@@ -678,6 +717,7 @@ namespace SLua.ScriptEngine
         {
             double quanta = m_options.QuantaMs / 1000.0;
             bool dispatching = !s.NeedsStep && s.Events.Count > 0;
+            double floorAtStart = s.MinEventDelay;   // a floor set by this very handler counts from the next one
             QueuedEvent ev = default;
             StepResult r;
             long start = Stopwatch.GetTimestamp();
@@ -727,6 +767,8 @@ namespace SLua.ScriptEngine
 
             if (dispatching && r.Status != StepStatus.Refused)
             {
+                if (floorAtStart > 0 && s.MinEventDelay > 0)
+                    s.NextEventAt = Now() + floorAtStart;   // a handler started now: the next may not before the floor
                 s.Events.Dequeue();
                 if (ev.EventIndex == TimerEvent())
                     s.TimerQueued = false;
@@ -921,6 +963,19 @@ namespace SLua.ScriptEngine
                     SetState(s, ScriptRunState.Sleeping);
                     s.SleepGen++;
                     m_sleepers.Enqueue((s, s.SleepGen), s.SleepUntil);
+                }
+                return;
+            }
+            // llMinEventDelay: a handler is not started before the floor has passed. The events stay queued (none is dropped)
+            // and the script waits, out of the ring, for the end of the floor.
+            if (!s.NeedsStep && s.Events.Count > 0 && s.MinEventDelay > 0 && Now() < s.NextEventAt)
+            {
+                SetState(s, ScriptRunState.Idle);
+                if (!s.FloorHeld)
+                {
+                    s.FloorHeld = true;
+                    s.FloorGen++;
+                    m_floors.Enqueue((s, s.FloorGen), s.NextEventAt);
                 }
                 return;
             }

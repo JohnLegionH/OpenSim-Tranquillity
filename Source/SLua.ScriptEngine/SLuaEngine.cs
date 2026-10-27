@@ -172,6 +172,8 @@ namespace SLua.ScriptEngine
             RequestParcelCheck = RecheckParcel,
             PhysicsFrameTimeAvg = () => PhysicsFrameTimeAvg,
             PostDataserverToPrim = PostDataserverToPrim,
+            SetMinEventDelay = HostSetMinEventDelay,
+            EventQueueFreeSpacePercentage = HostEventQueueFreeSpace,
         };
 
         /// <summary>

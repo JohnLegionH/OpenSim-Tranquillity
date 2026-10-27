@@ -51,7 +51,7 @@ namespace SLua.ScriptEngine
         void IScriptEngine.SetState(UUID itemID, string newState) { }
         IScriptApi IScriptEngine.GetApi(UUID itemID, string name) => null;
         void IScriptEngine.SleepScript(UUID itemID, int delay) { }
-        void IScriptEngine.SetMinEventDelay(UUID itemID, double delay) { }
+        void IScriptEngine.SetMinEventDelay(UUID itemID, double delay) => HostSetMinEventDelay(itemID, (float)delay);
 
         void IScriptEngine.ApiResetScript(UUID itemID) => ResetByItem(itemID);
 
@@ -59,6 +59,37 @@ namespace SLua.ScriptEngine
 
         bool IScriptEngine.PostObjectLinksetDataEvent(uint localID, int action, ReadOnlySpan<char> name, ReadOnlySpan<char> value) =>
             HostServices?.PostObjectLinksetDataEvent(localID, action, name, value) ?? false;
+
+        /// <summary>
+        /// llMinEventDelay: the floor between the starts of the script's handlers, kept to whole milliseconds as Phlox keeps it.
+        /// Set on the worker: directly when the script is inside its own call, through the worker's queue from any other thread.
+        /// </summary>
+        private void HostSetMinEventDelay(UUID itemId, float seconds)
+        {
+            SchedulerScript script = RecordOf(itemId)?.Script;
+            if (script == null)
+                return;
+            double floor = seconds <= 0f ? 0 : (int)(seconds * 1000f) / 1000.0;
+            if (ReferenceEquals(script, SchedulerScript.Current))
+                script.SetMinEventDelay(floor);
+            else
+                m_scheduler?.SetMinEventDelay(script, floor);
+        }
+
+        /// <summary>
+        /// The share of the script's event queue that is free, as Halcyon's EngineInterface.GetEventQueueFreeSpacePercentage
+        /// reports it: 1 for a script this engine does not run, 0 when the queue is full, else 1 less the share queued
+        /// (the queue holds <c>MaxEventQueue</c> events, 64 as in Second Life).
+        /// </summary>
+        private float HostEventQueueFreeSpace(UUID itemId)
+        {
+            SchedulerScript script = RecordOf(itemId)?.Script;
+            if (script == null)
+                return 1.0f;
+            int max = m_settings.MaxEventQueue;
+            int queued = script.QueuedEvents;
+            return queued >= max ? 0.0f : 1.0f - (float)queued / max;
+        }
 
         private void ResetByItem(UUID itemID)
         {

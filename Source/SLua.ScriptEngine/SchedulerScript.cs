@@ -141,6 +141,20 @@ namespace SLua.ScriptEngine
         internal double SluaTimer;
         internal ScriptWorker Worker;
 
+        /// <summary>Worker only: the floor llMinEventDelay set, in seconds (0: none), and the time the next handler may start.</summary>
+        internal double MinEventDelay;
+        internal double NextEventAt;
+
+        /// <summary>Worker only: the script waits at the floor for its next handler; the generation tells a wake that is still wanted from an old one.</summary>
+        internal bool FloorHeld;
+        internal long FloorGen;
+
+        /// <summary>
+        /// How many events wait for the script. Read from any thread (the queue figure), so it can be a moment old; the queue
+        /// itself is the worker's.
+        /// </summary>
+        internal int QueuedEvents => Events.Count;
+
         internal void CountStep(long ticks) { Interlocked.Increment(ref m_steps); Interlocked.Add(ref m_runTicks, ticks); }
         internal void CountDispatch(long ticks) { Interlocked.Increment(ref m_dispatches); Interlocked.Add(ref m_runTicks, ticks); }
         internal void CountDrop() => Interlocked.Increment(ref m_droppedEvents);
@@ -241,6 +255,16 @@ namespace SLua.ScriptEngine
         {
             RequireCurrent();
             Worker.ReportScriptError(this, text);
+        }
+
+        /// <summary>
+        /// For a host function: llMinEventDelay. The next handler of this script starts no sooner than <paramref name="seconds"/>
+        /// after the last one started; 0 or less lifts the floor. Events wait in the queue meanwhile and are not dropped.
+        /// </summary>
+        public void SetMinEventDelay(double seconds)
+        {
+            RequireCurrent();
+            Worker.SetMinEventDelay(this, seconds);
         }
 
         /// <summary>For a host function: sets or clears (0 or less) this script's timer, as llSetTimerEvent does. The interval is raised to the floor.</summary>

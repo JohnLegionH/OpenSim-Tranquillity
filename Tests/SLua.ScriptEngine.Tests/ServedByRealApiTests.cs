@@ -33,7 +33,7 @@ public class ServedByRealApiTests
     private static readonly string[] Lacking =
     {
         "Ossl", "StateManager", "AsyncCommands", "ScriptEngine",
-        "ExperienceGrantRestored", "ExperienceCannotRun", "SetMinEventDelay", "GetEventQueueFreeSpacePercentage",
+        "ExperienceGrantRestored", "ExperienceCannotRun",
     };
 
     private static string NameOf(string notServedEntry) => notServedEntry.Substring(0, notServedEntry.IndexOf(':'));
@@ -70,7 +70,7 @@ public class ServedByRealApiTests
         string[] served = LlServed.Served;
         string[] notServed = LlServed.NotServed.Select(NameOf).ToArray();
 
-        Assert.All(new[] { "llRequestPermissions", "llMessageLinked", "llMinEventDelay", "llSensor" },
+        Assert.All(new[] { "llRequestPermissions", "llStartAnimation", "llSensor", "llHTTPRequest" },
             n => Assert.Contains(n, notServed));
         Assert.All(new[] { "llGetPos", "llSetPos", "llSetTimerEvent", "llResetScript", "llStringLength", "llName2Key", "llInstantMessage", "llListen", "llListenRemove", "llSay" },
             n => Assert.Contains(n, served));
@@ -176,13 +176,13 @@ public class ServedByRealApiTests
         public int PostDataserverToPrim(SceneObjectPart part, UUID skip, UUID asker, string queryId, string data) => m_inner.PostDataserverToPrim(part, skip, asker, queryId, data);
         public bool HasScript(UUID itemID, out bool running) => m_inner.HasScript(itemID, out running);
         public void SetTimerEvent(uint localID, UUID itemID, float sec) => m_inner.SetTimerEvent(localID, itemID, sec);
-        public void SetMinEventDelay(UUID itemID, float seconds) { Trip("SetMinEventDelay"); m_inner.SetMinEventDelay(itemID, seconds); }
+        public void SetMinEventDelay(UUID itemID, float seconds) => m_inner.SetMinEventDelay(itemID, seconds);
         public void SetItemRunningFlag(uint localId, UUID itemId, bool running) => m_inner.SetItemRunningFlag(localId, itemId, running);
         public void ResetScript(UUID itemID) => m_inner.ResetScript(itemID);
         public void ApiResetScript(UUID itemID) => m_inner.ApiResetScript(itemID);
         public void RequestParcelCheck(UUID itemId) => m_inner.RequestParcelCheck(itemId);
         public void SendToWorldComm(Action<IWorldComm> send) => m_inner.SendToWorldComm(send);
-        public float GetEventQueueFreeSpacePercentage(UUID itemID) => Trip("GetEventQueueFreeSpacePercentage", m_inner.GetEventQueueFreeSpacePercentage(itemID));
+        public float GetEventQueueFreeSpacePercentage(UUID itemID) => m_inner.GetEventQueueFreeSpacePercentage(itemID);
         public void ExperienceGrantRestored() { Trip("ExperienceGrantRestored"); m_inner.ExperienceGrantRestored(); }
         public void ExperienceCannotRun(UUID experience, int code) { Trip("ExperienceCannotRun"); m_inner.ExperienceCannotRun(experience, code); }
     }

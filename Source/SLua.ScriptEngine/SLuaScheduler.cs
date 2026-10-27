@@ -123,6 +123,9 @@ namespace SLua.ScriptEngine
         }
 
         /// <summary>Starts the script over from a fresh script object: events, timer, sleep and a pending call are dropped, and a fault or kill is cleared.</summary>
+        /// <summary>llMinEventDelay for a script from a thread that is not its worker's: the floor is set on the worker.</summary>
+        public void SetMinEventDelay(SchedulerScript script, double seconds) => script.Worker.Enqueue(() => script.Worker.SetMinEventDelay(script, seconds));
+
         public void Reset(SchedulerScript script) => script.Worker.Enqueue(() => script.Worker.ResetScript(script));
 
         /// <summary>Frees the script's native objects on its worker and forgets it.</summary>

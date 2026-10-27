@@ -48,7 +48,7 @@ public class SwitchOnTests
         foreach (string name in LlCoverage.MissingFromSeam) expected.Add(name);
         foreach (string row in LlCoverage.SignatureMismatch) expected.Add(row.Substring(0, row.IndexOf(':')));
 
-        Assert.Equal(29, expected.Count);
+        Assert.Equal(27, expected.Count);
         Assert.Equal(expected.OrderBy(n => n), LlBindings.Unavailable.OrderBy(n => n));
         Assert.Contains("llSensorRemove", LlBindings.Unavailable);
         Assert.Contains("llRequestPermissions", LlBindings.Unavailable);
@@ -171,7 +171,7 @@ public class SwitchOnTests
         UUID item = rig.Rez(Slua("pcall(function() ll.SensorRemove() end)\npcall(function() ll.ReleaseControls() end)\nossl.Mark('done')"));
         MarkOf(rig, item, "done");
 
-        string[] counts = rig.Log.Lines.Where(l => l.Contains("500") && l.Contains("29")).ToArray();
+        string[] counts = rig.Log.Lines.Where(l => l.Contains("502") && l.Contains("27")).ToArray();
         Assert.Single(counts);
         Assert.StartsWith("INFO ", counts[0]);
         Assert.Empty(rig.Log.Warnings);
