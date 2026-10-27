@@ -180,6 +180,9 @@ namespace SLua.ScriptEngine
                 script.SetTimer(seconds);
         }
 
+        /// <summary>The region's listen registry (Phlox's manager, owned by this engine); null before the region is added.</summary>
+        internal Phlox.ScriptEngine.PhloxListenManager Listens => null;
+
         /// <summary>Where the engine sets each script's event flags on its prim; tests replace it before the region is added.</summary>
         internal IPrimEventFlags PrimFlags { get; set; }
 
