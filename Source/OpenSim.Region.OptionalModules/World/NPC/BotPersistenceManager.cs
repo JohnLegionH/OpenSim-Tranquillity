@@ -775,7 +775,7 @@ WHERE bot_id = @id AND active = 1";
         /// <summary>
         /// Expire old bots and check for orphaned scripts.
         /// </summary>
-        public void RunCleanup()
+        public void RunCleanup(bool checkOrphans = true)
         {
             if (!IsEnabled()) return;
 
@@ -803,7 +803,7 @@ WHERE region_id = @rid AND active = 1 AND expires_at IS NOT NULL AND expires_at 
                 {
                     cmd.CommandText = @"
 SELECT bot_id, creator_object FROM persistent_bots
-WHERE region_id = @rid AND active = 1";
+WHERE region_id = @rid AND active = 1" + (checkOrphans ? "" : " AND 0");
                     cmd.Parameters.AddWithValue("@rid", regionID);
 
                     using (var reader = cmd.ExecuteReader())
@@ -910,8 +910,9 @@ WHERE bot_id = @id AND active = 1";
 
             string regionID = m_scene.RegionInfo.RegionID.ToString();
 
-            // 1. Run cleanup first
-            RunCleanup();
+            // 1. Run cleanup first. The region has not loaded its objects yet when its modules load, so the check for
+            //    bots whose object is gone waits for OnPrimsLoaded.
+            RunCleanup(checkOrphans: false);
 
             // 2. Load all active records
             List<PersistentBotRecord> records = new List<PersistentBotRecord>();
@@ -1015,6 +1016,33 @@ ORDER BY created_at ASC";
             m_respawnTimer.Start();
         }
 
+        /// <summary>
+        /// The region has loaded its objects: a persistent bot whose creator object is not among them is gone for good
+        /// and is retired, and is not brought back if it was still queued to be.
+        /// </summary>
+        public void OnPrimsLoaded()
+        {
+            RunCleanup(checkOrphans: true);
+        }
+
+        private bool RecordActive(UUID botID)
+        {
+            try
+            {
+                using (var cmd = m_db.CreateCommand())
+                {
+                    cmd.CommandText = "SELECT COUNT(*) FROM persistent_bots WHERE bot_id = @id AND active = 1";
+                    cmd.Parameters.AddWithValue("@id", botID.ToString());
+                    return Convert.ToInt64(cmd.ExecuteScalar()) > 0;
+                }
+            }
+            catch (Exception ex)
+            {
+                m_log.LogError("[BotPersistence] Failed to read the record of {0}: {1}", botID, ex.Message);
+                return true;
+            }
+        }
+
         private string ValidateForRespawn(PersistentBotRecord rec)
         {
             // Check parcel permissions
@@ -1063,6 +1091,7 @@ ORDER BY created_at ASC";
             // A more robust approach would hook into Scene.AddNewAgent events
 
             PersistentBotRecord rec = m_respawnQueue.Dequeue();
+            if (!RecordActive(rec.BotID)) return;       // retired since it was queued
             SpawnBot(rec);
         }
 

@@ -159,6 +159,8 @@ namespace OpenSim.Region.OptionalModules.World.NPC
         // Each region keeps its own persistent bots in its own database, so each has its own persistence manager.
         private readonly Dictionary<UUID, BotPersistenceManager> m_persistence = new Dictionary<UUID, BotPersistenceManager>();
         private bool m_consoleCommandsRegistered;
+        private readonly Dictionary<Scene, EventManager.PrimsLoaded> m_primsLoadedHandlers
+            = new Dictionary<Scene, EventManager.PrimsLoaded>();
         private readonly Dictionary<Scene, EventManager.ObjectBeingRemovedFromScene> m_removedHandlers
             = new Dictionary<Scene, EventManager.ObjectBeingRemovedFromScene>();
 
@@ -259,6 +261,11 @@ namespace OpenSim.Region.OptionalModules.World.NPC
             EventManager.ObjectBeingRemovedFromScene removed = so => OnObjectBeingRemoved(scene, so);
             lock (m_removedHandlers) m_removedHandlers[scene] = removed;
             scene.EventManager.OnObjectBeingRemovedFromScene += removed;
+
+            // The bots whose object is gone are retired once the region has loaded its objects.
+            EventManager.PrimsLoaded primsLoaded = s => PersistenceFor(s)?.OnPrimsLoaded();
+            lock (m_removedHandlers) m_primsLoadedHandlers[scene] = primsLoaded;
+            scene.EventManager.OnPrimsLoaded += primsLoaded;
         }
 
         // Removing an object, or taking it into inventory, removes the botCreateBot bots it made that are not
@@ -320,6 +327,8 @@ namespace OpenSim.Region.OptionalModules.World.NPC
             {
                 if (m_removedHandlers.Remove(scene, out EventManager.ObjectBeingRemovedFromScene removed))
                     scene.EventManager.OnObjectBeingRemovedFromScene -= removed;
+                if (m_primsLoadedHandlers.Remove(scene, out EventManager.PrimsLoaded primsLoaded))
+                    scene.EventManager.OnPrimsLoaded -= primsLoaded;
             }
             // Clean up bots on this scene
             lock (m_bots)
