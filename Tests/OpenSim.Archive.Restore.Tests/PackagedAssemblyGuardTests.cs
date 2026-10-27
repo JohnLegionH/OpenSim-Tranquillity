@@ -51,6 +51,38 @@ public class PackagedAssemblyGuardTests
             Assert.True(File.Exists(Path.Combine(AppContext.BaseDirectory, name + ".dll")), name + ".dll is not in the test output");
     }
 
+    /// <summary>
+    /// The managed hash classes derive from the framework's abstract hash classes, so they name those types; the only member of
+    /// them they may call is the constructor. A call to Create or HashData would bring the system's OpenSSL back.
+    /// </summary>
+    [Fact]
+    public void TheManagedHashAssemblyOnlyDerivesFromTheFrameworkHashClasses()
+    {
+        string path = Path.Combine(AppContext.BaseDirectory, "OpenSim.Archive.ManagedHash.dll");
+        Assert.True(File.Exists(path), "OpenSim.Archive.ManagedHash.dll is not in the test output");
+        using FileStream stream = File.OpenRead(path);
+        using PEReader pe = new PEReader(stream);
+        MetadataReader reader = pe.GetMetadataReader();
+        List<string> calls = new List<string>();
+        int constructors = 0;
+        foreach (MemberReferenceHandle handle in reader.MemberReferences)
+        {
+            MemberReference member = reader.GetMemberReference(handle);
+            if (member.Parent.Kind != HandleKind.TypeReference)
+                continue;
+            TypeReference type = reader.GetTypeReference((TypeReferenceHandle)member.Parent);
+            if (reader.GetString(type.Namespace) != "System.Security.Cryptography" || !IsHashType(reader.GetString(type.Name)))
+                continue;
+            string name = reader.GetString(member.Name);
+            if (name == ".ctor")
+                constructors++;
+            else
+                calls.Add(reader.GetString(type.Name) + "::" + name);
+        }
+        Assert.Equal(3, constructors);
+        Assert.True(calls.Count == 0, "These bring libssl back on Linux:\n" + string.Join("\n", calls));
+    }
+
     [Fact]
     public void NoneOfOurPackagedAssembliesReferencesAFrameworkHashType()
     {
