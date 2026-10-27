@@ -287,6 +287,32 @@ public static class BakeOrchestrator
         return exists;
     }
 
+    /// <summary>
+    /// For an NPC: a channel with no usable bake of its own is reused when another NPC's bake for the same channel and
+    /// input hash is stored and still resolves. The NPCs of one outfit then share their bakes instead of compositing
+    /// and storing the same pixels again.
+    /// </summary>
+    private static ReuseDecision AddSharedBakes(ReuseDecision reuse, NpcBakeShare share, IAssetService assets)
+    {
+        var found = new Dictionary<BakeChannel, UUID>();
+        foreach (var ch in reuse.ToBake)
+            if (share.TryFind(ch, reuse.Hashes[ch], out var id)) found[ch] = id;
+        if (found.Count == 0) return reuse;
+
+        var channels = found.Keys.ToList();
+        var exists = Exists(assets, channels.Select(ch => found[ch].ToString()).ToArray());
+        var reused = new Dictionary<BakeChannel, StoredBake>(reuse.Reused);
+        var notes = new List<string>(reuse.Notes);
+        for (var i = 0; i < channels.Count; i++)
+        {
+            if (!exists[i]) { notes.Add($"{channels[i]}: shared bake {found[channels[i]]} has vanished from the asset service"); continue; }
+            reused[channels[i]] = new StoredBake(found[channels[i]], reuse.Hashes[channels[i]]);
+            notes.Add($"{channels[i]}: reused the bake another NPC stored for the same inputs");
+        }
+        var toBake = reuse.ToBake.Where(ch => !reused.ContainsKey(ch)).ToList();
+        return new ReuseDecision(reused, toBake, reuse.Hashes, notes);
+    }
+
     // ------------------------------------------------------------------ step 6: store + faces + supersede
 
     /// <summary>
@@ -305,7 +331,7 @@ public static class BakeOrchestrator
     public static IReadOnlyList<ChannelOutcome> StoreAndApply(IReadOnlyList<BakeResult> results, ResolvedInputs inputs, UUID agentId,
         IAssetService assets, AvatarAppearance appearance,
         IReadOnlyDictionary<BakeChannel, StoredBake> reused = null, IReadOnlyDictionary<BakeChannel, StoredBake> previous = null,
-        List<UUID> superseded = null, BakeTimings timings = null)
+        List<UUID> superseded = null, BakeTimings timings = null, NpcBakeShare npcShare = null)
     {
         ArgumentNullException.ThrowIfNull(results);
         ArgumentNullException.ThrowIfNull(assets);
@@ -321,6 +347,8 @@ public static class BakeOrchestrator
             {
                 appearance.Texture.CreateFace((uint)FaceOf(ch)).TextureID = keep.AssetId;
                 outcomes.Add(new ChannelOutcome(ch, ChannelStatus.Reused, keep.AssetId, keep.Hash, "inputs unchanged", empty));
+                if (npcShare is not null)
+                    DeleteSuperseded(assets, appearance, npcShare.Hold(agentId, ch, keep.Hash, keep.AssetId), keep.AssetId, superseded, timings);
                 continue;
             }
             byChannel.TryGetValue(ch, out var result);
@@ -368,7 +396,13 @@ public static class BakeOrchestrator
             }
             appearance.Texture.CreateFace((uint)FaceOf(ch)).TextureID = id;
             outcomes.Add(new ChannelOutcome(ch, ChannelStatus.Baked, id, result.InputHash, "", result.Fidelity));
-            Supersede(assets, appearance, previous, ch, id, superseded, timings);
+            if (npcShare is not null)
+            {
+                // An NPC's bakes may be shared with other NPCs: the old asset goes only when nobody holds it.
+                npcShare.NoteStored(ch, result.InputHash, id);
+                DeleteSuperseded(assets, appearance, npcShare.Hold(agentId, ch, result.InputHash, id), id, superseded, timings);
+            }
+            else Supersede(assets, appearance, previous, ch, id, superseded, timings);
         }
         return outcomes;
     }
@@ -382,18 +416,24 @@ public static class BakeOrchestrator
         BakeChannel ch, UUID newId, List<UUID> superseded, BakeTimings timings = null)
     {
         if (previous is null || !previous.TryGetValue(ch, out var old)) return;
-        if (old.AssetId.IsZero() || old.AssetId == newId) return;
+        DeleteSuperseded(assets, appearance, old.AssetId, newId, superseded, timings);
+    }
+
+    private static void DeleteSuperseded(IAssetService assets, AvatarAppearance appearance, UUID oldId, UUID newId,
+        List<UUID> superseded, BakeTimings timings)
+    {
+        if (oldId.IsZero() || oldId == newId) return;
         foreach (var other in AllChannels)
         {
             var face = appearance.Texture.FaceTextures[FaceOf(other)];
-            if (face is not null && face.TextureID == old.AssetId) return;
+            if (face is not null && face.TextureID == oldId) return;
         }
         try
         {
             var t0 = BakeTimings.Now;
-            var gone = assets.Delete(old.AssetId.ToString());
+            var gone = assets.Delete(oldId.ToString());
             timings?.AddAssetStore(t0, deleted: true);
-            if (gone) superseded?.Add(old.AssetId);
+            if (gone) superseded?.Add(oldId);
         }
         catch (Exception) { }
     }
@@ -413,7 +453,7 @@ public static class BakeOrchestrator
     /// <param name="cofVersion">The Current Outfit folder's version at bake time; stored, not compared (the hash is the stronger test).</param>
     public static BakeOutcome Run(UUID agentId, BakeReason reason, AvatarWearable[] wearables, byte[] visualParams, AvatarAppearance appearance,
         IAssetService assets, IAvatarService avatars, IBakeBackend backend, AvatarBakeCompositor compositor, int bakeSize, int cofVersion,
-        CancellationToken ct)
+        CancellationToken ct, NpcBakeShare npcShare = null)
     {
         var sw = Stopwatch.StartNew();
         var timings = new BakeTimings();
@@ -426,6 +466,7 @@ public static class BakeOrchestrator
         var hashRequest = new BakeRequest(w.Wearables, w.VisualParams, NoTextures, bakeSize);
         var index = BakeIndex.Read(avatars, agentId);
         var reuse = DecideReuse(needed, hashRequest, index, assets, compositor, bakeSize);
+        if (npcShare is not null) reuse = AddSharedBakes(reuse, npcShare, assets);
         ct.ThrowIfCancellationRequested();
 
         var (textures, texFailures) = ResolveTextures(w.Parsed, reuse.ToBake, assets, compositor, timings);
@@ -456,7 +497,7 @@ public static class BakeOrchestrator
         }
 
         var superseded = new List<UUID>();
-        var outcomes = StoreAndApply(results, inputs, agentId, assets, appearance, reuse.Reused, index.Bakes, superseded, timings);
+        var outcomes = StoreAndApply(results, inputs, agentId, assets, appearance, reuse.Reused, index.Bakes, superseded, timings, npcShare);
 
         // the index: one row pair per channel that now has a live bake, plus the three scalars
         var live = outcomes

@@ -136,8 +136,23 @@ public class NpcBakeTests
             : base(new IniConfigSource(), avatars, assets) { }
     }
 
+    /// <summary>The fake avatar service with a gate on <c>GetAvatar</c>, which a bake calls first (to read its index).</summary>
+    private sealed class GatedAvatarService : IAvatarService
+    {
+        private readonly FakeAvatarService m_inner;
+        public readonly ManualResetEventSlim Open = new(true);
+        public GatedAvatarService(FakeAvatarService inner) { m_inner = inner; }
+        public AvatarData GetAvatar(UUID userID) { Open.Wait(TimeSpan.FromSeconds(60)); return m_inner.GetAvatar(userID); }
+        public bool SetAvatar(UUID userID, AvatarData avatar) => m_inner.SetAvatar(userID, avatar);
+        public AvatarAppearance GetAppearance(UUID userID) => m_inner.GetAppearance(userID);
+        public bool SetAppearance(UUID userID, AvatarAppearance appearance) => m_inner.SetAppearance(userID, appearance);
+        public bool ResetAvatar(UUID userID) => m_inner.ResetAvatar(userID);
+        public bool SetItems(UUID userID, string[] names, string[] values) => m_inner.SetItems(userID, names, values);
+        public bool RemoveItems(UUID userID, string[] names) => m_inner.RemoveItems(userID, names);
+    }
+
     private sealed record Rig(Scene Scene, ServerSideBakingModule Module, ServerSideBakingRegion Region,
-        FakeAvatarService Avatars, NPCModule Npcs, ScenePresence Owner);
+        FakeAvatarService Avatars, NPCModule Npcs, ScenePresence Owner, GatedAvatarService Gate);
 
     private static Rig Setup(bool serverBaking = true)
     {
@@ -150,7 +165,15 @@ public class NpcBakeTests
 
         var scene = new SceneHelpers().SetupScene("npc bake scene", UUID.Random(), 1000, 1000, 256, 256, config);
         var avatars = new FakeAvatarService();
-        scene.RegisterModuleInterface<IAvatarService>(avatars);
+        var gate = new GatedAvatarService(avatars);
+        scene.RegisterModuleInterface<IAvatarService>(gate);
+
+        // The test scene's asset store does not answer AssetsExist (it reports every asset missing), and the reuse
+        // check asks it. A fake that does stands in; the scene caches its asset service, so that field is reset.
+        scene.UnregisterModuleInterface(scene.RequestModuleInterface<IAssetService>());
+        scene.RegisterModuleInterface<IAssetService>(new FakeAssetService());
+        typeof(Scene).GetField("m_AssetService", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .SetValue(scene, null);
 
         var module = new ServerSideBakingModule();
         var npcs = new NPCModule();
@@ -159,7 +182,7 @@ public class NpcBakeTests
 
         var owner = SceneHelpers.AddScenePresence(scene, UUID.Random());
         owner.Appearance.Wearables = Wear(scene, owner.UUID, 200, 170, 140);
-        return new Rig(scene, module, module.RegionOf(scene), avatars, npcs, owner);
+        return new Rig(scene, module, module.RegionOf(scene), avatars, npcs, owner, gate);
     }
 
     /// <summary>A shape and a skin whose paint is the given colour; a different colour is a different look.</summary>
@@ -324,6 +347,24 @@ public class NpcBakeTests
         Assert.Equal(npcHead, Indexed(rig, npcId, BakeChannel.Head));
     }
 
+    [Fact]
+    public async Task AnNpcNeverCarriesAnotherAvatarsBakedFacesWhileItsOwnBakeIsPending()
+    {
+        var rig = Setup();
+        await BakeOwner(rig);
+        Assert.NotEmpty(BakeOrchestratorFaces(rig.Owner));
+
+        rig.Gate.Open.Reset();   // holds every bake at its first avatar-service read
+        try
+        {
+            var npcId = MakeNpc(rig, new AvatarAppearance(rig.Owner.Appearance, true));
+            var npc = rig.Scene.GetScenePresence(npcId);
+            Assert.Empty(BakeOrchestratorFaces(npc));
+            Assert.Equal(-1, rig.Region.BakedCofVersion(npcId));
+        }
+        finally { rig.Gate.Open.Set(); }
+    }
+
     // ------------------------------------------------------------------ ruling 1: appearance changes, and sharing
 
     [Fact]
@@ -338,9 +379,9 @@ public class NpcBakeTests
 
         Assert.True(rig.Npcs.SetNPCAppearance(npcId, Look(rig, 20, 90, 200), rig.Scene));
 
-        WaitFor(() => { var h = Face(rig.Scene.GetScenePresence(npcId), BakeChannel.Head); return !h.IsZero() && h != before; }, "the NPC's new bake");
-        var after = Face(rig.Scene.GetScenePresence(npcId), BakeChannel.Head);
-        Assert.Equal(after, Indexed(rig, npcId, BakeChannel.Head));
+        WaitFor(() => { var h = Indexed(rig, npcId, BakeChannel.Head); return !h.IsZero() && h != before; }, "the NPC's new bake");
+        var after = Indexed(rig, npcId, BakeChannel.Head);
+        WaitFor(() => Face(rig.Scene.GetScenePresence(npcId), BakeChannel.Head) == after, "the NPC's face to name the new bake");
         Assert.True(Exists(rig, after));
         WaitFor(() => !Exists(rig, before), "the superseded bake to go");
     }

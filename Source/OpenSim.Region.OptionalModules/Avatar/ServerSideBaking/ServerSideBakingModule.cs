@@ -114,6 +114,7 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
         scene.UnregisterModuleInterface<IServerSideBakingRegion>(region);
         scene.EventManager.OnMakeRootAgent -= OnMakeRootAgent;
         scene.EventManager.OnRemovePresence -= region.Forget;
+        scene.EventManager.OnRemovePresence -= NpcBakes.Drop;
         scene.EventManager.OnAvatarAppearanceChange -= OnAvatarAppearanceChanged;
     }
 
@@ -150,6 +151,7 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
             scene.EventManager.OnRegisterCaps += (agentID, caps) => RegisterCaps(scene, agentID, caps);
             scene.EventManager.OnMakeRootAgent += OnMakeRootAgent;
             scene.EventManager.OnRemovePresence += region.Forget;
+            scene.EventManager.OnRemovePresence += NpcBakes.Drop;
             scene.EventManager.OnAvatarAppearanceChange += OnAvatarAppearanceChanged;
             m_log.LogDebug(
                 "[SSB]: region {Region} has server-side baking ON: RegionProtocols bit 0 set, {Cap} advertised, "
@@ -228,7 +230,8 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
         // steps 2, 4-6, scene-free; the ADR-004 index in the avatar service is read for the reuse decision and
         // written back at the end of the run
         var outcome = await Task.Run(() => BakeOrchestrator.Run(sp.UUID, reason, appearance.Wearables, appearance.VisualParams, appearance,
-            scene.AssetService, scene.AvatarService, backend, m_compositor, BakeSize, cofVersion, ct), ct).ConfigureAwait(false);
+            scene.AssetService, scene.AvatarService, backend, m_compositor, BakeSize, cofVersion, ct, sp.IsNPC ? NpcBakes : null), ct).ConfigureAwait(false);
+        if (sp.IsNPC) ClearFacesWithoutOwnBake(appearance, outcome);
 
         // The presence can also close while the bake runs. The bake itself is kept: it is stored and its index
         // written, which is where the next login's bake finds it. Nothing is written back, though: the region
@@ -282,6 +285,21 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
                 foreach (var note in c.Fidelity.Notes) m_log.LogDebug("[SSB]: {Channel} layer {Note}", c.Channel, note);
             }
         return outcome;
+    }
+
+    /// <summary>
+    /// An NPC is made from a copy of its owner's appearance, baked faces included. A channel the NPC's own bake gave no
+    /// live asset keeps that copy, which names a bake of the owner's: one the owner's next outfit change deletes, and
+    /// one the appearance service cannot serve under the NPC's id. Those faces are cleared, so every baked face of an
+    /// NPC is a bake of its own.
+    /// </summary>
+    public static void ClearFacesWithoutOwnBake(AvatarAppearance appearance, BakeOutcome outcome)
+    {
+        foreach (var c in outcome.Channels)
+        {
+            if (c.Status is ChannelStatus.Baked or ChannelStatus.Reused) continue;
+            appearance.Texture.FaceTextures[BakeOrchestrator.FaceOf(c.Channel)] = null;
+        }
     }
 
     /// <summary>
@@ -524,7 +542,7 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
     /// </summary>
     private void OnAvatarAppearanceChanged(ScenePresence sp)
     {
-        if (sp is null || sp.IsChildAgent || sp.IsNPC) return;
+        if (sp is null || sp.IsChildAgent) return;
         var scene = sp.Scene;
         var region = RegionOf(scene);
         if (region is not { ServerSideBakingEnabled: true }) return;
@@ -560,7 +578,7 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
     /// </summary>
     private void OnMakeRootAgent(ScenePresence sp)
     {
-        if (sp is null || sp.IsChildAgent || sp.IsNPC) return;
+        if (sp is null || sp.IsChildAgent) return;
         var scene = sp.Scene;
         if (RegionOf(scene) is not { ServerSideBakingEnabled: true }) return;
 
