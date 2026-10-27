@@ -7,6 +7,7 @@
 
 using System.Globalization;
 using System.Text.Json;
+using OpenSim.Archive.Rewrite;
 
 namespace OpenSim.Archive.Restore.Import;
 
@@ -94,6 +95,9 @@ public sealed class LinksetManifest
     private static readonly string[] PartKeys = { "name", "description", "folder", "base", "glb", "node", "lod2", "lod1", "lod0", "physics", "position", "rotation", "contents", "sit", "faces" };
     private static readonly string[] SourceKeys = { "glb", "node" };
     private static readonly string[] ContentKeys = { "type", "file", "name", "description" };
+    private static readonly string[] SitKeys = { "position", "rotation" };
+    private static readonly string[] FaceKeys = { "material", "face", "glow", "fullbright", "specular" };
+    private static readonly string[] SpecularKeys = { "map", "color", "glossiness", "environment" };
 
     public string Name { get; set; }
     public string Description { get; set; } = string.Empty;
@@ -145,6 +149,7 @@ public sealed class LinksetManifest
             LinksetManifest m = new LinksetManifest { Folder = folder };
             m.Name = Text(root, "name", "the manifest", required: true);
             m.Description = Text(root, "description", "the manifest", required: false) ?? string.Empty;
+            m.Pbr = Flag(root, "pbr", "the manifest") ?? false;
             if (!root.TryGetProperty("parts", out JsonElement parts) || parts.ValueKind != JsonValueKind.Array || parts.GetArrayLength() == 0)
                 throw new ImportException("the manifest needs \"parts\": a list with at least one part, the root part first");
             if (parts.GetArrayLength() > MaxParts)
@@ -215,11 +220,100 @@ public sealed class LinksetManifest
                         });
                     }
                 }
+                if (pe.TryGetProperty("sit", out JsonElement sit))
+                    part.SitTarget = ReadSit(sit, label);
+                if (pe.TryGetProperty("faces", out JsonElement faces))
+                    ReadFaces(faces, part, label, folder);
                 m.Parts.Add(part);
                 index++;
             }
             return m;
         }
+    }
+
+    /// <summary>A sit target: "position" (x, y, z in the part's own axes) and an optional "rotation" (x, y, z, w; none when left out).</summary>
+    private static LinksetSitTarget ReadSit(JsonElement e, string label)
+    {
+        string where = label + " \"sit\"";
+        if (e.ValueKind != JsonValueKind.Object)
+            throw new ImportException(label + ": \"sit\" must be an object with a \"position\" and an optional \"rotation\"");
+        Known(e, SitKeys, where);
+        float[] position = Numbers(e, "position", 3, where) ?? throw new ImportException(where + " needs \"position\": a list of 3 numbers");
+        float[] rotation = Numbers(e, "rotation", 4, where) ?? new[] { 0f, 0f, 0f, 1f };
+        float length = MathF.Sqrt(rotation.Sum(v => v * v));
+        if (length < 1e-6f)
+            throw new ImportException(where + ": \"rotation\" is all zeros; give x, y, z, w with w 1 for no turn");
+        return new LinksetSitTarget { Position = position, Rotation = rotation.Select(v => v / length).ToArray() };
+    }
+
+    /// <summary>The "faces" list: each entry names a face by "material" or by "face" and gives its glow, fullbright and legacy specular map.</summary>
+    private static void ReadFaces(JsonElement list, LinksetPart part, string label, string folder)
+    {
+        if (list.ValueKind != JsonValueKind.Array)
+            throw new ImportException(label + ": \"faces\" must be a list");
+        foreach (JsonElement fe in list.EnumerateArray())
+        {
+            string where = label + " faces";
+            if (fe.ValueKind != JsonValueKind.Object)
+                throw new ImportException(where + ": each entry must be a JSON object");
+            Known(fe, FaceKeys, where);
+            LinksetFace face = new LinksetFace { Material = Text(fe, "material", where, required: false) };
+            bool hasFace = fe.TryGetProperty("face", out JsonElement number);
+            if (hasFace && (number.ValueKind != JsonValueKind.Number || !number.TryGetInt32(out int n) || n < 0 || n >= MeshShape.MaxFaces))
+                throw new ImportException(where + ": \"face\" must be a whole number from 0 to " + (MeshShape.MaxFaces - 1));
+            if (hasFace)
+                face.Face = number.GetInt32();
+            if (face.Material != null && hasFace)
+                throw new ImportException(where + ": an entry names a face by \"material\" or by \"face\", not both");
+            if (face.Material == null && !hasFace)
+                throw new ImportException(where + ": an entry needs \"material\" (the glTF material name) or \"face\" (the face number)");
+            if (fe.TryGetProperty("glow", out JsonElement glow))
+            {
+                if (glow.ValueKind != JsonValueKind.Number || !glow.TryGetSingle(out float g) || !float.IsFinite(g) || g < 0f || g > 1f)
+                    throw new ImportException(where + ": \"glow\" must be a number from 0 to 1");
+                face.Glow = g;
+            }
+            face.Fullbright = Flag(fe, "fullbright", where);
+            if (fe.TryGetProperty("specular", out JsonElement spec))
+                face.Specular = ReadSpecular(spec, where, folder);
+            part.Faces.Add(face);
+        }
+    }
+
+    private static LinksetSpecular ReadSpecular(JsonElement e, string label, string folder)
+    {
+        string where = label + " specular";
+        if (e.ValueKind != JsonValueKind.Object)
+            throw new ImportException(label + ": \"specular\" must be an object with a \"map\"");
+        Known(e, SpecularKeys, where);
+        string map = Text(e, "map", where, required: true);
+        string file = Resolve(folder, map);
+        if (!File.Exists(file))
+            throw new ImportException(where + ": the specular map file '" + file + "' does not exist");
+        LinksetSpecular s = new LinksetSpecular { File = file, Color = Numbers(e, "color", 3, where) };
+        if (s.Color != null && s.Color.Any(v => v < 0f || v > 1f))
+            throw new ImportException(where + ": \"color\" must be red, green and blue from 0 to 1");
+        s.Glossiness = Byte(e, "glossiness", where);
+        s.Environment = Byte(e, "environment", where);
+        return s;
+    }
+
+    private static int? Byte(JsonElement e, string key, string where)
+    {
+        if (!e.TryGetProperty(key, out JsonElement v))
+            return null;
+        if (v.ValueKind != JsonValueKind.Number || !v.TryGetInt32(out int n) || n < 0 || n > 255)
+            throw new ImportException(where + ": \"" + key + "\" must be a whole number from 0 to 255");
+        return n;
+    }
+
+    private static bool? Flag(JsonElement e, string key, string where)
+    {
+        if (!e.TryGetProperty(key, out JsonElement v))
+            return null;
+        if (v.ValueKind != JsonValueKind.True && v.ValueKind != JsonValueKind.False)
+            throw new ImportException(where + ": \"" + key + "\" must be true or false");
+        return v.GetBoolean();
     }
 
     private static string Resolve(string folder, string path) => Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(folder ?? string.Empty, path));

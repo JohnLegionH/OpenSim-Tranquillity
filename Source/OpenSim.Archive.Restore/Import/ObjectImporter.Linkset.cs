@@ -89,7 +89,7 @@ public static partial class ObjectImporter
             say("read " + label + ": " + string.Join(", ", model.Names));
             try
             {
-                w.Built = BuildPart(model, catalog, w.Result, _ => { });
+                w.Built = BuildPart(model, catalog, w.Result, _ => { }, part.Faces, options.Pbr || manifest.Pbr);
             }
             catch (ImportException e)
             {
@@ -153,6 +153,9 @@ public static partial class ObjectImporter
                 Limit(Clean(w.Part.Description ?? string.Empty), MaxDescriptionChars), linkNumber, offset, turn, w.Built.Size, w.Built.TextureEntry.GetBytes(), options.Avatar);
             List<ElementEdit> edits = new List<ElementEdit>(MeshShape.Edits(w.Built.HighFaces.Count, w.Built.MeshId, null));
             edits.Add(ElementEdit.SetText("PhysicsShapeType", w.Built.ShapeType.ToString(Inv)));
+            AddPbrFaces(edits, w.Built.PbrFaces);
+            if (w.Part.SitTarget != null)
+                AddSitTarget(edits, w.Part.SitTarget);
             if (w.TaskInventory.Length > 0)
                 edits.Add(ElementEdit.SetInnerXmlOrAdd("TaskInventory", w.TaskInventory));
             partXml.Add(PartXml.Edit(xml, w.Id, edits));
@@ -175,6 +178,7 @@ public static partial class ObjectImporter
             result.Notes.AddRange(w.Result.Notes.Select(n => prefix + n));
             result.Textures.AddRange(w.Result.Textures);
             result.Materials.AddRange(w.Result.Materials);
+            result.PbrMaterials.AddRange(w.Result.PbrMaterials);
             ImportPartResult pr = new ImportPartResult
             {
                 Name = Limit(Clean(w.Part.Name), MaxNameChars), Description = Limit(Clean(w.Part.Description ?? string.Empty), MaxDescriptionChars), LinkNumber = work.Count == 1 ? 0 : i + 1,
@@ -252,6 +256,22 @@ public static partial class ObjectImporter
         foreach (string file in files)
             if (seen.Add(Path.GetFullPath(file)))
                 provenance.File(file, baseFolder);
+    }
+
+    /// <summary>
+    /// The sit target of a part as the region archives it: the offset and the turn (and the same values under the LL names), and the active flag, which the region
+    /// reads after them so that a target at the exact centre with no turn still counts as set (SceneObjectPart.SitTargetActive).
+    /// </summary>
+    private static void AddSitTarget(List<ElementEdit> edits, LinksetSitTarget sit)
+    {
+        string[] axes = { "X", "Y", "Z", "W" };
+        foreach (string name in new[] { "SitTargetPosition", "SitTargetPositionLL" })
+            for (int i = 0; i < 3; i++)
+                edits.Add(ElementEdit.SetText(name + "/" + axes[i], Text(sit.Position[i])));
+        foreach (string name in new[] { "SitTargetOrientation", "SitTargetOrientationLL" })
+            for (int i = 0; i < 4; i++)
+                edits.Add(ElementEdit.SetText(name + "/" + axes[i], Text(sit.Rotation[i])));
+        edits.Add(ElementEdit.SetTextOrAdd("SitTargetActive", "true"));
     }
 
     internal static string FolderBase(ModelSource source) => FindBaseName(source.Folder, source.Base);

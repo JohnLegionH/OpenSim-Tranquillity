@@ -58,7 +58,7 @@ public static partial class ObjectImporter
         result.Provenance = provenance.ToString();
         say("read " + string.Join(", ", model.Names));
         TextureCatalog catalog = new TextureCatalog(Path.Combine(folder, "no-original-textures"));
-        BuiltPart built = BuildPart(model, catalog, result, say);
+        BuiltPart built = BuildPart(model, catalog, result, say, null, options.Pbr);
         List<(Guid Id, byte[] Data, AssetType Type)> assets = built.Assets;
         foreach (KeyValuePair<Guid, byte[]> t in catalog.NewAssets)
             assets.Add((t.Key, t.Value, AssetType.Texture));
@@ -84,6 +84,7 @@ public static partial class ObjectImporter
             new float[] { 0f, 0f, 0f }, new float[] { 0f, 0f, 0f, 1f }, size, te.GetBytes(), options.Avatar);
         List<ElementEdit> edits = new List<ElementEdit>(MeshShape.Edits(highFaces.Count, meshId, null));
         edits.Add(ElementEdit.SetText("PhysicsShapeType", shapeType.ToString(Inv)));
+        AddPbrFaces(edits, built.PbrFaces);
         part = PartXml.Edit(part, partId, edits);
         string objectXml = "<SceneObjectGroup>" + part + "<OtherParts /></SceneObjectGroup>";
 
@@ -123,6 +124,8 @@ public static partial class ObjectImporter
         public int ShapeType;
         public Primitive.TextureEntry TextureEntry;
         public List<(Guid Id, byte[] Data, AssetType Type)> Assets;
+        /// <summary>The PBR material assigned to each face that has one: the face number and the material asset.</summary>
+        public List<(byte Face, Guid Id)> PbrFaces = new List<(byte, Guid)>();
     }
 
     internal static ModelLevels ReadFolderModel(string folder, string baseName, List<string> notes)
@@ -148,7 +151,7 @@ public static partial class ObjectImporter
     /// <summary>
     /// The mesh asset, the faces and the pictures of one part, from its four levels and its collision shape. Notes, textures and materials go to <paramref name="result"/>.
     /// </summary>
-    private static BuiltPart BuildPart(ModelLevels model, TextureCatalog catalog, ImportResult result, Action<string> say)
+    private static BuiltPart BuildPart(ModelLevels model, TextureCatalog catalog, ImportResult result, Action<string> say, IReadOnlyList<LinksetFace> settings = null, bool pbr = false)
     {
         GlbFile[] files = model.Files;
         GlbNode[] nodes = model.Nodes;
@@ -241,11 +244,18 @@ public static partial class ObjectImporter
         List<(Guid Id, byte[] Data, AssetType Type)> assets = new List<(Guid, byte[], AssetType)> { (meshId, meshBytes, AssetType.Mesh) };
         Primitive.TextureEntry te = new Primitive.TextureEntry(new UUID(PlywoodTexture));
         HashSet<Guid> materialsDone = new HashSet<Guid>();
+        Dictionary<int, LinksetFace> faceSettings = FaceSettings(settings, highFaces.Count, slotNames, sourceSlot);
+        List<(byte Face, Guid Id)> pbrFaces = new List<(byte, Guid)>();
         for (int face = 0; face < highFaces.Count; face++)
         {
+            faceSettings.TryGetValue(face, out LinksetFace setting);
             GlbPrimitive prim = highPrimitives[sourceSlot[face]];
             if (prim.Material < 0 || prim.Material >= files[0].Materials.Count)
+            {
+                if (setting != null)
+                    ApplyFaceSetting(te.CreateFace((uint)face), setting);
                 continue;
+            }
             GlbMaterial m = files[0].Materials[prim.Material];
             string materialName = MaterialName(files[0], prim.Material);
             if (m.HasTextureTransform)
@@ -254,49 +264,162 @@ public static partial class ObjectImporter
             float alpha = m.AlphaMode == "OPAQUE" ? 1f : m.BaseColor[3];
             tf.RGBA = new Color4(Clamp01(m.BaseColor[0]), Clamp01(m.BaseColor[1]), Clamp01(m.BaseColor[2]), Clamp01(alpha));
             tf.TextureID = new UUID(BlankTexture);
+            Guid? picture = null, normal = null, specular = null, metalRough = null, emissive = null;
             if (m.Image != null)
             {
-                Guid? id = catalog.Resolve(m.Image, out _, out string problem);
-                if (id == null)
+                picture = catalog.Resolve(m.Image, out _, out string problem);
+                if (picture == null)
                     result.Notes.Add("the picture of material '" + materialName + "' cannot be used (" + problem + "); the face is a plain colour");
                 else
                 {
-                    tf.TextureID = new UUID(id.Value);
-                    if (!result.Textures.Any(t => t.Id == id.Value && t.Role == "picture"))
-                        result.Textures.Add((id.Value, materialName, "picture"));
+                    tf.TextureID = new UUID(picture.Value);
+                    if (!result.Textures.Any(t => t.Id == picture.Value && t.Role == "picture"))
+                        result.Textures.Add((picture.Value, materialName, "picture"));
                 }
             }
             if (m.NormalImage != null)
             {
-                Guid? normal = catalog.Resolve(m.NormalImage, out _, out string problem);
+                normal = catalog.Resolve(m.NormalImage, out _, out string problem);
                 if (normal == null)
                     result.Notes.Add("the normal map of material '" + materialName + "' cannot be used (" + problem + "); the face has none");
-                else
+                else if (!result.Textures.Any(t => t.Id == normal.Value && t.Role == "normal map"))
+                    result.Textures.Add((normal.Value, materialName, "normal map"));
+            }
+            if (setting?.Specular != null)
+            {
+                specular = ReadSpecularMap(setting.Specular, catalog, materialName);
+                if (!result.Textures.Any(t => t.Id == specular.Value && t.Role == "specular map"))
+                    result.Textures.Add((specular.Value, materialName, "specular map"));
+            }
+            if (normal != null || specular != null)
+            {
+                // a legacy material with the maps drawn as the picture is, with no transform and no alpha blending
+                LinksetSpecular spec = setting?.Specular;
+                float[] colour = spec?.Color ?? new[] { 1f, 1f, 1f };
+                OSDMap map = new OSDMap
                 {
-                    if (!result.Textures.Any(t => t.Id == normal.Value && t.Role == "normal map"))
-                        result.Textures.Add((normal.Value, materialName, "normal map"));
-                    // a legacy material with the normal map drawn as the picture is, with no transform, no specular map and no alpha blending
-                    OSDMap map = new OSDMap
-                    {
-                        ["NormMap"] = OSD.FromUUID(new UUID(normal.Value)),
-                        ["SpecMap"] = OSD.FromUUID(UUID.Zero),
-                        ["SpecColor"] = new OSDArray { OSD.FromInteger(255), OSD.FromInteger(255), OSD.FromInteger(255), OSD.FromInteger(255) },
-                        ["SpecExp"] = OSD.FromInteger(51),
-                        ["EnvIntensity"] = OSD.FromInteger(0),
-                        ["DiffuseAlphaMode"] = OSD.FromInteger(0),
-                        ["AlphaMaskCutoff"] = OSD.FromInteger(0)
-                    };
-                    (Guid materialId, byte[] materialBytes) = MaterialBaking.WithoutMapTransforms(map);
-                    tf.MaterialID = new UUID(materialId);
-                    if (materialsDone.Add(materialId))
-                    {
-                        assets.Add((materialId, materialBytes, AssetType.OSMaterial));
-                        result.Materials.Add(materialId);
-                    }
+                    ["NormMap"] = OSD.FromUUID(normal.HasValue ? new UUID(normal.Value) : UUID.Zero),
+                    ["SpecMap"] = OSD.FromUUID(specular.HasValue ? new UUID(specular.Value) : UUID.Zero),
+                    ["SpecColor"] = new OSDArray { OSD.FromInteger(Byte(colour[0])), OSD.FromInteger(Byte(colour[1])), OSD.FromInteger(Byte(colour[2])), OSD.FromInteger(255) },
+                    ["SpecExp"] = OSD.FromInteger(spec?.Glossiness ?? 51),
+                    ["EnvIntensity"] = OSD.FromInteger(spec?.Environment ?? 0),
+                    ["DiffuseAlphaMode"] = OSD.FromInteger(0),
+                    ["AlphaMaskCutoff"] = OSD.FromInteger(0)
+                };
+                (Guid materialId, byte[] materialBytes) = MaterialBaking.WithoutMapTransforms(map);
+                tf.MaterialID = new UUID(materialId);
+                if (materialsDone.Add(materialId))
+                {
+                    assets.Add((materialId, materialBytes, AssetType.OSMaterial));
+                    result.Materials.Add(materialId);
                 }
             }
+            if (setting != null)
+                ApplyFaceSetting(tf, setting);
+            if (pbr)
+            {
+                if (m.MetalRoughImage != null)
+                    metalRough = PbrPicture(m.MetalRoughImage, "occlusion roughness metallic", catalog, result, materialName);
+                if (m.EmissiveImage != null)
+                    emissive = PbrPicture(m.EmissiveImage, "emissive", catalog, result, materialName);
+                PbrMaterialData data = new PbrMaterialData
+                {
+                    BaseColor = m.BaseColor, Metallic = m.Metallic, Roughness = m.Roughness, Emissive = m.Emissive, AlphaMode = m.AlphaMode,
+                    AlphaCutoff = m.AlphaCutoff, DoubleSided = m.DoubleSided,
+                    BaseColorTexture = picture ?? Guid.Empty, NormalTexture = normal ?? Guid.Empty, MetalRoughTexture = metalRough ?? Guid.Empty, EmissiveTexture = emissive ?? Guid.Empty
+                };
+                byte[] bytes = PbrMaterialAsset.Build(data);
+                Guid pbrId = MeshId.FromBytes(bytes);
+                if (materialsDone.Add(pbrId))
+                {
+                    assets.Add((pbrId, bytes, AssetType.Material));
+                    result.PbrMaterials.Add(pbrId);
+                }
+                pbrFaces.Add(((byte)face, pbrId));
+            }
         }
-        return new BuiltPart { Size = size, Centre = center, HighFaces = highFaces, MeshId = meshId, MeshBytes = meshBytes.Length, ShapeType = shapeType, TextureEntry = te, Assets = assets };
+        return new BuiltPart { Size = size, Centre = center, HighFaces = highFaces, MeshId = meshId, MeshBytes = meshBytes.Length, ShapeType = shapeType, TextureEntry = te, Assets = assets, PbrFaces = pbrFaces };
+    }
+
+    // ------------------------------------------------------------------ face settings and PBR pictures
+
+    /// <summary>The settings of a part by face number: a setting names its face by glTF material name (every face of that material) or by number.</summary>
+    private static Dictionary<int, LinksetFace> FaceSettings(IReadOnlyList<LinksetFace> settings, int faceCount, string[] slotNames, List<int> sourceSlot)
+    {
+        Dictionary<int, LinksetFace> byFace = new Dictionary<int, LinksetFace>();
+        if (settings == null)
+            return byFace;
+        foreach (LinksetFace s in settings)
+        {
+            List<int> faces = new List<int>();
+            if (s.Material != null)
+            {
+                for (int f = 0; f < faceCount; f++)
+                    if (slotNames[sourceSlot[f]] == s.Material)
+                        faces.Add(f);
+                if (faces.Count == 0)
+                    throw new ImportException("a face setting names the material '" + s.Material + "', which this part does not have (its materials: " + string.Join(", ", slotNames.Select(n => "'" + n + "'")) + ")");
+            }
+            else
+            {
+                if (s.Face >= faceCount)
+                    throw new ImportException("a face setting names face " + s.Face.ToString(Inv) + ", but this part has " + faceCount.ToString(Inv) + " face" + (faceCount == 1 ? string.Empty : "s"));
+                faces.Add(s.Face);
+            }
+            foreach (int f in faces)
+                if (!byFace.TryAdd(f, s))
+                    throw new ImportException("face " + f.ToString(Inv) + " is set twice in this part's faces list");
+        }
+        return byFace;
+    }
+
+    private static void ApplyFaceSetting(Primitive.TextureEntryFace face, LinksetFace setting)
+    {
+        if (setting.Glow.HasValue)
+            face.Glow = setting.Glow.Value;
+        if (setting.Fullbright.HasValue)
+            face.Fullbright = setting.Fullbright.Value;
+    }
+
+    private static Guid ReadSpecularMap(LinksetSpecular specular, TextureCatalog catalog, string materialName)
+    {
+        byte[] bytes;
+        try { bytes = File.ReadAllBytes(specular.File); }
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+        {
+            throw new ImportException("the specular map '" + specular.File + "' cannot be read: " + e.Message);
+        }
+        Guid? id = catalog.Resolve(bytes, out _, out string problem);
+        if (id == null)
+            throw new ImportException("the specular map '" + Path.GetFileName(specular.File) + "' of material '" + materialName + "' cannot be used (" + problem + ")");
+        return id.Value;
+    }
+
+    private static Guid? PbrPicture(byte[] picture, string role, TextureCatalog catalog, ImportResult result, string materialName)
+    {
+        Guid? id = catalog.Resolve(picture, out _, out string problem);
+        if (id == null)
+        {
+            result.Notes.Add("the " + role + " picture of material '" + materialName + "' cannot be used (" + problem + "); the PBR material has none");
+            return null;
+        }
+        if (!result.Textures.Any(t => t.Id == id.Value && t.Role == role))
+            result.Textures.Add((id.Value, materialName, role));
+        return id;
+    }
+
+    private static int Byte(float unit) => (int)Math.Round(Math.Min(1f, Math.Max(0f, unit)) * 255f, MidpointRounding.AwayFromZero);
+
+    /// <summary>Adds the PBR face references to a part's mesh edits: the ExtraParams value of the edits gets the PBR block beside the mesh block.</summary>
+    internal static void AddPbrFaces(List<ElementEdit> edits, IReadOnlyList<(byte Face, Guid Id)> faces)
+    {
+        if (faces.Count == 0)
+            return;
+        int at = edits.FindIndex(e => e.Path == "Shape/ExtraParams");
+        if (at < 0)
+            throw new ImportException("the mesh edits have no ExtraParams element to add the PBR faces to");
+        byte[] extra = MeshShape.WithRenderMaterials(Convert.FromBase64String(edits[at].Value), faces);
+        edits[at] = ElementEdit.SetText("Shape/ExtraParams", Convert.ToBase64String(extra));
     }
 
     // ------------------------------------------------------------------ the folder and the files

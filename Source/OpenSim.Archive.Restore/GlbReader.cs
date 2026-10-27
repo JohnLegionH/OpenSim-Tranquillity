@@ -58,6 +58,17 @@ public sealed class GlbMaterial
     public byte[] NormalImage;
     /// <summary>The material gives a picture an offset, scale or rotation (the KHR_texture_transform extension).</summary>
     public bool HasTextureTransform;
+    /// <summary>metallicFactor and roughnessFactor; 1 each when the material gives none (the glTF default).</summary>
+    public float Metallic = 1f, Roughness = 1f;
+    /// <summary>emissiveFactor (r, g, b); black when the material gives none.</summary>
+    public float[] Emissive = { 0f, 0f, 0f };
+    /// <summary>alphaCutoff, used when the alpha mode is MASK; 0.5 when the material gives none (the glTF default).</summary>
+    public float AlphaCutoff = 0.5f;
+    public bool DoubleSided;
+    /// <summary>The encoded metallicRoughnessTexture image (occlusion in red, roughness in green, metal in blue); null when it has none.</summary>
+    public byte[] MetalRoughImage;
+    /// <summary>The encoded emissiveTexture image; null when it has none.</summary>
+    public byte[] EmissiveImage;
 }
 
 /// <summary>A binary glTF file read as far as the restore needs: nodes with their extras, meshes with their primitives, and the material extras.</summary>
@@ -195,6 +206,20 @@ public sealed class GlbFile
                 result.HasTextureTransform = true;
         result.Image = ReadImage(tex, root, views, data, binAt, binLength);
         result.NormalImage = ReadImage(m["normalTexture"], root, views, data, binAt, binLength);
+        JsonNode mr = m["pbrMetallicRoughness"];
+        if (mr?["metallicFactor"] != null)
+            result.Metallic = (float)(double)mr["metallicFactor"];
+        if (mr?["roughnessFactor"] != null)
+            result.Roughness = (float)(double)mr["roughnessFactor"];
+        float[] emissive = Floats(m["emissiveFactor"], 3);
+        if (emissive != null)
+            result.Emissive = emissive;
+        if (m["alphaCutoff"] != null)
+            result.AlphaCutoff = (float)(double)m["alphaCutoff"];
+        if (m["doubleSided"] != null)
+            result.DoubleSided = (bool)m["doubleSided"];
+        result.MetalRoughImage = ReadImage(mr?["metallicRoughnessTexture"], root, views, data, binAt, binLength);
+        result.EmissiveImage = ReadImage(m["emissiveTexture"], root, views, data, binAt, binLength);
         return result;
     }
 

@@ -42,7 +42,18 @@ internal sealed class TextureCatalog
     {
         isNew = false;
         problem = null;
-        if (!SkiaImageUtils.TryDecodeFromBytes(picture, out SKBitmap bitmap) || bitmap == null)
+        SKBitmap bitmap = null;
+        try
+        {
+            if (!SkiaImageUtils.TryDecodeFromBytes(picture, out bitmap))
+                bitmap = null;
+        }
+        catch (ArgumentException)
+        {
+            // bytes that are no picture at all reach the decoder as a null codec
+            bitmap = null;
+        }
+        if (bitmap == null)
         {
             problem = "the picture cannot be decoded";
             return null;

@@ -16,8 +16,8 @@ namespace OpenSim.ArchiveInspector;
 internal static class ImportCommand
 {
     public const string Usage =
-@"Usage: OpenSim.ArchiveInspector oar-import <folder> --out <new.oar> --avatar <uuid> [--name <text>] [--description <text>] [--base <name>] [--position <x,y,z>] [--created <seconds>] [--check <folder>]
-       OpenSim.ArchiveInspector oar-import (--manifest <linkset.json> | <folder with a linkset.json>) --out <new.oar> --avatar <uuid> [--position <x,y,z>] [--created <seconds>] [--check <folder>]
+@"Usage: OpenSim.ArchiveInspector oar-import <folder> --out <new.oar> --avatar <uuid> [--name <text>] [--description <text>] [--base <name>] [--position <x,y,z>] [--created <seconds>] [--pbr] [--check <folder>]
+       OpenSim.ArchiveInspector oar-import (--manifest <linkset.json> | <folder with a linkset.json>) --out <new.oar> --avatar <uuid> [--position <x,y,z>] [--created <seconds>] [--pbr] [--check <folder>]
 
 Writes an archive that holds one mesh object, made from the .glb files in <folder> (the files a mesh tool writes for an upload):
   <base>.glb          the full mesh (high level of detail); one face for each material, and the pictures of the materials inside the file
@@ -35,6 +35,9 @@ The size of the object is the size of the full mesh in metres. The archive loads
   --position <x,y,z>    where the model's origin lands in the region, in metres (default 128,128,25)
   --created <seconds>   the creation time written into the archive and the object, in seconds since 1970 (default: now). Give the same value with the same
                         input files to get the same archive, byte for byte.
+  --pbr                 also write a glTF PBR material for every face that has a material in the .glb (base colour, normal, occlusion-roughness-metallic and
+                        emissive pictures and the factors), beside the legacy texture and normal-map material the face always has. A manifest can ask for it
+                        with ""pbr"": true.
   --check <folder>      after writing, write the object back out to glTF in <folder> and compare it with the input: triangle counts equal
                         for every level, positions within half a millimetre, texture coordinates and pictures the same
   --manifest <file>     a linked object (see below); a folder that holds a linkset.json is read the same way
@@ -58,6 +61,11 @@ A linked object: a JSON manifest, linkset.json, lists the parts, root part first
   relative to the root part: ""position"" is where its model origin lands, in metres in the viewer axes (x east, y north, z up), and ""rotation"" is its turn as x, y, z, w.
   A node source without them takes its node place in the file (as seen from the root part node when both are nodes of one file); a folder source takes 0, 0, 0 and no turn.
   A building is one manifest: the shell is the root, each door leaf and window a part.
+  A part can also have:
+    ""sit"": { ""position"": [x, y, z], ""rotation"": [x, y, z, w] }   where an avatar sits, in the part's own axes (rotation left out is no turn)
+    ""faces"": [ { ""material"": ""<glTF material name>"" (or ""face"": <number>), ""glow"": 0 to 1, ""fullbright"": true,
+                 ""specular"": { ""map"": ""<picture file>"", ""color"": [r, g, b] (0 to 1), ""glossiness"": 0 to 255, ""environment"": 0 to 255 } } ]
+  A specular map is a legacy one: colour in red, green and blue, glossiness in alpha. It goes in the face's legacy material beside the normal map.
   ""contents"" puts items into the part: ""script"" (LSL text, set running; the region compiles it when the object loads), ""notecard"" (a text file) or ""texture""
   (a PNG or JPEG picture, stored as a JPEG 2000 codestream the viewer can decode), each with a ""file"" and an optional ""name"" and ""description"". Creator and owner are the
   avatar, with full permission on parts and items. Unknown keys are refused by name.
@@ -105,6 +113,9 @@ Exit codes: 0 done (and the check passed, if asked); 1 written, but the check fa
                 case "--check":
                     if (i + 1 >= args.Length) return Fail("--check needs a folder");
                     checkFolder = args[++i];
+                    break;
+                case "--pbr":
+                    options.Pbr = true;
                     break;
                 case "--created":
                     if (i + 1 >= args.Length || !long.TryParse(args[i + 1], NumberStyles.None, CultureInfo.InvariantCulture, out long created) || created <= 0)
