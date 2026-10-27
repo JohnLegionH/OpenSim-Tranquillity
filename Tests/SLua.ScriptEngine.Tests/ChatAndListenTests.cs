@@ -159,6 +159,22 @@ public class ChatAndListenTests
         Assert.Equal(new[] { "m=5|Alice Resident|" + Alice + "|open", "m=5|Bob Resident|" + Bob + "|open" }, rig.MarksOf(byMessage).Where(m => m.StartsWith("m=")));
     }
 
+    [RequiresNativeFact]
+    public void ARegionSayToReachesOnlyTheListenOfItsTarget()
+    {
+        using var rig = new EngineRig(productionFunctions: true);
+        SceneObjectGroup other = rig.AddObject("Bystander", rig.Object.AbsolutePosition + new Vector3(4, 0, 0), Owner);
+        SceneObjectGroup talker = rig.AddObject("Talker", rig.Object.AbsolutePosition + new Vector3(2, 0, 0), Owner);
+        UUID target = rig.Rez(Listener("t", 12));
+        UUID bystander = rig.Rez(Listener("b", 12), part: other.RootPart);
+        Assert.True(Ready(rig, target, "t") && Ready(rig, bystander, "b"));
+
+        rig.Rez(Slua("ll.RegionSayTo('" + rig.Object.RootPart.UUID + "', 12, 'for you')"), part: talker.RootPart);
+
+        Assert.True(Heard(rig, target, "t=12|Talker|" + talker.RootPart.UUID + "|for you"));
+        Assert.True(NothingHeard(rig, bystander, "b"));
+    }
+
     // ---- listen control, the limit and the end of a listen ----
 
     [RequiresNativeFact]

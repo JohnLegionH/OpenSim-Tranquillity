@@ -43,16 +43,21 @@ public class ChatRegionRunFixtureTests
     internal const string SluaTalker = @"//SLua:slua
 local counts = {}
 LLEvents:on('listen', function(channel, name, id, message)
-    counts[channel] = (counts[channel] or 0) + 1
+    if channel == 46 then
+        -- the far speaker tells its key; a listen with that key filter follows
+        ll.Listen(44, '', message, '')
+    else
+        counts[channel] = (counts[channel] or 0) + 1
+    end
 end)
 ll.Listen(30, '', '', '')
 ll.Listen(31, '', '', '')
-ll.Listen(40, 'Proof Far', '', '')
+ll.Listen(40, '{FARNAME}', '', '')
 ll.Listen(41, 'Nobody Here', '', '')
 ll.Listen(42, '', '', 'open')
 ll.Listen(43, '', '', 'close')
-ll.Listen(44, '', '{FARKEY}', '')
 ll.Listen(45, '', '', '')
+ll.Listen(46, '', '', '')
 local step = 0
 LLEvents:on('timer', function()
     if step == 0 then
@@ -131,15 +136,23 @@ default
 
     // The far scripts speak at 17 and 19 seconds. {MARK} is F for the first, T for the second.
     internal const string FarSpeaker = @"//SLua:LSL
+integer step;
 default
 {
     state_entry()
     {
-        llSetTimerEvent({DELAY});
+        llSetTimerEvent(8.0);
     }
     timer()
     {
         integer c;
+        if (step == 0)
+        {
+            step = 1;
+            if ({SAYFIRST} == 1) llRegionSay(46, (string)llGetKey());
+            llSetTimerEvent({DELAY} - 8.0);
+            return;
+        }
         if ({SAYFIRST} == 1)
         {
             llSay(31, ""too far for llSay"");
@@ -201,12 +214,15 @@ default
     public void WriteTheRegionArchive()
     {
         string path = Environment.GetEnvironmentVariable("SLUA_CHAT_OAR_OUT");
+        // A second archive for a region that already holds the first: other names and places, no limit objects.
+        string suffix = Environment.GetEnvironmentVariable("SLUA_CHAT_SUFFIX") ?? "";
+        float shift = suffix.Length > 0 ? 20 : 0;
         var owner = new UUID(Environment.GetEnvironmentVariable("SLUA_REGION_OWNER"));
 
         Scene scene = new SceneHelpers().SetupScene();
         var assets = new List<(UUID Id, string Text)>();
         var groups = new List<SceneObjectGroup>();
-        int tail = 0x7900;
+        int tail = suffix.Length > 0 ? 0x7A00 : 0x7900;
 
         SceneObjectGroup Make(string name, Vector3 at, string scriptName, string text)
         {
@@ -240,14 +256,17 @@ default
         }
 
         // The far speaker's id is the key the SLua script's key filter names.
-        SceneObjectGroup far = Make("Proof Far", new Vector3(200, 200, 30), "Far speaker", FarSpeaker.Replace("{DELAY}", "17.0").Replace("{SAYFIRST}", "1").Replace("{MARK}", "F"));
-        Make("Proof Other", new Vector3(200, 203, 30), "Other speaker", FarSpeaker.Replace("{DELAY}", "19.0").Replace("{SAYFIRST}", "0").Replace("{MARK}", "T"));
-        Make("Proof SLua", new Vector3(60, 60, 30), "SLua talker", SluaTalker.Replace("{FARKEY}", far.RootPart.UUID.ToString()));
-        Make("Proof LSL", new Vector3(62, 60, 30), "LSL talker", LslTalker);
-        Make("Proof Phlox", new Vector3(64, 60, 30), "Phlox talker", PhloxTalker);
-        Make("Proof Cap SLua", new Vector3(100, 100, 30), "SLua cap", SluaCap);
-        Make("Proof Cap LSL", new Vector3(110, 100, 30), "LSL cap", LslCap);
-        Make("Proof Cap Phlox", new Vector3(120, 100, 30), "Phlox cap", PhloxCap);
+        Make("Proof Far" + suffix, new Vector3(200, 200 - shift, 30), "Far speaker", FarSpeaker.Replace("{DELAY}", "17.0").Replace("{SAYFIRST}", "1").Replace("{MARK}", "F"));
+        Make("Proof Other" + suffix, new Vector3(200, 203 - shift, 30), "Other speaker", FarSpeaker.Replace("{DELAY}", "19.0").Replace("{SAYFIRST}", "0").Replace("{MARK}", "T"));
+        Make("Proof SLua" + suffix, new Vector3(60, 60 + shift, 30), "SLua talker", SluaTalker.Replace("{FARNAME}", "Proof Far" + suffix));
+        Make("Proof LSL" + suffix, new Vector3(62, 60 + shift, 30), "LSL talker", LslTalker);
+        Make("Proof Phlox" + suffix, new Vector3(64, 60 + shift, 30), "Phlox talker", PhloxTalker);
+        if (suffix.Length == 0)
+        {
+            Make("Proof Cap SLua", new Vector3(100, 100, 30), "SLua cap", SluaCap);
+            Make("Proof Cap LSL", new Vector3(110, 100, 30), "LSL cap", LslCap);
+            Make("Proof Cap Phlox", new Vector3(120, 100, 30), "Phlox cap", PhloxCap);
+        }
 
         using var file = File.Create(path);
         using var gzip = new GZipStream(file, CompressionLevel.Optimal);
