@@ -68,6 +68,18 @@ def read_builtins(path):
     return out
 
 
+def read_builtin_parameters(path):
+    """name -> (return type, [(type, parameter name)]) for every function in the runtime's list."""
+    out = {}
+    for line in read(path).split("\n"):
+        m = BUILTIN.match(line)
+        if not m:
+            continue
+        params = [tuple(p.strip().split()[:2]) for p in m.group(3).split(",")] if m.group(3) else []
+        out[m.group(2)] = (m.group(1), params)
+    return out
+
+
 # ---- the interface ----
 
 def read_interface(path):
@@ -397,6 +409,7 @@ def main(builtins_path, interface_path, impl_path, shim_path, out_dir):
     write_bindings(out_dir, rows, failures)
     write_served(out_dir, [r[0] for r in rows], host_needs)
     write_coverage(out_dir, [r[0] for r in rows], missing, seam_only, mismatch, compiler, unplaced)
+    write_indexes(out_dir, read_builtin_parameters(builtins_path))
     counts = {c: sum(1 for r in rows if r[2] == c) for c in FUNCTION_CLASSES}
     print("bound %d (%s); missing from the seam %d; seam only %d; signature mismatch %d; os/iw/bot %d; unplaced %d"
           % (len(rows), ", ".join("%s %d" % (c, counts[c]) for c in FUNCTION_CLASSES), len(missing), len(seam_only),
@@ -524,6 +537,55 @@ namespace SLua.ScriptEngine
     out.append(string_array("Unplaced", "Bound functions whose delay the generator could not read, with the class they were given.", unplaced))
     out.append("    }\n}\n")
     write(out_dir, "LlCoverage.g.cs", "".join(out))
+
+
+# Which arguments and returns are positions, read from the runtime's own definitions: an integer parameter named "index" or
+# ending in "_index" is a position (the functions the runtime registers with a compatibility mode take them: VM/src/lll.cpp),
+# and an integer result of a function whose name has Find or Index in it is the position of a match. Integer parameters
+# whose name suggests a position without saying so are listed, not shifted.
+POSITION_LIKE = re.compile(r"^(number|item|line|face|num)$")
+FINDS_A_POSITION = re.compile(r"Find|Index")
+
+
+def is_index_parameter(ptype, pname):
+    return ptype == "integer" and (pname == "index" or pname.endswith("_index"))
+
+
+def write_indexes(out_dir, definitions):
+    arguments = {}
+    returns = []
+    not_derived = []
+    for name in sorted(definitions):
+        ret, params = definitions[name]
+        named = [p for p in params if len(p) == 2]
+        at = [i for i, p in enumerate(params) if len(p) == 2 and is_index_parameter(p[0], p[1])]
+        if at:
+            arguments[name] = at
+        if ret == "integer" and FINDS_A_POSITION.search(name):
+            returns.append(name)
+        for t, n in named:
+            if t == "integer" and POSITION_LIKE.match(n):
+                not_derived.append("%s(%s)" % (name, n))
+    out = [HEADER, """
+using System.Collections.Generic;
+
+namespace SLua.ScriptEngine
+{
+    /// <summary>Which arguments and results of the ll functions are positions (see tools/slua-bindings/generate-bindings.py).</summary>
+    internal static class LlIndexes
+    {
+        /// <summary>The ll functions with integer parameters that are positions, and the zero-based places of those parameters.</summary>
+        internal static readonly IReadOnlyDictionary<string, int[]> Arguments = new Dictionary<string, int[]>
+        {
+"""]
+    for name in sorted(arguments):
+        out.append('            ["%s"] = new[] { %s },\n' % (name, ", ".join(str(i) for i in arguments[name])))
+    out.append("        };\n\n")
+    out.append(string_array("Returns", "The ll functions whose integer result is a position (-1 for no match).", returns))
+    out.append("\n")
+    out.append(string_array("NotDerived", "Integer parameters whose name suggests a position without saying so; they are not shifted.", not_derived))
+    out.append("    }\n}\n")
+    write(out_dir, "LlIndexes.g.cs", "".join(out))
 
 
 def write(out_dir, name, text):

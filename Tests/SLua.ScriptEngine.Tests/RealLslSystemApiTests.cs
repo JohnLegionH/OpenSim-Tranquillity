@@ -227,7 +227,7 @@ public class RealLslSystemApiTests
     private const string SluaPureCalls =
         "ll.OwnerSay(tostring(ll.StringLength('hello')))\n" +
         "ll.OwnerSay(ll.ToUpper('abc'))\n" +
-        "ll.OwnerSay(ll.GetSubString('hello world', 0, 4))\n" +
+        "ll.OwnerSay(ll.GetSubString('hello world', 1, 5))\n" +
         "ll.OwnerSay(tostring(ll.Abs(-7)))\n" +
         "ll.OwnerSay(tostring(math.floor(ll.Pow(2, 10))))\n" +
         "ll.OwnerSay(tostring(ll.Floor(2.7)))";

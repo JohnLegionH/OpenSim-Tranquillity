@@ -244,7 +244,7 @@ public class LlEndToEndTests
     {
         using BindingRig rig = InventoryRig();
         Assert.Equal(InventoryCalls, Run(rig,
-            "local n = ll.GetInventoryNumber(1)\nlocal name = ll.GetInventoryName(1, n - 1)\nll.GiveInventory('6f1b6c0a-1d3e-4f4a-9a43-0c6a4a8e9d11', name)", lsl: false));
+            "local n = ll.GetInventoryNumber(1)\nlocal name = ll.GetInventoryName(1, n)\nll.GiveInventory('6f1b6c0a-1d3e-4f4a-9a43-0c6a4a8e9d11', name)", lsl: false));
     }
 
     [RequiresNativeFact]

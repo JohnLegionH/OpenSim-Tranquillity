@@ -176,9 +176,10 @@ public class IndexShiftTests
     {
         using var rig = new BindingRig();
         rig.Fake.Returns("llStringLength", 3);
-        Run(rig, "ll.StringLength('abc')");
+        string[] marks = Run(rig, "ossl.Mark('len', ll.StringLength('abc')) ll.GetLinkName(1)");
 
-        Assert.Equal(new[] { "llStringLength(abc)" }, Calls(rig));
+        Assert.Equal(new[] { "llStringLength(abc)", "llGetLinkName(1)" }, Calls(rig));
+        Assert.Contains("len:3", marks);
     }
 
     [RequiresNativeFact]

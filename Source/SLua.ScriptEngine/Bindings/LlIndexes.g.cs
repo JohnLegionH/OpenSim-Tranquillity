@@ -14,12 +14,96 @@ using System.Collections.Generic;
 
 namespace SLua.ScriptEngine
 {
+    /// <summary>Which arguments and results of the ll functions are positions (see tools/slua-bindings/generate-bindings.py).</summary>
     internal static class LlIndexes
     {
-        internal static readonly IReadOnlyDictionary<string, int[]> Arguments = new Dictionary<string, int[]>();
+        /// <summary>The ll functions with integer parameters that are positions, and the zero-based places of those parameters.</summary>
+        internal static readonly IReadOnlyDictionary<string, int[]> Arguments = new Dictionary<string, int[]>
+        {
+            ["llDeleteSubList"] = new[] { 1, 2 },
+            ["llDeleteSubString"] = new[] { 1, 2 },
+            ["llDetectedTouchBinormal"] = new[] { 0 },
+            ["llDetectedTouchFace"] = new[] { 0 },
+            ["llDetectedTouchNormal"] = new[] { 0 },
+            ["llDetectedTouchPos"] = new[] { 0 },
+            ["llDetectedTouchST"] = new[] { 0 },
+            ["llDetectedTouchUV"] = new[] { 0 },
+            ["llGetInventoryName"] = new[] { 1 },
+            ["llGetListEntryType"] = new[] { 1 },
+            ["llGetSubString"] = new[] { 1, 2 },
+            ["llInsertString"] = new[] { 1 },
+            ["llList2Float"] = new[] { 1 },
+            ["llList2Integer"] = new[] { 1 },
+            ["llList2Key"] = new[] { 1 },
+            ["llList2List"] = new[] { 1, 2 },
+            ["llList2ListSlice"] = new[] { 1, 2, 4 },
+            ["llList2ListStrided"] = new[] { 1, 2 },
+            ["llList2Rot"] = new[] { 1 },
+            ["llList2String"] = new[] { 1 },
+            ["llList2Vector"] = new[] { 1 },
+            ["llListFindStrided"] = new[] { 2, 3 },
+            ["llListReplaceList"] = new[] { 2, 3 },
+            ["llListSortStrided"] = new[] { 2 },
+            ["llOrd"] = new[] { 1 },
+        };
 
-        internal static readonly string[] Returns = new string[0];
+        /// <summary>The ll functions whose integer result is a position (-1 for no match).</summary>
+        internal static readonly string[] Returns = new string[]
+        {
+            "llListFindList",
+            "llListFindListNext",
+            "llListFindStrided",
+            "llSubStringIndex",
+        };
 
-        internal static readonly string[] NotDerived = new string[0];
+        /// <summary>Integer parameters whose name suggests a position without saying so; they are not shifted.</summary>
+        internal static readonly string[] NotDerived = new string[]
+        {
+            "llAdjustDamage(number)",
+            "llClearLinkMedia(face)",
+            "llClearPrimMedia(face)",
+            "llDetectedDamage(number)",
+            "llDetectedGrab(number)",
+            "llDetectedGroup(number)",
+            "llDetectedKey(number)",
+            "llDetectedLinkNumber(number)",
+            "llDetectedName(item)",
+            "llDetectedOwner(number)",
+            "llDetectedPos(number)",
+            "llDetectedRezzer(number)",
+            "llDetectedRot(number)",
+            "llDetectedType(number)",
+            "llDetectedVel(number)",
+            "llGetAlpha(face)",
+            "llGetColor(face)",
+            "llGetLinkMedia(face)",
+            "llGetNotecardLine(line)",
+            "llGetNotecardLineSync(line)",
+            "llGetPrimMediaParams(face)",
+            "llGetRenderMaterial(face)",
+            "llGetTexture(face)",
+            "llGetTextureOffset(face)",
+            "llGetTextureRot(face)",
+            "llGetTextureScale(face)",
+            "llIntegerToBase64(number)",
+            "llIsLinkGLTFMaterial(face)",
+            "llMessageLinked(num)",
+            "llOffsetTexture(face)",
+            "llRotateTexture(face)",
+            "llScaleTexture(face)",
+            "llSetAlpha(face)",
+            "llSetColor(face)",
+            "llSetLinkAlpha(face)",
+            "llSetLinkColor(face)",
+            "llSetLinkGLTFOverrides(face)",
+            "llSetLinkMedia(face)",
+            "llSetLinkRenderMaterial(face)",
+            "llSetLinkTexture(face)",
+            "llSetLinkTextureAnim(face)",
+            "llSetPrimMediaParams(face)",
+            "llSetRenderMaterial(face)",
+            "llSetTexture(face)",
+            "llSetTextureAnim(face)",
+        };
     }
 }

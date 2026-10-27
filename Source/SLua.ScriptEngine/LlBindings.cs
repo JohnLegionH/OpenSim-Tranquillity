@@ -33,13 +33,25 @@ namespace SLua.ScriptEngine
         private static string NameOf(string row) => row.Substring(0, row.IndexOf(':'));
 
         /// <summary>
-        /// Registers every bound function in the VM's "ll" table. With <paramref name="serviceLane"/>, the long-running (async)
-        /// and service-reaching functions are registered as pausing calls whose work runs on the context's service lane while
-        /// the script waits; every other function, and those two kinds without a lane, run on the script worker. With
-        /// <paramref name="unavailable"/>, the functions in <see cref="Unavailable"/> (bound or not) are registered as errors
-        /// instead.
+        /// Registers every bound function in the VM's "ll" table and again in its "llcompat" table. With
+        /// <paramref name="serviceLane"/>, the long-running (async) and service-reaching functions are registered as pausing
+        /// calls whose work runs on the context's service lane while the script waits; every other function, and those two
+        /// kinds without a lane, run on the script worker. With <paramref name="unavailable"/>, the functions in
+        /// <see cref="Unavailable"/> (bound or not) are registered as errors instead.
         /// </summary>
+        /// <remarks>
+        /// The two tables differ in how they count positions, as in the Second Life runtime (VM/src/lll.cpp registers its
+        /// functions in "ll" with compatibility mode off and in "llcompat" with it on): in "ll", an SLua script counts from 1
+        /// and a failed search is nil; in "llcompat", and in "ll" for an LSL script, positions are LSL's (from 0, -1 for no
+        /// match). The API underneath always sees LSL's.
+        /// </remarks>
         public static void Register(Vm vm, Func<SchedulerScript, ScriptContext> contextOf, bool serviceLane = false, bool unavailable = false)
+        {
+            RegisterTable(vm, "ll", compat: false, contextOf, serviceLane, unavailable);
+            RegisterTable(vm, "llcompat", compat: true, contextOf, serviceLane, unavailable);
+        }
+
+        private static void RegisterTable(Vm vm, string table, bool compat, Func<SchedulerScript, ScriptContext> contextOf, bool serviceLane, bool unavailable)
         {
             var refused = unavailable ? new System.Collections.Generic.HashSet<string>(Unavailable, StringComparer.Ordinal) : null;
             if (refused != null)
@@ -48,7 +60,7 @@ namespace SLua.ScriptEngine
                 foreach (string name in Unavailable)
                 {
                     string apiName = name;
-                    vm.Register("ll", apiName.Substring(2), (tag, args) => throw new FunctionUnavailableException(apiName));
+                    vm.Register(table, apiName.Substring(2), (tag, args) => throw new FunctionUnavailableException(apiName));
                 }
             }
 
@@ -59,20 +71,55 @@ namespace SLua.ScriptEngine
                 BoundFunction function = f;
                 if (serviceLane && function.Class is FunctionClass.Async or FunctionClass.Service)
                 {
-                    vm.RegisterPausing("ll", function.Name,
+                    vm.RegisterPausing(table, function.Name,
                         (tag, args) => StartLaneCall(function, contextOf(SchedulerScript.Current), args),
                         (tag, args) => TakeLaneAnswer());
                     continue;
                 }
 
-                vm.Register("ll", function.Name, (tag, args) =>
+                LlIndexes.Arguments.TryGetValue(function.ApiName, out int[] indexArguments);
+                bool indexResult = Array.IndexOf(LlIndexes.Returns, function.ApiName) >= 0;
+                vm.Register(table, function.Name, (tag, args) =>
                 {
                     ScriptContext context = contextOf(SchedulerScript.Current);
-                    Value[] result = RunInContext(function, context, args, out double delay);
+                    bool shift = !compat && context.Script.Language == ScriptLanguage.Slua;
+                    ReadOnlySpan<Value> given = shift && indexArguments != null ? ShiftArguments(function.Name, indexArguments, args) : args;
+                    Value[] result = RunInContext(function, context, given, out double delay);
                     if (delay > 0) context.Script.AddSleep(delay);
-                    return result;
+                    return shift && indexResult ? ShiftResult(result) : result;
                 });
             }
+        }
+
+        /// <summary>
+        /// An SLua script's positions to LSL's (VM/src/llsl.cpp luaSL_checkindexlike): 1 and up count from the start and become
+        /// 0 and up, negative positions count from the end and stay as they are, and 0 is an error.
+        /// </summary>
+        private static Value[] ShiftArguments(string function, int[] positions, ReadOnlySpan<Value> args)
+        {
+            Value[] shifted = args.ToArray();
+            foreach (int at in positions)
+            {
+                if (at >= shifted.Length)
+                    continue;
+                Value v = shifted[at];
+                if (v.Type != Bindings.ValueType.Int && v.Type != Bindings.ValueType.Number)
+                    continue; // not a number: the marshalling reports it as it does for any argument
+                long n = v.Type == Bindings.ValueType.Int ? v.I : (long)v.N;
+                if (n == 0)
+                    throw new ArgumentException("passed 0 when a 1-based index was expected");
+                shifted[at] = n > 0 ? Value.Int(n - 1) : Value.Int(n);
+            }
+            return shifted;
+        }
+
+        /// <summary>LSL's position to an SLua script's (VM/src/llsl.cpp luaSL_pushindexlike): -1, no match, is nil; 0 and up count from 1.</summary>
+        private static Value[] ShiftResult(Value[] result)
+        {
+            if (result == null || result.Length == 0 || result[0].Type != Bindings.ValueType.Int)
+                return result;
+            long n = result[0].I;
+            return new[] { n == -1 ? Value.Nil : n >= 0 ? Value.Int(n + 1) : Value.Int(n) };
         }
 
         /// <summary>
