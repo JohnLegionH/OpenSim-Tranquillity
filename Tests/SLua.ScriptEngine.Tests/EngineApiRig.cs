@@ -76,12 +76,18 @@ internal sealed class EngineApiRig : IDisposable
         }
     }
 
-    public EngineApiRig(params (string Key, string Value)[] settings)
+    public EngineApiRig(params (string Key, string Value)[] settings) : this((Action<IConfigSource>)null, settings)
+    {
+    }
+
+    /// <param name="configure">Adds sections to the configuration after the engine's own, for example [OSSL].</param>
+    public EngineApiRig(Action<IConfigSource> configure, params (string Key, string Value)[] settings)
     {
         var source = new IniConfigSource();
         IConfig c = source.AddConfig(EngineIdentity.ConfigSection);
         c.Set("Enabled", "true");
         foreach ((string key, string value) in settings) c.Set(key, value);
+        configure?.Invoke(source);
 
         Scene = new SceneHelpers().SetupScene();
         Object = SceneHelpers.AddSceneObject(Scene, "Example Object", UUID.Random());
@@ -97,6 +103,7 @@ internal sealed class EngineApiRig : IDisposable
             {
                 Bindings.Vm vm = inner();
                 LlBindings.Register(vm, ContextOf);
+                OsBindings.Register(vm, ContextOf);
                 return vm;
             };
         });
