@@ -26,24 +26,21 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// An NPC created from a server-baked owner renders as a cloud on a server-side-baking region.
+/// An NPC's appearance on a region with and without server-side baking.
 ///
 /// <para>
-/// The NPC's appearance is a clone of the owner's (<c>NPCModule.CreateNPC</c>, <c>BotManager.CreateBot</c>):
-/// the baked faces point at the owner's stored bake assets and the visual params are the owner's byte for byte,
-/// including <c>AppearanceMessage_Version</c> (id 11000, index 251), which the owner's viewer sends as 1 once it
-/// is on the server-bake path. The region never bakes an NPC (<c>ServerSideBakingModule</c> returns on
-/// <c>IsNPC</c> for both the login and the change bake), so <c>BakedCofVersion(npc)</c> is -1 and the NPC's
-/// appearance goes out with no <c>AppearanceData</c> block - but with the inherited parameter still saying 1.
-/// The viewer prefers the parameter (<c>resolve_appearance_version</c>), puts the NPC on the server-bake path,
-/// and fetches every baked face from the appearance service under the <b>NPC's</b> UUID, which has no bake
-/// index: 404 on every channel, and the avatar never leaves the cloud state.
+/// An NPC is created from a copy of its owner's appearance (<c>NPCModule.CreateNPC</c>, <c>BotManager.CreateBot</c>),
+/// including the owner's baked faces and <c>AppearanceMessage_Version</c> (id 11000, index 251), which the owner's
+/// viewer sends as 1 once it is on the server-bake path. The viewer prefers that parameter over the AppearanceData
+/// block (<c>resolve_appearance_version</c>), so a 1 with no bake behind it sends the viewer to the appearance
+/// service under the NPC's UUID.
 /// </para>
 ///
 /// <para>
-/// The fix under test: a presence this region did not bake must not claim a server bake. For an NPC the
-/// parameter goes out as 0, which is exactly the message every avatar carried before SSB and which Firestorm
-/// answers by fetching the (real, stored) bake assets from the region as it always did.
+/// On a server-baking region the region bakes the NPC (<c>ServerSideBakingModule</c>): the copy keeps no baked
+/// faces, and the message is an avatar's. On a region without server-side baking nothing bakes the NPC, so the
+/// copy keeps the owner's baked faces and the parameter goes out as 0, the message every avatar carried before
+/// server-side baking.
 /// </para>
 /// </summary>
 public class SsbNpcAppearanceTests
