@@ -21,6 +21,13 @@ internal sealed class ImportMaterial
     public float[] Color = { 1f, 1f, 1f, 1f };
     public byte[] Picture;
     public byte[] Normal;
+    /// <summary>The glTF metallic-roughness picture (occlusion in red, roughness in green, metal in blue); null writes none.</summary>
+    public byte[] MetalRough;
+    public byte[] EmissiveImage;
+    public float[] Emissive;
+    public float? Metallic, Roughness, AlphaCutoff;
+    public string AlphaMode;
+    public bool DoubleSided = true;
 }
 
 /// <summary>
@@ -146,10 +153,22 @@ internal static class ImportKit
             int materialIndex = -1;
             if (m != null && !done.TryGetValue(m, out materialIndex))
             {
-                JsonObject pbr = new JsonObject { ["baseColorFactor"] = new JsonArray(m.Color.Select(x => (JsonNode)x).ToArray()), ["metallicFactor"] = 0 };
+                JsonObject pbr = new JsonObject { ["baseColorFactor"] = new JsonArray(m.Color.Select(x => (JsonNode)x).ToArray()), ["metallicFactor"] = m.Metallic ?? 0f };
+                if (m.Roughness.HasValue)
+                    pbr["roughnessFactor"] = m.Roughness.Value;
                 if (m.Picture != null)
                     pbr["baseColorTexture"] = new JsonObject { ["index"] = Texture(m.Picture) };
-                JsonObject mat = new JsonObject { ["name"] = m.Name, ["pbrMetallicRoughness"] = pbr, ["doubleSided"] = true };
+                if (m.MetalRough != null)
+                    pbr["metallicRoughnessTexture"] = new JsonObject { ["index"] = Texture(m.MetalRough) };
+                JsonObject mat = new JsonObject { ["name"] = m.Name, ["pbrMetallicRoughness"] = pbr, ["doubleSided"] = m.DoubleSided };
+                if (m.AlphaMode != null)
+                    mat["alphaMode"] = m.AlphaMode;
+                if (m.AlphaCutoff.HasValue)
+                    mat["alphaCutoff"] = m.AlphaCutoff.Value;
+                if (m.Emissive != null)
+                    mat["emissiveFactor"] = new JsonArray(m.Emissive.Select(x => (JsonNode)x).ToArray());
+                if (m.EmissiveImage != null)
+                    mat["emissiveTexture"] = new JsonObject { ["index"] = Texture(m.EmissiveImage) };
                 if (m.Normal != null)
                     mat["normalTexture"] = new JsonObject { ["index"] = Texture(m.Normal) };
                 materials.Add(mat);
@@ -205,12 +224,13 @@ internal static class ImportKit
     }
 
     /// <summary>Writes the model folder. With <paramref name="normalMap"/> the side material carries a normal map.</summary>
-    public static Folder Write(bool normalMap = false, PhysicsKind physics = PhysicsKind.Box, bool withPhysics = true, string name = Name, string into = null, int pictureSize = 8)
+    public static Folder Write(bool normalMap = false, PhysicsKind physics = PhysicsKind.Box, bool withPhysics = true, string name = Name, string into = null, int pictureSize = 8, Action<ImportMaterial, ImportMaterial> configure = null)
     {
         string folder = into ?? System.IO.Path.Combine(System.IO.Path.GetTempPath(), "import-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);
         ImportMaterial top = new ImportMaterial { Name = "top", Color = new[] { 0.2f, 0.4f, 0.6f, 1f }, Picture = Png(200, 40, 10, pictureSize) };
         ImportMaterial side = new ImportMaterial { Name = "side", Color = new[] { 1f, 1f, 1f, 1f }, Picture = Png(30, 90, 150, pictureSize), Normal = normalMap ? Png(128, 128, 255, pictureSize) : null };
+        configure?.Invoke(top, side);
         string[] files = { name + ".glb", name + "_lod2.glb", name + "_lod1.glb", name + "_lod0.glb" };
         for (int level = 0; level < 4; level++)
         {

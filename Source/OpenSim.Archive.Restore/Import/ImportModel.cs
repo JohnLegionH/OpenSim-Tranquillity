@@ -28,6 +28,8 @@ public sealed class ImportOptions
     public Action<string> Progress { get; set; }
     /// <summary>The release of the tool that runs the import; written first in the provenance text. Empty leaves the line out.</summary>
     public string ToolVersion { get; set; } = string.Empty;
+    /// <summary>Write a glTF PBR material for every face that has a material in the .glb, beside the legacy material.</summary>
+    public bool Pbr { get; set; }
 }
 
 /// <summary>One level of detail of the written mesh.</summary>
@@ -90,6 +92,8 @@ public sealed class ImportResult
     /// <summary>The texture assets written, with the .glb material each is for.</summary>
     public List<(Guid Id, string Material, string Role)> Textures { get; } = new List<(Guid, string, string)>();
     public List<Guid> Materials { get; } = new List<Guid>();
+    /// <summary>The PBR material assets written.</summary>
+    public List<Guid> PbrMaterials { get; } = new List<Guid>();
     public List<string> Notes { get; } = new List<string>();
     /// <summary>For a linked object, each part in link order (root first); empty for the single-part import.</summary>
     public List<ImportPartResult> Parts { get; } = new List<ImportPartResult>();

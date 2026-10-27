@@ -35,6 +35,32 @@ public sealed class LinksetContent
     public string Description { get; set; } = string.Empty;
 }
 
+/// <summary>A part's sit target: where an avatar sits and how it is turned, in the part's own axes.</summary>
+public sealed class LinksetSitTarget
+{
+    public float[] Position { get; set; }
+    public float[] Rotation { get; set; }
+}
+
+/// <summary>A face's legacy specular map and its settings.</summary>
+public sealed class LinksetSpecular
+{
+    public string File { get; set; }
+    public float[] Color { get; set; }
+    public int? Glossiness { get; set; }
+    public int? Environment { get; set; }
+}
+
+/// <summary>Settings for one face of a part, named by its material or its number.</summary>
+public sealed class LinksetFace
+{
+    public string Material { get; set; }
+    public int Face { get; set; } = -1;
+    public float? Glow { get; set; }
+    public bool? Fullbright { get; set; }
+    public LinksetSpecular Specular { get; set; }
+}
+
 /// <summary>One part of the linked object: the root (the first in the list) or a child.</summary>
 public sealed class LinksetPart
 {
@@ -52,6 +78,9 @@ public sealed class LinksetPart
     /// <summary>The part's turn relative to the root part as x, y, z, w; null takes the node's own turn (a node source) or none.</summary>
     public float[] Rotation { get; set; }
     public List<LinksetContent> Contents { get; } = new List<LinksetContent>();
+    /// <summary>Where an avatar sits on the part; null leaves the part with no sit target.</summary>
+    public LinksetSitTarget SitTarget { get; set; }
+    public List<LinksetFace> Faces { get; } = new List<LinksetFace>();
 }
 
 /// <summary>The manifest of one linked object: the object's name and its parts, root first.</summary>
@@ -61,13 +90,15 @@ public sealed class LinksetManifest
     public const int MaxParts = 256;
     public static readonly string[] ContentTypes = { "script", "notecard", "texture" };
 
-    private static readonly string[] ManifestKeys = { "name", "description", "parts" };
-    private static readonly string[] PartKeys = { "name", "description", "folder", "base", "glb", "node", "lod2", "lod1", "lod0", "physics", "position", "rotation", "contents" };
+    private static readonly string[] ManifestKeys = { "name", "description", "pbr", "parts" };
+    private static readonly string[] PartKeys = { "name", "description", "folder", "base", "glb", "node", "lod2", "lod1", "lod0", "physics", "position", "rotation", "contents", "sit", "faces" };
     private static readonly string[] SourceKeys = { "glb", "node" };
     private static readonly string[] ContentKeys = { "type", "file", "name", "description" };
 
     public string Name { get; set; }
     public string Description { get; set; } = string.Empty;
+    /// <summary>True when the manifest asks for glTF PBR materials on every face that has a material.</summary>
+    public bool Pbr { get; set; }
     /// <summary>The folder the manifest's relative paths are read from.</summary>
     public string Folder { get; set; }
     /// <summary>The manifest file this was read from and the SHA-256 of its bytes; null when it was parsed from text.</summary>
