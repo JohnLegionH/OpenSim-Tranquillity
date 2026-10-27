@@ -103,6 +103,9 @@ public sealed class LinksetManifest
     public string Description { get; set; } = string.Empty;
     /// <summary>True when the manifest asks for glTF PBR materials on every face that has a material.</summary>
     public bool Pbr { get; set; }
+
+    /// <summary>True when the manifest asks for the joint positions of a rigged mesh to be written.</summary>
+    public bool JointPositions { get; set; }
     /// <summary>The folder the manifest's relative paths are read from.</summary>
     public string Folder { get; set; }
     /// <summary>The manifest file this was read from and the SHA-256 of its bytes; null when it was parsed from text.</summary>

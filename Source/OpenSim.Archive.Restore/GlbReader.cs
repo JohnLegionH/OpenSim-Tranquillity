@@ -25,6 +25,10 @@ public sealed class GlbPrimitive
     public int[] Indices;
     public int Material = -1;
     public JsonObject Extras;
+    /// <summary>Four joint numbers for each vertex (JOINTS_0), as numbers into the skin's joint list; null when the primitive is not skinned.</summary>
+    public int[] Joints;
+    /// <summary>Four weights for each vertex (WEIGHTS_0), in the order of <see cref="Joints"/>; null when the primitive is not skinned.</summary>
+    public float[] Weights;
 }
 
 public sealed class GlbMesh
@@ -40,8 +44,20 @@ public sealed class GlbNode
     public string Name;
     public float[] Translation, Rotation, Scale;
     public int Mesh = -1;
+    /// <summary>The skin the node's mesh is bound to (an index into <see cref="GlbFile.Skins"/>), or -1.</summary>
+    public int Skin = -1;
     public List<int> Children = new List<int>();
     public JsonObject Extras;
+}
+
+/// <summary>A glTF skin: the nodes that are its joints and the inverse bind matrix of each.</summary>
+public sealed class GlbSkin
+{
+    public string Name;
+    /// <summary>Node numbers of the joints, in the order the vertices' joint numbers refer to.</summary>
+    public List<int> Joints = new List<int>();
+    /// <summary>One matrix for each joint, 16 values in the file's column-major order; empty when the skin gives none (each is then the identity).</summary>
+    public List<float[]> InverseBind = new List<float[]>();
 }
 
 /// <summary>A glTF material as far as the restore needs it for a part that was added: its colour, alpha mode and base colour image.</summary>
@@ -78,6 +94,7 @@ public sealed class GlbFile
     public List<GlbMesh> Meshes = new List<GlbMesh>();
     public List<JsonObject> MaterialExtras = new List<JsonObject>();
     public List<GlbMaterial> Materials = new List<GlbMaterial>();
+    public List<GlbSkin> Skins = new List<GlbSkin>();
     /// <summary>What the exporter wrote about how the file was made; null for a file with no stamp (made before cleaning existed, or by another tool).</summary>
     public OpenSim.Archive.GltfExport.ExportStamp Stamp;
 

@@ -30,6 +30,8 @@ public sealed class ImportOptions
     public string ToolVersion { get; set; } = string.Empty;
     /// <summary>Write a glTF PBR material for every face that has a material in the .glb, beside the legacy material.</summary>
     public bool Pbr { get; set; }
+    /// <summary>For a rigged mesh, also write the joint positions of the file (the viewer's "include joint positions"), so the wearer's joints move to them. Off by default: the mesh then follows the wearer's own shape.</summary>
+    public bool JointPositions { get; set; }
 }
 
 /// <summary>One level of detail of the written mesh.</summary>
