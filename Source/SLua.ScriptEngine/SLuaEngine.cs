@@ -698,8 +698,13 @@ namespace SLua.ScriptEngine
             ScriptRecord record = RecordOf(itemID);
             if (record == null)
                 return;
+            // A script that was stopped takes up the sensor repeat and the controls its stop let go, as Phlox's start does (OnScriptInjected).
+            // A script a fault stopped starts fresh instead, and one still held by its object's crossing or a pause gets them back when that ends.
+            bool injected = !record.Script.Running && !record.Script.Killed && !SensorHeld(record);
             SetItemRunningFlag(record.LocalID, itemID, true);
             m_scheduler?.SetRunning(record.Script, true);
+            if (injected)
+                RealApiOf(itemID)?.OnScriptInjected(false);
             ApplyEventFlags(record, record.Script.CurrentState, true);
             BeginRunning(record);
         }
@@ -709,8 +714,22 @@ namespace SLua.ScriptEngine
             ScriptRecord record = RecordOf(itemID);
             if (record == null)
                 return;
+            bool wasRunning = record.Script.Running;
             m_scheduler?.SetRunning(record.Script, false);
+            // The sensor repeat stops, owed dataserver replies are dropped and taken controls are let go; their records stay, so a
+            // start carries on with them (Phlox: LSLSystemAPI.OnScriptStopped, from its stop).
+            if (wasRunning)
+                RealApiOf(itemID)?.OnScriptStopped();
             ApplyEventFlags(record, record.Script.CurrentState, false);
+        }
+
+        /// <summary>The pauses that stop a script's sensor repeat: the parcel and the estate switch, as Phlox's parcel pause, and the object's crossing.</summary>
+        private const PauseReason SensorHolds = PauseReason.Parcel | PauseReason.Estate | PauseReason.Crossing;
+
+        private static bool SensorHeld(ScriptRecord record)
+        {
+            lock (record.PauseLock)
+                return (record.Pause & SensorHolds) != 0;
         }
 
         /// <summary>The item's Running flag, as the viewer's checkbox and llSetScriptState persist it.</summary>
@@ -1006,11 +1025,36 @@ namespace SLua.ScriptEngine
                 record.Script.DropsEventsWhileSuspended = (after & (PauseReason.Estate | PauseReason.Parcel)) != 0;
                 // A script held by its object crossing does not hear chat: a listen is dropped, its other events are kept (Phlox, ProcessEventQueue, IsHeldOnlyForCrossing).
                 record.Script.DropsListensWhileSuspended = (after & PauseReason.Crossing) != 0;
+                HoldOrReleaseSensor(record, before, after);
                 if (before == PauseReason.None)
                     scheduler.Suspend(record.Script);
                 else if (after == PauseReason.None)
                     scheduler.Resume(record.Script);
             }
+        }
+
+        /// <summary>
+        /// A script held by its object's crossing, or paused by the parcel or the estate switch, stops its sensor repeat; the sensor
+        /// comes back when the last of those pauses ends and the script is running (Phlox: HoldForCrossing and PauseForParcel call
+        /// OnCrossingHold and PauseSensorForParcel, and the end of either calls RestoreSensorAfterParcel). The crossing hold also
+        /// drops the replies the script is owed. Called with the record's pause lock held.
+        /// </summary>
+        private void HoldOrReleaseSensor(ScriptRecord record, PauseReason before, PauseReason after)
+        {
+            Phlox.ScriptEngine.LSLSystemAPI api = RealApiOf(record.ItemID);
+            if (api == null)
+                return;
+            bool heldBefore = (before & SensorHolds) != 0;
+            bool heldAfter = (after & SensorHolds) != 0;
+            if (!heldBefore && heldAfter)
+            {
+                if ((after & PauseReason.Crossing) != 0)
+                    api.OnCrossingHold();
+                else
+                    api.PauseSensorForParcel();
+            }
+            else if (heldBefore && !heldAfter && record.Script.Running && !record.Script.Killed)
+                api.RestoreSensorAfterParcel();
         }
 
         /// <summary>
