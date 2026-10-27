@@ -19,7 +19,7 @@ namespace SLua.ScriptEngine.Tests;
 [Collection("native-library")]
 public class MinEventDelayResetTests
 {
-    private const double FloorSeconds = 1.5;
+    private const double FloorSeconds = 3;
 
     [RequiresNativeFact]
     public void AResetKeepsTheMinimumEventDelayFloorAndTheTimeTheNextHandlerWaitsFor()
@@ -40,6 +40,8 @@ public class MinEventDelayResetTests
         Assert.True(SchedulerHarness.WaitFor(() => rig.MarksOf(item).Count(m => m == "ready") == 2), "main did not run again");
         Assert.True(rig.Engine.PostScriptEvent(item, "changed", new object[] { 9 }));
         Assert.True(rig.Engine.PostScriptEvent(item, "changed", new object[] { 10 }));
+        Thread.Sleep(500);   // a real wait: the handler that started before the reset still holds the next one back, so the first event after it is not heard yet
+        Assert.DoesNotContain("c9", rig.MarksOf(item));
         Heard("c9");
 
         Thread.Sleep(500);   // a real wait: the second event waits for the floor, so it is not heard yet
