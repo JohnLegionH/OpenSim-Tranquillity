@@ -158,7 +158,10 @@ public static partial class ObjectImporter
         string[] fileNames = model.Names;
 
         // a rigged part: one skin from the four files, and every file's weights in its joint numbers
-        RigPlan rig = RigBuilder.Plan(files, nodes, fileNames, jointPositions);
+        List<string> turnNotes = new List<string>();
+        int quarterTurns = RigBuilder.Orient(files, nodes, model.PhysicsFile, turnNotes);
+        result.Notes.AddRange(turnNotes);
+        RigPlan rig = RigBuilder.Plan(files, nodes, fileNames, jointPositions, quarterTurns);
         if (rig != null)
         {
             for (int level = 0; level < 4; level++)

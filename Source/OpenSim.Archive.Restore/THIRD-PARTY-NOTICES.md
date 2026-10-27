@@ -9,6 +9,9 @@ aliases of the bones) and `indra/newview/character/avatar_lad.xml` (the attachme
 let `oar-import` tell a rigged mesh's joints from other nodes of a glTF file and write them under the names the viewer knows.
 
 **Licence:** the same as the two files named above, which the viewer source places under the GNU Lesser General Public License v2.1 (with the viewer's
-linking exception); see `Source/OpenSimNGC.Appearance.Baking/THIRD-PARTY-NOTICES.md` for the notice and the licence text that ship with `avatar_lad.xml`.
+linking exception). The licence texts are in the repository's `ThirdPartyLicenses` folder, the same ones that ship with `avatar_lad.xml` (the viewer repository does not
+say which of them covers these data files, so all are kept): `ThirdPartyLicenses/SecondLifeViewer-LGPL-2.1.txt` (the GNU Lesser General Public License, version 2.1),
+`ThirdPartyLicenses/SecondLifeViewer-LICENSE-source.txt` (the viewer's source licence statement) and `ThirdPartyLicenses/SecondLifeViewer-LICENSE-logos.txt` (the
+Creative Commons Attribution-Share Alike 3.0 statement for the viewer's data and logos). See also `Source/OpenSimNGC.Appearance.Baking/THIRD-PARTY-NOTICES.md`.
 
 **Modifications:** the names were copied into C# string lists and sets; the aliases into a dictionary. Nothing else.
