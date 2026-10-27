@@ -1,0 +1,53 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+using System.Collections.Concurrent;
+using System.Reflection;
+using InWorldz.Phlox.Types;
+using OpenMetaverse;
+using Phlox.ScriptEngine;
+
+namespace SLua.ScriptEngine.Tests;
+
+/// <summary>
+/// An ILSLSystemAPI that records every call (name and the arguments it received) and answers with a value the test set for
+/// that function, or the default of the return type. No LSLSystemAPI is built.
+/// </summary>
+public class FakeLslApi : DispatchProxy
+{
+    public sealed record Call(string Name, object[] Args);
+
+    private readonly ConcurrentQueue<Call> m_calls = new();
+    private readonly ConcurrentDictionary<string, object> m_returns = new();
+
+    public Call[] Calls => m_calls.ToArray();
+
+    public static (ILSLSystemAPI Api, FakeLslApi Fake) Create()
+    {
+        ILSLSystemAPI api = DispatchProxy.Create<ILSLSystemAPI, FakeLslApi>();
+        return (api, (FakeLslApi)(object)api);
+    }
+
+    /// <summary>The value the function answers with from now on.</summary>
+    public void Returns(string function, object value) => m_returns[function] = value;
+
+    protected override object Invoke(MethodInfo targetMethod, object[] args)
+    {
+        m_calls.Enqueue(new Call(targetMethod.Name, args));
+        if (m_returns.TryGetValue(targetMethod.Name, out object set)) return set;
+        return DefaultOf(targetMethod.ReturnType);
+    }
+
+    public static object DefaultOf(System.Type t)
+    {
+        if (t == typeof(void)) return null;
+        if (t == typeof(string)) return "";
+        if (t == typeof(LSLList)) return new LSLList();
+        if (t == typeof(Quaternion)) return Quaternion.Identity;
+        return t.IsValueType ? System.Activator.CreateInstance(t) : null;
+    }
+}
