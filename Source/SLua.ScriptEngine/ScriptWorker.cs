@@ -621,7 +621,9 @@ namespace SLua.ScriptEngine
             for (int i = 0; i < n; i++)
             {
                 QueuedEvent e = s.Events.Dequeue();
-                if (e.EventIndex != timer)
+                // The event being dispatched is still at the head until the handler finishes (RunTurn takes it out
+                // then), so a timer() handler that sets the timer must leave its own tick where it is.
+                if (e.EventIndex != timer || (i == 0 && s.Dispatching))
                     s.Events.Enqueue(e);
             }
             s.TimerQueued = false;
@@ -661,6 +663,7 @@ namespace SLua.ScriptEngine
             long start = Stopwatch.GetTimestamp();
             long runTicks = 0;
             SchedulerScript.Current = s;
+            s.Dispatching = dispatching;
             s.WaitRequested = false;
             s.AskedSeconds = 0;
             s.ClearHostCall();
@@ -696,6 +699,7 @@ namespace SLua.ScriptEngine
             finally
             {
                 SchedulerScript.Current = null;
+                s.Dispatching = false;
                 long ticks = runTicks = Stopwatch.GetTimestamp() - start;
                 if (dispatching) s.CountDispatch(ticks); else s.CountStep(ticks);
                 Interlocked.Increment(ref m_steps);

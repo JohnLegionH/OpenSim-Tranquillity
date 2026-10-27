@@ -120,6 +120,8 @@ namespace SLua.ScriptEngine
         internal long SleepGen;
         internal long TimerGen;
         internal bool TimerQueued;
+        /// <summary>Worker only: an event is being dispatched, and it is still the head of <see cref="Events"/>.</summary>
+        internal bool Dispatching;
         /// <summary>Worker only: when the armed timer is due, and whether one is armed.</summary>
         internal double TimerDue;
         internal bool TimerArmed;
