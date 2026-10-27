@@ -53,6 +53,9 @@ namespace SLua.ScriptEngine
 
         public FunctionClass Class { get; }
 
+        /// <summary>What the script receives when a service call passes its deadline (Phlox: the failure value of the shim's Defer call): null for a call with no value, else a string, an integer or a list.</summary>
+        public object FailureValue => null;
+
         /// <summary>The LSL return type: void, integer, float, string, key, vector, rotation or list.</summary>
         public string ReturnType { get; }
 

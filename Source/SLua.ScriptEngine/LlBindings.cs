@@ -14,8 +14,8 @@ namespace SLua.ScriptEngine
     /// <summary>The ll functions bound to ILSLSystemAPI. The table itself (<c>All</c>) is generated; see tools/slua-bindings.</summary>
     internal static partial class LlBindings
     {
-        /// <summary>Registers every bound function in the VM's "ll" table.</summary>
-        public static void Register(Vm vm, Func<SchedulerScript, ScriptContext> contextOf)
+        /// <summary>Registers every bound function in the VM's "ll" table. With <paramref name="serviceLane"/>, the async and service functions run on the context's service lane.</summary>
+        public static void Register(Vm vm, Func<SchedulerScript, ScriptContext> contextOf, bool serviceLane = false)
         {
             foreach (BoundFunction f in All)
             {

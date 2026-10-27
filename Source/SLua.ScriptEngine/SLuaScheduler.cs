@@ -132,6 +132,9 @@ namespace SLua.ScriptEngine
         public void CompleteWait(SchedulerScript script, params Value[] result) =>
             script.Worker.Enqueue(() => script.Worker.CompleteWait(script, result));
 
+        /// <summary>Delivers the answer of a call on the service lane: only if the script is still waiting for that call.</summary>
+        internal void CompleteWait(SchedulerScript script, int seq, Value[] result, double delaySeconds, Exception fault) { }
+
         /// <summary>
         /// Does the pending work of every worker once, as of <paramref name="now"/>, on the calling thread. For a
         /// scheduler built with RunThreads off. True when some worker still has runnable scripts.

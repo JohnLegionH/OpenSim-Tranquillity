@@ -19,7 +19,11 @@ namespace SLua.ScriptEngine.Tests;
 /// </summary>
 public class FakeLslApi : DispatchProxy
 {
-    public sealed record Call(string Name, object[] Args);
+    public sealed record Call(string Name, object[] Args)
+    {
+        /// <summary>The managed thread the call ran on.</summary>
+        public int Thread { get; init; } = Environment.CurrentManagedThreadId;
+    }
 
     private readonly ConcurrentQueue<Call> m_calls = new();
     private readonly ConcurrentDictionary<string, object> m_returns = new();
@@ -42,6 +46,11 @@ public class FakeLslApi : DispatchProxy
     /// <summary>The forced delay in milliseconds the function asks for each time it is called, as LSLSystemAPI's ScriptSleep does.</summary>
     public void Delays(string function, int ms) => m_delays[function] = _ => ms;
 
+    private readonly ConcurrentDictionary<string, Func<object[], object>> m_runs = new();
+
+    /// <summary>What the function does when called, in place of answering a fixed value: it may block, throw, or record a result on the call's context.</summary>
+    public void Runs(string function, Func<object[], object> body) => m_runs[function] = body;
+
     /// <summary>The same, for a delay that follows the call's arguments.</summary>
     public void Delays(string function, Func<object[], int> ms) => m_delays[function] = ms;
 
@@ -50,6 +59,8 @@ public class FakeLslApi : DispatchProxy
         m_calls.Enqueue(new Call(targetMethod.Name, args));
         if (m_delays.TryGetValue(targetMethod.Name, out Func<object[], int> ms))
             InWorldz.Phlox.Glue.SyscallContext.Current?.AddDelay(ms(args));
+        if (m_runs.TryGetValue(targetMethod.Name, out Func<object[], object> run))
+            return run(args);
         if (m_returns.TryGetValue(targetMethod.Name, out object set)) return set;
         return DefaultOf(targetMethod.ReturnType);
     }
