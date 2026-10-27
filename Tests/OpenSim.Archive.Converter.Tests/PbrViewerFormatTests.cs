@@ -172,7 +172,7 @@ public class PbrViewerFormatTests
     [Fact]
     public void TheFaceReferenceIsLaidOutAsTheViewerUnpacksIt()
     {
-        (_, XElement part) = Run();
+        (Dictionary<string, byte[]> oar, XElement part) = Run();
         byte[] extra = Convert.FromBase64String(ImportKit.Text(part, "Shape/ExtraParams"));
         Dictionary<int, Guid> faces = MaterialKit.PbrFaces(part);
         Assert.NotEmpty(faces);
@@ -192,10 +192,13 @@ public class PbrViewerFormatTests
         // LLRenderMaterialParams::unpack: a count, then a face number and the 16 bytes of the uuid for each
         Assert.Equal(faces.Count, block[0]);
         Assert.Equal(1 + 17 * faces.Count, block.Length);
+        // the slab has two faces, and both have a material
+        Assert.Equal(new[] { 0, 1 }, Enumerable.Range(0, faces.Count).Select(i => (int)block[1 + 17 * i]).OrderBy(f => f).ToArray());
         for (int i = 0; i < faces.Count; i++)
         {
-            int face = block[1 + 17 * i];
-            Assert.Equal(faces[face].ToString("N"), Convert.ToHexString(block, 2 + 17 * i, 16).ToLowerInvariant());
+            string id = Convert.ToHexString(block, 2 + 17 * i, 16).ToLowerInvariant();
+            Assert.Equal(faces[block[1 + 17 * i]].ToString("N"), id);
+            Assert.True(oar.ContainsKey("assets/" + Guid.Parse(id).ToString("D") + "_prmat.dat"), "the face names a material that the archive does not hold");
         }
     }
 }
