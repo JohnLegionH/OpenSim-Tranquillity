@@ -452,7 +452,7 @@ namespace SLua.ScriptEngine
 
             StartInfo start;
             lock (m_starts) m_starts.TryGetValue(ready.ItemID, out start);
-            var record = new ScriptRecord { ItemID = ready.ItemID, LocalID = ready.LocalID, AssetID = ready.AssetID, Script = script, Start = start, StartupPending = true };
+            var record = new ScriptRecord { ItemID = ready.ItemID, LocalID = ready.LocalID, AssetID = ready.AssetID, Script = script, Start = start, StartupPending = true, LastState = script.CurrentState };
             m_contexts[script.Id] = new ScriptContext(script, CreateScriptApi(script, ready.ItemID, ready.LocalID, UnavailableApi.Create()), ready.ItemID, m_lane);
             // The estate switch and the parcel rule decide before the script is visible or started: a script they hold back starts paused, never refused.
             record.Pause = m_policy?.ReasonsFor(ready.ItemID, ready.LocalID) ?? PauseReason.None;
