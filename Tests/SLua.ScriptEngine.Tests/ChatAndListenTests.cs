@@ -240,7 +240,7 @@ public class ChatAndListenTests
 
     // ---- the region's world communication ----
 
-    private sealed class StandInWorldComm : IWorldComm
+    internal sealed class StandInWorldComm : IWorldComm
     {
         public readonly List<string> Delivered = new();
         public int ListenerCount => 0;
