@@ -101,7 +101,7 @@ public sealed class ImportResult
             sb.Append("linked object '").Append(Name).Append("' (").Append(Parts.Count.ToString(c)).Append(Parts.Count == 1 ? " part" : " parts").Append(", root ").Append(ObjectId.ToString("D")).Append(") written to ").Append(Output).Append('\n');
             foreach (ImportPartResult p in Parts)
             {
-                sb.Append("  ").Append(p.LinkNumber.ToString(c)).Append(" '").Append(p.Name).Append("': size ").Append(p.Size.X.ToString("0.###", c)).Append(" x ").Append(p.Size.Y.ToString("0.###", c)).Append(" x ").Append(p.Size.Z.ToString("0.###", c))
+                sb.Append("  ").Append(p.LinkNumber.ToString(c)).Append(" '").Append(p.Name).Append("' (").Append(p.PartId.ToString("D")).Append("): size ").Append(p.Size.X.ToString("0.###", c)).Append(" x ").Append(p.Size.Y.ToString("0.###", c)).Append(" x ").Append(p.Size.Z.ToString("0.###", c))
                   .Append(" m, ").Append(p.Triangles.ToString(c)).Append(" triangles, physics ").Append(p.Physics);
                 if (p.LinkNumber > 1)
                     sb.Append(", at <").Append(p.Offset.X.ToString("0.###", c)).Append(", ").Append(p.Offset.Y.ToString("0.###", c)).Append(", ").Append(p.Offset.Z.ToString("0.###", c)).Append("> from the root");

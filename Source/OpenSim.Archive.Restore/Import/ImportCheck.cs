@@ -31,6 +31,8 @@ public sealed class CheckLine
     public float MaxPosition { get; set; }
     public float MaxUv { get; set; }
     public bool Ok { get; set; }
+    /// <summary>False for a line that compares counts only, so no position or texture-coordinate difference is printed for it.</summary>
+    public bool Measured { get; set; } = true;
     public string Detail { get; set; }
 }
 
@@ -49,7 +51,7 @@ public sealed class ImportCheckResult
             sb.Append(l.Ok ? "  ok      " : "  FAILED  ").Append(l.What).Append(": ");
             if (l.InputTriangles > 0 || l.OutputTriangles > 0)
                 sb.Append("input ").Append(l.InputTriangles.ToString(c)).Append(", output ").Append(l.OutputTriangles.ToString(c)).Append("; ");
-            if (l.Ok && (l.InputTriangles > 0 || l.OutputTriangles > 0))
+            if (l.Ok && l.Measured && (l.InputTriangles > 0 || l.OutputTriangles > 0))
                 sb.Append("largest position difference ").Append((l.MaxPosition * 1000f).ToString("0.###", c)).Append(" mm, texture coordinates ").Append(l.MaxUv.ToString("0.#####", c)).Append("; ");
             sb.Append(l.Detail).Append('\n');
         }

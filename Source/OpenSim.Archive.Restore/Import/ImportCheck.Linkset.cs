@@ -142,7 +142,7 @@ public static partial class ImportCheck
             int outputTriangles = node == null ? 0 : PartGeometry.FromNode(exported, node).TriangleCount;
             result.Lines.Add(new CheckLine
             {
-                What = "triangles of " + name, InputTriangles = inputTriangles[i], OutputTriangles = outputTriangles, Ok = outputTriangles == inputTriangles[i],
+                What = "triangles of " + name, Measured = false, InputTriangles = inputTriangles[i], OutputTriangles = outputTriangles, Ok = outputTriangles == inputTriangles[i],
                 Detail = outputTriangles == inputTriangles[i] ? "the full mesh has the triangles of the input" : "the exported part has " + outputTriangles + " triangles, the input " + inputTriangles[i]
             });
 
