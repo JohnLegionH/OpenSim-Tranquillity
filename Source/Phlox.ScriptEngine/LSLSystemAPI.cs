@@ -18105,9 +18105,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return World.RequestModuleInterface<IBotManager>();
         }
 
-        // The persistence manager of the region this script is in; each region keeps its own persistent bots.
-        private BotPersistenceManager GetBotPersistence()
-            => GetBotManager() is BotManager bm ? bm.PersistenceFor(World) : null;
+
 
         public void botCreateBot(string first, string last, string outfit, Vector3 pos, int options)
         {
@@ -22086,10 +22084,11 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             UUID id = ParseBotID(botID);
             if (id == UUID.Zero) return BotPersistError.NOT_FOUND;
 
-            BotPersistenceManager pm = GetBotPersistence();
-            if (pm == null) return BotPersistError.DISABLED;
+            // Each region keeps its own persistent bots: the call goes to the region this script is in.
+            IBotManager manager = GetBotManager();
+            if (manager == null) return BotPersistError.DISABLED;
 
-            return pm.SetPersistent(id, m_host.OwnerID, m_itemID,
+            return manager.SetBotPersistent(World, id, m_host.OwnerID, m_itemID,
                 m_host.ParentGroup.UUID, ttlSeconds);
         }
 
@@ -22099,10 +22098,10 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             UUID id = ParseBotID(botID);
             if (id == UUID.Zero) return BotPersistError.NOT_FOUND;
 
-            BotPersistenceManager pm = GetBotPersistence();
-            if (pm == null) return BotPersistError.DISABLED;
+            IBotManager manager = GetBotManager();
+            if (manager == null) return BotPersistError.DISABLED;
 
-            return pm.RemovePersistent(id, m_host.OwnerID);
+            return manager.RemoveBotPersistent(World, id, m_host.OwnerID);
         }
 
         // ── 669: botIsPersistent ──
@@ -22111,10 +22110,10 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             UUID id = ParseBotID(botID);
             if (id == UUID.Zero) return 0;
 
-            BotPersistenceManager pm = GetBotPersistence();
-            if (pm == null) return 0;
+            IBotManager manager = GetBotManager();
+            if (manager == null) return 0;
 
-            return pm.IsPersistent(id) ? 1 : 0;
+            return manager.IsBotPersistent(World, id) ? 1 : 0;
         }
 
         // ── 670: botGetPersistentData ──
@@ -22123,10 +22122,10 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             UUID id = ParseBotID(botID);
             if (id == UUID.Zero) return string.Empty;
 
-            BotPersistenceManager pm = GetBotPersistence();
-            if (pm == null) return string.Empty;
+            IBotManager manager = GetBotManager();
+            if (manager == null) return string.Empty;
 
-            return pm.GetPersistentData(id, key);
+            return manager.GetBotPersistentData(World, id, key);
         }
 
         // ── 671: botSetPersistentData ──
@@ -22135,10 +22134,10 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             UUID id = ParseBotID(botID);
             if (id == UUID.Zero) return BotPersistError.NOT_FOUND;
 
-            BotPersistenceManager pm = GetBotPersistence();
-            if (pm == null) return BotPersistError.DISABLED;
+            IBotManager manager = GetBotManager();
+            if (manager == null) return BotPersistError.DISABLED;
 
-            return pm.SetPersistentData(id, m_host.OwnerID, key, value);
+            return manager.SetBotPersistentData(World, id, m_host.OwnerID, key, value);
         }
     }
 

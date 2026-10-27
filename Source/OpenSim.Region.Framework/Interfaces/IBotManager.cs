@@ -149,6 +149,25 @@ namespace OpenSim.Region.Framework.Interfaces
         /// <summary>Get all bot UUIDs owned by a specific owner.</summary>
         List<UUID> GetAllOwnedBots(UUID ownerID);
 
+        // ── Persistence ──────────────────────────────────────────────────
+        // Each region keeps its own persistent bots. The result is a BotPersistError code: 0 on success, -6 when
+        // persistence is off for the region.
+
+        /// <summary>Mark a bot of <paramref name="scene"/> as persistent: it comes back in that region after a restart.</summary>
+        int SetBotPersistent(Scene scene, UUID botID, UUID ownerID, UUID scriptItemID, UUID objectID, int ttlSeconds);
+
+        /// <summary>Make a persistent bot of <paramref name="scene"/> non-persistent.</summary>
+        int RemoveBotPersistent(Scene scene, UUID botID, UUID ownerID);
+
+        /// <summary>True when the bot is persistent in <paramref name="scene"/>.</summary>
+        bool IsBotPersistent(Scene scene, UUID botID);
+
+        /// <summary>A script data value kept with a persistent bot of <paramref name="scene"/>.</summary>
+        string GetBotPersistentData(Scene scene, UUID botID, string key);
+
+        /// <summary>Set a script data value kept with a persistent bot of <paramref name="scene"/>.</summary>
+        int SetBotPersistentData(Scene scene, UUID botID, UUID ownerID, string key, string value);
+
         // ── Movement & Navigation ────────────────────────────────────────
 
         /// <summary>Set waypoint navigation for a bot.</summary>

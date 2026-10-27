@@ -157,7 +157,7 @@ namespace OpenSim.Region.OptionalModules.World.NPC
         private bool m_enabled;
         private IConfigSource m_config;
         // Each region keeps its own persistent bots in its own database, so each has its own persistence manager.
-        private readonly Dictionary<Scene, BotPersistenceManager> m_persistence = new Dictionary<Scene, BotPersistenceManager>();
+        private readonly Dictionary<UUID, BotPersistenceManager> m_persistence = new Dictionary<UUID, BotPersistenceManager>();
         private bool m_consoleCommandsRegistered;
         private readonly Dictionary<Scene, EventManager.ObjectBeingRemovedFromScene> m_removedHandlers
             = new Dictionary<Scene, EventManager.ObjectBeingRemovedFromScene>();
@@ -182,8 +182,33 @@ namespace OpenSim.Region.OptionalModules.World.NPC
         {
             if (scene == null) return null;
             lock (m_persistence)
-                return m_persistence.TryGetValue(scene, out BotPersistenceManager pm) ? pm : null;
+                return m_persistence.TryGetValue(scene.RegionInfo.RegionID, out BotPersistenceManager pm) ? pm : null;
         }
+
+        // A script's persistence call: the region's own manager, or "disabled" when the region has none.
+        private BotPersistenceManager PersistenceForScript(Scene scene, string function)
+        {
+            BotPersistenceManager pm = PersistenceFor(scene);
+            if (pm == null)
+                m_log.LogWarning("[BotManager] {0}: no bot persistence for region {1}", function, scene?.RegionInfo.RegionName);
+            return pm;
+        }
+
+        public int SetBotPersistent(Scene scene, UUID botID, UUID ownerID, UUID scriptItemID, UUID objectID, int ttlSeconds)
+            => PersistenceForScript(scene, "botSetPersistent")?.SetPersistent(botID, ownerID, scriptItemID, objectID, ttlSeconds)
+                ?? BotPersistError.DISABLED;
+
+        public int RemoveBotPersistent(Scene scene, UUID botID, UUID ownerID)
+            => PersistenceForScript(scene, "botRemovePersistent")?.RemovePersistent(botID, ownerID) ?? BotPersistError.DISABLED;
+
+        public bool IsBotPersistent(Scene scene, UUID botID) => PersistenceFor(scene)?.IsPersistent(botID) ?? false;
+
+        public string GetBotPersistentData(Scene scene, UUID botID, string key)
+            => PersistenceFor(scene)?.GetPersistentData(botID, key) ?? string.Empty;
+
+        public int SetBotPersistentData(Scene scene, UUID botID, UUID ownerID, string key, string value)
+            => PersistenceForScript(scene, "botSetPersistentData")?.SetPersistentData(botID, ownerID, key, value)
+                ?? BotPersistError.DISABLED;
 
         /// <summary>
         /// The persistence manager of the first region loaded. For a caller that has only one region; one that has a
@@ -252,6 +277,8 @@ namespace OpenSim.Region.OptionalModules.World.NPC
             {
                 if (persistence != null && persistence.IsPersistent(bot.BotID)) continue;
                 RemoveBotData(bot);
+                m_log.LogInformation("[BotManager] Removed bot {0} with its object {1} in {2}",
+                    bot.BotID, group.UUID, scene.RegionInfo.RegionName);
             }
         }
 
@@ -269,7 +296,7 @@ namespace OpenSim.Region.OptionalModules.World.NPC
             // Initialize bot persistence: this region's own, with its own database
             var persistence = new BotPersistenceManager();
             persistence.Initialize(scene, this, m_config);
-            lock (m_persistence) m_persistence[scene] = persistence;
+            lock (m_persistence) m_persistence[scene.RegionInfo.RegionID] = persistence;
 
             // Load and respawn persistent bots (staggered)
             persistence.LoadPersistentBots();
@@ -288,7 +315,7 @@ namespace OpenSim.Region.OptionalModules.World.NPC
             if (!m_enabled) return;
             // Save this region's persistent bot state before cleanup
             PersistenceFor(scene)?.OnRegionShutdown();
-            lock (m_persistence) m_persistence.Remove(scene);
+            lock (m_persistence) m_persistence.Remove(scene.RegionInfo.RegionID);
             lock (m_removedHandlers)
             {
                 if (m_removedHandlers.Remove(scene, out EventManager.ObjectBeingRemovedFromScene removed))
