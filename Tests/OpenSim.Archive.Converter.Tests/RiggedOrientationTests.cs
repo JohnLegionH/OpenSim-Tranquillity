@@ -168,6 +168,42 @@ public class RiggedOrientationTests
         Assert.Equal(0.15, alt[0][14], 4);
     }
 
+    // ---- --check of a model that was turned
+
+    private static ImportCheckResult CheckOf(RigKit.Options kit, bool withPhysics)
+    {
+        string folder = RigKit.Write(kit);
+        if (withPhysics)
+        {
+            // an L of two boxes off the vertical axis, so the shape shows a turn
+            ImportKit.Geo p = new ImportKit.Geo();
+            ImportKit.AddBox(p, 1, _ => true, 0.07f, 1.1f, 0.03f, 0.2f, 0.1f, 0.05f);
+            ImportKit.AddBox(p, 1, _ => true, 0.17f, 1.3f, 0.03f, 0.1f, 0.1f, 0.05f);
+            File.WriteAllBytes(Path.Combine(folder, "rig_physics.glb"), ImportKit.Glb(new[] { ((ImportMaterial)null, p) }, uvs: false));
+        }
+        string archive = ImportKit.OutputPath();
+        ImportOptions options = new ImportOptions { Avatar = ImportKit.Avatar, Position = new Vector3(10f, 20f, 30f), Created = 1767225600 };
+        ObjectImporter.Import(folder, archive, options);
+        return ImportCheck.Run(archive, folder, options, Path.Combine(Path.GetTempPath(), "import-tests", Guid.NewGuid().ToString("N")));
+    }
+
+    [Fact]
+    public void TheCheckPassesForAModelThatWasTurnedAndComparesItWithTheTurnedFiles()
+    {
+        ImportCheckResult check = CheckOf(Kit(Left(0.2f, 0f), Right(0.2f, 0f)), withPhysics: false);
+        Assert.True(check.Passed, check.ToText());
+        Assert.Contains(check.Lines, l => l.What == "high level" && l.Ok);
+        Assert.Contains(check.Lines, l => l.What == "skin and weights" && l.Ok);
+    }
+
+    [Fact]
+    public void TheCheckPassesForATurnedModelWithACollisionShapeThatIsTurnedToo()
+    {
+        ImportCheckResult check = CheckOf(Kit(Left(0.2f, 0f), Right(0.2f, 0f)), withPhysics: true);
+        Assert.True(check.Passed, check.ToText());
+        Assert.Contains(check.Lines, l => l.What == "physics shape" && l.Ok);
+    }
+
     // ---- the licence texts named by the notice for the joint names
 
     [Fact]
