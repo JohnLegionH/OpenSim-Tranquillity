@@ -24,8 +24,8 @@ namespace SLua.ScriptEngine
     /// call's result). The settings come from <see cref="SLuaSettings"/>; the calls are served by the
     /// <see cref="EngineHostBackend"/> the engine fills in.
     ///
-    /// The services the Phlox engine owns and the SLua engine does not have yet (the OSSL gate, the listen manager,
-    /// the state manager, the asynchronous command plugins, the notecard cache) are null, which the interface allows;
+    /// The services the Phlox engine owns and the SLua engine does not have yet (the OSSL gate,
+    /// the state manager, the asynchronous command plugins) are null, which the interface allows;
     /// the script functions that need one are the ones not yet served by the real API.
     /// </summary>
     internal sealed class EngineHostServices : IScriptHostServices
@@ -71,7 +71,8 @@ namespace SLua.ScriptEngine
         public bool HttpInFlightThrottle => m_settings.HttpInFlightThrottle;
         public bool NotecardHalcyonTiming => m_settings.NotecardPause == "halcyon";
         public bool NotecardCacheEnabled => m_settings.NotecardCache;
-        public PhloxNotecardCache NotecardCache => null;
+        /// <summary>The region's notecard reads are cached as Phlox caches them (whether the cache is used is <see cref="NotecardCacheEnabled"/>).</summary>
+        public PhloxNotecardCache NotecardCache { get; } = new PhloxNotecardCache();
         public int PhysicsFrameTimeAvg => m_backend.PhysicsFrameTimeAvg?.Invoke() ?? 0;
 
         public IScriptOsslChecks Ossl => null;
@@ -118,8 +119,9 @@ namespace SLua.ScriptEngine
             return any;
         }
 
-        /// <summary>The dataserver answer to other scripts in a prim is not served by the SLua engine yet.</summary>
-        public int PostDataserverToPrim(SceneObjectPart part, UUID skip, UUID asker, string queryId, string data) => 0;
+        /// <summary>The dataserver answer goes to every script in the asking script's prim, whatever engine runs it.</summary>
+        public int PostDataserverToPrim(SceneObjectPart part, UUID skip, UUID asker, string queryId, string data) =>
+            m_backend.PostDataserverToPrim?.Invoke(part, skip, asker, queryId, data) ?? 0;
 
         public bool HasScript(UUID itemID, out bool running)
         {

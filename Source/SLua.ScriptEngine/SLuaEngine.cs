@@ -31,7 +31,7 @@ namespace SLua.ScriptEngine
     /// The region's start, stop, reset and remove events drive the script; a script that faults is stopped and its
     /// owner is told.
     /// </summary>
-    public class SLuaEngine : INonSharedRegionModule, IScriptModule, IScriptStateProvider, IParcelScriptPolicyEngine, IEventPoster, IPolicyHost
+    public partial class SLuaEngine : INonSharedRegionModule, IScriptModule, IScriptStateProvider, IParcelScriptPolicyEngine, IEventPoster, IPolicyHost
     {
         public event ScriptRemoved OnScriptRemoved;
 
@@ -171,6 +171,7 @@ namespace SLua.ScriptEngine
             },
             RequestParcelCheck = RecheckParcel,
             PhysicsFrameTimeAvg = () => PhysicsFrameTimeAvg,
+            PostDataserverToPrim = PostDataserverToPrim,
         };
 
         /// <summary>

@@ -7,6 +7,7 @@
 
 using System;
 using OpenMetaverse;
+using OpenSim.Region.Framework.Scenes;
 using OpenSim.Region.ScriptEngine.Shared;
 
 namespace SLua.ScriptEngine
@@ -27,6 +28,9 @@ namespace SLua.ScriptEngine
         public Action<UUID> ResetScript;
         public Action<UUID> RequestParcelCheck;
         public Func<UUID, float> EventQueueFreeSpacePercentage;
+
+        /// <summary>Posts a dataserver answer to the scripts of the asking script's prim; returns how many of the engine's scripts got it.</summary>
+        public Func<SceneObjectPart, UUID, UUID, string, string, int> PostDataserverToPrim;
 
         /// <summary>Average of the region's last physics frame times in milliseconds; null answers 0.</summary>
         public Func<int> PhysicsFrameTimeAvg;

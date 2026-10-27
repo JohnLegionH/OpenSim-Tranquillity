@@ -32,7 +32,7 @@ public class ServedByRealApiTests
     /// <summary>The host members the engine does not provide yet; a function that reaches one is not served.</summary>
     private static readonly string[] Lacking =
     {
-        "Ossl", "StateManager", "AsyncCommands", "NotecardCache", "ScriptEngine", "PostDataserverToPrim",
+        "Ossl", "StateManager", "AsyncCommands", "ScriptEngine",
         "ExperienceGrantRestored", "ExperienceCannotRun", "SetMinEventDelay", "GetEventQueueFreeSpacePercentage",
     };
 
@@ -49,7 +49,7 @@ public class ServedByRealApiTests
         Assert.Empty(served.Intersect(notServed));
         Assert.Equal(served.Length, served.Distinct().Count());
         Assert.True(served.Length > 400, "only " + served.Length + " functions are served");
-        Assert.True(notServed.Length > 20, "only " + notServed.Length + " functions are not served");
+        Assert.True(notServed.Length > 10, "only " + notServed.Length + " functions are not served");
     }
 
     [Fact]
@@ -113,9 +113,9 @@ public class ServedByRealApiTests
     public void AScriptsServedAndUnservedCallsRunOnTheRealApiAndTheFallbackRespectively()
     {
         (ILSLSystemAPI fallback, FakeLslApi fallbackFake) = FakeLslApi.Create();
-        fallbackFake.Returns("llGetNotecardLine", "6b3f1d52-8a47-4e0b-9c61-2f5d7e8a9b10");
+        fallbackFake.Returns("llHTTPRequest", "6b3f1d52-8a47-4e0b-9c61-2f5d7e8a9b10");
         using var rig = new EngineApiRig(fallback, ("MinTimerInterval", "0.5"));
-        SchedulerScript s = rig.H.AddAndStart("ll.SetTimerEvent(2.0)\nlocal h = ll.GetNotecardLine('card', 1)\nossl.Mark('handle', tostring(h))\nossl.Count()");
+        SchedulerScript s = rig.H.AddAndStart("ll.SetTimerEvent(2.0)\nlocal h = ll.HTTPRequest('https://example.org/', {}, '')\nossl.Mark('handle', tostring(h))\nossl.Count()");
 
         // The first call of the real API in a process compiles code and can overrun the script's run window, which the runtime
         // punishes with a sleep; moving the clock past it is not what is under test.
@@ -124,7 +124,7 @@ public class ServedByRealApiTests
         Assert.True(rig.H.CountOf(s) == 1, "state " + s.State + " faulted=[" + string.Join(",", rig.H.FaultedScripts.Select(f => f.FaultMessage)) + "] errors=[" + string.Join(",", rig.H.ReportedErrors) + "] fallback=[" + string.Join(",", fallbackFake.Calls.Select(c => c.Name)) + "] backend=[" + string.Join(",", rig.BackendCalls) + "]");
         Assert.Contains("SetTimer 2", rig.BackendCalls.ToArray()); // the real API reached the engine's host
         Assert.DoesNotContain(fallbackFake.Calls, c => c.Name == "llSetTimerEvent");
-        Assert.Contains(fallbackFake.Calls, c => c.Name == "llGetNotecardLine"); // the fallback served the request
+        Assert.Contains(fallbackFake.Calls, c => c.Name == "llHTTPRequest"); // the fallback served the request
         Assert.Equal(new[] { "handle:6b3f1d52-8a47-4e0b-9c61-2f5d7e8a9b10" }, rig.H.MarksOf(s));
     }
 
@@ -161,7 +161,7 @@ public class ServedByRealApiTests
         public bool HttpInFlightThrottle => m_inner.HttpInFlightThrottle;
         public bool NotecardHalcyonTiming => m_inner.NotecardHalcyonTiming;
         public bool NotecardCacheEnabled => m_inner.NotecardCacheEnabled;
-        public PhloxNotecardCache NotecardCache => Trip("NotecardCache", m_inner.NotecardCache);
+        public PhloxNotecardCache NotecardCache => m_inner.NotecardCache;
         public int PhysicsFrameTimeAvg => m_inner.PhysicsFrameTimeAvg;
         public IScriptOsslChecks Ossl => Trip("Ossl", m_inner.Ossl);
         public IScriptListenService ListenManager => m_inner.ListenManager;
@@ -173,7 +173,7 @@ public class ServedByRealApiTests
         public bool PostScriptEvent(UUID itemID, EventParams parms) => m_inner.PostScriptEvent(itemID, parms);
         public bool PostObjectEvent(uint localID, EventParams parms) => m_inner.PostObjectEvent(localID, parms);
         public bool PostObjectLinksetDataEvent(uint localID, int action, ReadOnlySpan<char> name, ReadOnlySpan<char> value) => m_inner.PostObjectLinksetDataEvent(localID, action, name, value);
-        public int PostDataserverToPrim(SceneObjectPart part, UUID skip, UUID asker, string queryId, string data) => Trip("PostDataserverToPrim", m_inner.PostDataserverToPrim(part, skip, asker, queryId, data));
+        public int PostDataserverToPrim(SceneObjectPart part, UUID skip, UUID asker, string queryId, string data) => m_inner.PostDataserverToPrim(part, skip, asker, queryId, data);
         public bool HasScript(UUID itemID, out bool running) => m_inner.HasScript(itemID, out running);
         public void SetTimerEvent(uint localID, UUID itemID, float sec) => m_inner.SetTimerEvent(localID, itemID, sec);
         public void SetMinEventDelay(UUID itemID, float seconds) { Trip("SetMinEventDelay"); m_inner.SetMinEventDelay(itemID, seconds); }

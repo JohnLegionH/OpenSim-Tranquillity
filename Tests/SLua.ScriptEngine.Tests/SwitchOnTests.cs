@@ -41,17 +41,17 @@ public class SwitchOnTests
     }
 
     [Fact]
-    public void TheUnavailableFunctionsAreTheTwentyEightWaitingOnHostMembersAndTheSixteenPhloxGaps()
+    public void TheUnavailableFunctionsAreThoseWaitingOnHostMembersAndThePhloxGaps()
     {
         var expected = new HashSet<string>();
         foreach (string row in LlServed.NotServed) expected.Add(row.Substring(0, row.IndexOf(':')));
         foreach (string name in LlCoverage.MissingFromSeam) expected.Add(name);
         foreach (string row in LlCoverage.SignatureMismatch) expected.Add(row.Substring(0, row.IndexOf(':')));
 
-        Assert.Equal(44, expected.Count);
+        Assert.Equal(29, expected.Count);
         Assert.Equal(expected.OrderBy(n => n), LlBindings.Unavailable.OrderBy(n => n));
         Assert.Contains("llSensorRemove", LlBindings.Unavailable);
-        Assert.Contains("llRequestUsername", LlBindings.Unavailable);
+        Assert.Contains("llRequestPermissions", LlBindings.Unavailable);
         Assert.DoesNotContain("llAbs", LlBindings.Unavailable);
     }
 
@@ -86,11 +86,11 @@ public class SwitchOnTests
     public void AFunctionTheEngineDoesNotBindAnswersTheSameWay()
     {
         using var rig = new EngineRig(productionFunctions: true);
-        UUID item = rig.Rez(Slua("local ok, err = pcall(function() ll.RequestUsername('00000000-0000-0000-0000-000000000000') end)\nossl.Mark('caught=' .. tostring(ok) .. ' ' .. tostring(err))"));
+        UUID item = rig.Rez(Slua("local ok, err = pcall(function() ll.ReleaseControls() end)\nossl.Mark('caught=' .. tostring(ok) .. ' ' .. tostring(err))"));
 
         string caught = MarkOf(rig, item, "caught=");
         Assert.StartsWith("caught=false", caught);
-        Assert.Contains("RequestUsername", caught);
+        Assert.Contains("ReleaseControls", caught);
         Assert.Contains("is not available on this engine yet", caught);
     }
 
@@ -168,10 +168,10 @@ public class SwitchOnTests
     public void TheEngineLogsOneStartLineWithTheCountsAndNoLinePerFunction()
     {
         using var rig = new EngineRig(productionFunctions: true);
-        UUID item = rig.Rez(Slua("pcall(function() ll.SensorRemove() end)\npcall(function() ll.RequestUsername('00000000-0000-0000-0000-000000000000') end)\nossl.Mark('done')"));
+        UUID item = rig.Rez(Slua("pcall(function() ll.SensorRemove() end)\npcall(function() ll.ReleaseControls() end)\nossl.Mark('done')"));
         MarkOf(rig, item, "done");
 
-        string[] counts = rig.Log.Lines.Where(l => l.Contains("485") && l.Contains("44")).ToArray();
+        string[] counts = rig.Log.Lines.Where(l => l.Contains("500") && l.Contains("29")).ToArray();
         Assert.Single(counts);
         Assert.StartsWith("INFO ", counts[0]);
         Assert.Empty(rig.Log.Warnings);
