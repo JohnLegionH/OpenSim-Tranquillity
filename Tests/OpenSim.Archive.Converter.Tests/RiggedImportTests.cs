@@ -276,7 +276,7 @@ public class RiggedImportTests
         ImportException e = Assert.Throws<ImportException>(() => ObjectImporter.Import(folder, output, Options()));
         Assert.Contains("Spine_ctrl", e.Message);
         Assert.Contains("Hand.L", e.Message);
-        Assert.DoesNotContain("mPelvis", e.Message);
+        Assert.Contains("2 bones are not a joint", e.Message);
         Assert.False(File.Exists(output));
     }
 
@@ -406,5 +406,63 @@ public class RiggedImportTests
         MeshAssetModel mesh = MeshCodec.Decode(oar[oar.Keys.Single(k => k.EndsWith("_mesh.llmesh", StringComparison.Ordinal))]);
         Assert.NotNull(mesh.Skin);
         Assert.Equal(RigKit.DefaultNames, mesh.Skin.JointNames.ToArray());
+    }
+}
+
+/// <summary>
+/// The round trip check (oar-import --check) on a rigged part: the geometry still matches the files, and the skin block and the weights of every level are
+/// compared with the files' too. In the Console output collection with the other round trip tests, which share the process-wide Console.Out.
+/// </summary>
+[Collection("Console output")]
+public class RiggedRoundTripTests
+{
+    private static ImportOptions Options() => new ImportOptions { Name = "Rig Round Trip", Avatar = ImportKit.Avatar, Position = new Vector3(40f, 50f, 60f), Created = 1767225600 };
+
+    private static (ImportCheckResult Check, string Folder) Run(Action<string> afterImport = null, RigKit.Options kit = null)
+    {
+        string folder = RigKit.Write(kit);
+        string archive = ImportKit.OutputPath();
+        ImportOptions options = Options();
+        ObjectImporter.Import(folder, archive, options);
+        afterImport?.Invoke(folder);
+        string work = Path.Combine(Path.GetTempPath(), "import-tests", Guid.NewGuid().ToString("N"));
+        return (ImportCheck.Run(archive, folder, options, work), folder);
+    }
+
+    [Fact]
+    public void TheCheckOfARiggedPartPassesAndComparesTheGeometryOfEveryLevel()
+    {
+        ImportCheckResult check = Run().Check;
+        Assert.True(check.Passed, check.ToText());
+        foreach (string level in new[] { "high level", "medium level", "low level", "lowest level" })
+            Assert.Contains(check.Lines, l => l.What == level && l.Ok);
+    }
+
+    [Fact]
+    public void TheCheckComparesTheSkinAndTheWeightsOfEveryLevelWithTheFiles()
+    {
+        ImportCheckResult check = Run().Check;
+        CheckLine skin = Assert.Single(check.Lines, l => l.What == "skin and weights");
+        Assert.True(skin.Ok, skin.Detail);
+        Assert.Contains("3 joints", skin.Detail);
+    }
+
+    [Fact]
+    public void TheCheckFailsWhenTheWeightsInTheFilesAreNotTheOnesInTheArchive()
+    {
+        // the files are written again after the import, with every vertex weighted 60 to 40 on the first two joints
+        ImportCheckResult check = Run(folder => RigKit.Write(new RigKit.Options { Fixed = new[] { 0.6f, 0.4f } }, into: folder)).Check;
+        CheckLine skin = Assert.Single(check.Lines, l => l.What == "skin and weights");
+        Assert.False(skin.Ok);
+        Assert.False(check.Passed);
+    }
+
+    [Fact]
+    public void TheCheckFailsWhenTheJointsInTheFilesAreNotTheOnesInTheArchive()
+    {
+        ImportCheckResult check = Run(folder => RigKit.Write(new RigKit.Options { Names = new[] { "mPelvis", "mTorso", "mNeck" } }, into: folder)).Check;
+        CheckLine skin = Assert.Single(check.Lines, l => l.What == "skin and weights");
+        Assert.False(skin.Ok);
+        Assert.Contains("mNeck", skin.Detail);
     }
 }
