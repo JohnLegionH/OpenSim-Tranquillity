@@ -12,8 +12,8 @@ Inputs
   builtins.txt      the SLua runtime's function list: the ll functions a script can call and their LSL types
                     (key, list, integer ...), which the C# signatures cannot tell apart (a key is a string).
   ILSLSystemAPI.cs  the interface a binding calls through: one method per script function.
-  LSLSystemAPI.cs   the implementation Phlox runs. Each public ll method is read for the forced delay it asks for
-                    (ScriptSleep) so the engine can apply the same delay.
+  LSLSystemAPI.cs   the implementation Phlox runs. Each public ll method is read to tell whether it asks for a
+                    forced delay (ScriptSleep); the engine takes the delay itself from the call.
   SyscallShim.cs    Phlox's call shims. A shim that runs its call with RunAsync is a long-running call; one that goes
                     through Defer may be handed to the service lane. Both can leave the script's thread.
 
@@ -21,9 +21,10 @@ An ll function is bound when the runtime's list and the interface agree on its n
 listed in LlCoverage.g.cs: missing from the interface, only in the interface, or the signatures differ. Every os, iw and
 bot function of the interface is listed apart: the compiler does not know them yet.
 
-Delays and call kinds are read from the Phlox source by pattern. What the patterns cannot settle (a delay that depends on
-a setting, a computed delay, several different delays on one function) is not guessed: the function is listed as
-unplaced in LlCoverage.g.cs. The output is deterministic: sorted, no dates, no paths.
+Call kinds are read from the Phlox source by pattern, and so is whether a function asks for a delay; the delay itself is not
+copied into the table, because the engine takes it from LSLSystemAPI when the call runs. What the patterns cannot settle (a
+delay that depends on a setting, a computed delay, several different delays on one function) is listed as unplaced in
+LlCoverage.g.cs. The output is deterministic: sorted, no dates, no paths.
 """
 import re
 import sys
@@ -370,8 +371,9 @@ def esc(s):
 
 def write_bindings(out_dir, rows):
     out = [HEADER, """
-// The delays and the long-running and service-lane call kinds below follow Halcyon's script functions as Phlox carries
-// them (LSLSystemAPI ScriptSleep calls; SyscallShim RunAsync and Defer). The function names and types are the runtime's.
+// The long-running and service-lane call kinds below follow Halcyon's script functions as Phlox carries them (SyscallShim
+// RunAsync and Defer), and a function is classed as delayed when LSLSystemAPI asks for a ScriptSleep. The table holds no delay
+// figures: the delay of a call is whatever LSLSystemAPI asks for when it runs. The function names and types are the runtime's.
 
 using System;
 using SLua.ScriptEngine.Bindings;
@@ -396,8 +398,8 @@ namespace SLua.ScriptEngine
     for name, (ret, params), cls, delay_ms, delay_arg in rows:
         short = name[2:]
         types = "new string[0]" if not params else "new[] { %s }" % ", ".join('"%s"' % p for p in params)
-        out.append('            new BoundFunction("%s", "%s", FunctionClass.%s, %d, %d, "%s", %s, %s),\n'
-                   % (short, name, cls, delay_ms, delay_arg, ret, types, short))
+        out.append('            new BoundFunction("%s", "%s", FunctionClass.%s, "%s", %s, %s),\n'
+                   % (short, name, cls, ret, types, short))
     out.append("        };\n    }\n}\n")
     write(out_dir, "LlBindings.g.cs", "".join(out))
 

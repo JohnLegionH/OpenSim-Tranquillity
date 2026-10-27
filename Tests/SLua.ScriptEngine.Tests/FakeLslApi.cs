@@ -29,22 +29,27 @@ public class FakeLslApi : DispatchProxy
     public static (ILSLSystemAPI Api, FakeLslApi Fake) Create()
     {
         ILSLSystemAPI api = DispatchProxy.Create<ILSLSystemAPI, FakeLslApi>();
-        return (api, (FakeLslApi)(object)api);
+        var fake = (FakeLslApi)(object)api;
+        fake.Delays("llSleep", a => (int)((float)a[0] * 1000)); // LSLSystemAPI.llSleep: ScriptSleep((int)(sec * 1000))
+        return (api, fake);
     }
 
     /// <summary>The value the function answers with from now on.</summary>
     public void Returns(string function, object value) => m_returns[function] = value;
 
-    private readonly ConcurrentDictionary<string, int> m_delays = new();
+    private readonly ConcurrentDictionary<string, Func<object[], int>> m_delays = new();
 
     /// <summary>The forced delay in milliseconds the function asks for each time it is called, as LSLSystemAPI's ScriptSleep does.</summary>
-    public void Delays(string function, int ms) => m_delays[function] = ms;
+    public void Delays(string function, int ms) => m_delays[function] = _ => ms;
+
+    /// <summary>The same, for a delay that follows the call's arguments.</summary>
+    public void Delays(string function, Func<object[], int> ms) => m_delays[function] = ms;
 
     protected override object Invoke(MethodInfo targetMethod, object[] args)
     {
         m_calls.Enqueue(new Call(targetMethod.Name, args));
-        if (m_delays.TryGetValue(targetMethod.Name, out int ms))
-            InWorldz.Phlox.Glue.SyscallContext.Current?.AddDelay(ms);
+        if (m_delays.TryGetValue(targetMethod.Name, out Func<object[], int> ms))
+            InWorldz.Phlox.Glue.SyscallContext.Current?.AddDelay(ms(args));
         if (m_returns.TryGetValue(targetMethod.Name, out object set)) return set;
         return DefaultOf(targetMethod.ReturnType);
     }

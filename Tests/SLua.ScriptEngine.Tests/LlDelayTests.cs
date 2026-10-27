@@ -21,22 +21,12 @@ public class LlDelayTests
     // ---- the classification, read from the Phlox source by the generator ----
 
     [Fact]
-    public void EveryBoundFunctionHasAClassThatAgreesWithItsDelay()
+    public void EveryBoundFunctionHasAClassAndTheTableHoldsNoDelayFigures()
     {
         Assert.NotEmpty(LlBindings.All);
         foreach (BoundFunction f in LlBindings.All)
-        {
-            Assert.True(f.DelayMs >= 0, f.ApiName + " has a negative delay");
-            if (f.DelayArg >= 0)
-            {
-                Assert.True(f.DelayArg < f.ParamTypes.Length && f.ParamTypes[f.DelayArg] == "float", f.ApiName + ": the delay argument is not a float parameter");
-                Assert.Equal(0, f.DelayMs);
-            }
-            if (f.Class == FunctionClass.NonBlocking)
-                Assert.True(f.DelayMs == 0 && f.DelayArg < 0, f.ApiName + " is non-blocking but has a delay");
-            if (f.Class == FunctionClass.Delayed)
-                Assert.True(f.DelayMs > 0 || f.DelayArg >= 0, f.ApiName + " is delayed but has no delay");
-        }
+            Assert.True(Enum.IsDefined(f.Class), f.ApiName + " has no class");
+        Assert.All(typeof(BoundFunction).GetProperties(), p => Assert.DoesNotContain("Delay", p.Name));
     }
 
     [Fact]
@@ -54,13 +44,9 @@ public class LlDelayTests
         Assert.Equal(FunctionClass.NonBlocking, Fn("GetPos").Class);
         Assert.Equal(FunctionClass.NonBlocking, Fn("Abs").Class);
 
-        // llSleep asks for its argument, in seconds; llSetPos has the wiki's 0.2 s
-        BoundFunction sleep = Fn("Sleep");
-        Assert.Equal(FunctionClass.Delayed, sleep.Class);
-        Assert.Equal(0, sleep.DelayArg);
-        BoundFunction setPos = Fn("SetPos");
-        Assert.Equal(FunctionClass.Delayed, setPos.Class);
-        Assert.Equal(200, setPos.DelayMs);
+        // llSleep and llSetPos ask for a delay
+        Assert.Equal(FunctionClass.Delayed, Fn("Sleep").Class);
+        Assert.Equal(FunctionClass.Delayed, Fn("SetPos").Class);
 
         // Phlox runs llRezObject off the script's thread and may send llRequestPermissions to the service lane
         Assert.Equal(FunctionClass.Async, Fn("RezObject").Class);
@@ -73,7 +59,6 @@ public class LlDelayTests
         Assert.NotEmpty(LlBindings.All);
         // chat is slowed by a setting in Phlox, so its delay is not guessed
         Assert.Equal(FunctionClass.Unplaced, Fn("Say").Class);
-        Assert.Equal(0, Fn("Say").DelayMs);
 
         string[] listed = LlCoverage.Unplaced;
         foreach (BoundFunction f in LlBindings.All.Where(f => f.Class == FunctionClass.Unplaced))
@@ -128,9 +113,9 @@ public class LlDelayTests
     [RequiresNativeFact]
     public void ADelayedFunctionThatReturnsNothingEndsTheTurn()
     {
-        // llPreloadSound: void, string, 1 second in the table
-        Assert.Equal(1000, Fn("PreloadSound").DelayMs);
+        // llPreloadSound: void, string; the fake asks for its 1 second as LSLSystemAPI does
         using var rig = new BindingRig();
+        rig.Fake.Delays("llPreloadSound", 1000);
         SchedulerScript s = rig.H.AddAndStart("ll.PreloadSound('s') ossl.Count()");
         rig.H.Pump();
         Assert.Equal(0, rig.H.CountOf(s));
@@ -143,10 +128,10 @@ public class LlDelayTests
     [RequiresNativeFact]
     public void ADelayedFunctionThatReturnsValuesKeepsThemAndTwoCallsAddUpTheirDelays()
     {
-        // llClearLinkMedia: integer, two integers, 1 second in the table
-        BoundFunction f = Fn("ClearLinkMedia");
-        Assert.Equal(("integer", 1000), (f.ReturnType, f.DelayMs));
+        // llClearLinkMedia: integer, two integers; the fake asks for its 1 second as LSLSystemAPI does
+        Assert.Equal("integer", Fn("ClearLinkMedia").ReturnType);
         using var rig = new BindingRig();
+        rig.Fake.Delays("llClearLinkMedia", 1000);
         rig.Fake.Returns("llClearLinkMedia", 7);
         SchedulerScript s = rig.H.AddAndStart(
             "local a = ll.ClearLinkMedia(1, 2)\n" +

@@ -6,6 +6,7 @@
  */
 
 using System;
+using InWorldz.Phlox.Glue;
 using SLua.ScriptEngine.Bindings;
 
 namespace SLua.ScriptEngine
@@ -22,15 +23,19 @@ namespace SLua.ScriptEngine
                 vm.Register("ll", function.Name, (tag, args) =>
                 {
                     ScriptContext context = contextOf(SchedulerScript.Current);
-                    Value[] result = function.Call(context, args);
 
-                    // The call's forced delay goes to the runtime, which holds the script for it. A call that returns no
-                    // values also ends the script's turn; one that returns values keeps them and the delay takes effect
-                    // at the script's next interrupt, and two such delays add up.
-                    double seconds = function.DelayArg >= 0
-                        ? LslMarshal.Float(args, function.DelayArg, function.Name)
-                        : function.DelayMs / 1000.0;
-                    if (seconds > 0) context.Script.AddSleep(seconds);
+                    // The call runs inside a SyscallContext for its script, which is where LSLSystemAPI puts the delay it
+                    // asks for (its ScriptSleep adds to the context of the call it is running in; Phlox does the same for a
+                    // call that runs off its script's thread). The API's delay is then the runtime's: the script is held for
+                    // it. A call that returns no values also ends the script's turn; one that returns values keeps them and
+                    // the delay takes effect at the script's next interrupt, and two such delays add up.
+                    var call = new SyscallContext(context.ItemId, SyscallContext.NextSeq());
+                    Value[] result;
+                    call.Enter();
+                    try { result = function.Call(context, args); }
+                    finally { SyscallContext.Exit(); }
+
+                    if (call.DelayMs > 0) context.Script.AddSleep(call.DelayMs / 1000.0);
                     return result;
                 });
             }

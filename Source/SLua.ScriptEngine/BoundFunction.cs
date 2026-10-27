@@ -16,7 +16,7 @@ namespace SLua.ScriptEngine
         /// <summary>Returns at once; no forced delay.</summary>
         NonBlocking,
 
-        /// <summary>Returns at once and costs the script a forced delay (the call delay of the Second Life wiki).</summary>
+        /// <summary>Returns at once and costs the script a forced delay (the call delay of the Second Life wiki). The delay is whatever LSLSystemAPI asks for when the call runs.</summary>
         Delayed,
 
         /// <summary>Phlox runs the call off the script's thread (a long-running call such as a rez, an email or an instant message).</summary>
@@ -25,7 +25,7 @@ namespace SLua.ScriptEngine
         /// <summary>Phlox may hand the call to the region's service lane; it can leave the process (a name lookup, a key-value store call, a permission request).</summary>
         Service,
 
-        /// <summary>The delay or blocking nature could not be read from the Phlox source (a delay that depends on a setting, or on a computed value).</summary>
+        /// <summary>The delay or blocking nature could not be read from the Phlox source (a delay that depends on a setting, or on a computed value). The delay still comes from LSLSystemAPI when the call runs.</summary>
         Unplaced,
     }
 
@@ -34,14 +34,12 @@ namespace SLua.ScriptEngine
     /// <summary>One ll function bound to its ILSLSystemAPI method.</summary>
     internal sealed class BoundFunction
     {
-        public BoundFunction(string name, string apiName, FunctionClass functionClass, int delayMs, int delayArg,
+        public BoundFunction(string name, string apiName, FunctionClass functionClass,
             string returnType, string[] paramTypes, BoundCall call)
         {
             Name = name;
             ApiName = apiName;
             Class = functionClass;
-            DelayMs = delayMs;
-            DelayArg = delayArg;
             ReturnType = returnType;
             ParamTypes = paramTypes;
             Call = call;
@@ -55,19 +53,13 @@ namespace SLua.ScriptEngine
 
         public FunctionClass Class { get; }
 
-        /// <summary>The fixed delay in milliseconds the call costs the script; 0 for none.</summary>
-        public int DelayMs { get; }
-
-        /// <summary>The index of the argument that holds the delay in seconds (llSleep); -1 for none.</summary>
-        public int DelayArg { get; }
-
         /// <summary>The LSL return type: void, integer, float, string, key, vector, rotation or list.</summary>
         public string ReturnType { get; }
 
         /// <summary>The LSL parameter types, in order.</summary>
         public string[] ParamTypes { get; }
 
-        /// <summary>Converts the arguments, calls the API method and converts what it returns. Does not apply the delay.</summary>
+        /// <summary>Converts the arguments, calls the API method and converts what it returns. The API asks for any delay (ScriptSleep) itself.</summary>
         public BoundCall Call { get; }
     }
 }
