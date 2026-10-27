@@ -367,10 +367,20 @@ namespace SLua.ScriptEngine
         {
             m_policy?.SubscribeEstate();
             // The region's world communication may not be registered when the engine is added, so it is looked up here. Without it
-            // this engine's listens still work; only the exchange with another engine's listens is missing.
+            // chat cannot pass between script engines, so the engine disables itself with one line, as the Phlox engine does: it
+            // takes no script, and the region and the other engines carry on.
             IWorldComm worldComm = scene?.RequestModuleInterface<IWorldComm>();
-            if (m_chat != null && worldComm == null)
-                m_log.Info("The region has no world communication module; chat is not exchanged with other script engines");
+            if (worldComm == null)
+            {
+                lock (m_deferred)
+                {
+                    if (m_disabled)
+                        return;
+                    m_disabled = true;
+                }
+                m_log.Error("No IWorldComm module found, the SLua script engine is disabled");
+                return;
+            }
             m_chat?.Connect(worldComm);
         }
 

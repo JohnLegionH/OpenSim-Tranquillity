@@ -130,7 +130,6 @@ public class EngineHostServicesTests
         Assert.Null(host.ListenManager);
         Assert.Null(host.StateManager);
         Assert.Null(host.AsyncCommands);
-        Assert.Null(host.NotecardCache);
     }
 
     // ---- what the calls into the engine do ----

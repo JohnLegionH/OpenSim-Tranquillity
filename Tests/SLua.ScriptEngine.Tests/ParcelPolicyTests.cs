@@ -416,6 +416,7 @@ public class ParcelPolicyTests
         using var rig = new EngineRig();
         var estate = new EstateStub();
         rig.Scene.RegisterModuleInterface<IEstateModule>(estate);
+        rig.Scene.RegisterModuleInterface<OpenSim.Region.Framework.Interfaces.IWorldComm>(new ChatAndListenTests.StandInWorldComm());   // without one the engine disables itself
         UUID item = rig.Rez(EngineRig.Lsl(EngineRig.Probe));
         rig.WaitScheduled(item);
         rig.Engine.RegionLoaded(rig.Scene);
