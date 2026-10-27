@@ -49,13 +49,13 @@ public class EngineHostWiringTests
         using var rig = new EngineRig();
         (ILSLSystemAPI fallback, FakeLslApi fake) = FakeLslApi.Create();
         fake.Returns("llStringLength", 99);
-        fake.Returns("llListen", 5);
+        fake.Returns("llHTTPRequest", "5");
         var script = new SchedulerScript(1, 0, new byte[0], ScriptLanguage.Slua);
 
         ILSLSystemAPI api = rig.Engine.CreateScriptApi(script, UUID.Random(), rig.LocalId, fallback);
 
         Assert.Equal(3, api.llStringLength("abc")); // the real API's answer, not the fake's 99
-        Assert.Equal(5, api.llListen(0, "", "", "")); // the fallback's
-        Assert.Equal(new[] { "llListen" }, fake.Calls.Select(c => c.Name).ToArray());
+        Assert.Equal("5", api.llHTTPRequest("https://example.org/", new InWorldz.Phlox.Types.LSLList(), "")); // the fallback's
+        Assert.Equal(new[] { "llHTTPRequest" }, fake.Calls.Select(c => c.Name).ToArray());
     }
 }

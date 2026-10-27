@@ -36,12 +36,25 @@ public class ChatAndListenTests
         Slua("LLEvents:on('listen', function(ch, name, id, msg) ossl.Mark('" + tag + "=' .. ch .. '|' .. name .. '|' .. tostring(id) .. '|' .. msg) end)\n" +
              "ll.Listen(" + channel + ", '" + name + "', '" + key + "', '" + message + "')\nossl.Mark('" + tag + "-ready')");
 
-    private static bool Ready(EngineRig rig, UUID item, string tag) => SchedulerHarness.WaitFor(() => rig.MarksOf(item).Contains(tag + "-ready"));
+    private static string Diag(EngineRig rig, UUID item) =>
+        "marks=[" + string.Join(",", rig.MarksOf(item)) + "] shouts=[" + string.Join(" | ", rig.Messages.Shouts.Select(s => s.Text)) + "] log=[" + string.Join(" | ", rig.Log.Lines) + "]";
+
+    private static bool Ready(EngineRig rig, UUID item, string tag)
+    {
+        bool ok = SchedulerHarness.WaitFor(() => rig.MarksOf(item).Contains(tag + "-ready"));
+        Assert.True(ok, "never ready: " + Diag(rig, item));
+        return ok;
+    }
 
     private static void Speak(EngineRig rig, string text, int channel, string name = "Test Speaker", UUID? from = null, ChatTypeEnum type = ChatTypeEnum.Say, Vector3? at = null) =>
         rig.Scene.SimChat(text, type, channel, at ?? rig.Object.AbsolutePosition + new Vector3(1, 0, 0), name, from ?? Alice, false);
 
-    private static bool Heard(EngineRig rig, UUID item, string expected) => SchedulerHarness.WaitFor(() => rig.MarksOf(item).Contains(expected));
+    private static bool Heard(EngineRig rig, UUID item, string expected)
+    {
+        bool ok = SchedulerHarness.WaitFor(() => rig.MarksOf(item).Contains(expected));
+        Assert.True(ok, "did not hear '" + expected + "': " + Diag(rig, item));
+        return ok;
+    }
 
     /// <summary>A real wait, because it proves nothing arrives: a heard message needs far less than this.</summary>
     private static bool NothingHeard(EngineRig rig, UUID item, string tag)
@@ -189,10 +202,24 @@ public class ChatAndListenTests
 
         rig.Scene.EventManager.TriggerScriptReset(rig.LocalId, item);
         // the script starts again from the top and listens on channel 5 once more
-        Assert.True(SchedulerHarness.WaitFor(() => rig.Engine.Listens.ListenCount == 1));
+        Assert.True(SchedulerHarness.WaitFor(() => rig.Engine.Listens.ListenCount == 1), "count after reset " + rig.Engine.Listens.ListenCount + " " + Diag(rig, item));
 
         rig.Scene.EventManager.TriggerRemoveScript(rig.LocalId, item);
-        Assert.True(SchedulerHarness.WaitFor(() => rig.Engine.Listens.ListenCount == 0));
+        Assert.True(SchedulerHarness.WaitFor(() => rig.Engine.Listens.ListenCount == 0), "count after unload " + rig.Engine.Listens.ListenCount + " " + Diag(rig, item));
+    }
+
+    [RequiresNativeFact]
+    public void AChangeOfStateReleasesTheScriptsListensAndTheFirstStateDoesNot()
+    {
+        using var rig = new EngineRig(productionFunctions: true);
+        UUID item = rig.Rez(Lsl("default { state_entry() { llListen(5, \"\", \"\", \"\"); llOwnerSay(\"l-ready\"); } touch_start(integer n) { state other; } } state other { state_entry() { llOwnerSay(\"other\"); } }"));
+        Assert.True(Ready(rig, item, "l"));
+        Assert.Equal(1, rig.Engine.Listens.ListenCount); // entering the first state did not release the listen it just made
+
+        Assert.True(rig.Engine.PostScriptEvent(item, "touch_start", new object[] { 1 }));
+
+        Assert.True(Heard(rig, item, "other"));
+        Assert.True(SchedulerHarness.WaitFor(() => rig.Engine.Listens.ListenCount == 0), "count after the state change " + rig.Engine.Listens.ListenCount);
     }
 
     // ---- the region's world communication ----

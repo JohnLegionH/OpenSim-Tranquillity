@@ -29,7 +29,7 @@ namespace SLua.ScriptEngine
         public EngineScriptAccess(SchedulerScript script)
         {
             m_script = script;
-            ScriptState = new RuntimeState();
+            ScriptState = new RuntimeState(0); // the full constructor: llListen keeps the script's listens in the state (ActiveListens)
         }
 
         public RuntimeState ScriptState { get; }

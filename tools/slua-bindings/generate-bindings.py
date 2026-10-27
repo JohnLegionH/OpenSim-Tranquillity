@@ -265,8 +265,8 @@ def read_delays(path):
 # The members of the engine's host services (IScriptHostServices) that the SLua engine does not provide yet. A script function
 # that reaches one, itself or through a method it calls, cannot run on the real LSLSystemAPI with the SLua engine's host.
 LACKING_HOST_MEMBERS = (
-    "Ossl", "ListenManager", "StateManager", "AsyncCommands", "NotecardCache", "ScriptEngine", "PostDataserverToPrim",
-    "SendToWorldComm", "ExperienceGrantRestored", "ExperienceCannotRun", "SetMinEventDelay", "GetEventQueueFreeSpacePercentage",
+    "Ossl", "StateManager", "AsyncCommands", "NotecardCache", "ScriptEngine", "PostDataserverToPrim",
+    "ExperienceGrantRestored", "ExperienceCannotRun", "SetMinEventDelay", "GetEventQueueFreeSpacePercentage",
 )
 HOST_MEMBER = re.compile(r"m_ScriptEngine\s*\??\s*\.\s*(%s)\b" % "|".join(LACKING_HOST_MEMBERS))
 IDENTIFIER = re.compile(r"\b[A-Za-z_]\w*\b")

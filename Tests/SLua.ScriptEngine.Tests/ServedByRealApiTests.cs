@@ -32,8 +32,8 @@ public class ServedByRealApiTests
     /// <summary>The host members the engine does not provide yet; a function that reaches one is not served.</summary>
     private static readonly string[] Lacking =
     {
-        "Ossl", "ListenManager", "StateManager", "AsyncCommands", "NotecardCache", "ScriptEngine", "PostDataserverToPrim",
-        "SendToWorldComm", "ExperienceGrantRestored", "ExperienceCannotRun", "SetMinEventDelay", "GetEventQueueFreeSpacePercentage",
+        "Ossl", "StateManager", "AsyncCommands", "NotecardCache", "ScriptEngine", "PostDataserverToPrim",
+        "ExperienceGrantRestored", "ExperienceCannotRun", "SetMinEventDelay", "GetEventQueueFreeSpacePercentage",
     };
 
     private static string NameOf(string notServedEntry) => notServedEntry.Substring(0, notServedEntry.IndexOf(':'));
@@ -65,14 +65,14 @@ public class ServedByRealApiTests
     }
 
     [Fact]
-    public void FunctionsThatNeedAListenManagerOrWorldCommunicationAreNotServedAndPlainOnesAre()
+    public void FunctionsThatNeedAHostMemberTheEngineLacksAreNotServedAndPlainOnesAre()
     {
         string[] served = LlServed.Served;
         string[] notServed = LlServed.NotServed.Select(NameOf).ToArray();
 
-        Assert.All(new[] { "llListen", "llListenRemove", "llSay", "llMessageLinked", "llMinEventDelay", "llSensor" },
+        Assert.All(new[] { "llRequestPermissions", "llMessageLinked", "llMinEventDelay", "llSensor" },
             n => Assert.Contains(n, notServed));
-        Assert.All(new[] { "llGetPos", "llSetPos", "llSetTimerEvent", "llResetScript", "llStringLength", "llName2Key", "llInstantMessage" },
+        Assert.All(new[] { "llGetPos", "llSetPos", "llSetTimerEvent", "llResetScript", "llStringLength", "llName2Key", "llInstantMessage", "llListen", "llListenRemove", "llSay" },
             n => Assert.Contains(n, served));
     }
 
@@ -86,14 +86,14 @@ public class ServedByRealApiTests
         ILSLSystemAPI router = ApiRouter.Create(real, fallback);
         realFake.Returns("llStringLength", 11);
         fallbackFake.Returns("llStringLength", 22);
-        realFake.Returns("llListen", 33);
-        fallbackFake.Returns("llListen", 44);
+        realFake.Returns("llHTTPRequest", "33");
+        fallbackFake.Returns("llHTTPRequest", "44");
 
         Assert.Equal(11, router.llStringLength("x"));
-        Assert.Equal(44, router.llListen(0, "", "", ""));
+        Assert.Equal("44", router.llHTTPRequest("https://example.org/", new InWorldz.Phlox.Types.LSLList(), ""));
 
         Assert.Equal(new[] { "llStringLength" }, realFake.Calls.Select(c => c.Name).ToArray());
-        Assert.Equal(new[] { "llListen" }, fallbackFake.Calls.Select(c => c.Name).ToArray());
+        Assert.Equal(new[] { "llHTTPRequest" }, fallbackFake.Calls.Select(c => c.Name).ToArray());
     }
 
     [Fact]
@@ -106,16 +106,16 @@ public class ServedByRealApiTests
         fallbackFake.Returns("NeedsService", false);
 
         Assert.True(router.NeedsService("llName2Key", new object[] { "x" }));
-        Assert.False(router.NeedsService("llListen", new object[0]));
+        Assert.False(router.NeedsService("llHTTPRequest", new object[0]));
     }
 
     [RequiresNativeFact]
     public void AScriptsServedAndUnservedCallsRunOnTheRealApiAndTheFallbackRespectively()
     {
         (ILSLSystemAPI fallback, FakeLslApi fallbackFake) = FakeLslApi.Create();
-        fallbackFake.Returns("llListen", 7);
+        fallbackFake.Returns("llGetNotecardLine", "6b3f1d52-8a47-4e0b-9c61-2f5d7e8a9b10");
         using var rig = new EngineApiRig(fallback, ("MinTimerInterval", "0.5"));
-        SchedulerScript s = rig.H.AddAndStart("ll.SetTimerEvent(2.0)\nlocal h = ll.Listen(0, '', '', '')\nossl.Mark('handle', tostring(h))\nossl.Count()");
+        SchedulerScript s = rig.H.AddAndStart("ll.SetTimerEvent(2.0)\nlocal h = ll.GetNotecardLine('card', 1)\nossl.Mark('handle', tostring(h))\nossl.Count()");
 
         // The first call of the real API in a process compiles code and can overrun the script's run window, which the runtime
         // punishes with a sleep; moving the clock past it is not what is under test.
@@ -124,8 +124,8 @@ public class ServedByRealApiTests
         Assert.True(rig.H.CountOf(s) == 1, "state " + s.State + " faulted=[" + string.Join(",", rig.H.FaultedScripts.Select(f => f.FaultMessage)) + "] errors=[" + string.Join(",", rig.H.ReportedErrors) + "] fallback=[" + string.Join(",", fallbackFake.Calls.Select(c => c.Name)) + "] backend=[" + string.Join(",", rig.BackendCalls) + "]");
         Assert.Contains("SetTimer 2", rig.BackendCalls.ToArray()); // the real API reached the engine's host
         Assert.DoesNotContain(fallbackFake.Calls, c => c.Name == "llSetTimerEvent");
-        Assert.Contains(fallbackFake.Calls, c => c.Name == "llListen"); // the fallback served the listen
-        Assert.Equal(new[] { "handle:7" }, rig.H.MarksOf(s));
+        Assert.Contains(fallbackFake.Calls, c => c.Name == "llGetNotecardLine"); // the fallback served the request
+        Assert.Equal(new[] { "handle:6b3f1d52-8a47-4e0b-9c61-2f5d7e8a9b10" }, rig.H.MarksOf(s));
     }
 
     // ---- the tripwire ----
@@ -164,7 +164,7 @@ public class ServedByRealApiTests
         public PhloxNotecardCache NotecardCache => Trip("NotecardCache", m_inner.NotecardCache);
         public int PhysicsFrameTimeAvg => m_inner.PhysicsFrameTimeAvg;
         public IScriptOsslChecks Ossl => Trip("Ossl", m_inner.Ossl);
-        public IScriptListenService ListenManager => Trip("ListenManager", m_inner.ListenManager);
+        public IScriptListenService ListenManager => m_inner.ListenManager;
         public IScriptStateTracker StateManager => Trip("StateManager", m_inner.StateManager);
         public AsyncCommandManager AsyncCommands => Trip("AsyncCommands", m_inner.AsyncCommands);
 
@@ -181,7 +181,7 @@ public class ServedByRealApiTests
         public void ResetScript(UUID itemID) => m_inner.ResetScript(itemID);
         public void ApiResetScript(UUID itemID) => m_inner.ApiResetScript(itemID);
         public void RequestParcelCheck(UUID itemId) => m_inner.RequestParcelCheck(itemId);
-        public void SendToWorldComm(Action<IWorldComm> send) { Trip("SendToWorldComm"); m_inner.SendToWorldComm(send); }
+        public void SendToWorldComm(Action<IWorldComm> send) => m_inner.SendToWorldComm(send);
         public float GetEventQueueFreeSpacePercentage(UUID itemID) => Trip("GetEventQueueFreeSpacePercentage", m_inner.GetEventQueueFreeSpacePercentage(itemID));
         public void ExperienceGrantRestored() { Trip("ExperienceGrantRestored"); m_inner.ExperienceGrantRestored(); }
         public void ExperienceCannotRun(UUID experience, int code) { Trip("ExperienceCannotRun"); m_inner.ExperienceCannotRun(experience, code); }

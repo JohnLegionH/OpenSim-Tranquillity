@@ -75,7 +75,10 @@ namespace SLua.ScriptEngine
         public int PhysicsFrameTimeAvg => m_backend.PhysicsFrameTimeAvg?.Invoke() ?? 0;
 
         public IScriptOsslChecks Ossl => null;
-        public IScriptListenService ListenManager => null;
+        /// <summary>The engine's chat: its listen registry and the way to the region's world communication; set once the region is added.</summary>
+        internal EngineChat Chat { get; set; }
+
+        public IScriptListenService ListenManager => Chat?.Listens;
         public IScriptStateTracker StateManager => null;
         public AsyncCommandManager AsyncCommands => null;
 
@@ -137,8 +140,8 @@ namespace SLua.ScriptEngine
 
         public void RequestParcelCheck(UUID itemId) => m_backend.RequestParcelCheck?.Invoke(itemId);
 
-        /// <summary>Chat is offered to the listens of other engines through the region's world communication; the SLua engine has no listens yet.</summary>
-        public void SendToWorldComm(Action<IWorldComm> send) { }
+        /// <summary>Chat is offered to the listens of other engines through the region's world communication.</summary>
+        public void SendToWorldComm(Action<IWorldComm> send) => Chat?.SendToWorldComm(send);
 
         /// <summary>1.0 for a script the engine does not run, as Halcyon's EngineInterface.GetEventQueueFreeSpacePercentage.</summary>
         public float GetEventQueueFreeSpacePercentage(UUID itemID) => m_backend.EventQueueFreeSpacePercentage?.Invoke(itemID) ?? 1.0f;

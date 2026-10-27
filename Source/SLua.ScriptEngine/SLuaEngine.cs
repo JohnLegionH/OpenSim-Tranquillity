@@ -8,6 +8,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Threading;
 using SLua.ScriptEngine.Bindings;
 using Nini.Config;
 using OpenMetaverse;
@@ -72,6 +73,9 @@ namespace SLua.ScriptEngine
             public SchedulerScript Script;
             public StartInfo Start;
             public bool StartupPending;
+
+            /// <summary>The state the script was last seen in, to tell a change of state from the first.</summary>
+            public int LastState = -1;
 
             /// <summary>Why the script is held back; the scheduler's Suspend is on while any reason is set. Guarded by <see cref="PauseLock"/>.</summary>
             public PauseReason Pause;
@@ -181,7 +185,9 @@ namespace SLua.ScriptEngine
         }
 
         /// <summary>The region's listen registry (Phlox's manager, owned by this engine); null before the region is added.</summary>
-        internal Phlox.ScriptEngine.PhloxListenManager Listens => null;
+        internal Phlox.ScriptEngine.PhloxListenManager Listens => m_chat?.Listens;
+
+        private EngineChat m_chat;
 
         /// <summary>Where the engine sets each script's event flags on its prim; tests replace it before the region is added.</summary>
         internal IPrimEventFlags PrimFlags { get; set; }
@@ -211,6 +217,9 @@ namespace SLua.ScriptEngine
             if (!m_enabled) return;
             m_scene = scene;
             HostServices = new EngineHostServices(m_settings, scene, m_configSource, this, BuildHostBackend());
+            m_chat = new EngineChat(scene, m_configSource, m_settings, PostScriptEvent, TellOwnerOf);
+            HostServices.Chat = m_chat;
+            m_chat.Subscribe();
             PrimFlags ??= new ScenePrimEventFlags(scene);
             m_scene.RegisterModuleInterface<IScriptModule>(this);
             m_scene.StackModuleInterface<IScriptModule>(this);
@@ -330,6 +339,8 @@ namespace SLua.ScriptEngine
             m_scene.EventManager.OnScriptReset -= OnScriptReset;
             m_scene.EventManager.OnStartScript -= OnStartScript;
             m_scene.EventManager.OnStopScript -= OnStopScript;
+            m_chat?.Unsubscribe();
+            m_chat = null;
             m_hooks?.Unsubscribe();
             m_hooks = null;
             m_policy?.Unsubscribe();
@@ -349,7 +360,16 @@ namespace SLua.ScriptEngine
             m_scene = null;
         }
 
-        public void RegionLoaded(Scene scene) => m_policy?.SubscribeEstate();
+        public void RegionLoaded(Scene scene)
+        {
+            m_policy?.SubscribeEstate();
+            // The region's world communication may not be registered when the engine is added, so it is looked up here. Without it
+            // this engine's listens still work; only the exchange with another engine's listens is missing.
+            IWorldComm worldComm = scene?.RequestModuleInterface<IWorldComm>();
+            if (m_chat != null && worldComm == null)
+                m_log.Info("The region has no world communication module; chat is not exchanged with other script engines");
+            m_chat?.Connect(worldComm);
+        }
 
         /// <summary>
         /// Every engine receives every rez with the engine name the region selected. The first-line header still takes
@@ -397,6 +417,7 @@ namespace SLua.ScriptEngine
             ForgetPending(itemID);
             m_loader?.Disown(itemID);
             DropRecord(itemID);
+            m_chat?.Listens.Forget(itemID); // an unload ends the script's listens, after the script has stopped
         }
 
         private void ForgetPending(UUID itemID)
@@ -509,8 +530,13 @@ namespace SLua.ScriptEngine
         private void OnStateChanged(SchedulerScript script)
         {
             ScriptRecord record = FindRecord(script);
-            if (record != null)
-                ApplyEventFlags(record, script.CurrentState, script.Running);
+            if (record == null)
+                return;
+            // A change to another state releases the script's listens (wiki: State); the first state is not a change.
+            int was = Interlocked.Exchange(ref record.LastState, script.CurrentState);
+            if (was != -1 && was != script.CurrentState)
+                m_chat?.Listens.Remove(record.ItemID);
+            ApplyEventFlags(record, script.CurrentState, script.Running);
         }
 
         private void ForgetEventFlags(ScriptRecord record)
@@ -617,6 +643,7 @@ namespace SLua.ScriptEngine
             ForgetPending(itemID);
             m_loader?.Disown(itemID);
             DropRecord(itemID);
+            m_chat?.Listens.Forget(itemID); // an unload ends the script's listens
             OnScriptRemoved?.Invoke(itemID);
         }
 
@@ -625,6 +652,7 @@ namespace SLua.ScriptEngine
             ScriptRecord record = RecordOf(itemID);
             if (record == null)
                 return;
+            m_chat?.Listens.Remove(itemID); // a reset removes the script's listens
             if (record.Script.Killed)
                 SetItemRunningFlag(record.LocalID, itemID, true); // a reset is what starts a script a fault stopped
             m_scheduler?.Reset(record.Script);
@@ -722,6 +750,13 @@ namespace SLua.ScriptEngine
                         return r;
             }
             return null;
+        }
+
+        private void TellOwnerOf(UUID itemId, string text)
+        {
+            ScriptRecord record = RecordOf(itemId);
+            if (record != null)
+                TellOwner(record, text);
         }
 
         private void TellOwner(ScriptRecord record, string text)
