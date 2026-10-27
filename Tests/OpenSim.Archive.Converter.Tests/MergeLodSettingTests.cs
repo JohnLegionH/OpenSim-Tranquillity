@@ -18,6 +18,7 @@ namespace OpenSim.Archive.Converter.Tests;
 /// The pixel limit the levels of detail of a merged part are checked against is a setting of the command, and the report states whether merging made
 /// the build heavier for viewers than the prims it replaced. Each test writes its own archives and shares no process state, so the class runs in parallel.
 /// </summary>
+[Collection("Console output")]
 public class MergeLodSettingTests
 {
     private static string Output() => Path.Combine(Path.GetTempPath(), "merge-lod-setting-tests", Guid.NewGuid().ToString("N") + ".oar");

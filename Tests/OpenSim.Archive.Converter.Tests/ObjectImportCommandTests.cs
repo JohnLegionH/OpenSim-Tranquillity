@@ -11,7 +11,8 @@ using Xunit;
 
 namespace OpenSim.Archive.Converter.Tests;
 
-/// <summary>The oar-import command line. Each test writes its own folder and archive, so the class runs in parallel with others.</summary>
+/// <summary>The oar-import command line. Each test writes its own folder and archive; the class is in the Console output collection because a command writes to Console.Out (process-wide state), which another class redirects.</summary>
+[Collection("Console output")]
 public class ObjectImportCommandTests
 {
     [Fact]

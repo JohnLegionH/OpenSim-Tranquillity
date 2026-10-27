@@ -11,6 +11,9 @@ using Xunit;
 namespace OpenSim.Archive.Eligibility.Tests;
 
 /// <summary>The oar-convert command line: cleaning is on unless --no-clean is given, and --version names the version.</summary>
+// A command writes to Console.Out, which is process-wide, and CleanConvertCommandTests redirects it to read the version a tool prints:
+// every class that runs a command in process is in this one collection, so they never run together.
+[Collection("Console output")]
 public class CleanConvertCommandTests
 {
     private static long ConvertedSize(params string[] extra)

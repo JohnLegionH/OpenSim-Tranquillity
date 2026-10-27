@@ -19,6 +19,7 @@ namespace OpenSim.Archive.Converter.Tests;
 /// The merge plan read from real fixture archives, and the command line that writes it. Each test writes its own archive and
 /// its own output folder, and nothing is shared between tests, so the class runs in parallel with others.
 /// </summary>
+[Collection("Console output")]
 public class MergePlanArchiveTests
 {
     private static KitPart Box(int link, string name = null) =>

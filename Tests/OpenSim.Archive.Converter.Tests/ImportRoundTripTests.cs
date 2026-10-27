@@ -14,8 +14,9 @@ namespace OpenSim.Archive.Converter.Tests;
 
 /// <summary>
 /// The round trip: an imported archive is written back out to glTF by the exporter (and the other levels read back out of the mesh asset) and compared
-/// with the input files. Each test writes its own folders and shares nothing, so the class runs in parallel with others.
+/// with the input files. Each test writes its own folders and shares nothing; the class is in the Console output collection because it runs the import command, which writes to Console.Out (process-wide state), which another class redirects.
 /// </summary>
+[Collection("Console output")]
 public class ImportRoundTripTests
 {
     private static ImportOptions Options() => new ImportOptions

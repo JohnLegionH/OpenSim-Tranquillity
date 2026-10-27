@@ -17,6 +17,7 @@ namespace OpenSim.Archive.Converter.Tests;
 /// The oar-convert --merge command that writes an archive. Each test writes its own archive and folder, and shares nothing, so the
 /// class runs in parallel with others.
 /// </summary>
+[Collection("Console output")]
 public class MergeCommandTests
 {
     private static string Folder() => Path.Combine(Path.GetTempPath(), "merge-command-tests", Guid.NewGuid().ToString("N"));
