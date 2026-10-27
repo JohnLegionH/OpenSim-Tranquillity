@@ -1948,6 +1948,12 @@ namespace SLua.ScriptEngine
             return null;
         }
 
+        private static Value[] ManageEstateAccess(ScriptContext c, ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 2, "ManageEstateAccess");
+            return LlAdapters.ManageEstateAccess(c, a);
+        }
+
         private static Value[] MapDestination(ScriptContext c, ReadOnlySpan<Value> a)
         {
             LslMarshal.Arity(a, 3, "MapDestination");
@@ -2013,6 +2019,12 @@ namespace SLua.ScriptEngine
             LslMarshal.Arity(a, 3, "OffsetTexture");
             c.Api.llOffsetTexture(LslMarshal.Float(a, 0, "OffsetTexture"), LslMarshal.Float(a, 1, "OffsetTexture"), LslMarshal.Int(a, 2, "OffsetTexture"));
             return null;
+        }
+
+        private static Value[] OpenFloater(ScriptContext c, ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 3, "OpenFloater");
+            return LlAdapters.OpenFloater(c, a);
         }
 
         private static Value[] OpenRemoteDataChannel(ScriptContext c, ReadOnlySpan<Value> a)
@@ -2256,6 +2268,20 @@ namespace SLua.ScriptEngine
             return new[] { LslMarshal.OfString(c.Api.llReplaceSubString(LslMarshal.String(a, 0, "ReplaceSubString"), LslMarshal.String(a, 1, "ReplaceSubString"), LslMarshal.String(a, 2, "ReplaceSubString"), LslMarshal.Int(a, 3, "ReplaceSubString"))) };
         }
 
+        private static Value[] RequestAgentData(ScriptContext c, ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 2, "RequestAgentData");
+            c.Api.llRequestAgentData(LslMarshal.Key(a, 0, "RequestAgentData"), LslMarshal.Int(a, 1, "RequestAgentData"));
+            return null;
+        }
+
+        private static Value[] RequestDisplayName(ScriptContext c, ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 1, "RequestDisplayName");
+            c.Api.llRequestDisplayName(LslMarshal.Key(a, 0, "RequestDisplayName"));
+            return null;
+        }
+
         private static Value[] RequestExperiencePermissions(ScriptContext c, ReadOnlySpan<Value> a)
         {
             LslMarshal.Arity(a, 2, "RequestExperiencePermissions");
@@ -2316,6 +2342,13 @@ namespace SLua.ScriptEngine
         {
             LslMarshal.Arity(a, 1, "RequestUserKey");
             return new[] { LslMarshal.OfKey(c.Api.llRequestUserKey(LslMarshal.String(a, 0, "RequestUserKey"))) };
+        }
+
+        private static Value[] RequestUsername(ScriptContext c, ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 1, "RequestUsername");
+            c.Api.llRequestUsername(LslMarshal.Key(a, 0, "RequestUsername"));
+            return null;
         }
 
         private static Value[] ResetAnimationOverride(ScriptContext c, ReadOnlySpan<Value> a)
@@ -2655,6 +2688,12 @@ namespace SLua.ScriptEngine
             return null;
         }
 
+        private static Value[] SetGroundTexture(ScriptContext c, ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 1, "SetGroundTexture");
+            return LlAdapters.SetGroundTexture(c, a);
+        }
+
         private static Value[] SetHoverHeight(ScriptContext c, ReadOnlySpan<Value> a)
         {
             LslMarshal.Arity(a, 3, "SetHoverHeight");
@@ -2694,6 +2733,13 @@ namespace SLua.ScriptEngine
         {
             LslMarshal.Arity(a, 3, "SetLinkColor");
             c.Api.llSetLinkColor(LslMarshal.Int(a, 0, "SetLinkColor"), LslMarshal.Vector(a, 1, "SetLinkColor"), LslMarshal.Int(a, 2, "SetLinkColor"));
+            return null;
+        }
+
+        private static Value[] SetLinkGLTFOverrides(ScriptContext c, ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 3, "SetLinkGLTFOverrides");
+            c.Api.llSetLinkGLTFOverrides(LslMarshal.Int(a, 0, "SetLinkGLTFOverrides"), LslMarshal.Int(a, 1, "SetLinkGLTFOverrides"), LslMarshal.List(a, 2, "SetLinkGLTFOverrides"));
             return null;
         }
 
@@ -3673,6 +3719,7 @@ namespace SLua.ScriptEngine
             new BoundFunction("MakeFire", "llMakeFire", FunctionClass.NonBlocking, "void", new[] { "integer", "float", "float", "float", "float", "string", "vector" }, MakeFire),
             new BoundFunction("MakeFountain", "llMakeFountain", FunctionClass.NonBlocking, "void", new[] { "integer", "float", "float", "float", "float", "integer", "string", "vector", "float" }, MakeFountain),
             new BoundFunction("MakeSmoke", "llMakeSmoke", FunctionClass.NonBlocking, "void", new[] { "integer", "float", "float", "float", "float", "string", "vector" }, MakeSmoke),
+            new BoundFunction("ManageEstateAccess", "llManageEstateAccess", FunctionClass.Async, "integer", new[] { "integer", "key" }, ManageEstateAccess),
             new BoundFunction("MapDestination", "llMapDestination", FunctionClass.Delayed, "void", new[] { "string", "vector", "vector" }, MapDestination),
             new BoundFunction("MessageLinked", "llMessageLinked", FunctionClass.Unplaced, "void", new[] { "integer", "integer", "string", "key" }, MessageLinked),
             new BoundFunction("MinEventDelay", "llMinEventDelay", FunctionClass.NonBlocking, "void", new[] { "float" }, MinEventDelay),
@@ -3682,6 +3729,7 @@ namespace SLua.ScriptEngine
             new BoundFunction("Name2Key", "llName2Key", FunctionClass.Service, "key", new[] { "string" }, Name2Key, "00000000-0000-0000-0000-000000000000", Name2KeyArgs),
             new BoundFunction("NavigateTo", "llNavigateTo", FunctionClass.NonBlocking, "void", new[] { "vector", "list" }, NavigateTo),
             new BoundFunction("OffsetTexture", "llOffsetTexture", FunctionClass.Delayed, "void", new[] { "float", "float", "integer" }, OffsetTexture),
+            new BoundFunction("OpenFloater", "llOpenFloater", FunctionClass.NonBlocking, "integer", new[] { "string", "string", "list" }, OpenFloater),
             new BoundFunction("OpenRemoteDataChannel", "llOpenRemoteDataChannel", FunctionClass.Delayed, "void", new string[0], OpenRemoteDataChannel),
             new BoundFunction("Ord", "llOrd", FunctionClass.NonBlocking, "integer", new[] { "string", "integer" }, Ord),
             new BoundFunction("OverMyLand", "llOverMyLand", FunctionClass.NonBlocking, "integer", new[] { "key" }, OverMyLand),
@@ -3717,6 +3765,8 @@ namespace SLua.ScriptEngine
             new BoundFunction("ReplaceAgentEnvironment", "llReplaceAgentEnvironment", FunctionClass.NonBlocking, "integer", new[] { "key", "float", "string" }, ReplaceAgentEnvironment),
             new BoundFunction("ReplaceEnvironment", "llReplaceEnvironment", FunctionClass.NonBlocking, "integer", new[] { "vector", "string", "integer", "integer", "integer" }, ReplaceEnvironment),
             new BoundFunction("ReplaceSubString", "llReplaceSubString", FunctionClass.NonBlocking, "string", new[] { "string", "string", "string", "integer" }, ReplaceSubString),
+            new BoundFunction("RequestAgentData", "llRequestAgentData", FunctionClass.Async, "key", new[] { "key", "integer" }, RequestAgentData),
+            new BoundFunction("RequestDisplayName", "llRequestDisplayName", FunctionClass.Async, "key", new[] { "key" }, RequestDisplayName),
             new BoundFunction("RequestExperiencePermissions", "llRequestExperiencePermissions", FunctionClass.Service, "void", new[] { "key", "string" }, RequestExperiencePermissions, null, RequestExperiencePermissionsArgs),
             new BoundFunction("RequestInventoryData", "llRequestInventoryData", FunctionClass.NonBlocking, "key", new[] { "string" }, RequestInventoryData),
             new BoundFunction("RequestPermissions", "llRequestPermissions", FunctionClass.Service, "void", new[] { "key", "integer" }, RequestPermissions, null, RequestPermissionsArgs),
@@ -3724,6 +3774,7 @@ namespace SLua.ScriptEngine
             new BoundFunction("RequestSimulatorData", "llRequestSimulatorData", FunctionClass.Service, "key", new[] { "string", "integer" }, RequestSimulatorData, "00000000-0000-0000-0000-000000000000", RequestSimulatorDataArgs),
             new BoundFunction("RequestURL", "llRequestURL", FunctionClass.NonBlocking, "key", new string[0], RequestURL),
             new BoundFunction("RequestUserKey", "llRequestUserKey", FunctionClass.NonBlocking, "key", new[] { "string" }, RequestUserKey),
+            new BoundFunction("RequestUsername", "llRequestUsername", FunctionClass.Async, "key", new[] { "key" }, RequestUsername),
             new BoundFunction("ResetAnimationOverride", "llResetAnimationOverride", FunctionClass.NonBlocking, "void", new[] { "string" }, ResetAnimationOverride),
             new BoundFunction("ResetLandBanList", "llResetLandBanList", FunctionClass.Delayed, "void", new string[0], ResetLandBanList),
             new BoundFunction("ResetLandPassList", "llResetLandPassList", FunctionClass.Delayed, "void", new string[0], ResetLandPassList),
@@ -3775,12 +3826,14 @@ namespace SLua.ScriptEngine
             new BoundFunction("SetEnvironment", "llSetEnvironment", FunctionClass.NonBlocking, "integer", new[] { "vector", "list" }, SetEnvironment),
             new BoundFunction("SetForce", "llSetForce", FunctionClass.Unplaced, "void", new[] { "vector", "integer" }, SetForce),
             new BoundFunction("SetForceAndTorque", "llSetForceAndTorque", FunctionClass.NonBlocking, "void", new[] { "vector", "vector", "integer" }, SetForceAndTorque),
+            new BoundFunction("SetGroundTexture", "llSetGroundTexture", FunctionClass.NonBlocking, "integer", new[] { "list" }, SetGroundTexture),
             new BoundFunction("SetHoverHeight", "llSetHoverHeight", FunctionClass.NonBlocking, "void", new[] { "float", "integer", "float" }, SetHoverHeight),
             new BoundFunction("SetInventoryPermMask", "llSetInventoryPermMask", FunctionClass.NonBlocking, "void", new[] { "string", "integer", "integer" }, SetInventoryPermMask),
             new BoundFunction("SetKeyframedMotion", "llSetKeyframedMotion", FunctionClass.NonBlocking, "void", new[] { "list", "list" }, SetKeyframedMotion),
             new BoundFunction("SetLinkAlpha", "llSetLinkAlpha", FunctionClass.NonBlocking, "void", new[] { "integer", "float", "integer" }, SetLinkAlpha),
             new BoundFunction("SetLinkCamera", "llSetLinkCamera", FunctionClass.NonBlocking, "void", new[] { "integer", "vector", "vector" }, SetLinkCamera),
             new BoundFunction("SetLinkColor", "llSetLinkColor", FunctionClass.NonBlocking, "void", new[] { "integer", "vector", "integer" }, SetLinkColor),
+            new BoundFunction("SetLinkGLTFOverrides", "llSetLinkGLTFOverrides", FunctionClass.NonBlocking, "void", new[] { "integer", "integer", "list" }, SetLinkGLTFOverrides),
             new BoundFunction("SetLinkMedia", "llSetLinkMedia", FunctionClass.Delayed, "integer", new[] { "integer", "integer", "list" }, SetLinkMedia),
             new BoundFunction("SetLinkPrimitiveParams", "llSetLinkPrimitiveParams", FunctionClass.Delayed, "void", new[] { "integer", "list" }, SetLinkPrimitiveParams),
             new BoundFunction("SetLinkPrimitiveParamsFast", "llSetLinkPrimitiveParamsFast", FunctionClass.NonBlocking, "void", new[] { "integer", "list" }, SetLinkPrimitiveParamsFast),

@@ -150,10 +150,10 @@ public class ServiceLaneTests
     };
 
     [RequiresNativeFact]
-    public void NoneOfTheElevenAsyncAndTwentyServiceFunctionsRunsOnTheScriptWorker()
+    public void NoneOfTheFifteenAsyncAndTwentyServiceFunctionsRunsOnTheScriptWorker()
     {
         BoundFunction[] functions = LlBindings.All.Where(f => f.Class is FunctionClass.Async or FunctionClass.Service).ToArray();
-        Assert.Equal(11, functions.Count(f => f.Class == FunctionClass.Async));
+        Assert.Equal(15, functions.Count(f => f.Class == FunctionClass.Async));
         Assert.Equal(20, functions.Count(f => f.Class == FunctionClass.Service));
 
         using var rig = new LaneRig();

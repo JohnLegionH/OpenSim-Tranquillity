@@ -41,14 +41,14 @@ public class SwitchOnTests
     }
 
     [Fact]
-    public void TheUnavailableFunctionsAreTheThirtySixWaitingOnHostMembersAndTheTwentyThreeNotBound()
+    public void TheUnavailableFunctionsAreTheThirtyNineWaitingOnHostMembersAndTheSixteenPhloxGaps()
     {
         var expected = new HashSet<string>();
         foreach (string row in LlServed.NotServed) expected.Add(row.Substring(0, row.IndexOf(':')));
         foreach (string name in LlCoverage.MissingFromSeam) expected.Add(name);
         foreach (string row in LlCoverage.SignatureMismatch) expected.Add(row.Substring(0, row.IndexOf(':')));
 
-        Assert.Equal(59, expected.Count);
+        Assert.Equal(55, expected.Count);
         Assert.Equal(expected.OrderBy(n => n), LlBindings.Unavailable.OrderBy(n => n));
         Assert.Contains("llSay", LlBindings.Unavailable);
         Assert.Contains("llRequestUsername", LlBindings.Unavailable);
@@ -171,7 +171,7 @@ public class SwitchOnTests
         UUID item = rig.Rez(Slua("pcall(function() ll.Say(0, 'x') end)\npcall(function() ll.RequestUsername('00000000-0000-0000-0000-000000000000') end)\nossl.Mark('done')"));
         MarkOf(rig, item, "done");
 
-        string[] counts = rig.Log.Lines.Where(l => l.Contains("470") && l.Contains("59")).ToArray();
+        string[] counts = rig.Log.Lines.Where(l => l.Contains("474") && l.Contains("55")).ToArray();
         Assert.Single(counts);
         Assert.StartsWith("INFO ", counts[0]);
         Assert.Empty(rig.Log.Warnings);

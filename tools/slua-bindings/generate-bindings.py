@@ -323,6 +323,45 @@ def read_failures(path):
     return {m.group(1): m.group(2) for m in FAILURE.finditer(read(path))}
 
 
+# ---- adapters and gaps ----
+
+# Runtime functions whose signature differs from ILSLSystemAPI's but that Phlox implements: they are bound through an adapter
+# on this side that converts between the runtime's signature (secondlife/lsl-definitions) and Phlox's.
+#   result-by-sysreturn  Phlox's method is void and gives the runtime's result with SysReturn (its shim runs it as a
+#                        long-running call); the call is made and the answer is the one the lane records.
+#   drop-return          Phlox's method returns a value the runtime's function does not.
+#   hand                 the conversion is written by hand in LlAdapters.cs.
+ADAPTERS = {
+    "llManageEstateAccess": ("hand", "the runtime's ESTATE_ACCESS_* actions (4, 8, 16, 32, 64, 128) are turned into Phlox's numbers (0 to 5; LSLSystemAPI EstateAllowedAgentAdd and the others); the TRUE/FALSE result is Phlox's SysReturn"),
+    "llOpenFloater": ("hand", "Phlox's llOpenFloater has the runtime's arguments and no result; the adapter calls it and gives the runtime's success code 0 (lsl-definitions: returns an error code, 0 if successful)"),
+    "llRequestAgentData": ("result-by-sysreturn", "the runtime returns the query key (lsl-definitions); Phlox returns it with SysReturn (LSLSystemAPI.ReturnQueryKey)"),
+    "llRequestDisplayName": ("result-by-sysreturn", "the runtime returns the query key (lsl-definitions); Phlox returns it with SysReturn (LSLSystemAPI.llRequestUsername)"),
+    "llRequestUsername": ("result-by-sysreturn", "the runtime returns the query key (lsl-definitions); Phlox returns it with SysReturn (LSLSystemAPI.llRequestUsername)"),
+    "llSetGroundTexture": ("hand", "the runtime takes a list of TERRAIN_* changes (wiki LlSetGroundTexture); each TERRAIN_DETAIL_1 to 4 pair is one Phlox llSetGroundTexture(texture, corner) call, the other changes are skipped, and the result is 0 as the wiki says"),
+    "llSetLinkGLTFOverrides": ("drop-return", "the runtime's function returns nothing (lsl-definitions); Phlox's returns an integer the adapter drops"),
+}
+
+# Runtime functions Phlox does not implement as the runtime defines them. They answer a script with "not available".
+PHLOX_GAPS = {
+    "llClearExperience": "Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
+    "llClearExperiencePermissions": "Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
+    "llFindNotecardTextCount": "Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
+    "llFindNotecardTextSync": "Phlox's llFindNotecardTextSync(name, text, line, caseSensitive) is a plain-text search that returns the first matching line; the runtime's takes a regular expression and returns a strided list of line, column and length (lsl-definitions func-id 508)",
+    "llGetAttachedListFiltered": "Phlox's takes one attachment point; the runtime's takes a list of FILTER_INCLUDE and FILTER_FLAGS options, which no single attachment point expresses",
+    "llGetExperienceList": "Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
+    "llGetGameControlMode": "Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
+    "llGetGameControlModeAxes": "Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
+    "llGetGameControlModeButtons": "Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
+    "llGiveAgentInventory": "Phlox's gives one named item by calling llGiveInventory; the runtime's gives a list of items to the agent as a new named folder, with options, and returns a TRANSFER_* code (lsl-definitions func-id 517)",
+    "llMapBeacon": "Phlox's llMapBeacon(agent, text, color) only writes a debug log line; the runtime's (region_name, pos, options) shows a map beacon (lsl-definitions func-id 516)",
+    "llRemoteDataSetRegion": "Phlox has no method of this name; the function exists only in the older OpenSim LSL_Api",
+    "llRemoteLoadScript": "Phlox has no method of this name; the function exists only in the older OpenSim LSL_Api",
+    "llSetExperienceKey": "Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
+    "llSetParcelForSale": "Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
+    "llTransferOwnership": "Phlox's llTransferOwnership(destination) hands the whole object over and has no flags (TRANSFER_FLAG_COPY, TRANSFER_FLAG_TAKE) or TRANSFER_* result codes; the runtime's takes flags and options (wiki LlTransferOwnership)",
+}
+
+
 # ---- matching ----
 
 def matches(builtin, member):
@@ -354,6 +393,12 @@ def main(builtins_path, interface_path, impl_path, shim_path, out_dir):
     bound_members = set()
     for name in sorted(builtins):
         cands = by_name.get(name)
+        if name in ADAPTERS:
+            if not cands:
+                sys.exit("%s has an adapter but the interface has no method of that name" % name)
+            bound.append((name, builtins[name], cands[0]))
+            bound_members.add((name, tuple(cands[0][1])))
+            continue
         if not cands:
             missing.append(name)
             continue
@@ -365,6 +410,12 @@ def main(builtins_path, interface_path, impl_path, shim_path, out_dir):
         bound.append((name, builtins[name], hit))
         bound_members.add((name, tuple(hit[1])))
 
+    for name in missing + [n for n, _ in mismatch]:
+        if name not in PHLOX_GAPS:
+            sys.exit("%s is neither bound, adapted nor a named Phlox gap" % name)
+    for name in PHLOX_GAPS:
+        if name not in missing and name not in {n for n, _ in mismatch}:
+            sys.exit("%s is listed as a Phlox gap but is bound" % name)
     mismatch_names = {n for n, _ in mismatch}
     seam_only = []
     for ret, name, params, names in members:
@@ -454,7 +505,11 @@ namespace SLua.ScriptEngine
         call = "c.Api.%s(%s)" % (name, args)
         out.append("        private static Value[] %s(ScriptContext c, ReadOnlySpan<Value> a)\n        {\n" % short)
         out.append('            LslMarshal.Arity(a, %d, "%s");\n' % (len(params), short))
-        if ret == "void":
+        adapter = ADAPTERS.get(name)
+        if adapter and adapter[0] == "hand":
+            out.append("            return LlAdapters.%s(c, a);\n" % short)
+        elif adapter or ret == "void":
+            # result-by-sysreturn: the answer is the one the call records; drop-return: the value is not the runtime's
             out.append("            %s;\n            return null;\n" % call)
         else:
             out.append("            return new[] { LslMarshal.%s(%s) };\n" % (MARSHAL_OUT[ret], call))
@@ -514,6 +569,8 @@ def string_array(name, doc, items):
 
 
 def write_coverage(out_dir, bound, missing, seam_only, mismatch, compiler, unplaced):
+    adapted = ["%s: %s" % (n, ADAPTERS[n][1]) for n in sorted(ADAPTERS)]
+    gaps = ["%s: %s" % (n, PHLOX_GAPS[n]) for n in sorted(PHLOX_GAPS)]
     out = [HEADER, """
 namespace SLua.ScriptEngine
 {
@@ -536,9 +593,9 @@ namespace SLua.ScriptEngine
     out.append("\n")
     out.append(string_array("Unplaced", "Bound functions whose delay the generator could not read, with the class they were given.", unplaced))
     out.append("\n")
-    out.append(string_array("Adapted", "Runtime functions bound through an adapter, each with the source of the conversion.", []))
+    out.append(string_array("Adapted", "Runtime functions bound through an adapter, each with the source of the conversion.", adapted))
     out.append("\n")
-    out.append(string_array("PhloxGaps", "Runtime functions Phlox does not implement as the runtime defines them, each with the reason.", []))
+    out.append(string_array("PhloxGaps", "Runtime functions Phlox does not implement as the runtime defines them, each with the reason.", gaps))
     out.append("    }\n}\n")
     write(out_dir, "LlCoverage.g.cs", "".join(out))
 

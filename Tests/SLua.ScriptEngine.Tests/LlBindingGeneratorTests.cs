@@ -138,7 +138,8 @@ public class LlBindingGeneratorTests
     public void TheTableBindsExactlyTheRuntimeFunctionsTheSeamHasWithTheSameSignature()
     {
         MethodInfo[] members = SeamMembers("ll");
-        string[] expected = ReadBuiltins().Where(b => Matching(b, members) != null).Select(b => b.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray();
+        string[] adapted = LlCoverage.Adapted.Select(r => r.Substring(0, r.IndexOf(':'))).ToArray();
+        string[] expected = ReadBuiltins().Where(b => Matching(b, members) != null || adapted.Contains(b.Name)).Select(b => b.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray();
         string[] actual = LlBindings.All.Select(f => f.ApiName).OrderBy(n => n, StringComparer.Ordinal).ToArray();
         Assert.True(expected.Length > 400, "the oracle found only " + expected.Length + " matching functions");
         Assert.Equal(expected, actual);
@@ -212,11 +213,13 @@ public class LlBindingGeneratorTests
         _ => throw new ArgumentException(type),
     };
 
+    private static readonly HashSet<string> AdaptedNames = LlCoverage.Adapted.Select(r => r.Substring(0, r.IndexOf(':'))).ToHashSet();
+
     [Fact]
     public void EveryBoundFunctionPassesItsArgumentsToItsApiMethodOnceAndNothingElse()
     {
         Assert.NotEmpty(LlBindings.All);
-        foreach (BoundFunction f in LlBindings.All)
+        foreach (BoundFunction f in LlBindings.All.Where(f => !AdaptedNames.Contains(f.ApiName))) // the adapted ones have their own tests (AdaptedFunctionTests)
         {
             var (api, fake) = FakeLslApi.Create();
             Value[] args = f.ParamTypes.Select((t, i) => SampleArg(t, i)).ToArray();
@@ -235,7 +238,7 @@ public class LlBindingGeneratorTests
     public void EveryBoundFunctionGivesBackWhatTheApiReturnedAsTheRightType()
     {
         Assert.NotEmpty(LlBindings.All);
-        foreach (BoundFunction f in LlBindings.All)
+        foreach (BoundFunction f in LlBindings.All.Where(f => !AdaptedNames.Contains(f.ApiName))) // the adapted ones have their own tests (AdaptedFunctionTests)
         {
             var (api, fake) = FakeLslApi.Create();
             Value[] args = f.ParamTypes.Select((t, i) => SampleArg(t, i)).ToArray();

@@ -45,7 +45,7 @@ public class LlCoverageTests
     {
         MethodInfo[] members = LlBindingGeneratorTests.SeamMembers("ll");
         string[] expected = LlBindingGeneratorTests.ReadBuiltins()
-            .Where(b => members.Any(m => m.Name == b.Name) && LlBindingGeneratorTests.Matching(b, members) == null)
+            .Where(b => members.Any(m => m.Name == b.Name) && LlBindingGeneratorTests.Matching(b, members) == null && !LlCoverage.Adapted.Any(r => r.StartsWith(b.Name + ":")))
             .Select(b => b.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray();
         Assert.NotEmpty(expected);
         Assert.Equal(expected, LlCoverage.SignatureMismatch.Select(NameOf).OrderBy(n => n, StringComparer.Ordinal).ToArray());

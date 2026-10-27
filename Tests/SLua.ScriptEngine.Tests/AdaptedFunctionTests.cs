@@ -181,8 +181,10 @@ public class AdaptedFunctionTests
     public void EveryPhloxGapAnswersAScriptWithNotAvailableAndEveryAdaptedFunctionDoesNot()
     {
         using var rig = new EngineRig(productionFunctions: true);
+        // The three requests also need the host's dataserver delivery, which the engine does not provide yet: they wait on it.
+        string[] waiting = { "llRequestAgentData", "llRequestDisplayName", "llRequestUsername" };
         string gaps = string.Join(",", Gaps.Select(n => "'" + n.Substring(2) + "'"));
-        string adapted = string.Join(",", Adapted.Select(n => "'" + n.Substring(2) + "'"));
+        string adapted = string.Join(",", Adapted.Except(waiting).Select(n => "'" + n.Substring(2) + "'"));
         UUID item = rig.Rez(Slua(
             "local refused = 0 for _, n in ipairs({" + gaps + "}) do local ok, err = pcall(ll[n]) if not ok and string.find(tostring(err), 'is not available on this engine yet', 1, true) then refused = refused + 1 end end\n" +
             "local open = 0 for _, n in ipairs({" + adapted + "}) do local ok, err = pcall(ll[n]) if not string.find(tostring(err), 'is not available on this engine yet', 1, true) then open = open + 1 end end\n" +
@@ -190,7 +192,8 @@ public class AdaptedFunctionTests
 
         Assert.True(SchedulerHarness.WaitFor(() => rig.MarksOf(item).Length >= 2));
         Assert.Contains("refused=" + Gaps.Length, rig.MarksOf(item));
-        Assert.Contains("open=" + Adapted.Length, rig.MarksOf(item));
+        Assert.Contains("open=" + (Adapted.Length - waiting.Length), rig.MarksOf(item));
+        Assert.All(waiting, n => Assert.Contains(LlServed.NotServed, r => r.StartsWith(n + ": PostDataserverToPrim")));
     }
 
     // ---- the table: every runtime function is accounted for ----
