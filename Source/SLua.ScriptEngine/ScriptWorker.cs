@@ -519,15 +519,15 @@ namespace SLua.ScriptEngine
         /// <summary>
         /// Starts the script over from a fresh script object: variables, events, timer, sleep, a pending call and any
         /// fault or kill are dropped. A script that was stopped by a fault runs again; one the Running flag stopped
-        /// stays stopped until the flag is set.
+        /// stays stopped until the flag is set. The llMinEventDelay floor stays, as in Phlox.
         /// </summary>
         internal void ResetScript(SchedulerScript s)
         {
             if (s.State == ScriptRunState.Removed || s.State == ScriptRunState.Loading)
                 return;
             s.Events.Clear();
-            s.MinEventDelay = 0;
-            s.NextEventAt = 0;
+            // The floor llMinEventDelay set and the time before which the next handler may not start survive the reset, as in Phlox
+            // (RuntimeState.Reset does not touch MinEventDelayMs or NextEventAllowedOn); only the wait for the floor is dropped with the queue.
             s.FloorHeld = false;
             s.FloorGen++;
             s.CurrentDetected = null;
