@@ -49,7 +49,7 @@ public sealed class ImportCheckResult
             sb.Append(l.Ok ? "  ok      " : "  FAILED  ").Append(l.What).Append(": ");
             if (l.InputTriangles > 0 || l.OutputTriangles > 0)
                 sb.Append("input ").Append(l.InputTriangles.ToString(c)).Append(", output ").Append(l.OutputTriangles.ToString(c)).Append("; ");
-            if (l.Ok)
+            if (l.Ok && (l.InputTriangles > 0 || l.OutputTriangles > 0))
                 sb.Append("largest position difference ").Append((l.MaxPosition * 1000f).ToString("0.###", c)).Append(" mm, texture coordinates ").Append(l.MaxUv.ToString("0.#####", c)).Append("; ");
             sb.Append(l.Detail).Append('\n');
         }

@@ -43,6 +43,21 @@
     <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.151.1" />
   </ItemGroup>
 
+  <!-- dotnet publish -p:OarImportExe=true builds the importer alone as oar-import(.exe); an ordinary build is unchanged -->
+  <PropertyGroup Condition="'$(OarImportExe)' == 'true'">
+    <AssemblyName>oar-import</AssemblyName>
+    <AssemblyTitle>oar-import</AssemblyTitle>
+    <DefineConstants>$(DefineConstants);OAR_IMPORT_ONLY</DefineConstants>
+    <!-- no ICU library is needed on Linux; the OpenMetaverse library asks for the culture "en-us" when it starts, which invariant mode allows only with this -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <PredefinedCulturesOnly>false</PredefinedCulturesOnly>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(OarImportExe)' == 'true'">
+    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="4.151.1" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.151.1" />
+  </ItemGroup>
+
   <!-- the single-file build carries the image library's native code for both platforms it is published for; the Linux package is the variant that does not need fontconfig -->
   <ItemGroup Condition="'$(OarExportExe)' == 'true'">
     <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="4.151.1" />
