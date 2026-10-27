@@ -18,7 +18,7 @@ namespace SLua.ScriptEngine.Tests;
 [Collection("native-library")]
 public class EngineStateRestartTests
 {
-    private const string CountsEvents = "n = (n or 0) + 1\nossl.Mark('start')\nLLEvents:on('changed', function(c) n = n + 1; ossl.Mark('n' .. n) end)\n";
+    private const string CountsEvents = "n = (n or 0) + 1\nossl.Mark('start')\nLLEvents:on('changed', function(c) if c < 1000 then n = n + 1; ossl.Mark('n' .. n) end end)\n";
 
     private static string Db(TempFolder dir) => System.IO.Path.Combine(dir.Path, "state.db");
 

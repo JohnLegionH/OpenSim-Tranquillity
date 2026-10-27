@@ -8,7 +8,9 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
+using InWorldz.Phlox.VM;
 using SLua.ScriptEngine.Bindings;
 using Nini.Config;
 using OpenMetaverse;
@@ -39,7 +41,7 @@ namespace SLua.ScriptEngine
         public event ObjectRemoved OnObjectRemoved;
 #pragma warning restore CS0067
 
-        public SLuaEngine() : this(new RegionLog(), NativeRuntime.GateForEngine) { }
+        public SLuaEngine() : this(new RegionLog(), NativeRuntime.GateForEngine) { m_makesItsStore = true; }
 
         private readonly IEngineLog m_log;
         private readonly RuntimeLoader m_loadRuntime;
@@ -47,7 +49,15 @@ namespace SLua.ScriptEngine
         private bool m_enabled;
         private Scene m_scene;
 
-        private readonly ISavedStateStore m_store;
+        private ISavedStateStore m_store;
+
+        /// <summary>The engine's own database of saved script state, when it keeps one (the store it was given, or the one it made).</summary>
+        private SqliteStateStore m_stateStore;
+
+        /// <summary>The database this engine made itself and so closes when the region goes; null for a store it was given.</summary>
+        private SqliteStateStore m_ownedStateStore;
+
+        private readonly bool m_makesItsStore;
 
         /// <summary>Builds the loader for a region once the engine is enabled; tests substitute their own.</summary>
         internal delegate IScriptLoader LoaderFactory(SLuaSettings settings, IEngineLog log, Scene scene);
@@ -125,7 +135,7 @@ namespace SLua.ScriptEngine
         }
 
         /// <summary>Why the engine holds the script back at its start (its saved state could not be read), or null.</summary>
-        internal string HeldReasonOf(UUID itemId) => null;
+        internal string HeldReasonOf(UUID itemId) => RecordOf(itemId)?.Script?.StateHeld;
 
         /// <summary>Whether the engine holds a load record for the item (a rez it accepted and has not forgotten).</summary>
         internal bool IsTracking(UUID itemID)
@@ -228,6 +238,7 @@ namespace SLua.ScriptEngine
         {
             if (!m_enabled) return;
             m_scene = scene;
+            OpenStateStore();
             HostServices = new EngineHostServices(m_settings, scene, m_configSource, this, BuildHostBackend());
             m_chat = new EngineChat(scene, m_configSource, m_settings, PostScriptEvent, TellOwnerOf);
             HostServices.Chat = m_chat;
@@ -297,6 +308,50 @@ namespace SLua.ScriptEngine
             return Convert.ToHexString(hash, 0, 8).ToLowerInvariant();
         }
 
+        /// <summary>
+        /// Opens the engine's database of saved script state: the store the engine was given, or (in a region) its own file under the
+        /// engine's state folder. With SaveScriptState off there is none, and nothing is saved or restored.
+        /// </summary>
+        private void OpenStateStore()
+        {
+            m_stateStore = null;
+            if (m_settings == null || !m_settings.SaveScriptState)
+                return;
+            if (m_store is SqliteStateStore given)
+            {
+                m_stateStore = given;
+                return;
+            }
+            if (!m_makesItsStore)
+                return;
+            try
+            {
+                string file = Path.Combine(m_settings.StateRoot, "state", "script_state.db");
+                m_ownedStateStore = new SqliteStateStore(file, EngineIdentity.EngineName, m_log, 5000);
+                m_stateStore = m_ownedStateStore;
+                m_store = m_ownedStateStore;
+                m_log.Info("Saved script state: " + file);
+            }
+            catch (Exception e)
+            {
+                m_log.Error("The database of saved script state could not be opened; scripts of this region start fresh after a restart and are not saved: " + e.Message);
+            }
+        }
+
+        /// <summary>Writes what the scheduler handed over and closes the database the engine made.</summary>
+        private void CloseStateStore()
+        {
+            try { m_stateStore?.Flush(); }
+            catch (Exception e) { m_log.Error("The saved script state could not be written out: " + e.Message); }
+            if (m_ownedStateStore != null)
+            {
+                m_ownedStateStore.Dispose();
+                m_ownedStateStore = null;
+                m_store = new EmptyStateStore();
+            }
+            m_stateStore = null;
+        }
+
         /// <summary>The loader the engine runs with: the compile cache in the engine's folder (unless switched off), the region's asset service for text, scripts held as compiled bytes.</summary>
         private static IScriptLoader DefaultLoader(SLuaSettings settings, IEngineLog log, Scene scene)
         {
@@ -335,6 +390,9 @@ namespace SLua.ScriptEngine
                     return vm;
                 },
                 Log = m_log,
+                StateSink = m_stateStore,
+                EngineName = EngineIdentity.EngineName,
+                StateSaveIntervalMs = m_settings.StateSaveIntervalMs,
                 ScriptFaulted = OnScriptFaulted,
                 StateChanged = OnStateChanged,
                 HandlersChanged = OnHandlersChanged,
@@ -375,8 +433,9 @@ namespace SLua.ScriptEngine
             m_loader = null;
             m_lane?.Dispose();
             m_lane = null;
-            m_scheduler?.Dispose();
+            m_scheduler?.Dispose(); // saves every script's state
             m_scheduler = null;
+            CloseStateStore();
             m_contexts.Clear();
             lock (m_records) m_records.Clear();
             HostServices = null;
@@ -472,6 +531,14 @@ namespace SLua.ScriptEngine
             TaskInventoryItem item = m_scene?.GetSceneObjectPart(ready.LocalID)?.Inventory?.GetInventoryItem(ready.ItemID);
             bool running = item?.ScriptRunning ?? true;
 
+            // The script's saved state, if this engine owns one for this item and asset (a record of another engine is left alone; one the
+            // store cannot read holds the script back with its row untouched).
+            StateLoadResult saved = null;
+            if (m_stateStore != null && ready.AssetID != UUID.Zero)
+                saved = StateJoin.Load(m_stateStore, EngineIdentity.EngineName, ready.ItemID, ready.AssetID, m_settings.StateLoadRetries, m_settings.StateLoadRetryDelayMs, System.Threading.Thread.Sleep, m_log);
+            if (saved?.Kind == StateLoadKind.Held)
+                running = false; // the script is not started over a state it could not read
+
             SchedulerScript script;
             try
             {
@@ -486,8 +553,27 @@ namespace SLua.ScriptEngine
 
             StartInfo start;
             lock (m_starts) m_starts.TryGetValue(ready.ItemID, out start);
+            if (m_stateStore != null && ready.AssetID != UUID.Zero)
+            {
+                script.ItemId = ready.ItemID;
+                script.AssetId = ready.AssetID;
+                if (saved?.Kind == StateLoadKind.Restore)
+                {
+                    script.RestoreRecord = saved.Record;
+                    if (saved.Record.Faulted)
+                    {
+                        script.Fault = (Bindings.FaultKind)saved.Record.FaultKind;
+                        script.FaultMessage = saved.Record.FaultMessage;
+                    }
+                    else
+                        script.CurrentState = saved.Record.LslState;
+                }
+                else if (saved?.Kind == StateLoadKind.Held)
+                    script.StateHeld = saved.Reason;
+            }
             var record = new ScriptRecord { ItemID = ready.ItemID, LocalID = ready.LocalID, AssetID = ready.AssetID, Script = script, Start = start, StartupPending = true, LastState = script.CurrentState };
             m_contexts[script.Id] = new ScriptContext(script, CreateScriptApi(script, ready.ItemID, ready.LocalID, UnavailableApi.Create()), ready.ItemID, m_lane);
+            WireListens(record);
             // The estate switch and the parcel rule decide before the script is visible or started: a script they hold back starts paused, never refused.
             record.Pause = m_policy?.ReasonsFor(ready.ItemID, ready.LocalID) ?? PauseReason.None;
             if (record.Pause != PauseReason.None)
@@ -511,6 +597,12 @@ namespace SLua.ScriptEngine
 
             m_policy?.Resync(ready.ItemID); // closes the window between the decision above and the record being visible
 
+            if (saved?.Kind == StateLoadKind.Held)
+            {
+                m_log.Error($"Script {ready.ItemID} (asset {ready.AssetID}) is held and not started: {script.StateHeld}");
+                TellOwner(record, $"Script {ready.AssetID} was not started: {script.StateHeld}");
+            }
+
             if (running)
             {
                 // The flags are set before the script can hear anything, so its first events are not lost.
@@ -523,6 +615,37 @@ namespace SLua.ScriptEngine
                 scheduler.SetRunning(script, false);
                 ApplyEventFlags(record, 0, false);
             }
+        }
+
+        /// <summary>
+        /// Lets the scheduler save a script's listens with its state and put them back: the listens a script holds are in its runtime state
+        /// (ActiveListens), and the region's listen registry is told of each one again, with the handle the script keeps, before the script runs.
+        /// </summary>
+        private void WireListens(ScriptRecord record)
+        {
+            UUID item = record.ItemID;
+            record.Script.ListenSnapshot = () =>
+            {
+                RuntimeState state = RealApiOf(item)?.RuntimeAccess?.ScriptState;
+                if (state?.ActiveListens == null)
+                    return null;
+                var list = new List<ActiveListen>(state.ActiveListens.Values);
+                return list.ToArray();
+            };
+            record.Script.ListenRestore = listens =>
+            {
+                RuntimeState state = RealApiOf(item)?.RuntimeAccess?.ScriptState;
+                SceneObjectPart part = m_scene?.GetSceneObjectPart(record.LocalID);
+                foreach (ActiveListen l in listens)
+                {
+                    state?.AddActiveListen(l);
+                    UUID.TryParse(l.Key ?? "", out UUID key);
+                    UUID host = part != null ? part.UUID : UUID.Zero;
+                    if (!string.IsNullOrEmpty(l.HostKey) && UUID.TryParse(l.HostKey, out UUID bot))
+                        host = bot;
+                    m_chat?.Listens.Restore(record.LocalID, item, host, key, l);
+                }
+            };
         }
 
         // ---- the events each script asks the region for ----

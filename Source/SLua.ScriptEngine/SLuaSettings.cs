@@ -58,6 +58,15 @@ namespace SLua.ScriptEngine
         /// <summary>Consecutive punished turns after which a script is killed.</summary>
         public int KillAfterPunishments { get; private set; } = 20;
         public int StateSaveIntervalMs { get; private set; } = 2500;
+
+        /// <summary>Whether the engine keeps its scripts' state across a restart (SaveScriptState). Off, a restart starts every script fresh and no database is made.</summary>
+        public bool SaveScriptState { get; private set; } = true;
+
+        /// <summary>How many times a failed read of a script's saved state is tried again before the script is held (StateLoadRetries).</summary>
+        public int StateLoadRetries { get; private set; } = 3;
+
+        /// <summary>How long the engine waits between those tries, in milliseconds (StateLoadRetryDelayMs).</summary>
+        public int StateLoadRetryDelayMs { get; private set; } = 500;
         public bool CompileCache { get; private set; } = true;
 
         /// <summary>Compile the script API's code on a background thread when the engine starts, once per process.</summary>
@@ -118,6 +127,9 @@ namespace SLua.ScriptEngine
             s.EventFrontOfRing = c.GetBoolean("EventFrontOfRing", s.EventFrontOfRing);
             s.KillAfterPunishments = Math.Max(1, c.GetInt("KillAfterPunishments", s.KillAfterPunishments));
             s.StateSaveIntervalMs = Math.Max(1, c.GetInt("StateSaveIntervalMs", s.StateSaveIntervalMs));
+            s.SaveScriptState = c.GetBoolean("SaveScriptState", s.SaveScriptState);
+            s.StateLoadRetries = Math.Max(0, c.GetInt("StateLoadRetries", s.StateLoadRetries));
+            s.StateLoadRetryDelayMs = Math.Max(0, c.GetInt("StateLoadRetryDelayMs", s.StateLoadRetryDelayMs));
             s.CompileCache = c.GetBoolean("CompileCache", s.CompileCache);
             s.WarmUp = c.GetBoolean("WarmUp", s.WarmUp);
             s.ServiceCallDeferral = ReadChoice(c, "ServiceCallDeferral", s.ServiceCallDeferral, DeferralModes, log);
