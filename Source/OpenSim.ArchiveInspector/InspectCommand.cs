@@ -27,6 +27,8 @@ permission mask of every part and of every item inside it. The archive is only r
     Names are shown where the archive carries them (creator data); otherwise the id, with a count per id at the top.
   For each object: its effective permissions, worked out the way the region combines the root part, the contents of every part
     and the base mask (an object with one no-copy item inside is no-copy), and the part or item that restricts them.
+    The owner, group and everyone columns follow the region's own function; the next owner column is derived (this tool's
+    combination, labelled derived in the text, the CSV header effective_next_derived and the JSON entry nextOwnerDerived).
   For an IAR: every inventory item with its own masks and folder; object items are opened, and a coalesced item lists each
     linkset on its own with its link order and offset.
   --csv           one row per part, per item in a part and per inventory item, for a spreadsheet

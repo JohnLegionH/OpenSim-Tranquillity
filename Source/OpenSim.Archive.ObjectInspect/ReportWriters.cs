@@ -101,6 +101,7 @@ public static class ReportText
         sb.Append("  objects with link order problems: ").Append(s.LinkOrderProblems).Append('\n');
         sb.Append("  lacking by mask: ").Append(string.Join(", ", MaskSet.Names.Select(n => (n == "next" ? "next" : n) + " " + s.LackingByMask.GetValueOrDefault(n)))).Append('\n');
         sb.Append("  masks are shown as M modify, C copy, T transfer; a dash means the mask lacks it. Flagged means the base, owner or next owner mask lacks at least one of the three (with --strict, any of the five masks).\n");
+        sb.Append("  The next owner column of the effective permissions is derived: the owner, group and everyone columns follow the region's aggregate permission function, but no region function gives the next owner column, so it is this tool's combination of the root part's next owner mask, what every item passes on and every part's base mask. It is not a single function of the region; read it as a derived reading.\n");
 
         if (report.Parties.Count > 0)
         {
@@ -150,7 +151,7 @@ public static class ReportText
             {
                 EffectivePerms e = o.Effective;
                 sb.Append("  effective  owner ").Append(MaskSet.Letters(e.Owner)).Append("  group ").Append(MaskSet.Letters(e.Group))
-                  .Append("  everyone ").Append(MaskSet.Letters(e.Everyone)).Append("  next owner ").Append(MaskSet.Letters(e.NextOwner)).Append('\n');
+                  .Append("  everyone ").Append(MaskSet.Letters(e.Everyone)).Append("  next owner (derived) ").Append(MaskSet.Letters(e.NextOwner)).Append('\n');
                 foreach (string why in e.RestrictedBy)
                     sb.Append("  restricted by: ").Append(why).Append('\n');
             }
@@ -193,7 +194,7 @@ public static class ReportCsv
 {
     public const string Header = "kind,object,entry,item_name,folder,coalesced,offset,link_num,file_order,name,description,x,y,z,shape_type,phantom,link_order," +
         "creator_id,creator_name,owner_id,owner_name,last_owner_id,last_owner_name,group_id,base,owner,group,everyone,next," +
-        "base_hex,owner_hex,group_hex,everyone_hex,next_hex,lacks,flagged,effective_owner,effective_group,effective_everyone,effective_next,restricted_by";
+        "base_hex,owner_hex,group_hex,everyone_hex,next_hex,lacks,flagged,effective_owner,effective_group,effective_everyone,effective_next_derived,restricted_by";
 
     /// <summary>
     /// A cell of text from the archive. Quoted when it holds a comma, quote or line break. Text a spreadsheet would take for a
@@ -374,7 +375,7 @@ public static class ReportJson
                     Effective(w, "owner", o.Effective.Owner);
                     Effective(w, "group", o.Effective.Group);
                     Effective(w, "everyone", o.Effective.Everyone);
-                    Effective(w, "nextOwner", o.Effective.NextOwner);
+                    Effective(w, "nextOwnerDerived", o.Effective.NextOwner);
                     w.WriteStartArray("restrictedBy");
                     foreach (string why in o.Effective.RestrictedBy)
                         w.WriteStringValue(why);
