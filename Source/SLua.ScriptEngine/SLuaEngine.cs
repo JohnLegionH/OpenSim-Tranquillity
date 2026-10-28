@@ -274,6 +274,7 @@ namespace SLua.ScriptEngine
             }
             m_scene.EventManager.OnRezScript += OnRezScript;
             m_scene.EventManager.OnRemoveScript += OnRemoveScript;
+            m_scene.EventManager.OnObjectBeingRemovedFromScene += OnObjectLeavingScene;
             m_scene.EventManager.OnScriptReset += OnScriptReset;
             m_scene.EventManager.OnStartScript += OnStartScript;
             m_scene.EventManager.OnStopScript += OnStopScript;
@@ -435,6 +436,7 @@ namespace SLua.ScriptEngine
             if (m_scene == null) return;
             m_scene.EventManager.OnRezScript -= OnRezScript;
             m_scene.EventManager.OnRemoveScript -= OnRemoveScript;
+            m_scene.EventManager.OnObjectBeingRemovedFromScene -= OnObjectLeavingScene;
             m_scene.EventManager.OnScriptReset -= OnScriptReset;
             m_scene.EventManager.OnStartScript -= OnStartScript;
             m_scene.EventManager.OnStopScript -= OnStopScript;
@@ -896,9 +898,54 @@ namespace SLua.ScriptEngine
             ForgetCarried(itemID);
             // The script is gone, from its prim or with its object: its row in the engine's own database goes with it. (A take carries the
             // state in the object, a crossing in the next region's copy.) Not at shutdown, where the rows are what the restart restores from.
-            if (!m_shuttingDown && m_settings.SaveScriptState)
-                m_store?.Delete(itemID);
+            DeleteRowOrWaitForObject(localID, itemID);
             OnScriptRemoved?.Invoke(itemID);
+        }
+
+        /// <summary>
+        /// Items whose scripts were taken out while their item is still in its prim, by the object they are in: "scripts off"
+        /// (Scene.ScriptsEnabled = false) takes every script out and the items stay, and Phlox keeps their rows then. The rows go when the
+        /// object leaves the scene (<see cref="OnObjectLeavingScene"/>).
+        /// </summary>
+        private readonly Dictionary<UUID, HashSet<UUID>> m_removedWithObject = new Dictionary<UUID, HashSet<UUID>>();
+
+        /// <summary>
+        /// A script was taken out. If its item left its prim (deleted, moved, given away) the row goes now. If the item is still there the
+        /// script was only stopped (scripts switched off) or its object is being deleted, so the row waits for the object to leave the scene.
+        /// Not at shutdown, where the rows are what the restart restores from.
+        /// </summary>
+        private void DeleteRowOrWaitForObject(uint localID, UUID itemID)
+        {
+            if (m_shuttingDown || !m_settings.SaveScriptState)
+                return;
+            SceneObjectPart part = m_scene?.GetSceneObjectPart(localID);
+            SceneObjectGroup group = part?.ParentGroup;
+            if (group == null || part.Inventory.GetInventoryItem(itemID) == null)
+            {
+                m_store?.Delete(itemID);
+                return;
+            }
+            lock (m_removedWithObject)
+            {
+                if (!m_removedWithObject.TryGetValue(group.UUID, out HashSet<UUID> items))
+                    m_removedWithObject[group.UUID] = items = new HashSet<UUID>();
+                items.Add(itemID);
+            }
+        }
+
+        /// <summary>An object is leaving the scene (deleted, taken, crossed): the rows of the scripts taken out of it go.</summary>
+        private void OnObjectLeavingScene(SceneObjectGroup group)
+        {
+            HashSet<UUID> items;
+            lock (m_removedWithObject)
+            {
+                if (!m_removedWithObject.Remove(group.UUID, out items))
+                    return;
+            }
+            if (m_shuttingDown || !m_settings.SaveScriptState)
+                return;
+            foreach (UUID itemID in items)
+                m_store?.Delete(itemID);
         }
 
         private void OnScriptReset(uint localID, UUID itemID)
