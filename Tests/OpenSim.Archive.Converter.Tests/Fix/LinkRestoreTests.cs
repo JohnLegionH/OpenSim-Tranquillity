@@ -337,7 +337,7 @@ public class LinkRestoreTests
 
     // One script per way of addressing a part by link number. Each holds its call on line 4, so the report's line can be checked.
     // In the scrambled table link 2 was Leg2 and is now Top, link 3 was Top and is now Leg1, link 4 was Leg1 and is now Leg2.
-    private static string OnLine4(string statement) => "default\n{\n    touch_start(integer n)\n    {\n        " + statement + "\n    }\n}\n";
+    private static string OnLine4(string statement) => "default\n{\n    touch_start(integer n) {\n        " + statement + "\n    }\n}\n";
 
     public static readonly object[][] AddressedByNumber =
     {
