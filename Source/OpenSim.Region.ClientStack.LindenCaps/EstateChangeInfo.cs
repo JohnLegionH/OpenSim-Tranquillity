@@ -168,18 +168,37 @@ public class EstateChangeInfoCapModule : INonSharedRegionModule
             UUID invoice = r["invoice"].AsUUID();
             //int sunHour = r["sun_hour"].AsInteger();
             //bool sunFixed = r["is_sun_fixed"].AsBoolean();
-            bool externallyVisible = r["is_externally_visible"].AsBoolean();
-            bool allowDirectTeleport = r["allow_direct_teleport"].AsBoolean();
-            bool denyAnonymous = r["deny_anonymous"].AsBoolean();
-            bool denyAgeUnverified = r["deny_age_unverified"].AsBoolean();
-            bool alloVoiceChat = r["allow_voice_chat"].AsBoolean();
-            // taxfree is now !AllowAccessOverride
+
+            // Every boolean is parsed as NULLABLE: absent means "leave unchanged" and must
+            // stay distinguishable from a carried false. The viewer does not send every key
+            // in every save (the TaxFree flip in Docs/KnownDefects.md was observed from an
+            // omitted override_public_access), and the server owns all of these values, so
+            // the old bare r["key"].AsBoolean() reads silently turned omission into false —
+            // five fields carried that defect, and override_public_access carried a worse
+            // one, defaulting to the NEGATED current value. Do not turn these back into
+            // plain bools.
             OSD tmp;
-            bool overridePublicAccess = !m_scene.RegionInfo.EstateSettings.TaxFree;
+            bool? externallyVisible = null;
+            if (r.TryGetValue("is_externally_visible", out tmp))
+                externallyVisible = tmp.AsBoolean();
+            bool? allowDirectTeleport = null;
+            if (r.TryGetValue("allow_direct_teleport", out tmp))
+                allowDirectTeleport = tmp.AsBoolean();
+            bool? denyAnonymous = null;
+            if (r.TryGetValue("deny_anonymous", out tmp))
+                denyAnonymous = tmp.AsBoolean();
+            bool? denyAgeUnverified = null;
+            if (r.TryGetValue("deny_age_unverified", out tmp))
+                denyAgeUnverified = tmp.AsBoolean();
+            bool? alloVoiceChat = null;
+            if (r.TryGetValue("allow_voice_chat", out tmp))
+                alloVoiceChat = tmp.AsBoolean();
+            // taxfree is now !AllowAccessOverride — the wire carries the override sense,
+            // the setting stores its negation.
+            bool? overridePublicAccess = null;
             if (r.TryGetValue("override_public_access", out tmp))
                 overridePublicAccess = !tmp.AsBoolean();
-
-            bool allowEnvironmentOverride = m_scene.RegionInfo.EstateSettings.AllowEnvironmentOverride;
+            bool? allowEnvironmentOverride = null;
             if (r.TryGetValue("override_environment", out tmp))
                 allowEnvironmentOverride = tmp.AsBoolean();
 
