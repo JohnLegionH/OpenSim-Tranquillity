@@ -491,7 +491,8 @@ public class EffectiveAndFlagTests
         using System.Text.Json.JsonDocument doc = Json(ReportJson.Build(RestrictedTable()));
         System.Text.Json.JsonElement eff = doc.RootElement.GetProperty("objects")[0].GetProperty("effective");
 
-        Assert.Equal("M-T", eff.GetProperty("nextOwnerDerived").GetProperty("letters").GetString());
+        Assert.True(eff.TryGetProperty("nextOwnerDerived", out System.Text.Json.JsonElement derived), "the effective object has no nextOwnerDerived entry");
+        Assert.Equal("M-T", derived.GetProperty("letters").GetString());
         Assert.False(eff.TryGetProperty("nextOwner", out _));
         Assert.Equal("M-T", eff.GetProperty("owner").GetProperty("letters").GetString());
     }
