@@ -7,8 +7,8 @@
 
 namespace OpenSim.ArchiveInspector;
 
-/// <summary>The release of the oar tools. oar-convert, oar-export, oar-restore and oar-import are packaged and numbered together, so all four print this in --version. It is separate from <see cref="OpenSim.Archive.GltfExport.ExportStamp.CurrentVersion"/>, the file format version written into a .glb, which only changes when the .glb itself changes.</summary>
+/// <summary>The release of the oar tools. oar-convert, oar-export, oar-restore, oar-import and oar-inspect are packaged and numbered together, so all of them print this in --version. It is separate from <see cref="OpenSim.Archive.GltfExport.ExportStamp.CurrentVersion"/>, the file format version written into a .glb, which only changes when the .glb itself changes.</summary>
 internal static class ToolRelease
 {
-    public const string Version = "0.4.1";
+    public const string Version = "0.4.2";
 }
