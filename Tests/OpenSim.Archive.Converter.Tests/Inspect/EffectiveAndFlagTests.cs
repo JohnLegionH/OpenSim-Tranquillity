@@ -175,12 +175,26 @@ public class EffectiveAndFlagTests
     }
 
     [Fact]
-    public void TheMasksOfAChildPartDoNotCountOnlyTheRootPartsAndTheContentsDo()
+    public void TheOwnerAndNextOwnerMasksOfAChildPartDoNotCountOnlyTheRootPartsAndTheContentsDo()
     {
-        ObjectEntry o = Table(null, child: leg => { leg.BaseMask = 0; leg.OwnerMask = 0; leg.NextMask = 0; });
+        ObjectEntry o = Table(null, child: leg => { leg.OwnerMask = 0; leg.NextMask = 0; leg.GroupMask = 0; leg.EveryoneMask = 0; });
 
         Assert.Equal("MCT", Letters(o.Effective, e => e.Owner));
         Assert.Equal("MCT", Letters(o.Effective, e => e.NextOwner));
+        Assert.Empty(o.Effective.RestrictedBy);
+    }
+
+    [Fact]
+    public void AChildPartsBaseMaskStillLimitsWhatPassesToTheNextOwner()
+    {
+        // SceneObjectGroup.CurrentAndFoldedNextPermissions: the owner mask is ANDed with every part's base mask
+        ObjectEntry o = Table(null, child: leg => leg.BaseMask = M | T);
+
+        Assert.Equal("MCT", Letters(o.Effective, e => e.Owner));
+        Assert.Equal("M-T", Letters(o.Effective, e => e.NextOwner));
+        string why = Assert.Single(o.Effective.RestrictedBy);
+        Assert.Contains("\"Leg\"", why);
+        Assert.Contains("base mask", why);
     }
 
     [Fact]

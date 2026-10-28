@@ -16,19 +16,24 @@ namespace OpenSim.ArchiveInspector;
 internal static class InspectCommand
 {
     public const string Usage =
-@"Usage: oar-inspect <archive.oar|archive.iar> [--csv | --json] [--filter <text>] [--compare <reference archive>] [--out <file>]
+@"Usage: oar-inspect <archive.oar|archive.iar> [--csv | --json] [--filter <text>] [--strict] [--names <file>] [--compare <reference archive>] [--out <file>]
 
 Reads an OAR or an IAR (found out from the archive itself) and reports, for every object, every part in link order and every
 permission mask of every part and of every item inside it. The archive is only read.
   For each part: link number as stored, place in the file, name, description, position inside the object, physics shape type
     (Prim, None or Convex), creator, owner, last owner, group, and the five masks (base, owner, group, everyone, next owner)
-    as the letters M (modify), C (copy) and T (transfer), a dash where the mask lacks it. A mask that lacks one of the three
-    is flagged and says which. Names are shown where the archive carries them (creator data); otherwise the id, with a count
-    per id at the top.
+    as the letters M (modify), C (copy) and T (transfer), a dash where the mask lacks it. A base, owner or next owner mask that
+    lacks one of the three is flagged and says which; the group and everyone masks are shown but not flagged (see --strict).
+    Names are shown where the archive carries them (creator data); otherwise the id, with a count per id at the top.
+  For each object: its effective permissions, worked out the way the region combines the root part, the contents of every part
+    and the base mask (an object with one no-copy item inside is no-copy), and the part or item that restricts them.
   For an IAR: every inventory item with its own masks and folder; object items are opened, and a coalesced item lists each
     linkset on its own with its link order and offset.
   --csv           one row per part, per item in a part and per inventory item, for a spreadsheet
   --json          the same report as JSON
+  --strict        flag all five masks, group and everyone included
+  --names <file>  a list of account ids and names, one per line (the id, then a space, comma, tab or equals sign, then the name; blank
+                  lines and lines starting with # are skipped); names the creators, owners and last owners the archive does not name
   --filter <text> keep only objects whose name contains the text (any case); in an IAR also items whose name contains it
   --compare <ref> compare with a reference archive: objects found in both (matched by name and, where several share a name,
                   by part count and shape) are compared part by part for link order and for permissions, ids and items
@@ -41,7 +46,8 @@ Exit codes: 0 read fully (with --compare: no differences), 1 read partly (see th
     public static int Run(string[] args)
     {
         string input = null, compare = null, filter = null, outPath = null;
-        bool csv = false, json = false;
+        bool csv = false, json = false, strict = false;
+        string namesPath = null;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -56,6 +62,11 @@ Exit codes: 0 read fully (with --compare: no differences), 1 read partly (see th
                     return 0;
                 case "--csv": csv = true; break;
                 case "--json": json = true; break;
+                case "--strict": strict = true; break;
+                case "--names":
+                    if (i + 1 >= args.Length) return Fail("--names needs a file");
+                    namesPath = args[++i];
+                    break;
                 case "--filter":
                     if (i + 1 >= args.Length) return Fail("--filter needs the text to look for");
                     filter = args[++i];
@@ -83,7 +94,19 @@ Exit codes: 0 read fully (with --compare: no differences), 1 read partly (see th
         if (outPath != null && (Same(outPath, input) || (compare != null && Same(outPath, compare))))
             return Fail("--out is the archive itself");
 
-        ReadOptions options = new ReadOptions { NameFilter = filter };
+        ReadOptions options = new ReadOptions { NameFilter = filter, Strict = strict };
+        if (namesPath != null)
+        {
+            try
+            {
+                options.Names = NameList.Parse(File.ReadAllText(namesPath));
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is FormatException)
+            {
+                Console.Error.WriteLine("oar-inspect: the names file " + Sanitize.Text(namesPath) + " cannot be used: " + Sanitize.Text(e.Message));
+                return 2;
+            }
+        }
         ObjectReport report = ObjectReader.Read(input, options);
         if (report.Status == InspectionStatus.NotAnArchive)
         {

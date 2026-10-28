@@ -235,6 +235,7 @@ public class IarObjectTests
     {
         KPart p1 = Part("A", 1), p2 = Part("B", 2);
         p2.GroupMask = 0;
+        p2.OwnerMask = M | C;   // group alone is not flagged by default
         IarItem obj = ObjectItem("Thing", OriginalGroup(p1, p2));
         IarItem tex = new IarItem { Name = "Tex", AssetType = 0, Next = M };
         IarItem ok = new IarItem { Name = "Fine", AssetType = 7 };

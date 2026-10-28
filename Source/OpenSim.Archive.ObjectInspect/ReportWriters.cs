@@ -100,7 +100,7 @@ public static class ReportText
             sb.Append("  flagged inventory items: ").Append(s.FlaggedInventoryItems).Append('\n');
         sb.Append("  objects with link order problems: ").Append(s.LinkOrderProblems).Append('\n');
         sb.Append("  lacking by mask: ").Append(string.Join(", ", MaskSet.Names.Select(n => (n == "next" ? "next" : n) + " " + s.LackingByMask.GetValueOrDefault(n)))).Append('\n');
-        sb.Append("  masks are shown as M modify, C copy, T transfer; a dash means the mask lacks it. Flagged means a mask lacks at least one of the three.\n");
+        sb.Append("  masks are shown as M modify, C copy, T transfer; a dash means the mask lacks it. Flagged means the base, owner or next owner mask lacks at least one of the three (with --strict, any of the five masks).\n");
 
         if (report.Parties.Count > 0)
         {
@@ -146,6 +146,14 @@ public static class ReportText
                 sb.Append('\n');
             }
             sb.Append("  link order: ").Append(o.LinkOrderOk ? "ok" : "PROBLEM - " + o.LinkOrderNote).Append('\n');
+            if (o.Effective != null)
+            {
+                EffectivePerms e = o.Effective;
+                sb.Append("  effective  owner ").Append(MaskSet.Letters(e.Owner)).Append("  group ").Append(MaskSet.Letters(e.Group))
+                  .Append("  everyone ").Append(MaskSet.Letters(e.Everyone)).Append("  next owner ").Append(MaskSet.Letters(e.NextOwner)).Append('\n');
+                foreach (string why in e.RestrictedBy)
+                    sb.Append("  restricted by: ").Append(why).Append('\n');
+            }
             foreach (PartEntry p in o.Parts)
             {
                 sb.Append("  [").Append(p.FileOrder).Append("] link ").Append(p.LinkNum).Append("  ").Append(Fmt.Quote(p.Name ?? string.Empty))
@@ -185,7 +193,7 @@ public static class ReportCsv
 {
     public const string Header = "kind,object,entry,item_name,folder,coalesced,offset,link_num,file_order,name,description,x,y,z,shape_type,phantom,link_order," +
         "creator_id,creator_name,owner_id,owner_name,last_owner_id,last_owner_name,group_id,base,owner,group,everyone,next," +
-        "base_hex,owner_hex,group_hex,everyone_hex,next_hex,lacks,flagged";
+        "base_hex,owner_hex,group_hex,everyone_hex,next_hex,lacks,flagged,effective_owner,effective_group,effective_everyone,effective_next,restricted_by";
 
     /// <summary>
     /// A cell of text from the archive. Quoted when it holds a comma, quote or line break. Text a spreadsheet would take for a
@@ -230,7 +238,7 @@ public static class ReportCsv
             {
                 Row(sb, "part", o.Name, o.Entry, o.ItemName, o.FolderPath, coalesced, offset, p.LinkNum.ToString(CultureInfo.InvariantCulture), p.FileOrder.ToString(CultureInfo.InvariantCulture),
                     p.Name, p.Description, Fmt.Num(p.Position.X), Fmt.Num(p.Position.Y), Fmt.Num(p.Position.Z), p.ShapeTypeName, p.Phantom ? "true" : "false", linkOrder,
-                    p.CreatorId, p.CreatorName, p.OwnerId, p.OwnerName, p.LastOwnerId, p.LastOwnerName, p.GroupId, p.Masks, p.Lacks);
+                    p.CreatorId, p.CreatorName, p.OwnerId, p.OwnerName, p.LastOwnerId, p.LastOwnerName, p.GroupId, p.Masks, p.Lacks, false, o.Effective);
                 foreach (ItemEntry i in p.Items)
                     Row(sb, "item", o.Name, o.Entry, o.ItemName, o.FolderPath, coalesced, offset, p.LinkNum.ToString(CultureInfo.InvariantCulture), p.FileOrder.ToString(CultureInfo.InvariantCulture),
                         i.Name, "", "", "", "", "", "", linkOrder,
@@ -242,7 +250,7 @@ public static class ReportCsv
 
     private static void Row(StringBuilder sb, string kind, string obj, string entry, string itemName, string folder, string coalesced, string offset,
         string linkNum, string fileOrder, string name, string description, string x, string y, string z, string shape, string phantom, string linkOrder,
-        UUID creator, string creatorName, UUID owner, string ownerName, UUID lastOwner, string lastOwnerName, UUID group, MaskSet m, List<string> lacks, bool inventory = false)
+        UUID creator, string creatorName, UUID owner, string ownerName, UUID lastOwner, string lastOwnerName, UUID group, MaskSet m, List<string> lacks, bool inventory = false, EffectivePerms effective = null)
     {
         string[] cells =
         {
@@ -250,7 +258,10 @@ public static class ReportCsv
             Id(creator), Text(creatorName), Id(owner), Text(ownerName), Id(lastOwner), Text(lastOwnerName), Id(group),
             MaskSet.Letters(m.Base), MaskSet.Letters(m.Owner), Fmt.Letters(m.Group, inventory), MaskSet.Letters(m.Everyone), MaskSet.Letters(m.NextOwner),
             Fmt.Hex(m.Base), Fmt.Hex(m.Owner), Fmt.Hex(m.Group), Fmt.Hex(m.Everyone), Fmt.Hex(m.NextOwner),
-            string.Join("; ", lacks), lacks.Count > 0 ? "true" : "false"
+            string.Join("; ", lacks), lacks.Count > 0 ? "true" : "false",
+            effective == null ? "" : MaskSet.Letters(effective.Owner), effective == null ? "" : MaskSet.Letters(effective.Group),
+            effective == null ? "" : MaskSet.Letters(effective.Everyone), effective == null ? "" : MaskSet.Letters(effective.NextOwner),
+            effective == null ? "" : Plain(string.Join("; ", effective.RestrictedBy))
         };
         // the cells from Text() are already quoted; the others hold no comma, quote or line break
         sb.Append(string.Join(",", cells.Select(c => c ?? string.Empty))).Append("\r\n");
@@ -357,6 +368,19 @@ public static class ReportJson
                 w.WriteBoolean("linkOrderOk", o.LinkOrderOk);
                 if (o.LinkOrderNote != null) w.WriteString("linkOrderNote", o.LinkOrderNote);
                 w.WriteBoolean("flagged", o.Flagged);
+                if (o.Effective != null)
+                {
+                    w.WriteStartObject("effective");
+                    Effective(w, "owner", o.Effective.Owner);
+                    Effective(w, "group", o.Effective.Group);
+                    Effective(w, "everyone", o.Effective.Everyone);
+                    Effective(w, "nextOwner", o.Effective.NextOwner);
+                    w.WriteStartArray("restrictedBy");
+                    foreach (string why in o.Effective.RestrictedBy)
+                        w.WriteStringValue(why);
+                    w.WriteEndArray();
+                    w.WriteEndObject();
+                }
                 w.WriteStartArray("parts");
                 foreach (PartEntry p in o.Parts)
                 {
@@ -409,6 +433,14 @@ public static class ReportJson
             w.WriteEndObject();
         }
         return Encoding.UTF8.GetString(ms.ToArray()) + "\n";
+    }
+
+    private static void Effective(Utf8JsonWriter w, string name, uint mask)
+    {
+        w.WriteStartObject(name);
+        w.WriteNumber("value", mask);
+        w.WriteString("letters", MaskSet.Letters(mask));
+        w.WriteEndObject();
     }
 
     internal static void Who(Utf8JsonWriter w, string name, UUID id, string display)

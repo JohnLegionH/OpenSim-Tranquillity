@@ -47,11 +47,14 @@ public sealed class MaskSet
         }
     }
 
-    /// <summary>One entry per mask that lacks modify, copy or transfer, as "name:letters" (for example "next:CT"); "name:absent" for a mask the file does not hold.</summary>
-    public List<string> Lacks()
+    /// <summary>The masks that are flagged when they lack something: base, owner and next owner. Group and everyone are only flagged in a strict report.</summary>
+    public static readonly string[] FlaggedNames = { "base", "owner", "next" };
+
+    /// <summary>One entry per mask that lacks modify, copy or transfer, as "name:letters" (for example "next:CT"); "name:absent" for a mask the file does not hold. Without strict the group and everyone masks are left out.</summary>
+    public List<string> Lacks(bool strict = true)
     {
         List<string> lacks = new List<string>();
-        foreach (string name in Names)
+        foreach (string name in strict ? Names : FlaggedNames)
         {
             uint? mask = Get(name);
             if (!mask.HasValue)
@@ -99,6 +102,9 @@ public sealed class PartEntry
     public UUID PartId { get; set; }
     /// <summary>Position inside the object: relative to the root part for a child part, the world position for the root part.</summary>
     public Vector3 Position { get; set; }
+    public bool IsRoot { get; set; }
+    /// <summary>The creation date as stored (seconds since 1970); the region applies a different permission rule to objects made before 30 April 2017.</summary>
+    public int? CreationDate { get; set; }
     /// <summary>The stored physics shape type: 0 prim, 1 none, 2 convex; -1 when the file has none (the region then uses prim).</summary>
     public int ShapeType { get; set; } = -1;
     public string ShapeTypeName { get; set; }

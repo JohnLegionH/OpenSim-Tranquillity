@@ -16,16 +16,18 @@ public static class ObjectReader
 {
     public static ObjectReport Read(string path, ReadOptions options = null)
     {
-        Collector collector = new Collector();
+        options ??= new ReadOptions();
+        Collector collector = new Collector(options);
         ArchiveReport inspected = new Archive.Inspection.ArchiveInspector(collector.Options()).Inspect(path);
-        return collector.Finish(inspected, options ?? new ReadOptions());
+        return collector.Finish(inspected, options);
     }
 
     public static ObjectReport Read(Stream input, ReadOptions options = null)
     {
-        Collector collector = new Collector();
+        options ??= new ReadOptions();
+        Collector collector = new Collector(options);
         ArchiveReport inspected = new Archive.Inspection.ArchiveInspector(collector.Options()).Inspect(input);
-        return collector.Finish(inspected, options ?? new ReadOptions());
+        return collector.Finish(inspected, options);
     }
 
     /// <summary>Gathers what the inspector pass hands over, in a form that outlives the pass.</summary>
@@ -34,6 +36,12 @@ public static class ObjectReader
         private readonly List<ObjectEntry> m_objects = new List<ObjectEntry>();
         private readonly List<InventoryItemEntry> m_items = new List<InventoryItemEntry>();
         private readonly Dictionary<UUID, BoxedLinksets> m_boxed = new Dictionary<UUID, BoxedLinksets>();
+        private readonly bool m_strict;
+
+        public Collector(ReadOptions options)
+        {
+            m_strict = options.Strict;
+        }
 
         private sealed class BoxedLinksets
         {
@@ -51,7 +59,7 @@ public static class ObjectReader
             public override void OnRecord(ArchiveRecord record)
             {
                 if (record is ItemRecord item && item.Source == ItemSource.InventoryArchive)
-                    m_owner.m_items.Add(ConvertInventoryItem(item));
+                    m_owner.m_items.Add(ConvertInventoryItem(item, m_owner.m_strict));
             }
         }
 
@@ -71,7 +79,7 @@ public static class ObjectReader
         private void OnArchiveObject(ParsedObject obj, string entry, string regionDir)
         {
             foreach (ParsedGroup g in obj.Groups)
-                m_objects.Add(ConvertGroup(g, entry, regionDir));
+                m_objects.Add(ConvertGroup(g, entry, regionDir, m_strict));
         }
 
         private void OnBoxedObject(ParsedObject obj, string entry, UUID asset)
@@ -81,7 +89,7 @@ public static class ObjectReader
             BoxedLinksets b = new BoxedLinksets { Coalesced = obj.Coalesced };
             foreach (ParsedGroup g in obj.Groups)
             {
-                ObjectEntry o = ConvertGroup(g, entry, string.Empty);
+                ObjectEntry o = ConvertGroup(g, entry, string.Empty, m_strict);
                 o.AssetId = asset;
                 b.Linksets.Add(o);
             }
@@ -150,7 +158,7 @@ public static class ObjectReader
                 keptObjects = filtering ? m_objects.Where(o => Contains(o.Name, filter)).ToList() : m_objects;
 
             report.ObjectsBeforeFilter = all.Count;
-            NameMap names = NameMap.From(all, m_items);
+            NameMap names = NameMap.From(all, m_items, options.Names);
             for (int i = 0; i < keptObjects.Count; i++)
             {
                 keptObjects[i].Index = i + 1;
@@ -184,7 +192,8 @@ public static class ObjectReader
                 CoalescedIndex = coalescedIndex,
                 CoalescedCount = coalescedIndex > 0 ? coalescedCount : 0,
                 HasOffset = source.HasOffset,
-                Offset = source.Offset
+                Offset = source.Offset,
+                Effective = source.Effective
             };
         }
     }
@@ -194,7 +203,7 @@ public static class ObjectReader
 
     // ------------------------------------------------------------------ parsed linkset to report entry
 
-    internal static ObjectEntry ConvertGroup(ParsedGroup g, string entry, string regionDir)
+    internal static ObjectEntry ConvertGroup(ParsedGroup g, string entry, string regionDir, bool strict)
     {
         ObjectEntry o = new ObjectEntry
         {
@@ -213,6 +222,8 @@ public static class ObjectReader
             PartEntry p = new PartEntry
             {
                 FileOrder = ++order,
+                IsRoot = rec.IsRoot,
+                CreationDate = rec.CreationDate,
                 LinkNum = rec.LinkNum,
                 Name = Sanitize.Text(rec.Name),
                 Description = Sanitize.Text(pp.Description),
@@ -229,17 +240,18 @@ public static class ObjectReader
                 GroupId = rec.GroupId,
                 Masks = ToMasks(rec.Masks)
             };
-            p.Lacks = p.Masks.Lacks();
+            p.Lacks = p.Masks.Lacks(strict);
             foreach (ItemRecord item in pp.Items)
-                p.Items.Add(ConvertItem(item));
+                p.Items.Add(ConvertItem(item, strict));
             o.Parts.Add(p);
         }
 
         CheckLinkOrder(o);
+        o.Effective = EffectivePermissions.Compute(o);
         return o;
     }
 
-    private static ItemEntry ConvertItem(ItemRecord item)
+    private static ItemEntry ConvertItem(ItemRecord item, bool strict)
     {
         ItemEntry e = new ItemEntry
         {
@@ -256,11 +268,11 @@ public static class ObjectReader
             GroupId = item.GroupId,
             Masks = ToMasks(item.Masks)
         };
-        e.Lacks = e.Masks.Lacks();
+        e.Lacks = e.Masks.Lacks(strict);
         return e;
     }
 
-    private static InventoryItemEntry ConvertInventoryItem(ItemRecord item)
+    private static InventoryItemEntry ConvertInventoryItem(ItemRecord item, bool strict)
     {
         InventoryItemEntry e = new InventoryItemEntry
         {
@@ -277,7 +289,7 @@ public static class ObjectReader
             Masks = ToMasks(item.Masks)
         };
         // the inventory item record has no group permissions element (UserInventoryItemSerializer), so an absent group mask is not a defect
-        e.Lacks = e.Masks.Lacks().Where(l => l != "group:absent").ToList();
+        e.Lacks = e.Masks.Lacks(strict).Where(l => l != "group:absent").ToList();
         return e;
     }
 
@@ -366,9 +378,11 @@ public static class ObjectReader
     {
         private readonly Dictionary<UUID, string> m_names = new Dictionary<UUID, string>();
 
-        public static NameMap From(IEnumerable<ObjectEntry> objects, IEnumerable<InventoryItemEntry> inventory)
+        private IReadOnlyDictionary<UUID, string> m_listed;
+
+        public static NameMap From(IEnumerable<ObjectEntry> objects, IEnumerable<InventoryItemEntry> inventory, IReadOnlyDictionary<UUID, string> listed)
         {
-            NameMap map = new NameMap();
+            NameMap map = new NameMap { m_listed = listed };
             foreach (InventoryItemEntry i in inventory)
                 map.Learn(i.CreatorId, i.CreatorName);
             foreach (ObjectEntry o in objects)
@@ -391,7 +405,11 @@ public static class ObjectReader
         {
             if (!string.IsNullOrEmpty(own))
                 return own;
-            return id != UUID.Zero && m_names.TryGetValue(id, out string name) ? name : null;
+            if (id == UUID.Zero)
+                return null;
+            if (m_names.TryGetValue(id, out string name))
+                return name;
+            return m_listed != null && m_listed.TryGetValue(id, out string listed) ? Sanitize.Text(listed) : null;
         }
 
         public void Apply(InventoryItemEntry i)
@@ -443,17 +461,22 @@ public static class ObjectReader
             if (group != UUID.Zero) Party(group, null).AsGroup++;
         }
 
-        void CountLacks(List<string> lacks)
+        // every mask that lacks something is counted, flagged or not, so the group and everyone masks of a default report still show here
+        void CountLacks(MaskSet masks, bool inventory = false)
         {
-            foreach (string l in lacks)
+            foreach (string l in masks.Lacks())
+            {
+                if (inventory && l == "group:absent")
+                    continue;
                 s.LackingByMask[l.Substring(0, l.IndexOf(':'))]++;
+            }
         }
 
         foreach (InventoryItemEntry i in report.InventoryItems)
         {
             s.InventoryItems++;
             if (i.Flagged) s.FlaggedInventoryItems++;
-            CountLacks(i.Lacks);
+            CountLacks(i.Masks, true);
             Count(i.CreatorId, i.CreatorName, i.OwnerId, i.OwnerName, UUID.Zero, null, i.GroupId);
         }
 
@@ -466,13 +489,13 @@ public static class ObjectReader
             {
                 s.Parts++;
                 if (p.Flagged) s.FlaggedParts++;
-                CountLacks(p.Lacks);
+                CountLacks(p.Masks);
                 Count(p.CreatorId, p.CreatorName, p.OwnerId, p.OwnerName, p.LastOwnerId, p.LastOwnerName, p.GroupId);
                 foreach (ItemEntry i in p.Items)
                 {
                     s.PartItems++;
                     if (i.Flagged) s.FlaggedPartItems++;
-                    CountLacks(i.Lacks);
+                    CountLacks(i.Masks);
                     Count(i.CreatorId, i.CreatorName, i.OwnerId, i.OwnerName, i.LastOwnerId, i.LastOwnerName, i.GroupId);
                 }
             }
