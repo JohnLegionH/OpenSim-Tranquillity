@@ -60,7 +60,7 @@ public class IarObjectTests
         Assert.Equal(M | T, wood.Masks.NextOwner);
         Assert.Equal(Bob, wood.CreatorId);
         Assert.Equal(Carol, wood.OwnerId);
-        Assert.Equal(new[] { "everyone:MCT", "next:C" }, wood.Lacks.ToArray());
+        Assert.Equal(new[] { "next:C" }, wood.Lacks.ToArray());
         Assert.True(wood.Flagged);
         Assert.Equal("Notes", r.InventoryItems[1].FolderPath);
         Assert.False(r.InventoryItems[1].Flagged);

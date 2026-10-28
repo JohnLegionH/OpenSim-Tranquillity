@@ -34,6 +34,7 @@ internal static class InspectKit
         public UUID AssetId = UUID.Random();
         public UUID Creator = Alice, Owner = Alice, LastOwner = Alice, Group = UUID.Zero;
         public string CreatorData;
+        public int? InvType;
         public uint BaseMask = All, OwnerMask = All, GroupMask = All, EveryoneMask = All, NextMask = All;
     }
 
@@ -77,7 +78,7 @@ internal static class InspectKit
         sb.Append(Id("CreatorID", i.Creator));
         if (i.CreatorData != null)
             sb.Append("<CreatorData>").Append(Esc(i.CreatorData)).Append("</CreatorData>");
-        sb.Append(Id("GroupID", i.Group)).Append("<InvType>").Append(i.AssetType == 10 ? 10 : 7).Append("</InvType>");
+        sb.Append(Id("GroupID", i.Group)).Append("<InvType>").Append(i.InvType ?? (i.AssetType == 10 ? 10 : 7)).Append("</InvType>");
         sb.Append(Id("ItemID", i.ItemId)).Append(Id("LastOwnerID", i.LastOwner));
         sb.Append("<Name>").Append(Esc(i.Name)).Append("</Name>").Append(Id("OwnerID", i.Owner));
         sb.Append("<Type>").Append(i.AssetType).Append("</Type></TaskInventoryItem>");

@@ -145,7 +145,21 @@ public sealed class ObjectEntry
     /// <summary>The linkset's offset inside the coalesced object (the offsetx, offsety and offsetz attributes).</summary>
     public Vector3 Offset { get; set; }
 
+    /// <summary>What the region makes of the whole object's permissions from its parts and contents; null until computed.</summary>
+    public EffectivePerms Effective { get; set; }
+
     public bool Flagged => Parts.Any(p => p.Flagged || p.Items.Any(i => i.Flagged));
+}
+
+/// <summary>An object's permissions as the region aggregates them from the root part, every part's contents and the base mask.</summary>
+public sealed class EffectivePerms
+{
+    public uint Owner { get; set; }
+    public uint Group { get; set; }
+    public uint Everyone { get; set; }
+    public uint NextOwner { get; set; }
+    /// <summary>The part or item, and the mask, that takes modify, copy or transfer away from the owner or the next owner.</summary>
+    public List<string> RestrictedBy { get; set; } = new List<string>();
 }
 
 /// <summary>An inventory item of an IAR, with the masks of its own inventory record.</summary>
@@ -216,6 +230,10 @@ public sealed class ObjectReport
 
 public sealed class ReadOptions
 {
+    /// <summary>Flag every one of the five masks that lacks modify, copy or transfer. By default only the base, owner and next owner masks are flagged; the group and everyone masks are shown but not flagged.</summary>
+    public bool Strict { get; set; }
+    /// <summary>Names for account ids, used where the archive names nobody (see <see cref="NameList"/>). Null for none.</summary>
+    public IReadOnlyDictionary<UUID, string> Names { get; set; }
     /// <summary>Keep only objects whose name contains this text (any case); for an IAR also the items whose name contains it. Null or empty keeps everything.</summary>
     public string NameFilter { get; set; }
 }

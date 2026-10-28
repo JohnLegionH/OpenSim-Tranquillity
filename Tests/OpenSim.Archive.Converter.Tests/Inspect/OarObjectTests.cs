@@ -189,12 +189,12 @@ public class OarObjectTests
     }
 
     [Fact]
-    public void ZeroGroupAndEveryoneMasksLackAllThree()
+    public void WithStrictZeroGroupAndEveryoneMasksLackAllThree()
     {
         KPart p = Part("Locked", 1);
         p.GroupMask = 0;
         p.EveryoneMask = 0;
-        PartEntry e = ReadOar(Oar(new[] { p })).Objects.One().Parts.One();
+        PartEntry e = ReadOar(Oar(new[] { p }), new ReadOptions { Strict = true }).Objects.One().Parts.One();
         Assert.Equal(new[] { "group:MCT", "everyone:MCT" }, e.Lacks.ToArray());
     }
 
@@ -303,7 +303,8 @@ public class OarObjectTests
         Assert.Equal("LSLText", open.AssetTypeName);
 
         Assert.True(locked.Flagged);
-        Assert.Equal(new[] { "base:T", "owner:T", "group:CT", "everyone:MCT", "next:M" }, locked.Lacks.ToArray());
+        // group and everyone are shown but not flagged unless the report is strict
+        Assert.Equal(new[] { "base:T", "owner:T", "next:M" }, locked.Lacks.ToArray());
         Assert.Equal(M | C, locked.Masks.Base);
         Assert.Equal(C | T, locked.Masks.NextOwner);
         Assert.Equal(Bob, locked.CreatorId);
