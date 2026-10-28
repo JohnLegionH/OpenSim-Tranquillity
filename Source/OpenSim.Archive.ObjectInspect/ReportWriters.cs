@@ -49,8 +49,10 @@ internal static class Fmt
 
     public static string LacksLine(List<string> lacks) => string.Join("; ", lacks.Select(LacksText));
 
-    public static string Masks(MaskSet m) =>
-        "base " + MaskSet.Letters(m.Base) + "  owner " + MaskSet.Letters(m.Owner) + "  group " + MaskSet.Letters(m.Group) +
+    public static string Letters(uint? mask, bool notStored) => notStored && !mask.HasValue ? "n/a" : MaskSet.Letters(mask);
+
+    public static string Masks(MaskSet m, bool inventory = false) =>
+        "base " + MaskSet.Letters(m.Base) + "  owner " + MaskSet.Letters(m.Owner) + "  group " + Letters(m.Group, inventory) +
         "  everyone " + MaskSet.Letters(m.Everyone) + "  next " + MaskSet.Letters(m.NextOwner);
 
     public static string Quote(string s) => "\"" + s + "\"";
@@ -118,7 +120,7 @@ public static class ReportText
                 sb.Append("      id ").Append(i.ItemId).Append("  asset ").Append(i.AssetId).Append('\n');
                 sb.Append("      who     creator ").Append(Fmt.Who(i.CreatorId, i.CreatorName)).Append("; owner ").Append(Fmt.Who(i.OwnerId, i.OwnerName))
                   .Append("; group ").Append(Fmt.Who(i.GroupId, null)).Append('\n');
-                sb.Append("      masks   ").Append(Fmt.Masks(i.Masks)).Append('\n');
+                sb.Append("      masks   ").Append(Fmt.Masks(i.Masks, true)).Append('\n');
                 if (i.Lacks.Count > 0)
                     sb.Append("      LACKS   ").Append(Fmt.LacksLine(i.Lacks)).Append('\n');
                 if (i.LinksetCount > 0)
@@ -216,7 +218,7 @@ public static class ReportCsv
         foreach (InventoryItemEntry i in report.InventoryItems)
         {
             Row(sb, "inventory", "", "", "", i.FolderPath, "", "", "", "", i.Name, "", "", "", "", "", "", "",
-                i.CreatorId, i.CreatorName, i.OwnerId, i.OwnerName, UUID.Zero, null, i.GroupId, i.Masks, i.Lacks);
+                i.CreatorId, i.CreatorName, i.OwnerId, i.OwnerName, UUID.Zero, null, i.GroupId, i.Masks, i.Lacks, true);
         }
 
         foreach (ObjectEntry o in report.Objects)
@@ -240,13 +242,13 @@ public static class ReportCsv
 
     private static void Row(StringBuilder sb, string kind, string obj, string entry, string itemName, string folder, string coalesced, string offset,
         string linkNum, string fileOrder, string name, string description, string x, string y, string z, string shape, string phantom, string linkOrder,
-        UUID creator, string creatorName, UUID owner, string ownerName, UUID lastOwner, string lastOwnerName, UUID group, MaskSet m, List<string> lacks)
+        UUID creator, string creatorName, UUID owner, string ownerName, UUID lastOwner, string lastOwnerName, UUID group, MaskSet m, List<string> lacks, bool inventory = false)
     {
         string[] cells =
         {
             kind, Text(obj), Text(entry), Text(itemName), Text(folder), coalesced, offset, linkNum, fileOrder, Text(name), Text(description), x, y, z, shape, phantom, linkOrder,
             Id(creator), Text(creatorName), Id(owner), Text(ownerName), Id(lastOwner), Text(lastOwnerName), Id(group),
-            MaskSet.Letters(m.Base), MaskSet.Letters(m.Owner), MaskSet.Letters(m.Group), MaskSet.Letters(m.Everyone), MaskSet.Letters(m.NextOwner),
+            MaskSet.Letters(m.Base), MaskSet.Letters(m.Owner), Fmt.Letters(m.Group, inventory), MaskSet.Letters(m.Everyone), MaskSet.Letters(m.NextOwner),
             Fmt.Hex(m.Base), Fmt.Hex(m.Owner), Fmt.Hex(m.Group), Fmt.Hex(m.Everyone), Fmt.Hex(m.NextOwner),
             string.Join("; ", lacks), lacks.Count > 0 ? "true" : "false"
         };
@@ -324,7 +326,7 @@ public static class ReportJson
                 Who(w, "creator", i.CreatorId, i.CreatorName);
                 Who(w, "owner", i.OwnerId, i.OwnerName);
                 Who(w, "group", i.GroupId, null);
-                Masks(w, i.Masks);
+                Masks(w, i.Masks, true);
                 Lacks(w, i.Lacks);
                 w.WriteBoolean("flagged", i.Flagged);
                 w.WriteNumber("linksets", i.LinksetCount);
@@ -427,7 +429,7 @@ public static class ReportJson
         w.WriteEndObject();
     }
 
-    private static void Masks(Utf8JsonWriter w, MaskSet m)
+    private static void Masks(Utf8JsonWriter w, MaskSet m, bool inventory = false)
     {
         w.WriteStartObject("masks");
         foreach (string name in MaskSet.Names)
@@ -436,7 +438,7 @@ public static class ReportJson
             w.WriteStartObject(name);
             if (v.HasValue)
                 w.WriteNumber("value", v.Value);
-            w.WriteString("letters", MaskSet.Letters(v));
+            w.WriteString("letters", Fmt.Letters(v, inventory && name == "group"));
             w.WriteEndObject();
         }
         w.WriteEndObject();

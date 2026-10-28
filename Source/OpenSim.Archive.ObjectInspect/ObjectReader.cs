@@ -276,7 +276,8 @@ public static class ObjectReader
             GroupId = item.GroupId,
             Masks = ToMasks(item.Masks)
         };
-        e.Lacks = e.Masks.Lacks();
+        // the inventory item record has no group permissions element (UserInventoryItemSerializer), so an absent group mask is not a defect
+        e.Lacks = e.Masks.Lacks().Where(l => l != "group:absent").ToList();
         return e;
     }
 
