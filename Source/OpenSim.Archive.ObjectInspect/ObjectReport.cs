@@ -22,14 +22,49 @@ public sealed class MaskSet
     /// <summary>The mask names in report order.</summary>
     public static readonly string[] Names = { "base", "owner", "group", "everyone", "next" };
 
+    private const uint ModifyBit = 0x4000, CopyBit = 0x8000, TransferBit = 0x2000;
+
     /// <summary>Modify, copy and transfer as the letters M, C and T, a dash for each one the mask lacks, and "???" when the mask is absent.</summary>
-    public static string Letters(uint? mask) => string.Empty;
+    public static string Letters(uint? mask)
+    {
+        if (!mask.HasValue)
+            return "???";
+        uint m = mask.Value;
+        return string.Concat((m & ModifyBit) != 0 ? 'M' : '-', (m & CopyBit) != 0 ? 'C' : '-', (m & TransferBit) != 0 ? 'T' : '-');
+    }
 
     /// <summary>The mask with the given name (see <see cref="Names"/>).</summary>
-    public uint? Get(string name) => null;
+    public uint? Get(string name)
+    {
+        switch (name)
+        {
+            case "base": return Base;
+            case "owner": return Owner;
+            case "group": return Group;
+            case "everyone": return Everyone;
+            case "next": return NextOwner;
+            default: return null;
+        }
+    }
 
     /// <summary>One entry per mask that lacks modify, copy or transfer, as "name:letters" (for example "next:CT"); "name:absent" for a mask the file does not hold.</summary>
-    public List<string> Lacks() => new List<string>();
+    public List<string> Lacks()
+    {
+        List<string> lacks = new List<string>();
+        foreach (string name in Names)
+        {
+            uint? mask = Get(name);
+            if (!mask.HasValue)
+            {
+                lacks.Add(name + ":absent");
+                continue;
+            }
+            string missing = string.Concat((mask.Value & ModifyBit) == 0 ? "M" : "", (mask.Value & CopyBit) == 0 ? "C" : "", (mask.Value & TransferBit) == 0 ? "T" : "");
+            if (missing.Length > 0)
+                lacks.Add(name + ":" + missing);
+        }
+        return lacks;
+    }
 }
 
 /// <summary>An item inside a part's contents (a prim inventory item).</summary>
@@ -183,12 +218,4 @@ public sealed class ReadOptions
 {
     /// <summary>Keep only objects whose name contains this text (any case); for an IAR also the items whose name contains it. Null or empty keeps everything.</summary>
     public string NameFilter { get; set; }
-}
-
-/// <summary>Reads an OAR or an IAR and lists every part in link order and every permission mask. The archive is only read.</summary>
-public static class ObjectReader
-{
-    public static ObjectReport Read(string path, ReadOptions options = null) => new ObjectReport();
-
-    public static ObjectReport Read(Stream input, ReadOptions options = null) => new ObjectReport();
 }

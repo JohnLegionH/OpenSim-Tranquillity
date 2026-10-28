@@ -113,6 +113,9 @@ public sealed class ParsedGroup
     public UUID RootId;
     public string Name;
     public float X, Y, Z;
+    /// <summary>True for a linkset read from a coalesced object, which stores where the linkset sits inside it (the offsetx, offsety and offsetz attributes).</summary>
+    public bool HasOffset;
+    public float OffsetX, OffsetY, OffsetZ;
 }
 
 /// <summary>The linksets found in one object body.</summary>
