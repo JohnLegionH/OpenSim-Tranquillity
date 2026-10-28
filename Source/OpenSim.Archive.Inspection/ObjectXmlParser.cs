@@ -181,9 +181,29 @@ internal static class ObjectXmlParser
         return result;
     }
 
-    private static void ReadGroup(XmlReader r, ParsedObject result)
+    /// <summary>Where a linkset sits inside a coalesced object.</summary>
+    private sealed class GroupOffset
+    {
+        public float X, Y, Z;
+    }
+
+    /// <summary>
+    /// The region writes a coalesced object as a CoalescedObject element holding one SceneObjectGroup per linkset, each with
+    /// offsetx, offsety and offsetz attributes and around the linkset's own SceneObjectGroup
+    /// (CoalescedSceneObjectsSerializer.ToXml, Source/OpenSim.Region.Framework/Scenes/Serialization). The attributes are on the outer element.
+    /// </summary>
+    private static GroupOffset ReadOffset(XmlReader r)
+    {
+        string x = r.GetAttribute("offsetx"), y = r.GetAttribute("offsety"), z = r.GetAttribute("offsetz");
+        if (x == null && y == null && z == null)
+            return null;
+        return new GroupOffset { X = XmlRead.Float(x ?? ""), Y = XmlRead.Float(y ?? ""), Z = XmlRead.Float(z ?? "") };
+    }
+
+    private static void ReadGroup(XmlReader r, ParsedObject result, GroupOffset enclosing = null)
     {
         // r is on a SceneObjectGroup element; a coalesced file wraps one in another.
+        GroupOffset offset = ReadOffset(r) ?? enclosing;
         ParsedGroup g = new ParsedGroup();
         bool rootSeen = false;
 
@@ -206,7 +226,7 @@ internal static class ObjectXmlParser
             switch (r.Name)
             {
                 case "SceneObjectGroup":
-                    ReadGroup(r, result);
+                    ReadGroup(r, result, offset);
                     break;
                 case "RootPart":
                     ReadPartsIn(r, g, true, ref rootSeen);
@@ -238,6 +258,13 @@ internal static class ObjectXmlParser
         if (g.Parts.Count > 0)
         {
             Finish(g);
+            if (offset != null)
+            {
+                g.HasOffset = true;
+                g.OffsetX = offset.X;
+                g.OffsetY = offset.Y;
+                g.OffsetZ = offset.Z;
+            }
             result.Groups.Add(g);
         }
     }

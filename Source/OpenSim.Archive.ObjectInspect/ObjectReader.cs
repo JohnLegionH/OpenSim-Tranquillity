@@ -28,22 +28,64 @@ public static class ObjectReader
         return collector.Finish(inspected, options ?? new ReadOptions());
     }
 
-    /// <summary>Gathers what the inspector's single pass hands over, in a form that outlives the pass.</summary>
+    /// <summary>Gathers what the inspector pass hands over, in a form that outlives the pass.</summary>
     private sealed class Collector
     {
         private readonly List<ObjectEntry> m_objects = new List<ObjectEntry>();
+        private readonly List<InventoryItemEntry> m_items = new List<InventoryItemEntry>();
+        private readonly Dictionary<UUID, BoxedLinksets> m_boxed = new Dictionary<UUID, BoxedLinksets>();
 
-        public InspectorOptions Options() => new InspectorOptions
+        private sealed class BoxedLinksets
         {
-            StandardChecks = false,
-            MaxRetainedRecords = 1,
-            ObjectObserver = OnArchiveObject
-        };
+            public bool Coalesced;
+            public List<ObjectEntry> Linksets = new List<ObjectEntry>();
+        }
+
+        /// <summary>Copies each IAR inventory item as the pass reads it; the inspector record is not kept.</summary>
+        private sealed class ItemCheck : ArchiveCheckBase
+        {
+            private readonly Collector m_owner;
+            public ItemCheck(Collector owner) { m_owner = owner; }
+            public override string Id => "object-inspect-items";
+
+            public override void OnRecord(ArchiveRecord record)
+            {
+                if (record is ItemRecord item && item.Source == ItemSource.InventoryArchive)
+                    m_owner.m_items.Add(ConvertInventoryItem(item));
+            }
+        }
+
+        public InspectorOptions Options()
+        {
+            InspectorOptions options = new InspectorOptions
+            {
+                StandardChecks = false,
+                MaxRetainedRecords = 1,
+                ObjectObserver = OnArchiveObject,
+                BoxedObjectObserver = OnBoxedObject
+            };
+            options.Checks.Add(new ItemCheck(this));
+            return options;
+        }
 
         private void OnArchiveObject(ParsedObject obj, string entry, string regionDir)
         {
             foreach (ParsedGroup g in obj.Groups)
                 m_objects.Add(ConvertGroup(g, entry, regionDir));
+        }
+
+        private void OnBoxedObject(ParsedObject obj, string entry, UUID asset)
+        {
+            if (m_boxed.ContainsKey(asset))
+                return;
+            BoxedLinksets b = new BoxedLinksets { Coalesced = obj.Coalesced };
+            foreach (ParsedGroup g in obj.Groups)
+            {
+                ObjectEntry o = ConvertGroup(g, entry, string.Empty);
+                o.AssetId = asset;
+                b.Linksets.Add(o);
+            }
+            m_boxed[asset] = b;
         }
 
         public ObjectReport Finish(ArchiveReport inspected, ReadOptions options)
@@ -61,23 +103,89 @@ public static class ObjectReader
             if (inspected.Status == InspectionStatus.NotAnArchive)
                 return report;
 
-            report.ObjectsBeforeFilter = m_objects.Count;
             string filter = options.NameFilter;
             bool filtering = !string.IsNullOrEmpty(filter);
             report.Filter = filtering ? filter : null;
-            List<ObjectEntry> kept = filtering
-                ? m_objects.Where(o => Contains(o.Name, filter)).ToList()
-                : m_objects;
 
-            NameMap names = NameMap.From(m_objects);
-            for (int i = 0; i < kept.Count; i++)
+            List<ObjectEntry> all = new List<ObjectEntry>(m_objects);
+            List<InventoryItemEntry> keptItems = new List<InventoryItemEntry>();
+            List<ObjectEntry> keptObjects = new List<ObjectEntry>();
+
+            if (inspected.Archive.Kind == ArchiveKind.Iar)
             {
-                kept[i].Index = i + 1;
-                names.Apply(kept[i]);
+                bool noAssets = inspected.Archive.AssetsIncluded == false;
+                foreach (InventoryItemEntry item in m_items)
+                {
+                    List<ObjectEntry> linksets = new List<ObjectEntry>();
+                    if (item.AssetType == (int)AssetType.Object)
+                    {
+                        if (m_boxed.TryGetValue(item.AssetId, out BoxedLinksets b))
+                        {
+                            for (int n = 0; n < b.Linksets.Count; n++)
+                                linksets.Add(ForItem(b.Linksets[n], item, b.Coalesced ? n + 1 : 0, b.Linksets.Count));
+                            item.LinksetCount = linksets.Count;
+                        }
+                        else
+                            item.Note = noAssets ? "the object asset is not in the archive (the archive was saved without assets)" : "the object asset is not in the archive";
+                    }
+                    all.AddRange(linksets);
+
+                    if (!filtering || Contains(item.Name, filter))
+                    {
+                        keptItems.Add(item);
+                        keptObjects.AddRange(linksets);
+                    }
+                    else
+                    {
+                        List<ObjectEntry> matching = linksets.Where(o => Contains(o.Name, filter)).ToList();
+                        if (matching.Count > 0)
+                        {
+                            keptItems.Add(item);
+                            keptObjects.AddRange(matching);
+                        }
+                    }
+                }
             }
-            report.Objects = kept;
+            else
+                keptObjects = filtering ? m_objects.Where(o => Contains(o.Name, filter)).ToList() : m_objects;
+
+            report.ObjectsBeforeFilter = all.Count;
+            NameMap names = NameMap.From(all, m_items);
+            for (int i = 0; i < keptObjects.Count; i++)
+            {
+                keptObjects[i].Index = i + 1;
+                names.Apply(keptObjects[i]);
+            }
+            foreach (InventoryItemEntry item in keptItems)
+                names.Apply(item);
+
+            report.Objects = keptObjects;
+            report.InventoryItems = keptItems;
             Summarise(report);
             return report;
+        }
+
+        /// <summary>A linkset as the inventory item that holds it shows it: the same parts, with the item name, folder and place in a coalesced object.</summary>
+        private static ObjectEntry ForItem(ObjectEntry source, InventoryItemEntry item, int coalescedIndex, int coalescedCount)
+        {
+            return new ObjectEntry
+            {
+                Name = source.Name,
+                Entry = source.Entry,
+                RegionDir = source.RegionDir,
+                GroupPosition = source.GroupPosition,
+                Parts = source.Parts,
+                LinkOrderOk = source.LinkOrderOk,
+                LinkOrderNote = source.LinkOrderNote,
+                ItemId = item.ItemId,
+                ItemName = item.Name,
+                FolderPath = item.FolderPath,
+                AssetId = source.AssetId,
+                CoalescedIndex = coalescedIndex,
+                CoalescedCount = coalescedIndex > 0 ? coalescedCount : 0,
+                HasOffset = source.HasOffset,
+                Offset = source.Offset
+            };
         }
     }
 
@@ -145,6 +253,26 @@ public static class ObjectReader
             CreatorName = Sanitize.Text(item.Creator.Name),
             OwnerId = item.OwnerId,
             LastOwnerId = item.LastOwnerId,
+            GroupId = item.GroupId,
+            Masks = ToMasks(item.Masks)
+        };
+        e.Lacks = e.Masks.Lacks();
+        return e;
+    }
+
+    private static InventoryItemEntry ConvertInventoryItem(ItemRecord item)
+    {
+        InventoryItemEntry e = new InventoryItemEntry
+        {
+            Name = Sanitize.Text(item.Name),
+            ItemId = item.ItemId,
+            AssetId = item.AssetId,
+            AssetType = item.AssetType,
+            AssetTypeName = item.AssetType.HasValue ? Archive.Inspection.ArchiveInspector.TypeName(item.AssetType.Value) : "unknown",
+            FolderPath = Sanitize.Text(item.FolderPath ?? string.Empty),
+            CreatorId = item.Creator.Id,
+            CreatorName = Sanitize.Text(item.Creator.Name),
+            OwnerId = item.OwnerId,
             GroupId = item.GroupId,
             Masks = ToMasks(item.Masks)
         };
@@ -237,9 +365,11 @@ public static class ObjectReader
     {
         private readonly Dictionary<UUID, string> m_names = new Dictionary<UUID, string>();
 
-        public static NameMap From(IEnumerable<ObjectEntry> objects)
+        public static NameMap From(IEnumerable<ObjectEntry> objects, IEnumerable<InventoryItemEntry> inventory)
         {
             NameMap map = new NameMap();
+            foreach (InventoryItemEntry i in inventory)
+                map.Learn(i.CreatorId, i.CreatorName);
             foreach (ObjectEntry o in objects)
                 foreach (PartEntry p in o.Parts)
                 {
@@ -261,6 +391,12 @@ public static class ObjectReader
             if (!string.IsNullOrEmpty(own))
                 return own;
             return id != UUID.Zero && m_names.TryGetValue(id, out string name) ? name : null;
+        }
+
+        public void Apply(InventoryItemEntry i)
+        {
+            i.CreatorName = Name(i.CreatorId, i.CreatorName);
+            i.OwnerName = Name(i.OwnerId, null);
         }
 
         public void Apply(ObjectEntry o)
@@ -310,6 +446,14 @@ public static class ObjectReader
         {
             foreach (string l in lacks)
                 s.LackingByMask[l.Substring(0, l.IndexOf(':'))]++;
+        }
+
+        foreach (InventoryItemEntry i in report.InventoryItems)
+        {
+            s.InventoryItems++;
+            if (i.Flagged) s.FlaggedInventoryItems++;
+            CountLacks(i.Lacks);
+            Count(i.CreatorId, i.CreatorName, i.OwnerId, i.OwnerName, UUID.Zero, null, i.GroupId);
         }
 
         foreach (ObjectEntry o in report.Objects)

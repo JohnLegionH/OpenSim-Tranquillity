@@ -256,8 +256,11 @@ public class IarObjectTests
     [Fact]
     public void AnOarHasNoInventoryItems()
     {
-        using MemoryStream ms = new MemoryStream(Oar(new[] { Part("Chair", 1) }));
+        KPart chair = Part("Chair", 1);
+        chair.Items.Add(new KItem { Name = "Script" });
+        using MemoryStream ms = new MemoryStream(Oar(new[] { chair }));
         ObjectReport r = ObjectReader.Read(ms);
+        Assert.Single(r.Objects.One().Parts.One().Items);
         Assert.Empty(r.InventoryItems);
         Assert.Equal(0, r.Summary.InventoryItems);
     }

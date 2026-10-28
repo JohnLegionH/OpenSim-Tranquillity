@@ -537,6 +537,9 @@ public sealed class ArchiveInspector
                 m_opt.ObjectObserver(obj, entry, regionDir);
             }
 
+            if (boxedAsset.HasValue && m_opt.BoxedObjectObserver != null)
+                m_opt.BoxedObjectObserver(obj, entry, boxedAsset.Value);
+
             if (obj.PhloxScriptStates > 0)
                 AddLegacy("script-state-phlox", boxedAsset, obj.PhloxScriptStates, 0, entry);
             m_report.ScriptStateBlobs += obj.ScriptStates;

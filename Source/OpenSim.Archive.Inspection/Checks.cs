@@ -162,6 +162,11 @@ public class InspectorOptions
     /// only valid during the call.
     /// </summary>
     public Action<ParsedObject, string, string> ObjectObserver { get; set; }
+    /// <summary>
+    /// Called once for every object held in an object asset (an IAR's object items and the objects inside part contents), with the
+    /// parsed linksets, the archive entry and the asset id, before the records are emitted. The parsed object is only valid during the call.
+    /// </summary>
+    public Action<ParsedObject, string, UUID> BoxedObjectObserver { get; set; }
     /// <summary>Hash each object file (SHA-256) into <see cref="ParsedObject.BodyHash"/> before the observer is called. Off by default.</summary>
     public bool HashObjectBodies { get; set; }
     /// <summary>
