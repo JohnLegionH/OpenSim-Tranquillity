@@ -1,0 +1,2 @@
+# The copy must stay byte-identical to the runtime's file, line endings included.
+builtins.txt -text
