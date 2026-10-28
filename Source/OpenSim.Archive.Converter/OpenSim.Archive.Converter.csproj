@@ -14,6 +14,7 @@
     <ProjectReference Include="../../Source/OpenSim.Archive.GltfExport/OpenSim.Archive.GltfExport.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Archive.Rewrite/OpenSim.Archive.Rewrite.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Archive.Compare/OpenSim.Archive.Compare.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Archive.ObjectInspect/OpenSim.Archive.ObjectInspect.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Archive.Eligibility/OpenSim.Archive.Eligibility.csproj" />
     <ProjectReference Include="../../Source/OpenSim.MeshAsset/OpenSim.MeshAsset.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Region.PhysicsModules.Meshing/OpenSim.Region.PhysicsModules.Meshing.csproj" />

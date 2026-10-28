@@ -15,5 +15,6 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="OpenSim.Archive.Rewrite.Tests" />
+    <InternalsVisibleTo Include="OpenSim.Archive.Converter" />
   </ItemGroup>
 </Project>
