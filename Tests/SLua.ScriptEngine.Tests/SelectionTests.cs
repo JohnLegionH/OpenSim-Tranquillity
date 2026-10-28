@@ -76,15 +76,15 @@ public class SelectionTests
     }
 
     [Fact]
-    public void ALowerCaseHeaderIsOursByOurOwnTestButTheRegionStillComparesNamesAsWritten()
+    public void ALowerCaseHeaderIsNotOursUnlessTheRegionChoseUs()
     {
-        // The region compares engine names ordinally (Scene.ResolveScriptEngine); the engine's own test does not.
+        // The region compares engine names ordinally (Scene.ResolveScriptEngine), and so does the engine's own test.
         // A "//slua:" script therefore reaches us only when we are the default engine, or by saved state.
         const string source = "//slua:\nprint(1)";
         Scene scene = RegionWithAllThree();
         Assert.Equal(Phlox, scene.ResolveScriptEngine(Phlox, source)?.ScriptEngineName);
         Assert.Equal(Ours, scene.ResolveScriptEngine(Ours, source)?.ScriptEngineName);
-        Assert.Equal(Ours, EngineHeader.Owner(source, Phlox, new[] { Phlox, YEngine, Ours }));
+        Assert.Equal(Phlox, EngineHeader.Owner(source, Phlox, new[] { Phlox, YEngine, Ours }));   // the engine agrees with the region: not ours
     }
 
     [Theory]

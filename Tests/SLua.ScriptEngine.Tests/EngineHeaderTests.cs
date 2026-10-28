@@ -79,8 +79,9 @@ public class EngineHeaderTests
     [InlineData("//YEngine:\nx", "InWorldz.Phlox", "YEngine")]
     [InlineData("//InWorldz.Phlox:\nx", "SLua", "InWorldz.Phlox")]
     [InlineData("//Unloaded:\nx", "InWorldz.Phlox", "InWorldz.Phlox")]    // names no loaded engine: the scene's choice
-    [InlineData("//slua:\nx", "InWorldz.Phlox", "SLua")]               // the name is read without regard to case
-    [InlineData("//SLUA:LSL\nx", "InWorldz.Phlox", "SLua")]
+    [InlineData("//slua:\nx", "InWorldz.Phlox", "InWorldz.Phlox")]    // the region compares names as written, so this is not ours
+    [InlineData("//slua:\nx", "SLua", "SLua")]                        // unless the scene chose us
+    [InlineData("//SLUA:LSL\nx", "InWorldz.Phlox", "InWorldz.Phlox")]
     [InlineData("//yengine:\nx", "InWorldz.Phlox", "InWorldz.Phlox")]   // other engines are still compared as written
     [InlineData("default {}", "SLua", "SLua")]
     public void OwnerIsTheNamedLoadedEngineElseTheScenesChoice(string script, string sceneChoice, string expected)
