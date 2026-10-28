@@ -41,7 +41,7 @@ public class CleanConvertCommandTests
         Console.SetOut(capture);
         try { Assert.Equal(0, ConvertCommand.Run(new[] { "--version" })); }
         finally { Console.SetOut(saved); }
-        Assert.Contains("oar-convert 0.4.1", capture.ToString());
+        Assert.Contains("oar-convert 0.4.2", capture.ToString());
     }
 
     private static string VersionLine(Func<string[], int> run)
@@ -55,13 +55,14 @@ public class CleanConvertCommandTests
     }
 
     [Fact]
-    public void AllFourToolsReportTheSameRelease()
+    public void AllTheToolsReportTheSameRelease()
     {
-        Assert.Equal("0.4.1", ToolRelease.Version);
-        Assert.Equal("oar-convert 0.4.1", VersionLine(ConvertCommand.Run));
-        Assert.Equal("oar-export 0.4.1", VersionLine(ExportCommand.Run));
-        Assert.Equal("oar-restore 0.4.1", VersionLine(RestoreCommand.Run));
-        Assert.Equal("oar-import 0.4.1", VersionLine(ImportCommand.Run));
+        Assert.Equal("0.4.2", ToolRelease.Version);
+        Assert.Equal("oar-convert 0.4.2", VersionLine(ConvertCommand.Run));
+        Assert.Equal("oar-export 0.4.2", VersionLine(ExportCommand.Run));
+        Assert.Equal("oar-restore 0.4.2", VersionLine(RestoreCommand.Run));
+        Assert.Equal("oar-import 0.4.2", VersionLine(ImportCommand.Run));
+        Assert.Equal("oar-inspect 0.4.2", VersionLine(InspectCommand.Run));
     }
 
     [Fact]
