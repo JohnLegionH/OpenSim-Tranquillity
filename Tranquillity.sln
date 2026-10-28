@@ -235,6 +235,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Archive.ManagedHash
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Archive.PackagePatch", "Source\OpenSim.Archive.PackagePatch\OpenSim.Archive.PackagePatch.csproj", "{1C24A733-4C2D-4F69-AA6B-570762D8A577}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Archive.ObjectInspect", "Source\OpenSim.Archive.ObjectInspect\OpenSim.Archive.ObjectInspect.csproj", "{4EC87304-246D-44A3-8762-FD2FD560DCED}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -1601,6 +1603,18 @@ Global
 		{1C24A733-4C2D-4F69-AA6B-570762D8A577}.Release|x64.Build.0 = Release|Any CPU
 		{1C24A733-4C2D-4F69-AA6B-570762D8A577}.Release|x86.ActiveCfg = Release|Any CPU
 		{1C24A733-4C2D-4F69-AA6B-570762D8A577}.Release|x86.Build.0 = Release|Any CPU
+		{4EC87304-246D-44A3-8762-FD2FD560DCED}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4EC87304-246D-44A3-8762-FD2FD560DCED}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4EC87304-246D-44A3-8762-FD2FD560DCED}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{4EC87304-246D-44A3-8762-FD2FD560DCED}.Debug|x64.Build.0 = Debug|Any CPU
+		{4EC87304-246D-44A3-8762-FD2FD560DCED}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{4EC87304-246D-44A3-8762-FD2FD560DCED}.Debug|x86.Build.0 = Debug|Any CPU
+		{4EC87304-246D-44A3-8762-FD2FD560DCED}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4EC87304-246D-44A3-8762-FD2FD560DCED}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4EC87304-246D-44A3-8762-FD2FD560DCED}.Release|x64.ActiveCfg = Release|Any CPU
+		{4EC87304-246D-44A3-8762-FD2FD560DCED}.Release|x64.Build.0 = Release|Any CPU
+		{4EC87304-246D-44A3-8762-FD2FD560DCED}.Release|x86.ActiveCfg = Release|Any CPU
+		{4EC87304-246D-44A3-8762-FD2FD560DCED}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -1719,6 +1733,7 @@ Global
 		{F0FB87D9-3A2F-4B37-B399-4689ED625A78} = {E886CEB5-B01D-411F-A7A0-72AA1B71761D}
 		{A8BC2F57-7983-4349-9018-FF2317332202} = {E886CEB5-B01D-411F-A7A0-72AA1B71761D}
 		{1C24A733-4C2D-4F69-AA6B-570762D8A577} = {E886CEB5-B01D-411F-A7A0-72AA1B71761D}
+		{4EC87304-246D-44A3-8762-FD2FD560DCED} = {E886CEB5-B01D-411F-A7A0-72AA1B71761D}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {A40AD54B-8BC7-41E4-B241-19B59EA65D2A}
