@@ -43,6 +43,16 @@
     <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.151.1" />
   </ItemGroup>
 
+  <!-- dotnet publish -p:OarInspectExe=true builds the permission and link order report alone as oar-inspect(.exe); an ordinary build is unchanged -->
+  <PropertyGroup Condition="'$(OarInspectExe)' == 'true'">
+    <AssemblyName>oar-inspect</AssemblyName>
+    <AssemblyTitle>oar-inspect</AssemblyTitle>
+    <DefineConstants>$(DefineConstants);OAR_INSPECT_ONLY</DefineConstants>
+    <!-- no ICU library is needed on Linux; the OpenMetaverse library asks for the culture "en-us" when it starts, which invariant mode allows only with this -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <PredefinedCulturesOnly>false</PredefinedCulturesOnly>
+  </PropertyGroup>
+
   <!-- dotnet publish -p:OarImportExe=true builds the importer alone as oar-import(.exe); an ordinary build is unchanged -->
   <PropertyGroup Condition="'$(OarImportExe)' == 'true'">
     <AssemblyName>oar-import</AssemblyName>
@@ -65,7 +75,7 @@
   </ItemGroup>
 
   <!-- the published programs make their hash objects in managed code, so they start on a Linux without libssl (see the targets file) -->
-  <PropertyGroup Condition="'$(OarExportExe)' == 'true' Or '$(OarConvertExe)' == 'true' Or '$(OarRestoreExe)' == 'true' Or '$(OarImportExe)' == 'true'">
+  <PropertyGroup Condition="'$(OarExportExe)' == 'true' Or '$(OarConvertExe)' == 'true' Or '$(OarRestoreExe)' == 'true' Or '$(OarImportExe)' == 'true' Or '$(OarInspectExe)' == 'true'">
     <PatchHashObjects>true</PatchHashObjects>
   </PropertyGroup>
   <Import Project="../OpenSim.Archive.PackagePatch/PatchHashObjects.targets" />

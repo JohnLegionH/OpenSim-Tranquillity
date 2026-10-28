@@ -29,11 +29,15 @@ Other commands: OpenSim.ArchiveInspector oar-export --help  (writes each build o
                 OpenSim.ArchiveInspector oar-eligibility --help  (decides which parts become mesh, which stay as they are, and why)
                 OpenSim.ArchiveInspector oar-convert --help  (writes a new OAR with the convertible parts turned into mesh parts)
                 OpenSim.ArchiveInspector oar-restore --help  (writes a new OAR from the original and its .glb files after editing in Blender)
-                OpenSim.ArchiveInspector oar-import --help  (writes an OAR with one mesh object made from a folder of .glb files)";
+                OpenSim.ArchiveInspector oar-import --help  (writes an OAR with one mesh object made from a folder of .glb files)
+                OpenSim.ArchiveInspector oar-inspect --help  (lists every part in link order and every permission mask of an OAR or IAR)";
 
     public static int Main(string[] args)
     {
-#if OAR_RESTORE_ONLY
+#if OAR_INSPECT_ONLY
+        // the oar-inspect build of this program: only the permission and link order report, with or without the word oar-inspect first
+        return InspectCommand.Run(args.Length > 0 && args[0] == "oar-inspect" ? args.Skip(1).ToArray() : args);
+#elif OAR_RESTORE_ONLY
         // the oar-restore build of this program: only the restore, with or without the word oar-restore first
         return RestoreCommand.Run(args.Length > 0 && args[0] == "oar-restore" ? args.Skip(1).ToArray() : args);
 #elif OAR_IMPORT_ONLY
@@ -60,6 +64,8 @@ Other commands: OpenSim.ArchiveInspector oar-export --help  (writes each build o
             return RestoreCommand.Run(args.Skip(1).ToArray());
         if (args.Length > 0 && args[0] == "oar-import")
             return ImportCommand.Run(args.Skip(1).ToArray());
+        if (args.Length > 0 && args[0] == "oar-inspect")
+            return InspectCommand.Run(args.Skip(1).ToArray());
 
         string input = null, jsonPath = null;
         bool all = false, stats = false;

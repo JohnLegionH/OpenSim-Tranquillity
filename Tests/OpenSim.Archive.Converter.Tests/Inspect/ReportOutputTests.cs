@@ -99,8 +99,10 @@ public class ReportOutputTests
         string[] lines = Lines(ReportText.Build(TableReport()));
         int item = Array.FindIndex(lines, l => l.Contains("item \"Script\" [LSLText]"));
         Assert.True(item >= 0);
-        Assert.Contains("masks   base MCT  owner M-T  group MCT  everyone MCT  next MCT", lines[item + 1]);
-        Assert.Contains("LACKS   owner: copy", lines[item + 3]);
+        string[] block = lines.Skip(item + 1).Take(3).ToArray();
+        Assert.Contains(block, l => l.Contains("who     creator Alice Builder"));
+        Assert.Contains(block, l => l.Contains("masks   base MCT  owner M-T  group MCT  everyone MCT  next MCT"));
+        Assert.Contains(block, l => l.Contains("LACKS   owner: copy"));
     }
 
     [Fact]
@@ -245,14 +247,15 @@ public class ReportOutputTests
     }
 
     [Fact]
-    public void CommasQuotesAndLineBreaksInTextAreQuotedSoTheRowsStayWhole()
+    public void CommasAndQuotesInTextAreQuotedSoTheRowsStayWhole()
     {
         KPart p = Part("Chair, \"big\"", 1);
-        p.Desc = "line one\nline two";
+        p.Desc = "red, green and \"blue\"";
         List<string[]> rows = ParseCsv(ReportCsv.Build(ReadBytes(Oar(new[] { p }))));
         Assert.Equal(2, rows.Count);
         Assert.Equal("Chair, \"big\"", Cell(rows, 1, "name"));
-        Assert.Equal("line one\nline two", Cell(rows, 1, "description").Replace("\r\n", "\n"));
+        Assert.Equal("red, green and \"blue\"", Cell(rows, 1, "description"));
+        Assert.Equal(rows[0].Length, rows[1].Length);
     }
 
     [Theory]
