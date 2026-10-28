@@ -880,6 +880,12 @@ namespace SLua.ScriptEngine
         /// <summary>The scheduler's record of the item's script, or null; for the status command and the tests.</summary>
         internal SchedulerScript SchedulerScriptFor(UUID itemID) => RecordOf(itemID)?.Script;
 
+        /// <summary>
+        /// The lines the status console command prints for the scripts that match <paramref name="filter"/> (an item id, or part of an object's
+        /// or a script's name; empty for all). Stub: nothing yet.
+        /// </summary>
+        internal IReadOnlyList<string> StatusLines(string filter) => Array.Empty<string>();
+
         /// <summary>The scheduler's counters for the status console command; null when the engine has no scheduler.</summary>
         internal SchedulerStats GetStats() => m_scheduler?.GetStats();
 

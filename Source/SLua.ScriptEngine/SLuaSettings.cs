@@ -62,6 +62,12 @@ namespace SLua.ScriptEngine
         /// <summary>Whether the engine keeps its scripts' state across a restart (SaveScriptState). Off, a restart starts every script fresh and no database is made.</summary>
         public bool SaveScriptState { get; private set; } = true;
 
+        /// <summary>A script that repeats the same error message is told to its owner once, then as a count after a quiet interval (ErrorRateLimit).</summary>
+        public bool ErrorRateLimit { get; private set; } = true;
+
+        /// <summary>How long a script must stop repeating an error before the count of the repeats is told, in seconds (ErrorQuietSeconds).</summary>
+        public double ErrorQuietSeconds { get; private set; } = 10.0;
+
         /// <summary>How many times a failed read of a script's saved state is tried again before the script is held (StateLoadRetries).</summary>
         public int StateLoadRetries { get; private set; } = 3;
 
@@ -128,6 +134,8 @@ namespace SLua.ScriptEngine
             s.KillAfterPunishments = Math.Max(1, c.GetInt("KillAfterPunishments", s.KillAfterPunishments));
             s.StateSaveIntervalMs = Math.Max(1, c.GetInt("StateSaveIntervalMs", s.StateSaveIntervalMs));
             s.SaveScriptState = c.GetBoolean("SaveScriptState", s.SaveScriptState);
+            s.ErrorRateLimit = c.GetBoolean("ErrorRateLimit", s.ErrorRateLimit);
+            s.ErrorQuietSeconds = Math.Max(0.05, c.GetDouble("ErrorQuietSeconds", s.ErrorQuietSeconds));
             s.StateLoadRetries = Math.Max(0, c.GetInt("StateLoadRetries", s.StateLoadRetries));
             s.StateLoadRetryDelayMs = Math.Max(0, c.GetInt("StateLoadRetryDelayMs", s.StateLoadRetryDelayMs));
             s.CompileCache = c.GetBoolean("CompileCache", s.CompileCache);

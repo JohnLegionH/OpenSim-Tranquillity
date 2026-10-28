@@ -184,6 +184,9 @@ namespace SLua.ScriptEngine
         /// </summary>
         internal int QueuedEvents => Events.Count;
 
+        /// <summary>The bytes the script's runtime heap used after its last step, for the status command and the memory figures.</summary>
+        internal int MemoryUsed;
+
         internal void CountStep(long ticks) { Interlocked.Increment(ref m_steps); Interlocked.Add(ref m_runTicks, ticks); }
         internal void CountDispatch(long ticks) { Interlocked.Increment(ref m_dispatches); Interlocked.Add(ref m_runTicks, ticks); }
         internal void CountDrop() => Interlocked.Increment(ref m_droppedEvents);
