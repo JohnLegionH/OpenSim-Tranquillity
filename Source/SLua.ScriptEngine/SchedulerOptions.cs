@@ -108,6 +108,12 @@ namespace SLua.ScriptEngine
         /// <summary>Called on the worker's thread when a script ends in a fault or is killed.</summary>
         public Action<SchedulerScript> ScriptFaulted { get; set; }
 
+        /// <summary>
+        /// Called on the worker's thread when a script that a fault had stopped is put back stopped from its saved state (a restart, a rez, a
+        /// crossing): the report of the fault went out when it happened, so this is for the one log line and the item's flag, not for a message.
+        /// </summary>
+        public Action<SchedulerScript> ScriptFaultRestored { get; set; }
+
         /// <summary>Called on the worker's thread after a step in which an SLua script's handler set changed; <see cref="SchedulerScript.HandlerMask"/> is the new set.</summary>
         public Action<SchedulerScript> HandlersChanged { get; set; }
 

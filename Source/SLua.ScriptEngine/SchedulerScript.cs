@@ -120,6 +120,15 @@ namespace SLua.ScriptEngine
         /// <summary>Given the listens of a restored script before it runs, so the engine can register them again.</summary>
         internal Action<ActiveListen[]> ListenRestore;
 
+        /// <summary>Fills in what the engine keeps of the script outside the worker (its attributes and permission records) when a record is captured.</summary>
+        internal Action<ScriptStateRecord> ExtrasFill;
+
+        /// <summary>Given the record of a restored script before it runs; the second argument says the state came with the object, not from the database.</summary>
+        internal Action<ScriptStateRecord, bool> ExtrasRestore;
+
+        /// <summary>The record the script was restored from came with its object (take, rez, crossing, teleport) and not from the database.</summary>
+        internal bool RestoredFromCarried;
+
         /// <summary>The timer interval in force, seconds; 0 for none.</summary>
         public double TimerInterval { get; internal set; }
 

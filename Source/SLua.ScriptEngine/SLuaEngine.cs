@@ -981,6 +981,24 @@ namespace SLua.ScriptEngine
 
         public bool HasSavedScriptState(UUID itemID, UUID assetID) => m_store.HasSavedState(itemID, assetID);
 
+        /// <summary>The version of the carried-state envelope this build writes and reads.</summary>
+        internal const string CarriedStateVersion = "1";
+
+        /// <summary>The most bytes of a script's record an object carries; checked before anything is decoded.</summary>
+        internal const int MaxCarriedStateBytes = 16 * 1024 * 1024;
+
+        /// <summary>The longest envelope read: the base64 of <see cref="MaxCarriedStateBytes"/> and room for the attributes.</summary>
+        internal const int MaxCarriedStateXmlChars = (MaxCarriedStateBytes + 2) / 3 * 4 + 1024;
+
+        /// <summary>How long a region thread waits for the workers to capture an object's scripts.</summary>
+        internal int CarriedStateTimeoutMs = 10 * 1000;
+
+        /// <summary>How many times the workers were asked to capture the scripts of an object (one pass takes all of them).</summary>
+        internal int CarriedCapturePasses => 0;
+
+        /// <summary>The script functions of the item's script, or null; for the tests.</summary>
+        internal Phlox.ScriptEngine.LSLSystemAPI RealApiFor(UUID itemId) => RealApiOf(itemId);
+
         public string GetXMLState(UUID itemID) => string.Empty;
         public bool SetXMLState(UUID itemID, string xml) => false;
         public bool PostScriptEvent(UUID itemID, string name, object[] args) =>

@@ -19,6 +19,16 @@ namespace SLua.ScriptEngine
     {
         public int EventIndex;
         public Value[] Args = Array.Empty<Value>();
+
+        /// <summary>The detected objects of the event (a toucher, a sensed object, a collider); null for none.</summary>
+        public DetectedRecord[] Detected;
+    }
+
+    /// <summary>One of the script's attributes the API keeps in its runtime state (a repeating sensor, a volume detect, taken controls) with its values.</summary>
+    internal sealed class SavedMisc
+    {
+        public int Key;
+        public object[] Values = Array.Empty<object>();
     }
 
     /// <summary>
@@ -62,6 +72,16 @@ namespace SLua.ScriptEngine
         /// <summary>The floor llMinEventDelay set, and the time left before the next handler may start.</summary>
         public double MinEventDelay;
         public double NextEventIn;
+
+        /// <summary>The script's attributes the API keeps (layout 2).</summary>
+        public List<SavedMisc> Misc = new List<SavedMisc>();
+
+        /// <summary>The permission record the script holds (layout 2): who granted, what, the owner then, the Experience it came from, and whether it is a claim still waiting for its granter.</summary>
+        public string PermsGranter;
+        public int PermsMask;
+        public string PermsOwner;
+        public string PermsExperience;
+        public bool PermsUnverified;
 
         public List<SavedEvent> Events = new List<SavedEvent>();
         public List<ActiveListen> Listens = new List<ActiveListen>();
