@@ -248,3 +248,11 @@
     ; Change this to your grid-wide experience server
     ;
     ExperienceServerURI = "${Const|BaseURL}:${Const|PrivatePort}"
+
+[MembershipService]
+    LocalServiceModule = "OpenSim.Services.Connectors.dll:RemoteMembershipServicesConnector"
+
+    ;
+    ; Change this to your grid-wide membership server
+    ;
+    MembershipServerURI = "${Const|BaseURL}:${Const|PrivatePort}"
