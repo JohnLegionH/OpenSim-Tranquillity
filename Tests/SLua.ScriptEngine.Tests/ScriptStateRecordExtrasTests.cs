@@ -112,4 +112,18 @@ public class ScriptStateRecordExtrasTests
         Assert.Null(ScriptStateRecord.Decode(cut, "SLua", out string problem));
         Assert.NotNull(problem);
     }
+
+    [Theory]
+    [InlineData(2)]  // inside the trailer
+    [InlineData(7)]  // inside the runtime's own blob
+    public void ARecordCutShortInTheBlobOrTheTrailerIsNotRead(int cutBytes)
+    {
+        ScriptStateRecord r = WithExtras();
+        r.Native = new byte[] { 9, 8, 7, 6, 5, 4, 3, 2, 1, 0 };
+        byte[] bytes = r.Encode();
+
+        Assert.NotNull(ScriptStateRecord.Decode(bytes, "SLua", out _)); // whole, it reads
+        Assert.Null(ScriptStateRecord.Decode(bytes[..(bytes.Length - cutBytes)], "SLua", out string problem));
+        Assert.NotNull(problem);
+    }
 }
