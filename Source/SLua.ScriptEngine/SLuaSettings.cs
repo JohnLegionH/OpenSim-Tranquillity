@@ -52,6 +52,9 @@ namespace SLua.ScriptEngine
 
         public int MaxEventQueue { get; private set; } = 64;
 
+        /// <summary>A script with no engine header and no saved state is taken by this engine as LSL (ClaimHeaderlessScripts).</summary>
+        public bool ClaimHeaderlessScripts { get; private set; }
+
         /// <summary>An event that wakes an idle script puts it at the front of its worker's ring (once per ring cycle).</summary>
         public bool EventFrontOfRing { get; private set; } = true;
 
@@ -131,6 +134,7 @@ namespace SLua.ScriptEngine
             s.MinTimerInterval = Math.Max(0.0, c.GetDouble("MinTimerInterval", s.MinTimerInterval));
             s.MaxEventQueue = Math.Max(1, c.GetInt("MaxEventQueue", s.MaxEventQueue));
             s.EventFrontOfRing = c.GetBoolean("EventFrontOfRing", s.EventFrontOfRing);
+            s.ClaimHeaderlessScripts = c.GetBoolean("ClaimHeaderlessScripts", s.ClaimHeaderlessScripts);
             s.KillAfterPunishments = Math.Max(1, c.GetInt("KillAfterPunishments", s.KillAfterPunishments));
             s.StateSaveIntervalMs = Math.Max(1, c.GetInt("StateSaveIntervalMs", s.StateSaveIntervalMs));
             s.SaveScriptState = c.GetBoolean("SaveScriptState", s.SaveScriptState);
