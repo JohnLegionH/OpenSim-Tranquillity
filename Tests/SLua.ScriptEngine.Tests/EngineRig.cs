@@ -114,6 +114,8 @@ internal sealed class EngineRig : IDisposable
             lock (m_marks) m_phySleeps.Add(caller.AskedSeconds - before);
             return null;
         });
+        // A script error as a host function reports it: the owner is told and the script pays the error pause.
+        vm.Register("ossl", "Err", (tag, a) => { SchedulerScript.Current.ReportError(a[0].S); return null; });
         vm.Register("ll", "OwnerSay", (tag, a) => { lock (m_marks) m_marks.Add($"{tag}:{a[0].S}"); return null; });
         // What the Detected functions will read: the detected objects of the event being handled, by index.
         vm.Register("ossl", "DetectedCount", (tag, _) => new[] { Value.Int(SchedulerScript.Current.DetectedCount) });
