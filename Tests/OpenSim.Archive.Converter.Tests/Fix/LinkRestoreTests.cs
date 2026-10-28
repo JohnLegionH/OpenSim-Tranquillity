@@ -368,7 +368,9 @@ public class LinkRestoreTests
         Assert.Equal("Table", change.Part);
         Assert.Contains(change.Uses, u => u == "line 4: " + function + " - " + what);
         Assert.Contains("      line 4: " + function + " - " + what, result.ToText());
-        Assert.Contains("line 4: " + function + " - " + what, result.ToJson());
+        using System.Text.Json.JsonDocument json = System.Text.Json.JsonDocument.Parse(result.ToJson());
+        Assert.Contains("line 4: " + function + " - " + what,
+            json.RootElement.GetProperty("scripts")[0].GetProperty("uses").EnumerateArray().Select(u => u.GetString()));
     }
 
     [Fact]
