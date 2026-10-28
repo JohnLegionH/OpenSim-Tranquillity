@@ -89,7 +89,7 @@ public class ErrorRateLimitTests
         rig.Rez(EngineRig.Slua("n = 0\nLLEvents:on('timer', function()\n  n = n + 1\n  if n <= 8 then ll.GetScriptState('no such script') end\nend)\nll.SetTimerEvent(0.1)\nossl.Mark('start')\n"));
 
         Assert.True(SchedulerHarness.WaitFor(() => { lock (heard) return heard.Any(m => m.Contains("no such script") && !m.Contains("repeated")); }), "the first is spoken");
-        Assert.True(SchedulerHarness.WaitFor(() => { lock (heard) return heard.Any(m => Regex.IsMatch(m, @"repeated 7 more times")); }, 20000), "the count follows the quiet");
-        lock (heard) Assert.Equal(2, heard.Count(m => m.Contains("no such script")));
+        Assert.True(SchedulerHarness.WaitFor(() => { lock (heard) return Texts(rig).Any(m => Regex.IsMatch(m, @"no such script.*repeated 7 more times")); }, 20000), "the count follows the quiet");
+        lock (heard) Assert.Single(heard, m => m.Contains("no such script")); // the API spoke it once; the count went to the owner as the engine's message
     }
 }

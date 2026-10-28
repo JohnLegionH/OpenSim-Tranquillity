@@ -173,6 +173,8 @@ namespace SLua.ScriptEngine
             var real = new Phlox.ScriptEngine.LSLSystemAPI(host, m_scene?.GetSceneObjectPart(localId), localId, itemId)
             {
                 RuntimeAccess = new EngineScriptAccess(script),
+                // An error the script functions speak on DEBUG_CHANNEL is told once and then as a count, like the engine's own errors.
+                ShoutErrorFilter = text => AllowErrorShout(itemId, text),
             };
             m_realApis[itemId] = real;
             return ApiRouter.Create(real, fallback);
@@ -1163,7 +1165,7 @@ namespace SLua.ScriptEngine
                 string state;
                 PauseReason paused = PauseReasonsOf(r.ItemID);
                 if (s.StateHeld != null) state = "HELD: " + s.StateHeld;
-                else if (s.Killed) state = "FAULTED: " + s.FaultMessage;
+                else if (s.Killed) state = "FAULTED: " + FirstLine(s.FaultMessage);
                 else if (!s.Running) state = "stopped";
                 else state = "running";
                 var detail = new System.Text.StringBuilder("  ").Append(state);
@@ -1176,6 +1178,16 @@ namespace SLua.ScriptEngine
             if (shown.Count > StatusListLimit)
                 lines.Add($"... {shown.Count - StatusListLimit} more scripts; give an object name, a script name or an item id as a filter to see them");
             return lines;
+        }
+
+        private static string FirstLine(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return string.Empty;
+            int end = text.IndexOf('\n');
+            if (end > 0 && text[end - 1] == '\r')
+                end--;
+            return end < 0 ? text : text.Substring(0, end);
         }
 
         private int CountHeld()
@@ -1272,6 +1284,15 @@ namespace SLua.ScriptEngine
                 return;
             }
             EnsureErrorSweep();
+        }
+
+        /// <summary>True when the error is to be spoken now; a repeat is counted and told by the sweep.</summary>
+        private bool AllowErrorShout(UUID itemId, string text)
+        {
+            if (!m_settings.ErrorRateLimit || m_errors.Offer(itemId, text, Clock.Now))
+                return true;
+            EnsureErrorSweep();
+            return false;
         }
 
         private void EnsureErrorSweep()
