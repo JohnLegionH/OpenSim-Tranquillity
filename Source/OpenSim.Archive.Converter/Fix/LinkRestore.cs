@@ -302,6 +302,9 @@ public static class LinkRestore
             {
                 PartEntry host = plan.Archive.Parts.FirstOrDefault(p => p.PartId.Guid == links.HostPartId);
                 ScriptLinkChange change = new ScriptLinkChange { Object = plan.Archive.Name, Part = host?.Name ?? "?", Script = links.Script };
+                // the scan reads LSL only; an SLua script is listed whenever any number changed, since nothing says it leaves the numbers alone
+                if (links.IsLua && anyChange)
+                    change.Uses.Add("not read: an SLua (Lua) script, which the scan cannot read; check by hand whether it addresses parts by link number");
                 foreach (LinkUse use in links.Uses)
                 {
                     string what = null;

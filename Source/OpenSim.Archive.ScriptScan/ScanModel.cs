@@ -85,6 +85,8 @@ public sealed class ScriptLinkUses
     public string Script { get; set; }
     /// <summary>True when the scan stopped at its cap of findings for this script, so the uses may be incomplete.</summary>
     public bool Truncated { get; set; }
+    /// <summary>True when the script is SLua, which the scan does not read: <see cref="Uses"/> is then empty because nothing was read.</summary>
+    public bool IsLua { get; set; }
     public List<LinkUse> Uses { get; } = new List<LinkUse>();
 }
 

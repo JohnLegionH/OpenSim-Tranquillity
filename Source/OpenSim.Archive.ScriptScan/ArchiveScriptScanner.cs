@@ -251,7 +251,7 @@ public sealed class ArchiveScriptScanner
 
                 ScriptLinkUses links = new ScriptLinkUses
                 {
-                    LinksetId = host?.Record.LinksetId.Guid ?? Guid.Empty, Entry = b.Entry, HostPartId = s.PartId, Script = s.Name, Truncated = analysis.Truncated
+                    LinksetId = host?.Record.LinksetId.Guid ?? Guid.Empty, Entry = b.Entry, HostPartId = s.PartId, Script = s.Name, Truncated = analysis.Truncated, IsLua = analysis.IsLua
                 };
                 links.Uses.AddRange(analysis.LinkUses);
                 Result.ScriptLinks.Add(links);

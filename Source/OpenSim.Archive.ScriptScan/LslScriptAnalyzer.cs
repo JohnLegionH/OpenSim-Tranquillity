@@ -107,6 +107,8 @@ public sealed class ScriptAnalysis
     public bool Truncated { get; set; }
     /// <summary>Where the script addresses other parts of its linkset, or depends on the link numbering.</summary>
     public List<LinkUse> LinkUses { get; } = new List<LinkUse>();
+    /// <summary>True when the text is SLua (Lua), which this scan does not read: it reads LSL only, so <see cref="LinkUses"/> and the hits of such a script are empty by lack of reading, not by finding nothing.</summary>
+    public bool IsLua { get; set; }
 }
 
 /// <summary>
@@ -253,10 +255,24 @@ public static class LslScriptAnalyzer
             || code == ScriptBaseClass.PRIM_NORMAL || code == ScriptBaseClass.PRIM_SPECULAR || code == ScriptBaseClass.PRIM_ALPHA_MODE;
     }
 
+    /// <summary>
+    /// True when the source is SLua rather than LSL: its first line is a Lua comment ("--", as the Phlox engine routes it, including the
+    /// "--!slua" and "--!lua" markers), or the "//SLua:slua" or "//SLua:lua" header line some archives carry. LSL never starts with "--".
+    /// </summary>
+    public static bool IsLuaSource(string source)
+    {
+        if (string.IsNullOrEmpty(source))
+            return false;
+        string head = source.TrimStart('\uFEFF', ' ', '\t', '\r', '\n');
+        if (head.StartsWith("--", StringComparison.Ordinal))
+            return true;
+        return head.StartsWith("//SLua:slua", StringComparison.OrdinalIgnoreCase) || head.StartsWith("//SLua:lua", StringComparison.OrdinalIgnoreCase);
+    }
+
     public static ScriptAnalysis Analyze(string source)
     {
         List<LslToken> tokens = LslLexer.Tokenize(source);
-        ScriptAnalysis result = new ScriptAnalysis { Lines = tokens.Count == 0 ? 0 : tokens[tokens.Count - 1].Line };
+        ScriptAnalysis result = new ScriptAnalysis { Lines = tokens.Count == 0 ? 0 : tokens[tokens.Count - 1].Line, IsLua = IsLuaSource(source) };
         Collector collector = new Collector(result);
 
         LslListTracker lists = new LslListTracker(tokens);
