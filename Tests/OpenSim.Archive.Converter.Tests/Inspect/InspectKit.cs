@@ -56,6 +56,13 @@ internal static class InspectKit
     /// <summary>The one element of a list, as an assertion: a list that is empty or longer fails the test on its assertion.</summary>
     public static T One<T>(this IEnumerable<T> items) => Assert.Single(items);
 
+    /// <summary>Parses JSON text after asserting there is some, so an empty output fails on an assertion.</summary>
+    public static System.Text.Json.JsonDocument Json(string text)
+    {
+        Assert.False(string.IsNullOrWhiteSpace(text), "the JSON is empty");
+        return System.Text.Json.JsonDocument.Parse(text);
+    }
+
     private static string Id(string element, UUID id) => "<" + element + "><UUID>" + id + "</UUID></" + element + ">";
     private static string F(float v) => v.ToString(CultureInfo.InvariantCulture);
     private static string Esc(string s) => SecurityElement.Escape(s);
