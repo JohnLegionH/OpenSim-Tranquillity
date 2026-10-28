@@ -148,7 +148,7 @@ public class ReportOutputTests
         Assert.Contains("inventory items: 2", text);
         Assert.Contains("INVENTORY ITEMS", text);
         Assert.Contains("Builds / House pieces [Object]", text);
-        Assert.Contains("masks   base MCT  owner MCT  group MCT  everyone MCT  next MC-", text);
+        Assert.Contains("masks   base MCT  owner MCT  group n/a  everyone MCT  next MC-", text);
         Assert.Contains("OBJECT 1 \"Wall\"", text);
         Assert.Contains("item \"House pieces\" in Builds, linkset 1 of 2, offset <0, 0, 0>", text);
         Assert.Contains("item \"House pieces\" in Builds, linkset 2 of 2, offset <4, -2, 1.5>", text);

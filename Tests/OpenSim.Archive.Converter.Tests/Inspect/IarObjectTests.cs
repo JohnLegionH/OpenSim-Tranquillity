@@ -55,15 +55,28 @@ public class IarObjectTests
         Assert.Equal("Texture", wood.AssetTypeName);
         Assert.Equal(All, wood.Masks.Base);
         Assert.Equal(M | C | T, wood.Masks.Owner);
-        Assert.Equal(C, wood.Masks.Group);
+        Assert.Null(wood.Masks.Group);
         Assert.Equal(0u, wood.Masks.Everyone);
         Assert.Equal(M | T, wood.Masks.NextOwner);
         Assert.Equal(Bob, wood.CreatorId);
         Assert.Equal(Carol, wood.OwnerId);
-        Assert.Equal(new[] { "group:MT", "everyone:MCT", "next:C" }, wood.Lacks.ToArray());
+        Assert.Equal(new[] { "everyone:MCT", "next:C" }, wood.Lacks.ToArray());
         Assert.True(wood.Flagged);
         Assert.Equal("Notes", r.InventoryItems[1].FolderPath);
         Assert.False(r.InventoryItems[1].Flagged);
+    }
+
+    [Fact]
+    public void AnIarItemNeverHoldsAGroupMaskAndThatIsNotAFlag()
+    {
+        ObjectReport r = ReadIar(Iar(new IarItem { Name = "Note", AssetType = 7 }));
+        InventoryItemEntry note = Assert.Single(r.InventoryItems);
+        Assert.Null(note.Masks.Group);
+        Assert.Empty(note.Lacks);
+        Assert.False(note.Flagged);
+        Assert.Equal(0, r.Summary.FlaggedInventoryItems);
+        Assert.Equal(0, r.Summary.LackingByMask.GetValueOrDefault("group"));
+        Assert.Contains("group n/a", ReportText.Build(r));
     }
 
     [Fact]

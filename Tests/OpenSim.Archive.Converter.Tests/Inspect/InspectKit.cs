@@ -178,7 +178,7 @@ internal static class InspectKit
         sb.Append("<AssetType>").Append(assetType).Append("</AssetType><AssetID>").Append(asset).Append("</AssetID><SaleType>0</SaleType><SalePrice>0</SalePrice>");
         sb.Append("<BasePermissions>").Append(baseMask).Append("</BasePermissions><CurrentPermissions>").Append(currentMask).Append("</CurrentPermissions>");
         sb.Append("<EveryOnePermissions>").Append(everyoneMask).Append("</EveryOnePermissions><NextPermissions>").Append(nextMask).Append("</NextPermissions><Flags>0</Flags>");
-        sb.Append("<GroupPermissions>").Append(groupMask).Append("</GroupPermissions>");
+        // the inventory item serializer writes no group permissions (UserInventoryItemSerializer), so neither does this
         sb.Append("<GroupID>").Append(group ?? UUID.Zero).Append("</GroupID><GroupOwned>False</GroupOwned>");
         if (creatorData != null)
             sb.Append("<CreatorData>").Append(Esc(creatorData)).Append("</CreatorData>");
