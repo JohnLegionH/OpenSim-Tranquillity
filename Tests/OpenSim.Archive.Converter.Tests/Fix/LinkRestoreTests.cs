@@ -335,6 +335,119 @@ public class LinkRestoreTests
         Assert.DoesNotContain("paints the root", text);
     }
 
+    // One script per way of addressing a part by link number. Each holds its call on line 4, so the report's line can be checked.
+    // In the scrambled table link 2 was Leg2 and is now Top, link 3 was Top and is now Leg1, link 4 was Leg1 and is now Leg2.
+    private static string OnLine4(string statement) => "default\n{\n    touch_start(integer n)\n    {\n        " + statement + "\n    }\n}\n";
+
+    public static readonly object[][] AddressedByNumber =
+    {
+        new object[] { "llSetLinkPrimitiveParamsFast(3, [PRIM_COLOR, ALL_SIDES, <1,0,0>, 1.0]);", "llSetLinkPrimitiveParamsFast", "link 3 was part \"Top\" and is now part \"Leg1\"" },
+        new object[] { "llSetLinkPrimitiveParams(4, [PRIM_COLOR, ALL_SIDES, <1,0,0>, 1.0]);", "llSetLinkPrimitiveParams", "link 4 was part \"Leg1\" and is now part \"Leg2\"" },
+        new object[] { "llMessageLinked(2, 7, \"open\", NULL_KEY);", "llMessageLinked", "link 2 was part \"Leg2\" and is now part \"Top\"" },
+        new object[] { "llOwnerSay(llGetLinkName(3));", "llGetLinkName", "link 3 was part \"Top\" and is now part \"Leg1\"" },
+        new object[] { "llOwnerSay((string)llGetLinkKey(4));", "llGetLinkKey", "link 4 was part \"Leg1\" and is now part \"Leg2\"" },
+        new object[] { "llSetLinkPrimitiveParamsFast(LINK_THIS, [PRIM_LINK_TARGET, 3, PRIM_COLOR, ALL_SIDES, <1,0,0>, 1.0]);", "llSetLinkPrimitiveParamsFast", "link 3 was part \"Top\" and is now part \"Leg1\"" },
+        new object[] { "llOwnerSay((string)llGetLinkNumber());", "llGetLinkNumber", "depends on how the parts are numbered" },
+        new object[] { "llOwnerSay((string)llGetNumberOfPrims());", "llGetNumberOfPrims", "depends on how the parts are numbered" },
+        new object[] { "llOwnerSay(llGetLinkName(n));", "llGetLinkName", "a link number the scan cannot work out" },
+    };
+
+    [Theory]
+    [MemberData(nameof(AddressedByNumber))]
+    public void EveryWayOfAddressingAPartByLinkNumberIsListedWithItsLineAndWhatChanged(string statement, string function, string what)
+    {
+        UUID id = UUID.Random();
+        KPart[] source = ScrambledTable();
+        source[0].Items.Add(Script("by number", id));
+        Setup s = Prepare(Oar(ReferenceTable()), OarWithScripts(source, (id, OnLine4(statement))));
+
+        RelinkResult result = Relink(s);
+
+        ScriptLinkChange change = Assert.Single(result.Scripts);
+        Assert.Equal("by number", change.Script);
+        Assert.Equal("Table", change.Part);
+        Assert.Contains(change.Uses, u => u == "line 4: " + function + " - " + what);
+        Assert.Contains("      line 4: " + function + " - " + what, result.ToText());
+        Assert.Contains("line 4: " + function + " - " + what, result.ToJson());
+    }
+
+    [Fact]
+    public void ALinkMessageHandlerThatReadsTheSendersLinkNumberIsListedAtTheHandlersLine()
+    {
+        UUID id = UUID.Random();
+        KPart[] source = ScrambledTable();
+        source[0].Items.Add(Script("listens", id));
+        string text = "default\n{\n    touch_start(integer n) { }\n    link_message(integer sender, integer num, string str, key k)\n    {\n        llOwnerSay((string)sender);\n    }\n}\n";
+        Setup s = Prepare(Oar(ReferenceTable()), OarWithScripts(source, (id, text)));
+
+        ScriptLinkChange change = Assert.Single(Relink(s).Scripts);
+        Assert.Contains(change.Uses, u => u == "line 4: link_message - reads the sender's link number");
+    }
+
+    [Fact]
+    public void AScriptInAChildPartIsListedWithTheNameOfThePartThatHoldsIt()
+    {
+        UUID id = UUID.Random();
+        KPart[] source = ScrambledTable();
+        source[2].Items.Add(Script("in the top", id));                         // "Top"
+        Setup s = Prepare(Oar(ReferenceTable()), OarWithScripts(source, (id, OnLine4("llSetLinkColor(3, <1,0,0>, ALL_SIDES);"))));
+
+        ScriptLinkChange change = Assert.Single(Relink(s).Scripts);
+        Assert.Equal("Top", change.Part);
+        Assert.Equal("in the top", change.Script);
+    }
+
+    [Theory]
+    [InlineData("llSetLinkColor(LINK_SET, <1,0,0>, ALL_SIDES);")]
+    [InlineData("llSetLinkColor(LINK_ALL_OTHERS, <1,0,0>, ALL_SIDES);")]
+    [InlineData("llSetLinkColor(LINK_ALL_CHILDREN, <1,0,0>, ALL_SIDES);")]
+    [InlineData("llSetLinkColor(LINK_THIS, <1,0,0>, ALL_SIDES);")]
+    [InlineData("llSetLinkColor(1, <1,0,0>, ALL_SIDES);")]
+    [InlineData("llMessageLinked(LINK_ALL_OTHERS, 1, \"ping\", NULL_KEY);")]
+    [InlineData("llMessageLinked(LINK_SET, 1, \"ping\", NULL_KEY);")]
+    [InlineData("llOwnerSay(\"no link at all\");")]
+    public void AScriptThatNamesNoPartByNumberIsNotListedWhateverIsRenumbered(string statement)
+    {
+        UUID id = UUID.Random();
+        KPart[] source = ScrambledTable();
+        source[0].Items.Add(Script("harmless", id));
+        Setup s = Prepare(Oar(ReferenceTable()), OarWithScripts(source, (id, OnLine4(statement))));
+
+        RelinkResult result = Relink(s);
+
+        Assert.Equal(3, result.Objects.Single().Parts.Count(p => p.Changed));
+        Assert.Empty(result.Scripts);
+    }
+
+    [Fact]
+    public void AnLuaScriptIsListedAsOneTheScanCannotReadWhenPartsAreRenumberedAndNotOtherwise()
+    {
+        UUID lua = UUID.Random(), lua2 = UUID.Random(), lsl = UUID.Random();
+        KPart[] source = ScrambledTable();
+        source[0].Items.Add(Script("lua with marker", lua));
+        source[1].Items.Add(Script("lua with dashes", lua2));
+        source[0].Items.Add(Script("lsl with marker", lsl));
+        byte[] archive = OarWithScripts(source,
+            (lua, "//SLua:slua\nll.SetLinkColor(3, vector(1, 0, 0), ALL_SIDES)\n"),
+            (lua2, "--!slua\nll.MessageLinked(2, 1, 'x', '')\n"),
+            (lsl, "//SLua:LSL\ndefault\n{\n    touch_start(integer n) { llOwnerSay(\"hello\"); }\n}\n"));
+        Setup s = Prepare(Oar(ReferenceTable()), archive);
+
+        RelinkResult result = Relink(s);
+
+        Assert.Equal(new[] { "lua with dashes", "lua with marker" }, result.Scripts.Select(x => x.Script).OrderBy(x => x, StringComparer.Ordinal).ToArray());
+        Assert.All(result.Scripts, x => Assert.Contains(x.Uses, u => u.StartsWith("not read: ") && u.Contains("Lua")));
+        Assert.Equal("Leg2", result.Scripts.Single(x => x.Script == "lua with dashes").Part);
+        Assert.Contains("not read: ", result.ToText());
+
+        // the same scripts in an object whose parts were already in the reference's order: nothing to list
+        UUID again = UUID.Random();
+        KPart[] same = ReferenceTable();
+        same[0].Items.Add(Script("lua with marker", again));
+        Setup unchanged = Prepare(Oar(ReferenceTable()), OarWithScripts(same, (again, "//SLua:slua\nll.SetLinkColor(3, vector(1, 0, 0), ALL_SIDES)\n")));
+        Assert.Empty(Relink(unchanged).Scripts);
+    }
+
     [Fact]
     public void NoScriptIsListedForAnObjectWhosePartsWereNotRenumbered()
     {
