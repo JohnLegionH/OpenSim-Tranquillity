@@ -12,7 +12,8 @@ using static OpenSim.Archive.GltfExport.Tests.TestKit;
 
 namespace OpenSim.Archive.GltfExport.Tests;
 
-/// <summary>The oar-export command line: cleaning is on unless --no-clean is given, and --version names the version.</summary>
+/// <summary>The oar-export command line: cleaning is on unless --no-clean is given, and --version names the version. Redirects the console, so it shares a collection with the other classes that do.</summary>
+[Collection("console-output")]
 public class CleanExportCommandTests
 {
     private static (int exit, string output) Run(params string[] args)

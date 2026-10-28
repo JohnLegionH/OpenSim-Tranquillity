@@ -13,7 +13,8 @@ using static OpenSim.Archive.GltfExport.Tests.TestKit;
 
 namespace OpenSim.Archive.GltfExport.Tests;
 
-/// <summary>A whole archive in, a folder per build out; the archive itself untouched.</summary>
+/// <summary>A whole archive in, a folder per build out; the archive itself untouched. Redirects the console, so it shares a collection with the other classes that do.</summary>
+[Collection("console-output")]
 public class ArchiveExportTests
 {
     private static (string archive, string outDir, PartSpec treeRoot, PartSpec houseRoot) MakeArchive()
