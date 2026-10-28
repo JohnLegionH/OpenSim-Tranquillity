@@ -112,7 +112,8 @@ public class LinkRestoreTests
     [Fact]
     public void TheRootStaysTheRootWhateverTheReferenceSays()
     {
-        KPart[] reference = { P("Top", 1, 0, 0, 1), P("Table", 2), P("Leg1", 3, 1, 1, -1) };
+        // the reference stores the root's link number as 3, so by number alone the root would come last
+        KPart[] reference = { P("Table", 3), P("Top", 1, 0, 0, 1), P("Leg1", 2, 1, 1, -1) };
         KPart[] source = { P("Table", 1), P("Leg1", 2, 1, 1, -1), P("Top", 3, 0, 0, 1) };
         Setup s = Prepare(Oar(reference), Oar(source));
         Relink(s);
@@ -252,7 +253,7 @@ public class LinkRestoreTests
         Relink(s);
 
         string after = Text(Entries(s.Dest), "objects/");
-        Assert.Equal(3, after.Split("</SceneObjectPart>\n      <SceneObjectPart").Length - 1);
+        Assert.Equal(2, after.Split("</SceneObjectPart>\n      <SceneObjectPart").Length - 1);
         Assert.Equal(new[] { "Table", "Top", "Leg1", "Leg2" }, Names(Read(s.Dest).Objects.One()));
     }
 

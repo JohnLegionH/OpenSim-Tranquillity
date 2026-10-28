@@ -222,6 +222,20 @@ public static class ReportCompare
 
     // ------------------------------------------------------------------ pairing objects
 
+    /// <summary>
+    /// Pairs the objects of a reference report with those of another report the way a compare does: by name, and where several share a name, by part
+    /// count and shape. Objects that found no partner are returned in the two lists.
+    /// </summary>
+    public static List<(ObjectEntry reference, ObjectEntry archive, string how)> PairObjects(IReadOnlyList<ObjectEntry> references, IReadOnlyList<ObjectEntry> archives,
+        out List<ObjectEntry> onlyInReference, out List<ObjectEntry> onlyInArchive)
+    {
+        CompareResult scratch = new CompareResult();
+        List<(ObjectEntry, ObjectEntry, string)> pairs = Pair(references.ToList(), archives.ToList(), scratch);
+        onlyInReference = references.Where(r => !pairs.Any(p => ReferenceEquals(p.Item1, r))).ToList();
+        onlyInArchive = archives.Where(a => !pairs.Any(p => ReferenceEquals(p.Item2, a))).ToList();
+        return pairs.Select(p => (p.Item1, p.Item2, p.Item3)).ToList();
+    }
+
     private static string ShapeSignature(ObjectEntry o) => string.Join("|", o.Parts.Select(p => p.ShapeKey).OrderBy(k => k, StringComparer.Ordinal));
 
     private static List<(ObjectEntry, ObjectEntry, string)> Pair(List<ObjectEntry> refs, List<ObjectEntry> arcs, CompareResult result)

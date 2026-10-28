@@ -22,6 +22,7 @@ internal static class ConvertCommand
        OpenSim.ArchiveInspector oar-convert <archive.oar> --merge --out <new.oar> --merge-plan-dir <folder> [--report <folder>] [--lod-pixel-limit <pixels>] [--assume-safe-unscanned]
        OpenSim.ArchiveInspector oar-convert <archive.oar> --merge --plan-only --merge-plan-dir <folder> [--assume-safe-unscanned]
        OpenSim.ArchiveInspector oar-convert <archive.oar|archive.iar> --fix-perms --creator <id>[,<id>...] --out <new archive> [--report <folder>]
+       OpenSim.ArchiveInspector oar-convert <archive.oar|archive.iar> --relink-from <reference archive> --out <new archive> [--report <folder>]
 
 Turns every part the eligibility rules pass (see oar-eligibility) into a mesh part and writes a new archive. A converted part
 keeps its link number, name, description, contents, size and texture entry; its faces, their numbers and their texture
@@ -53,6 +54,14 @@ that changed with its value before and after, and every part and item left alone
   --fix-perms                write the permission-fixed copy to --out; no conversion is done
   --creator <id>[,<id>...]   the account ids whose creations are fixed (required with --fix-perms; the program refuses without it)
   --report <folder>          also write fix-perms-report.txt and fix-perms-report.json there
+
+Link order restore (--relink-from): writes a copy of an OAR or IAR in which each object that is also in the reference archive has the
+reference's link order back, so scripts and tools that address parts by link number see the numbering they were made for. Objects are
+paired as oar-inspect --compare pairs them (by name and, where several share a name, by part count and shape); parts are matched by name,
+shape and position relative to the root. The root part stays the root; parts the reference does not hold keep their order, after the
+matched ones; objects and parts that cannot be matched are left unchanged and listed. The report lists every part's link number and place
+in the file before and after, and every script whose use of link numbers changes. The reference is only read.
+  --relink-from <reference>  the OAR or IAR whose link order is restored; the output goes to --out
 
 The mesh assets are written with OpenSim.MeshAsset: the faces as the high level of detail, the lower levels made with the
 viewer's profile, a bounding-hull physics block, and a physics_mesh block holding the collision shape the region's own prim
@@ -140,6 +149,13 @@ Exit codes: 0 the check passed, 1 the parity check failed or a mesh failed its v
             if (outPath == null) return Fail("--out is required with --fix-perms");
             return RunFixPerms(archive, outPath, creatorArg, reportDir);
         }
+        if (relinkFrom != null)
+        {
+            if (merge) return Fail("--relink-from cannot be combined with --merge");
+            if (planOut != null || planOnly || lodGiven || mergePlanDir != null) return Fail("--relink-from takes only --out and --report");
+            if (outPath == null) return Fail("--out is required with --relink-from");
+            return RunRelink(archive, relinkFrom, outPath, reportDir);
+        }
         if (planOnly && !merge) return Fail("--plan-only goes with --merge");
         if (lodGiven && !merge) return Fail("--lod-pixel-limit goes with --merge: it sets the levels of detail of merged parts, and without --merge no part is merged");
         if (merge && mergePlanDir == null) return Fail("--merge-plan-dir is required with --merge");
@@ -195,6 +211,29 @@ Exit codes: 0 the check passed, 1 the parity check failed or a mesh failed its v
             return 0;
         }
         catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is InvalidDataException || e is ArgumentException || e is InvalidOperationException)
+        {
+            Console.Error.WriteLine("oar-convert could not run: " + Sanitize.Text(e.Message));
+            return 2;
+        }
+    }
+
+    private static int RunRelink(string archive, string reference, string outPath, string reportDir)
+    {
+        try
+        {
+            OpenSim.Archive.Converter.Fix.RelinkResult result = OpenSim.Archive.Converter.Fix.LinkRestore.Run(archive, reference, outPath);
+            string text = result.ToText();
+            Console.Out.Write(text);
+            if (reportDir != null)
+            {
+                Directory.CreateDirectory(reportDir);
+                ReportFile.Write(Path.Combine(reportDir, "relink-report.txt"), text);
+                ReportFile.Write(Path.Combine(reportDir, "relink-report.json"), result.ToJson());
+            }
+            return 0;
+        }
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is InvalidDataException || e is ArgumentException || e is InvalidOperationException
+            || e is ScanException)
         {
             Console.Error.WriteLine("oar-convert could not run: " + Sanitize.Text(e.Message));
             return 2;
