@@ -1852,7 +1852,10 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
                                     if (m_landIDList[xx, yy] == 0)
                                         m_landIDList[xx, yy] = onlyParcelID;
 
-                            onlyLandObject.LandBitmap = CreateBitmapForID(onlyParcelID);
+                            // The bitmap changed, so the parcel's area, corners and stored bitmap have to follow,
+                            // and the parcel is saved again; otherwise the old values come back at every start.
+                            onlyLandObject.SetLandBitmap(CreateBitmapForID(onlyParcelID));
+                            m_scene.EventManager.TriggerLandObjectUpdated((uint)onlyLandObject.LandData.LocalID, onlyLandObject);
                         }
                         else if (m_landList.Count > 1)
                         {
