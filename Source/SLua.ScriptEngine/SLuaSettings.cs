@@ -52,6 +52,9 @@ namespace SLua.ScriptEngine
 
         public int MaxEventQueue { get; private set; } = 64;
 
+        /// <summary>A script with no engine header and no saved state is taken by this engine as LSL (ClaimHeaderlessScripts).</summary>
+        public bool ClaimHeaderlessScripts { get; private set; }
+
         /// <summary>An event that wakes an idle script puts it at the front of its worker's ring (once per ring cycle).</summary>
         public bool EventFrontOfRing { get; private set; } = true;
 
