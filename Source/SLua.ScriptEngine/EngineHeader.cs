@@ -66,10 +66,9 @@ namespace SLua.ScriptEngine
 
         /// <summary>
         /// The engine that runs the script: the engine its header names when that engine is loaded in the region
-        /// (this engine's name without regard to case, every other name as written), otherwise the engine
-        /// the scene passed (the saved-state owner, or the default for a fresh compile). The region itself compares
-        /// names as written (Scene.ResolveScriptEngine), so a lower-case header reaches this test only when the
-        /// scene already chose this engine.
+        /// (names compared as written, as the region does in Scene.ResolveScriptEngine), otherwise the engine the scene
+        /// passed (the saved-state owner, the engine that claimed the script, or the default for a fresh compile). A
+        /// header in another case names no engine, so such a script is this engine's only when the scene chose it.
         /// </summary>
         internal static string Owner(string script, string defaultEngine, IEnumerable<string> loadedEngines)
         {
@@ -78,12 +77,10 @@ namespace SLua.ScriptEngine
             {
                 foreach (string loaded in loadedEngines)
                 {
-                    // Only this engine's own name is read without regard to case. Another engine named in a
-                    // different case is not its script as far as the region is concerned, and letting go of it
-                    // here would leave a script the region gave to this engine running nowhere.
-                    if (loaded == named
-                        || (loaded == EngineIdentity.EngineName
-                            && string.Equals(loaded, named, System.StringComparison.OrdinalIgnoreCase)))
+                    // Names are compared as written, as the region does (Scene.ResolveScriptEngine). Reading this
+                    // engine's own name without regard to case here, while the region does not, kept a script the
+                    // region had given to another engine in both engines.
+                    if (loaded == named)
                         return loaded;
                 }
             }
