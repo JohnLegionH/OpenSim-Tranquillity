@@ -47,7 +47,7 @@ public class EngineRowDeletionTests
         UUID asset = UUID.Random();
         UUID item = RezSaved(rig, store, asset);
 
-        rig.Scene.EventManager.TriggerRemoveScript(rig.LocalId, item);
+        rig.Object.RootPart.Inventory.RemoveInventoryItem(item); // the item leaves its prim, and the region stops its script
 
         Assert.True(SchedulerHarness.WaitFor(() => !HasRow(store, item, asset)), "the row is gone");
     }
@@ -85,7 +85,7 @@ public class EngineRowDeletionTests
         UUID item = RezSaved(rig, store, asset);
 
         rig.Scene.EventManager.TriggerShutdown();
-        rig.Scene.EventManager.TriggerRemoveScript(rig.LocalId, item); // the region takes its scripts out on the way down
+        rig.Object.RootPart.Inventory.RemoveInventoryItem(item); // the region takes its scripts out on the way down
 
         Assert.True(store.Flush());
         Assert.True(store.HasSavedState(item, asset), "the row is what the restart restores from");
@@ -105,5 +105,28 @@ public class EngineRowDeletionTests
 
         Assert.True(store.Flush());
         Assert.True(store.HasSavedState(item, asset));
+    }
+
+    [RequiresNativeFact]
+    public void SwitchingScriptsOffKeepsTheRowsAndAfterwardsDeletingTheObjectOrAScriptStillDeletesThem()
+    {
+        using var dir = new TempFolder();
+        using var store = new SqliteStateStore(Db(dir), "SLua");
+        using var rig = new EngineRig(Fast, store: store);
+        UUID asset = UUID.Random(), other = UUID.Random();
+        UUID item = RezSaved(rig, store, asset);
+        UUID second = RezSaved(rig, store, other);
+
+        rig.Scene.ScriptsEnabled = false; // the console's "scripts stop": every script is removed, the items stay in their prims
+
+        Assert.True(SchedulerHarness.WaitFor(() => rig.Engine.SchedulerScriptFor(item) == null), "the script was taken out");
+        Assert.True(store.Flush());
+        Assert.True(store.HasSavedState(item, asset), "the row stays when scripts are only switched off");
+        Assert.True(store.HasSavedState(second, other));
+
+        rig.Scene.DeleteSceneObject(rig.Object, false); // and the object deleted afterwards takes its scripts' rows
+
+        Assert.True(SchedulerHarness.WaitFor(() => !HasRow(store, item, asset)), "the object's delete removes the row");
+        Assert.True(SchedulerHarness.WaitFor(() => !HasRow(store, second, other)));
     }
 }
