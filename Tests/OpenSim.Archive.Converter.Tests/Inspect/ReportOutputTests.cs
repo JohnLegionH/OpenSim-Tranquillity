@@ -208,7 +208,7 @@ public class ReportOutputTests
     public void TheCsvHasOneHeaderRowAndOneRowPerPartAndPerItem()
     {
         List<string[]> rows = ParseCsv(ReportCsv.Build(TableReport()));
-        Assert.Equal("kind,object,entry,item_name,folder,coalesced,offset,link_num,file_order,name,description,x,y,z,shape_type,phantom,link_order,creator_id,creator_name,owner_id,owner_name,last_owner_id,last_owner_name,group_id,base,owner,group,everyone,next,base_hex,owner_hex,group_hex,everyone_hex,next_hex,lacks,flagged,effective_owner,effective_group,effective_everyone,effective_next,restricted_by",
+        Assert.Equal("kind,object,entry,item_name,folder,coalesced,offset,link_num,file_order,name,description,x,y,z,shape_type,phantom,link_order,creator_id,creator_name,owner_id,owner_name,last_owner_id,last_owner_name,group_id,base,owner,group,everyone,next,base_hex,owner_hex,group_hex,everyone_hex,next_hex,lacks,flagged,effective_owner,effective_group,effective_everyone,effective_next_derived,restricted_by",
             string.Join(",", rows[0]));
         Assert.Equal(1 + 4 + 1, rows.Count);
         Assert.All(rows, r => Assert.Equal(rows[0].Length, r.Length));

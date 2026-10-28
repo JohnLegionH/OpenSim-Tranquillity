@@ -444,4 +444,62 @@ public class EffectiveAndFlagTests
         Assert.Contains("--strict", r.output);
         Assert.Contains("--names", r.output);
     }
+
+    // ------------------------------------------------------------------ the next owner column is labelled as derived
+
+    private static ObjectReport RestrictedTable()
+    {
+        KPart table = Part("Table", 1), leg = Part("Leg", 2);
+        leg.Items.Add(new KItem { Name = "Door script", OwnerMask = M | T, NextMask = M | T });
+        return ReadOar(Oar(new[] { table, leg }));
+    }
+
+    [Fact]
+    public void TheTextLabelsTheNextOwnerColumnAsDerivedAndTheOthersNot()
+    {
+        string line = ReportText.Build(RestrictedTable()).Split('\n').Single(l => l.StartsWith("  effective"));
+
+        Assert.Contains("next owner (derived) M-T", line);
+        Assert.Contains("owner M-T", line);
+        Assert.DoesNotContain("owner (derived)", line.Replace("next owner (derived)", ""));
+        Assert.DoesNotContain("group (derived)", line);
+        Assert.DoesNotContain("everyone (derived)", line);
+    }
+
+    [Fact]
+    public void TheTextLegendSaysTheNextOwnerColumnIsDerivedAndWhy()
+    {
+        string text = ReportText.Build(RestrictedTable());
+
+        Assert.Contains("next owner column of the effective permissions is derived", text);
+        Assert.Contains("not a single function of the region", text);
+    }
+
+    [Fact]
+    public void TheCsvNamesTheNextOwnerColumnAsDerived()
+    {
+        string header = ReportCsv.Build(RestrictedTable()).Split("\r\n")[0];
+
+        Assert.Contains(",effective_next_derived,", header);
+        Assert.DoesNotContain("effective_next,", header);
+        Assert.Contains("effective_owner,effective_group,effective_everyone,effective_next_derived,restricted_by", header);
+    }
+
+    [Fact]
+    public void TheJsonNamesTheNextOwnerEntryAsDerivedAndCarriesItsLetters()
+    {
+        using System.Text.Json.JsonDocument doc = Json(ReportJson.Build(RestrictedTable()));
+        System.Text.Json.JsonElement eff = doc.RootElement.GetProperty("objects")[0].GetProperty("effective");
+
+        Assert.Equal("M-T", eff.GetProperty("nextOwnerDerived").GetProperty("letters").GetString());
+        Assert.False(eff.TryGetProperty("nextOwner", out _));
+        Assert.Equal("M-T", eff.GetProperty("owner").GetProperty("letters").GetString());
+    }
+
+    [Fact]
+    public void TheUsageTextSaysTheNextOwnerColumnIsDerived()
+    {
+        var r = Run("--help");
+        Assert.Contains("next owner column is derived", r.output);
+    }
 }
