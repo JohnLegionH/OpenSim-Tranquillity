@@ -451,6 +451,27 @@ public class LinkRestoreTests
     }
 
     [Fact]
+    public void NoScriptIsListedWhenOnlyTheFileOrderChangesAndEveryPartKeepsItsNumber()
+    {
+        // the stored numbers are already the reference's (Top 2, Leg1 3, Leg2 4) but the parts sit in another order in the file: the object is
+        // rewritten, and no part changes its number, so neither an LSL script on a number nor an SLua script is at risk
+        UUID lsl = UUID.Random(), lua = UUID.Random();
+        KPart[] source = { P("Table", 1), P("Leg2", 4, -1, 1, -1), P("Top", 2, 0, 0, 1), P("Leg1", 3, 1, 1, -1) };
+        source[0].Items.Add(Script("by number", lsl));
+        source[0].Items.Add(Script("lua", lua));
+        Setup s = Prepare(Oar(ReferenceTable()), OarWithScripts(source,
+            (lsl, "default { touch_start(integer n) { llSetLinkColor(3, <1,0,0>, ALL_SIDES); } }"),
+            (lua, "//SLua:slua\nll.SetLinkColor(3, vector(1, 0, 0), ALL_SIDES)\n")));
+
+        RelinkResult result = Relink(s);
+
+        Assert.Equal(1, result.ObjectsChanged);
+        Assert.Equal(new[] { 1, 2, 3, 4 }, result.Objects.Single().Parts.OrderBy(p => p.FilePositionAfter).Select(p => p.LinkAfter).ToArray());
+        Assert.All(result.Objects.Single().Parts, p => Assert.Equal(p.LinkBefore, p.LinkAfter));
+        Assert.Empty(result.Scripts);
+    }
+
+    [Fact]
     public void NoScriptIsListedForAnObjectWhosePartsWereNotRenumbered()
     {
         UUID id = UUID.Random();
