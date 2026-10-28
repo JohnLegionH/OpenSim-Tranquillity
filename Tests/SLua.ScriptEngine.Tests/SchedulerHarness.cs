@@ -35,6 +35,9 @@ internal sealed class SchedulerHarness : IDisposable
     /// <summary>Scripts reported as faulted or killed, in order.</summary>
     public readonly ConcurrentQueue<SchedulerScript> FaultedScripts = new();
 
+    /// <summary>Scripts a fault had stopped that were put back stopped from their saved state (not a new fault).</summary>
+    public readonly ConcurrentQueue<SchedulerScript> FaultRestoredScripts = new();
+
     /// <summary>Errors scripts reported through ReportError, as "scriptId:text".</summary>
     public readonly ConcurrentQueue<string> ReportedErrors = new();
 
@@ -62,6 +65,7 @@ internal sealed class SchedulerHarness : IDisposable
             Log = Log,
             VmFactory = MakeVm,
             ScriptFaulted = f => { FaultedScripts.Enqueue(f); Interlocked.Increment(ref FaultsSeen); },
+            ScriptFaultRestored = f => FaultRestoredScripts.Enqueue(f),
             ScriptError = (script, text) => ReportedErrors.Enqueue(script.Id + ":" + text),
             WorkerStopped = (index, crashes, message) => StoppedWorkers.Enqueue((index, crashes, message)),
         };
