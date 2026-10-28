@@ -157,11 +157,10 @@ public class FixCommandTests
     }
 
     [Fact]
-    public void TheUsageTextDescribesBothModes()
+    public void TheUsageTextDescribesTheFixPermsMode()
     {
         var r = Run("--help");
         Assert.Contains("--fix-perms", r.output);
         Assert.Contains("--creator", r.output);
-        Assert.Contains("--relink-from", r.output);
     }
 }

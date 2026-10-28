@@ -18,7 +18,7 @@ namespace OpenSim.Archive.Rewrite;
 /// </summary>
 internal static class ObjectXml
 {
-    private sealed class Span
+    internal sealed class Span
     {
         public string Name;
         public int TagStart;      // offset of '<' of the start tag
@@ -27,7 +27,7 @@ internal static class ObjectXml
         public int InnerEnd;      // offset of '<' of the end tag (TagEnd when self-closing)
     }
 
-    private sealed class PartSpans
+    internal sealed class PartSpans
     {
         public Guid Id;
         public Dictionary<string, List<Span>> ByPath = new Dictionary<string, List<Span>>();
@@ -159,6 +159,13 @@ internal static class ObjectXml
         if (inserted.Count > 0)
             cuts.Add(InsertionPoint(text, string.Concat(inserted.Select(p => "<Part>" + p + "</Part>")), entryName));
 
+        return ApplyCuts(d, cuts, entryName);
+    }
+
+    /// <summary>Applies text cuts (start, end, replacement) to the decoded file and returns its new bytes; the cuts must not overlap and the result must still be well formed.</summary>
+    internal static byte[] ApplyCuts(Decoded d, List<(int start, int end, string with)> cuts, string entryName)
+    {
+        string text = d.Text;
         cuts = cuts.Select((c, i) => (c, i)).OrderBy(x => x.c.start).ThenBy(x => x.i).Select(x => x.c).ToList();
         for (int i = 1; i < cuts.Count; i++)
             if (cuts[i].start < cuts[i - 1].end)
@@ -240,7 +247,7 @@ internal static class ObjectXml
     }
 
     /// <summary>Reads the file and returns the elements inside each SceneObjectPart whose id is wanted.</summary>
-    private static List<PartSpans> Scan(string text, ISet<Guid> wanted)
+    internal static List<PartSpans> Scan(string text, ISet<Guid> wanted)
     {
         // Line starts as the XML reader counts them: \n, \r\n and a lone \r each end a line.
         List<int> lineStart = new List<int> { 0 };
