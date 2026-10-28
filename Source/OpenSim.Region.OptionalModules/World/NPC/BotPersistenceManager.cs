@@ -1015,6 +1015,20 @@ ORDER BY created_at ASC";
             m_respawnTimer.Start();
         }
 
+        private bool m_startupLoaded;
+
+        /// <summary>
+        /// The simulator loads a region's modules first and its parcels and objects after that, and the bots are
+        /// brought back by looking at both: a parcel to rez on and the object that made the bot. So the region's
+        /// persistent bots are brought back here, once, when it has loaded its parcels and objects.
+        /// </summary>
+        public void OnPrimsLoaded()
+        {
+            if (m_startupLoaded) return;
+            m_startupLoaded = true;
+            LoadPersistentBots();
+        }
+
         private string ValidateForRespawn(PersistentBotRecord rec)
         {
             // Check parcel permissions

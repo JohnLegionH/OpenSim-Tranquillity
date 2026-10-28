@@ -11791,6 +11791,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (mgr == null) return UUID.Zero.ToString();
             mgr.SaveOutfitToDatabase(agentId, notecard, out string reason);
             if (reason != null) { ShoutError("osAgentSaveAppearance: " + reason); return UUID.Zero.ToString(); }
+            WriteOutfitNotecard("osAgentSaveAppearance", notecard, sp, includeHuds != 0);
             return OpenSim.Region.OptionalModules.World.NPC.BotManager.OutfitKey(agentId, notecard).ToString();
         }
 
@@ -12828,6 +12829,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             var mgr = NpcMgr(); if (mgr == null || m_host == null) return UUID.Zero.ToString();
             mgr.SaveOutfitToDatabase(m_host.OwnerID, notecard, out string reason);
             if (reason != null) { ShoutError("osOwnerSaveAppearance: " + reason); return UUID.Zero.ToString(); }
+            WriteOutfitNotecard("osOwnerSaveAppearance", notecard, World?.GetScenePresence(m_host.OwnerID), includeHuds != 0);
             return OpenSim.Region.OptionalModules.World.NPC.BotManager.OutfitKey(m_host.OwnerID, notecard).ToString();
         }
 
@@ -13901,17 +13903,43 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 return UUID.Zero.ToString();
             }
             // OS_NPC_OBJECT_GROUP: BotManager's CreateNPC call carries no group - accepted, not applied.
-            UUID id = mgr.CreateBot(firstname, lastname, position, notecard ?? string.Empty, m_itemID, m_host.OwnerID, owned, senseAsAgent, out string reason);
+            UUID id;
+            string reason;
+            if (TryOutfitNotecard(notecard, out AvatarAppearance look))
+                id = mgr.CreateBotWithAppearance(World, firstname, lastname, position, look, m_itemID, m_host.OwnerID, owned, senseAsAgent, false, out reason, m_host.ParentGroup.UUID);
+            else
+                id = mgr.CreateBotInRegion(World, firstname, lastname, position, notecard ?? string.Empty, m_itemID, m_host.OwnerID, owned, senseAsAgent, false, m_host.ParentGroup.UUID, out reason);
             if (reason != null) ShoutError("osNpcCreate: " + reason);
             return id.ToString();
         }
 
-        private string NpcSaveOutfit(string npc, string notecard)
+        private string NpcSaveOutfit(string npc, string notecard, bool includeHuds)
         {
             var mgr = NpcMgr(); if (mgr == null || !NpcKey(npc, out UUID id)) return UUID.Zero.ToString();
             UUID key = mgr.SaveBotOutfit(id, notecard, m_host.OwnerID, out string reason);
             if (reason != null) ShoutError("osNpcSaveAppearance: " + reason);
+            else WriteOutfitNotecard("osNpcSaveAppearance", notecard, World?.GetScenePresence(id), includeHuds);
             return key.ToString();
+        }
+
+        // A saved outfit is an appearance notecard in the calling object's contents (AppearanceNotecard). The outfit
+        // name is the notecard's name. With no notecard of that name the name goes to the owner's in-memory outfit
+        // store, as it did before notecards; a notecard that is not an appearance is said so and treated the same.
+        private bool TryOutfitNotecard(string name, out AvatarAppearance look)
+        {
+            look = null;
+            if (string.IsNullOrWhiteSpace(name) || m_host == null || World == null) return false;
+            if (m_host.Inventory.GetInventoryItem(name, (int)AssetType.Notecard) == null) return false;
+            if (AppearanceNotecard.TryLoad(m_host, World.AssetService, name, out look, out string why)) return true;
+            ShoutError(why);
+            return false;
+        }
+
+        private void WriteOutfitNotecard(string function, string name, ScenePresence who, bool includeHuds)
+        {
+            if (who?.Appearance == null) { ShoutError(function + ": no avatar here to write the notecard '" + name + "' from"); return; }
+            if (AppearanceNotecard.Save(m_host, World.AssetService, name, who.Appearance, includeHuds) == null)
+                ShoutError(function + ": the notecard '" + name + "' could not be written");
         }
 
         private void NpcMove(string npc, Vector3 target, TravelMode mode)
@@ -13953,14 +13981,14 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public string osNpcSaveAppearance(string npc, string notecard)
         {
             OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcSaveAppearance");
-            return NpcSaveOutfit(npc, notecard);
+            return NpcSaveOutfit(npc, notecard, true);   // as OSSL_Api's two-argument form: HUDs are included
         }
 
         /// <summary>OSSL_Api.cs:2980 - High (key osNpcSaveAppearance).</summary>
         public string osNpcSaveAppearance(string npc, string notecard, int includeHuds)
         {
             OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcSaveAppearance");
-            return NpcSaveOutfit(npc, notecard);   // includeHuds: the outfit store keeps the whole appearance
+            return NpcSaveOutfit(npc, notecard, includeHuds != 0);
         }
 
         /// <summary>OSSL_Api.cs:3005 - High (key osNpcLoadAppearance).</summary>
@@ -13968,7 +13996,11 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcLoadAppearance");
             var mgr = NpcMgr(); if (mgr == null || !NpcKey(npc, out UUID id)) return;
-            mgr.ChangeBotOutfit(id, notecard, m_host.OwnerID, out string reason);
+            string reason;
+            if (TryOutfitNotecard(notecard, out AvatarAppearance look))
+                mgr.ChangeBotAppearance(id, look, m_host.OwnerID, out reason);
+            else
+                mgr.ChangeBotOutfit(id, notecard, m_host.OwnerID, out reason);
             if (reason != null) ShoutError("osNpcLoadAppearance: " + reason);
         }
 
@@ -18096,17 +18128,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return World.RequestModuleInterface<IBotManager>();
         }
 
-        private BotPersistenceManager _botPersistence;
-        private BotPersistenceManager GetBotPersistence()
-        {
-            if (_botPersistence == null)
-            {
-                IBotManager mgr = GetBotManager();
-                if (mgr is BotManager bm)
-                    _botPersistence = bm.PersistenceManager;
-            }
-            return _botPersistence;
-        }
+
 
         public void botCreateBot(string first, string last, string outfit, Vector3 pos, int options)
         {
@@ -18119,7 +18141,9 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 if (manager != null)
                 {
                     string reason;
-                    string botID = manager.CreateBot(first, last, pos, outfit, m_itemID, m_host.OwnerID, out reason).ToString();
+                    string botID = (TryOutfitNotecard(outfit, out AvatarAppearance look)
+                        ? manager.CreateBotWithAppearance(World, first, last, pos, look, m_itemID, m_host.OwnerID, true, true, true, out reason, m_host.ParentGroup.UUID)
+                        : manager.CreateBotInRegion(World, first, last, pos, outfit, m_itemID, m_host.OwnerID, true, true, true, m_host.ParentGroup.UUID, out reason)).ToString();
                     if (reason == null)
                     {
                         retVal = botID;
@@ -18310,6 +18334,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     manager.SaveOutfitToDatabase(m_host.OwnerID, outfitName, out reason);
                     if (reason != null)
                         ShoutError(reason);
+                    else
+                        WriteOutfitNotecard("botSetOutfit", outfitName, World?.GetScenePresence(m_host.OwnerID), false);   // a bot has no use for the owner's HUDs
                 }
             }
             finally
@@ -18327,6 +18353,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 IBotManager manager = GetBotManager();
                 if (manager != null)
                     manager.RemoveOutfitFromDatabase(m_host.OwnerID, outfitName);
+                // A saved outfit is also a notecard in this object (botSetOutfit); it goes too.
+                AppearanceNotecard.Remove(m_host, World?.AssetService, outfitName);
             }
             finally
             {
@@ -18347,7 +18375,10 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 if (manager != null)
                 {
                     string reason;
-                    manager.ChangeBotOutfit(id, outfitName, m_host.OwnerID, out reason);
+                    if (TryOutfitNotecard(outfitName, out AvatarAppearance look))
+                        manager.ChangeBotAppearance(id, look, m_host.OwnerID, out reason);
+                    else
+                        manager.ChangeBotOutfit(id, outfitName, m_host.OwnerID, out reason);
                     if (reason != null)
                         ShoutError(reason);
                 }
@@ -18583,10 +18614,13 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 if (type == VarType.Vector) pos = positions.GetVector3Item(i);
                 else if (type == VarType.Float || type == VarType.Integer) pos = new Vector3(positions.GetLSLFloatItem(i), 0f, 0f);
                 else return;
-                pos.X = Math.Clamp(pos.X, 0f, 256f);
-                pos.Y = Math.Clamp(pos.Y, 0f, 256f);
+                // The point is held inside the region the bot is in (Halcyon's Util.ForceValidRegionXYZ held it
+                // inside a 256 m region), whatever that region's size.
+                float edgeX = World.RegionInfo.RegionSizeX, edgeY = World.RegionInfo.RegionSizeY;
+                pos.X = Math.Clamp(pos.X, 0f, edgeX);
+                pos.Y = Math.Clamp(pos.Y, 0f, edgeY);
                 pos.Z = Math.Max(pos.Z, 0f);
-                float zmin = World.Heightmap.GetHeight(Math.Clamp(pos.X, 0f, 255.99f), Math.Clamp(pos.Y, 0f, 255.99f));
+                float zmin = World.Heightmap.GetHeight(Math.Clamp(pos.X, 0f, edgeX - 0.01f), Math.Clamp(pos.Y, 0f, edgeY - 0.01f));
                 if (pos.Z < zmin) pos.Z = zmin;
                 positionsMap.Add(pos);
             }
@@ -22073,10 +22107,11 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             UUID id = ParseBotID(botID);
             if (id == UUID.Zero) return BotPersistError.NOT_FOUND;
 
-            BotPersistenceManager pm = GetBotPersistence();
-            if (pm == null) return BotPersistError.DISABLED;
+            // Each region keeps its own persistent bots: the call goes to the region this script is in.
+            IBotManager manager = GetBotManager();
+            if (manager == null) return BotPersistError.DISABLED;
 
-            return pm.SetPersistent(id, m_host.OwnerID, m_itemID,
+            return manager.SetBotPersistent(World, id, m_host.OwnerID, m_itemID,
                 m_host.ParentGroup.UUID, ttlSeconds);
         }
 
@@ -22086,10 +22121,10 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             UUID id = ParseBotID(botID);
             if (id == UUID.Zero) return BotPersistError.NOT_FOUND;
 
-            BotPersistenceManager pm = GetBotPersistence();
-            if (pm == null) return BotPersistError.DISABLED;
+            IBotManager manager = GetBotManager();
+            if (manager == null) return BotPersistError.DISABLED;
 
-            return pm.RemovePersistent(id, m_host.OwnerID);
+            return manager.RemoveBotPersistent(World, id, m_host.OwnerID);
         }
 
         // ── 669: botIsPersistent ──
@@ -22098,10 +22133,10 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             UUID id = ParseBotID(botID);
             if (id == UUID.Zero) return 0;
 
-            BotPersistenceManager pm = GetBotPersistence();
-            if (pm == null) return 0;
+            IBotManager manager = GetBotManager();
+            if (manager == null) return 0;
 
-            return pm.IsPersistent(id) ? 1 : 0;
+            return manager.IsBotPersistent(World, id) ? 1 : 0;
         }
 
         // ── 670: botGetPersistentData ──
@@ -22110,10 +22145,10 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             UUID id = ParseBotID(botID);
             if (id == UUID.Zero) return string.Empty;
 
-            BotPersistenceManager pm = GetBotPersistence();
-            if (pm == null) return string.Empty;
+            IBotManager manager = GetBotManager();
+            if (manager == null) return string.Empty;
 
-            return pm.GetPersistentData(id, key);
+            return manager.GetBotPersistentData(World, id, key);
         }
 
         // ── 671: botSetPersistentData ──
@@ -22122,10 +22157,10 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             UUID id = ParseBotID(botID);
             if (id == UUID.Zero) return BotPersistError.NOT_FOUND;
 
-            BotPersistenceManager pm = GetBotPersistence();
-            if (pm == null) return BotPersistError.DISABLED;
+            IBotManager manager = GetBotManager();
+            if (manager == null) return BotPersistError.DISABLED;
 
-            return pm.SetPersistentData(id, m_host.OwnerID, key, value);
+            return manager.SetBotPersistentData(World, id, m_host.OwnerID, key, value);
         }
     }
 

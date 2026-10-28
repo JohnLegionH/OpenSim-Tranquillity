@@ -37,6 +37,8 @@ namespace OpenSim.Region.OptionalModules.Avatar.ServerSideBaking;
 ///     ServerSideBaking = false   ; simulator-wide default for the wire flag
 ///     BakeSize = 1024            ; 512, 1024 or 2048
 ///     BakeQuality = 0.85
+///     NpcBakeCleanup = true      ; delete an NPC's bakes when it goes, unless another NPC holds them
+///     NpcBakeCleanupDryRun = false ; log what the cleanup would delete and delete nothing
 ///
 /// [&lt;Region Name&gt;]
 ///     ServerSideBaking = true    ; per-region override, same idiom as [AIS] AIS_Enabled
@@ -68,6 +70,29 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
     public int BakeSize { get; private set; } = 1024;
     public double BakeQuality { get; private set; } = 0.85;
 
+    /// <summary>The bakes the NPCs of this simulator hold between them.</summary>
+    public NpcBakeShare NpcBakes { get; } = new();
+
+    /// <summary>Whether an NPC's bakes are deleted when it goes ([Appearance] NpcBakeCleanup, default true).</summary>
+    public bool NpcBakeCleanupEnabled { get; private set; } = true;
+
+    /// <summary>Whether the cleanup only logs what it would delete ([Appearance] NpcBakeCleanupDryRun, default false).</summary>
+    public bool NpcBakeCleanupDryRun { get; private set; }
+
+    /// <summary>The cleanup of removed NPCs' bakes.</summary>
+    public NpcBakeCleanup NpcCleanup { get; private set; }
+
+    // The scene each baked NPC is in, so a region that shuts down can clean up the NPCs it still has, and the
+    // cleanups still running, so that shutdown waits for them.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<UUID, Scene> m_npcScenes = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Task, byte> m_cleanups = new();
+    private readonly Dictionary<Scene, (EventManager.OnRemovePresenceDelegate Removed, Action<Scene> ShuttingDown)> m_npcHandlers = new();
+
+    public ServerSideBakingModule()
+    {
+        NpcCleanup = new NpcBakeCleanup(NpcBakes, NpcBakeCleanupEnabled, NpcBakeCleanupDryRun);
+    }
+
     public string Name => "ServerSideBakingModule";
     public Type ReplaceableInterface => null;
 
@@ -79,7 +104,10 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
             ServerSideBakingEnabled = config.GetBoolean("ServerSideBaking", false);
             BakeSize = config.GetInt("BakeSize", 1024);
             BakeQuality = config.GetDouble("BakeQuality", 0.85);
+            NpcBakeCleanupEnabled = config.GetBoolean("NpcBakeCleanup", true);
+            NpcBakeCleanupDryRun = config.GetBoolean("NpcBakeCleanupDryRun", false);
         }
+        NpcCleanup = new NpcBakeCleanup(NpcBakes, NpcBakeCleanupEnabled, NpcBakeCleanupDryRun);
         if (BakeSize is not (512 or 1024 or 2048))
         {
             m_log.LogWarning("[SSB]: [Appearance] BakeSize {Size} is not 512, 1024 or 2048; using 1024", BakeSize);
@@ -102,15 +130,22 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
     {
         scene.UnregisterModuleInterface<IServerSideBaker>(this);
         ServerSideBakingRegion region;
+        (EventManager.OnRemovePresenceDelegate Removed, Action<Scene> ShuttingDown) npcHandlers;
         lock (m_scenes)
         {
             m_scenes.Remove(scene);
             m_regions.Remove(scene, out region);
+            m_npcHandlers.Remove(scene, out npcHandlers);
         }
         if (region is null) return;
         scene.UnregisterModuleInterface<IServerSideBakingRegion>(region);
         scene.EventManager.OnMakeRootAgent -= OnMakeRootAgent;
         scene.EventManager.OnRemovePresence -= region.Forget;
+        if (npcHandlers.Removed is not null)
+        {
+            scene.EventManager.OnRemovePresence -= npcHandlers.Removed;
+            scene.EventManager.OnSceneShuttingDown -= npcHandlers.ShuttingDown;
+        }
         scene.EventManager.OnAvatarAppearanceChange -= OnAvatarAppearanceChanged;
     }
 
@@ -147,6 +182,13 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
             scene.EventManager.OnRegisterCaps += (agentID, caps) => RegisterCaps(scene, agentID, caps);
             scene.EventManager.OnMakeRootAgent += OnMakeRootAgent;
             scene.EventManager.OnRemovePresence += region.Forget;
+            // An NPC that goes lets go of its bakes, and those nobody else holds are deleted; so are those of the
+            // NPCs still in the region when it shuts down.
+            EventManager.OnRemovePresenceDelegate npcRemoved = id => OnNpcRemoved(scene, id);
+            Action<Scene> shuttingDown = OnSceneShuttingDown;
+            lock (m_scenes) m_npcHandlers[scene] = (npcRemoved, shuttingDown);
+            scene.EventManager.OnRemovePresence += npcRemoved;
+            scene.EventManager.OnSceneShuttingDown += shuttingDown;
             scene.EventManager.OnAvatarAppearanceChange += OnAvatarAppearanceChanged;
             m_log.LogDebug(
                 "[SSB]: region {Region} has server-side baking ON: RegionProtocols bit 0 set, {Cap} advertised, "
@@ -164,6 +206,41 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
             "Bake the avatar's current wearables on the server, store the bakes as assets, write them into the avatar's "
             + "texture entry and send the appearance. (Not 'appearance rebake', which asks the viewer to re-upload its own bakes.)",
             HandleServerBakeCommand);
+    }
+
+    // ------------------------------------------------------------------ NPC bake cleanup
+
+    /// <summary>
+    /// An NPC left the region. Its holds are let go and the bakes nobody else holds are deleted, off the thread that
+    /// removed it (the asset service may be remote). Presences that are not baked NPCs are not in the table and
+    /// cost nothing.
+    /// </summary>
+    private void OnNpcRemoved(Scene scene, UUID id)
+    {
+        if (!m_npcScenes.TryRemove(id, out _)) return;
+        var task = Task.Run(() => CleanUpNpc(scene, id));
+        m_cleanups[task] = 0;
+        task.ContinueWith(t => m_cleanups.TryRemove(t, out _), TaskScheduler.Default);
+    }
+
+    /// <summary>
+    /// The region is shutting down. Cleanups already running are waited for, then every NPC the region still has is
+    /// cleaned up here, on this thread, so the work is done before the process ends.
+    /// </summary>
+    private void OnSceneShuttingDown(Scene scene)
+    {
+        try { Task.WaitAll(m_cleanups.Keys.ToArray(), TimeSpan.FromSeconds(10)); }
+        catch (Exception) { }
+
+        foreach (var id in m_npcScenes.Where(kv => ReferenceEquals(kv.Value, scene)).Select(kv => kv.Key).ToList())
+            if (m_npcScenes.TryRemove(id, out _))
+                CleanUpNpc(scene, id);
+    }
+
+    private void CleanUpNpc(Scene scene, UUID id)
+    {
+        try { NpcCleanup.Run(id, scene.AssetService); }
+        catch (Exception e) { m_log.LogWarning(e, "[SSB]: NPC bake cleanup for {Npc} failed", id); }
     }
 
     /// <summary>The backend is created on first use so a region without any bake never loads the compositor's resources.</summary>
@@ -206,6 +283,7 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
 
         var scene = sp.Scene;
         var backend = Backend;
+        if (sp.IsNPC) m_npcScenes[sp.UUID] = scene;
 
         var cofVersion = CofVersionOf(scene, sp.UUID);
         var region = RegionOf(scene);
@@ -225,13 +303,16 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
         // steps 2, 4-6, scene-free; the ADR-004 index in the avatar service is read for the reuse decision and
         // written back at the end of the run
         var outcome = await Task.Run(() => BakeOrchestrator.Run(sp.UUID, reason, appearance.Wearables, appearance.VisualParams, appearance,
-            scene.AssetService, scene.AvatarService, backend, m_compositor, BakeSize, cofVersion, ct), ct).ConfigureAwait(false);
+            scene.AssetService, scene.AvatarService, backend, m_compositor, BakeSize, cofVersion, ct, sp.IsNPC ? NpcBakes : null), ct).ConfigureAwait(false);
+        if (sp.IsNPC) ClearFacesWithoutOwnBake(appearance, outcome);
 
         // The presence can also close while the bake runs. The bake itself is kept: it is stored and its index
         // written, which is where the next login's bake finds it. Nothing is written back, though: the region
         // forgot the agent on close (ServerSideBakingRegion.Forget), and recording now would put back what that
         // removed, for an agent that is no longer here. There is nobody to send to either.
         var closed = sp.IsDeleted;
+        // An NPC that went while its bake ran let go of nothing then; the bake has just taken its holds.
+        if (closed && sp.IsNPC) CleanUpNpc(scene, sp.UUID);
         var live = outcome.Count(ChannelStatus.Baked) + outcome.Count(ChannelStatus.Reused) > 0;
         if (closed)
             m_log.LogDebug("[SSB]: bake for {Name} ({Agent}) reason={Reason}: the presence closed during the bake; stored, not recorded or sent",
@@ -279,6 +360,21 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
                 foreach (var note in c.Fidelity.Notes) m_log.LogDebug("[SSB]: {Channel} layer {Note}", c.Channel, note);
             }
         return outcome;
+    }
+
+    /// <summary>
+    /// An NPC is made from a copy of its owner's appearance, baked faces included. A channel the NPC's own bake gave no
+    /// live asset keeps that copy, which names a bake of the owner's: one the owner's next outfit change deletes, and
+    /// one the appearance service cannot serve under the NPC's id. Those faces are cleared, so every baked face of an
+    /// NPC is a bake of its own.
+    /// </summary>
+    public static void ClearFacesWithoutOwnBake(AvatarAppearance appearance, BakeOutcome outcome)
+    {
+        foreach (var c in outcome.Channels)
+        {
+            if (c.Status is ChannelStatus.Baked or ChannelStatus.Reused) continue;
+            appearance.Texture.FaceTextures[BakeOrchestrator.FaceOf(c.Channel)] = null;
+        }
     }
 
     /// <summary>
@@ -521,7 +617,7 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
     /// </summary>
     private void OnAvatarAppearanceChanged(ScenePresence sp)
     {
-        if (sp is null || sp.IsChildAgent || sp.IsNPC) return;
+        if (sp is null || sp.IsChildAgent) return;
         var scene = sp.Scene;
         var region = RegionOf(scene);
         if (region is not { ServerSideBakingEnabled: true }) return;
@@ -557,7 +653,7 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
     /// </summary>
     private void OnMakeRootAgent(ScenePresence sp)
     {
-        if (sp is null || sp.IsChildAgent || sp.IsNPC) return;
+        if (sp is null || sp.IsChildAgent) return;
         var scene = sp.Scene;
         if (RegionOf(scene) is not { ServerSideBakingEnabled: true }) return;
 

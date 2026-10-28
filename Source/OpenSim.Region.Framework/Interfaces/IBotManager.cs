@@ -93,6 +93,35 @@ namespace OpenSim.Region.Framework.Interfaces
             string outfitName, UUID scriptItemID, UUID ownerID, bool owned, bool senseAsAgent, out string reason);
 
         /// <summary>
+        /// Makes a bot in <paramref name="scene"/>, the region of the script that makes it, whether the owner is in that
+        /// region, in another one, or away. The look is the named outfit, else the owner's current look, else (owner
+        /// away) the owner's stored look with its worn items resolved to their assets. <paramref name="botDoor"/> is
+        /// true for botCreateBot, which also registers the creating script for bot_update, and false for osNpcCreate.
+        /// <paramref name="hostObjectID"/> is the object the creating script is in: a botCreateBot bot that is not
+        /// persistent is removed with it.
+        /// </summary>
+        UUID CreateBotInRegion(Scene scene, string firstName, string lastName, Vector3 startPos,
+            string outfitName, UUID scriptItemID, UUID ownerID, bool owned, bool senseAsAgent, bool botDoor,
+            UUID hostObjectID, out string reason);
+
+        /// <summary>
+        /// Makes a bot in <paramref name="scene"/> that wears <paramref name="appearance"/> (an outfit read from a
+        /// notecard). The owner need not be in the region: nothing is read from the owner's presence.
+        /// <paramref name="botDoor"/> is true for botCreateBot, which also registers the creating script for
+        /// bot_update, and false for osNpcCreate. <paramref name="hostObjectID"/> is the object the creating script is
+        /// in, as for <see cref="CreateBotInRegion"/>.
+        /// </summary>
+        UUID CreateBotWithAppearance(Scene scene, string firstName, string lastName, Vector3 startPos,
+            AvatarAppearance appearance, UUID scriptItemID, UUID ownerID, bool owned, bool senseAsAgent, bool botDoor,
+            out string reason, UUID hostObjectID = default);
+
+        /// <summary>
+        /// Dresses an existing bot in <paramref name="appearance"/> (an outfit read from a notecard). The caller must
+        /// be allowed to control the bot, as for <see cref="ChangeBotOutfit"/>.
+        /// </summary>
+        void ChangeBotAppearance(UUID botID, AvatarAppearance appearance, UUID ownerID, out string reason);
+
+        /// <summary>
         /// osNpcSaveAppearance's door: capture the BOT's current appearance into the caller's
         /// outfit store under <paramref name="outfitName"/> (SaveOutfitToDatabase captures the owner's).
         /// Returns the outfit's key, UUID.Zero with a reason on failure.
@@ -119,6 +148,25 @@ namespace OpenSim.Region.Framework.Interfaces
 
         /// <summary>Get all bot UUIDs owned by a specific owner.</summary>
         List<UUID> GetAllOwnedBots(UUID ownerID);
+
+        // ── Persistence ──────────────────────────────────────────────────
+        // Each region keeps its own persistent bots. The result is a BotPersistError code: 0 on success, -6 when
+        // persistence is off for the region.
+
+        /// <summary>Mark a bot of <paramref name="scene"/> as persistent: it comes back in that region after a restart.</summary>
+        int SetBotPersistent(Scene scene, UUID botID, UUID ownerID, UUID scriptItemID, UUID objectID, int ttlSeconds);
+
+        /// <summary>Make a persistent bot of <paramref name="scene"/> non-persistent.</summary>
+        int RemoveBotPersistent(Scene scene, UUID botID, UUID ownerID);
+
+        /// <summary>True when the bot is persistent in <paramref name="scene"/>.</summary>
+        bool IsBotPersistent(Scene scene, UUID botID);
+
+        /// <summary>A script data value kept with a persistent bot of <paramref name="scene"/>.</summary>
+        string GetBotPersistentData(Scene scene, UUID botID, string key);
+
+        /// <summary>Set a script data value kept with a persistent bot of <paramref name="scene"/>.</summary>
+        int SetBotPersistentData(Scene scene, UUID botID, UUID ownerID, string key, string value);
 
         // ── Movement & Navigation ────────────────────────────────────────
 
