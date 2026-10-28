@@ -1,0 +1,264 @@
+=== 01_do_block
+local x = 1
+do local x = 2 assert(x == 2) end
+assert(x == 1)
+=== 02_break
+local n = 0
+while true do n = n + 1 if n == 3 then break end end
+assert(n == 3)
+=== 03_continue
+local s = 0
+for i = 1, 5 do if i == 3 then continue end s = s + i end
+assert(s == 12)
+=== 04_compound_assign
+local x = 1
+x += 2 x *= 3 x -= 1 x /= 2
+local s = "a" s ..= "b"
+assert(x == 4 and s == "ab")
+=== 05_string_interp
+local n = 5
+assert(`n={n}` == "n=5")
+=== 06_call_no_parens
+local function f(s) return s end
+assert(f"x" == "x")
+assert(#f{1,2} == 2)
+=== 07_varargs
+local function sum(...) local t = {...} local s = 0 for i = 1, #t do s = s + t[i] end return s end
+assert(sum(1,2,3) == 6)
+=== 08_select
+local function n(...) return select("#", ...) end
+assert(n(1,nil,3) == 3)
+=== 09_if_expr
+local x = if 1 > 2 then "a" elseif 2 > 1 then "b" else "c"
+assert(x == "b")
+=== 10_generalized_iter
+local s = 0
+for k, v in {10, 20} do s = s + v end
+assert(s == 30)
+=== 11_for_in_next
+local s = 0
+for k, v in next, {1, 2} do s = s + v end
+assert(s == 3)
+=== 12_type_annot_local
+local x: number = 1
+assert(x == 1)
+=== 13_type_annot_func
+local function f(a: number, b: string?): number return a end
+assert(f(2) == 2)
+=== 14_type_alias
+type Point = {x: number, y: number}
+local p: Point = {x = 1, y = 2}
+assert(p.x == 1)
+=== 15_type_cast
+local x = (1 :: any) :: number
+assert(x == 1)
+=== 16_generics
+local function id<T>(x: T): T return x end
+assert(id(3) == 3)
+=== 17_coroutine_create
+local co = coroutine.create(function(a) local b = coroutine.yield(a + 1) return b * 2 end)
+local ok, v = coroutine.resume(co, 1)
+assert(ok and v == 2)
+local ok2, v2 = coroutine.resume(co, 5)
+assert(ok2 and v2 == 10)
+assert(coroutine.status(co) == "dead")
+=== 18_coroutine_wrap
+local g = coroutine.wrap(function() coroutine.yield(1) coroutine.yield(2) end)
+assert(g() == 1 and g() == 2)
+=== 19_buffer
+local b = buffer.create(4)
+buffer.writeu8(b, 0, 7)
+assert(buffer.readu8(b, 0) == 7 and buffer.len(b) == 4)
+=== 20_bit32
+assert(bit32.band(6, 3) == 2 and bit32.bor(1, 2) == 3 and bit32.lshift(1, 4) == 16)
+=== 21_utf8
+assert(utf8.char(72, 105) == "Hi" and utf8.len("Hi") == 2)
+=== 22_floor_div
+assert(7 // 2 == 3)
+=== 23_hex_literal
+assert(0xFF == 255)
+=== 24_bin_and_sep
+assert(0b101 == 5 and 1_000 == 1000)
+=== 25_long_string
+local s = [[a
+b]]
+assert(#s == 3)
+--[[ long
+comment ]]
+=== 26_string_method
+local s = "abc"
+assert(s:upper() == "ABC" and s:len() == 3 and ("x"):rep(2) == "xx")
+=== 27_xpcall
+local ok, e = xpcall(function() error("boom") end, function(m) return "h:" .. tostring(m) end)
+assert(not ok and string.find(e, "h:") == 1)
+=== 28_error_table
+local ok, e = pcall(function() error({code = 7}) end)
+assert(not ok and e.code == 7)
+=== 29_mm_eq
+local mt = {__eq = function(a, b) return a.v == b.v end}
+local a = setmetatable({v = 1}, mt) local b = setmetatable({v = 1}, mt)
+assert(a == b)
+=== 30_mm_lt_le
+local mt = {__lt = function(a, b) return a.v < b.v end, __le = function(a, b) return a.v <= b.v end}
+local a = setmetatable({v = 1}, mt) local b = setmetatable({v = 2}, mt)
+assert(a < b and a <= b)
+=== 31_mm_concat
+local mt = {__concat = function(a, b) return "cc" end}
+local a = setmetatable({}, mt)
+assert(a .. "x" == "cc")
+=== 32_mm_len
+local a = setmetatable({}, {__len = function() return 42 end})
+assert(#a == 42)
+=== 33_mm_newindex
+local a = setmetatable({}, {__newindex = function(t, k, v) rawset(t, k, v * 2) end})
+a.x = 2
+assert(a.x == 4)
+=== 34_mm_call
+local a = setmetatable({}, {__call = function(self, x) return x + 1 end})
+assert(a(1) == 2)
+=== 35_mm_index_fn
+local a = setmetatable({}, {__index = function(t, k) return k .. "!" end})
+assert(a.hi == "hi!")
+=== 36_mm_unm
+local a = setmetatable({v = 3}, {__unm = function(x) return -x.v end})
+assert(-a == -3)
+=== 37_table_lib
+local t = table.create(3, 0)
+assert(#t == 3 and table.find({5, 6}, 6) == 2)
+local c = table.clone({1, 2}) assert(#c == 2)
+table.freeze(c) assert(table.isfrozen(c))
+=== 38_table_move
+local a = table.move({1, 2, 3}, 1, 3, 2, {})
+assert(a[2] == 1 and a[4] == 3)
+=== 39_string_lib
+assert(string.reverse("ab") == "ba" and string.byte("A") == 65 and string.char(65) == "A")
+assert(string.lower("A") == "a" and string.find("hello", "ll") == 3)
+=== 40_string_pack
+local s = string.pack("i4", 7)
+assert(string.unpack("i4", s) == 7)
+=== 41_repeat_until
+local i = 0
+repeat i = i + 1 until i == 3
+assert(i == 3)
+=== 42_raw_funcs
+local t = setmetatable({}, {__index = function() return 1 end})
+assert(rawget(t, "x") == nil and rawequal(t, t) and rawlen({1, 2}) == 2)
+=== 43_loop_var_capture
+local fs = {}
+for i = 1, 3 do fs[i] = function() return i end end
+assert(fs[1]() == 1 and fs[3]() == 3)
+=== 44_multi_assign_index
+local a = {} local b
+a.x, b, a[1] = 1, 2, 3
+assert(a.x == 1 and b == 2 and a[1] == 3)
+=== 45_os_lib
+assert(type(os.time()) == "number" and type(os.clock()) == "number")
+=== 46_uuid
+local u = uuid("00000000-0000-0000-0000-000000000001")
+assert(typeof(u) == "uuid" and tostring(u) == "00000000-0000-0000-0000-000000000001")
+=== 47_lljson
+local s = lljson.encode({1, 2})
+assert(s == "[1,2]")
+assert(lljson.decode("[3]")[1] == 3)
+=== 48_llbase64
+assert(llbase64.encode("hi") == "aGk=" and llbase64.decode("aGk=") == "hi")
+=== 49_integer_type
+local i = integer.create(3)
+assert(typeof(i) == "integer")
+=== 50_quaternion
+local q = quaternion(0, 0, 0, 1)
+assert(q.s == 1)
+=== 51_vector_lib
+local v = vector.create(3, 4, 0)
+assert(vector.magnitude(v) == 5 and v.x == 3)
+=== 52_vector_tostring
+assert(tostring(vector(1, 2, 3)) == "<1, 2, 3>")
+=== 53_LLEvents_on
+local h = LLEvents:on("touch_start", function(d) end)
+assert(h ~= nil)
+=== 54_LLEvents_off
+local h = LLEvents:on("touch_start", function(d) end)
+LLEvents:off("touch_start", h)
+=== 55_LLEvents_once
+LLEvents:once("touch_start", function(d) end)
+=== 56_LLEvents_listeners
+-- LL's LLEvents has handlers and eventNames (VM/src/lllevents.cpp), not listeners.
+local f = function(d) end
+LLEvents:on("touch_start", f)
+assert(#LLEvents:handlers("touch_start") == 1)
+assert(#LLEvents:eventNames() == 1)
+=== 57_LLTimers_every
+local h = LLTimers:every(1, function() end)
+assert(h ~= nil)
+=== 58_LLTimers_once
+local h = LLTimers:once(1, function() end)
+=== 59_LLTimers_off
+local h = LLTimers:every(1, function() end)
+LLTimers:off(h)
+=== 60_ll_pcall_bad_arg
+assert(not pcall(ll.List2Float, "notalist", 0))
+=== 61_ll_call
+local n = ll.Abs(-3)
+assert(n ~= nil)
+=== 62_typeof
+assert(typeof(1) == "number" and typeof(vector(1,2,3)) == "vector")
+=== 63_tostring_number
+assert(tostring(1) == "1" and tostring(1.5) == "1.5" and tostring(1e300 * 1e10) == "inf")
+=== 64_string_compare
+assert("a" < "b" and "abc" > "abb")
+=== 65_getmetatable_string
+assert(getmetatable("x").__index == string)
+=== 66_table_keys_identity
+local a, b = {1, 2}, {1, 2}
+local t = {}
+t[a] = "A" t[b] = "B"
+assert(t[a] == "A" and t[b] == "B")
+local n = 0 for _ in pairs(t) do n = n + 1 end
+assert(n == 2)
+=== 67_number_key_normalise
+local t = {}
+t[1] = "a" t[1.0] = "b"
+assert(t[1] == "b")
+=== 68_vector_key
+local t = {}
+t[vector(1, 2, 3)] = "v"
+assert(t[vector(1, 2, 3)] == "v")
+=== 69_uuid_key
+local t = {}
+t[uuid("00000000-0000-0000-0000-000000000001")] = 1
+assert(t[uuid("00000000-0000-0000-0000-000000000001")] == 1)
+=== 70_function_key
+local f = function() end
+local t = {[f] = 1}
+assert(t[f] == 1)
+=== 71_nested_func_def
+local M = {a = {}}
+function M.a.b() return 1 end
+assert(M.a.b() == 1)
+=== 72_method_def_call
+local C = {} C.__index = C
+function C.new(x) return setmetatable({x = x}, C) end
+function C:get() return self.x end
+assert(C.new(4):get() == 4)
+=== 73_tostring_table_addr
+assert(string.find(tostring({}), "table: ") == 1)
+=== 74_math_extra
+assert(math.fmod(7, 3) == 1 and math.max(1, 5, 3) == 5 and math.min(2, 1) == 1)
+=== 75_integer_literal
+assert(type(123i) == "integer")
+=== 76_dynamic_global
+g = 5
+assert(g == 5)
+=== 77_getfenv
+-- LL's executor removes getfenv and setfenv from the script environment (Executor/src/Executor.cpp, kGlobalsToRemove).
+assert(getfenv == nil and setfenv == nil)
+=== 78_ll_constants
+-- LL defines every LSL constant as a global except TRUE and FALSE (LSLBuiltins/src/LSLBuiltins.cpp: "we don't want these defined").
+assert(PI ~= nil and ZERO_VECTOR == vector(0, 0, 0))
+assert(TRUE == nil and FALSE == nil)
+=== 79_table_key_mutated_after_insert
+local a = {1}
+local t = {}
+t[a] = "A"
+table.insert(a, 2)
+assert(t[a] == "A")

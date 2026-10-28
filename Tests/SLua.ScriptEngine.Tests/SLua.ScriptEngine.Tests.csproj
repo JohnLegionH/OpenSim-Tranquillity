@@ -20,7 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="TestData/builtins.txt;TestData/builtins-source.txt;TestData/lsl-definition-marks.txt" CopyToOutputDirectory="PreserveNewest" LinkBase="TestData" />
+    <None Include="TestData/feature-probes.txt;TestData/builtins.txt;TestData/builtins-source.txt;TestData/lsl-definition-marks.txt" CopyToOutputDirectory="PreserveNewest" LinkBase="TestData" />
   </ItemGroup>
 
   <ItemGroup>
