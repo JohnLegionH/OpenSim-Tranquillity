@@ -279,6 +279,7 @@ namespace SLua.ScriptEngine
             m_scene.EventManager.OnStartScript += OnStartScript;
             m_scene.EventManager.OnStopScript += OnStopScript;
             m_scene.EventManager.OnShutdown += OnShutdown;
+            RegisterConsoleCommands();
             if (m_settings.WarmUp)
                 ApiWarmUp.Start(m_log);
             m_hooks = new SceneHooksA(scene, this, m_settings.PhysicsThrottle, Clock);
@@ -319,6 +320,7 @@ namespace SLua.ScriptEngine
         /// </summary>
         private void OnShutdown()
         {
+            StopErrorSweep();
             m_shuttingDown = true; // the scripts the region takes out on the way down keep their rows: the restart restores from them
             SLuaScheduler scheduler = m_scheduler;
             m_scheduler = null;
@@ -441,6 +443,7 @@ namespace SLua.ScriptEngine
             m_scene.EventManager.OnStartScript -= OnStartScript;
             m_scene.EventManager.OnStopScript -= OnStopScript;
             m_scene.EventManager.OnShutdown -= OnShutdown;
+            StopErrorSweep();
             m_chat?.Unsubscribe();
             m_chat = null;
             HostServices?.AsyncCommands?.Shutdown();
@@ -880,12 +883,6 @@ namespace SLua.ScriptEngine
         /// <summary>The scheduler's record of the item's script, or null; for the status command and the tests.</summary>
         internal SchedulerScript SchedulerScriptFor(UUID itemID) => RecordOf(itemID)?.Script;
 
-        /// <summary>
-        /// The lines the status console command prints for the scripts that match <paramref name="filter"/> (an item id, or part of an object's
-        /// or a script's name; empty for all). Stub: nothing yet.
-        /// </summary>
-        internal IReadOnlyList<string> StatusLines(string filter) => Array.Empty<string>();
-
         /// <summary>The scheduler's counters for the status console command; null when the engine has no scheduler.</summary>
         internal SchedulerStats GetStats() => m_scheduler?.GetStats();
 
@@ -1054,7 +1051,7 @@ namespace SLua.ScriptEngine
         {
             ScriptRecord record = FindRecord(script);
             if (record != null)
-                TellOwner(record, text);
+                TellRuntimeError(record, text);
         }
 
         private void OnWorkerStopped(int index, int crashes, string message)
@@ -1113,6 +1110,240 @@ namespace SLua.ScriptEngine
                 return;
             try { m_messages?.CompileFailed(failure.LocalID, failure.ItemID, failure.Errors); }
             catch (Exception e) { m_log.Error("A compile failure could not be shown to the owner: " + e.Message); }
+        }
+
+        // ---- the status command ----
+
+        /// <summary>The most scripts the status command lists before it asks for a filter.</summary>
+        private const int StatusListLimit = 40;
+
+        /// <summary>
+        /// The lines of the status command for the scripts that match <paramref name="filter"/>: an item id, or part of an object's or a
+        /// script's name (empty: all). A header of the engine's figures, then two lines for each script: its name and item, then its run state
+        /// (running, stopped, FAULTED with the reason, HELD with the reason), why it is paused, the events waiting, the events dropped while
+        /// it was stopped, its memory, its minimum event delay and its waived overruns.
+        /// </summary>
+        internal IReadOnlyList<string> StatusLines(string filter)
+        {
+            var lines = new List<string>();
+            SchedulerStats stats = m_scheduler?.GetStats();
+            var shown = new List<(string Object, string Script, ScriptRecord Record)>();
+            long waived = 0;
+            lock (m_records)
+            {
+                foreach (ScriptRecord r in m_records.Values)
+                {
+                    waived += r.Script.WaivedOverruns;
+                    SceneObjectPart part = m_scene?.GetSceneObjectPart(r.LocalID);
+                    string objectName = part?.ParentGroup?.Name ?? part?.Name ?? "(unknown object)";
+                    string scriptName = part?.Inventory?.GetInventoryItem(r.ItemID)?.Name ?? "(not in a prim)";
+                    if (StatusMatches(filter, r.ItemID, objectName, scriptName))
+                        shown.Add((objectName, scriptName, r));
+                }
+            }
+            shown.Sort((a, b) => { int c = string.Compare(a.Object, b.Object, StringComparison.OrdinalIgnoreCase); return c != 0 ? c : string.Compare(a.Script, b.Script, StringComparison.OrdinalIgnoreCase); });
+
+            lines.Add($"{EngineIdentity.EngineName} engine: scripts {stats?.Scripts ?? 0}, stopped {stats?.Stopped ?? 0}, paused {stats?.Suspended ?? 0}, faulted {stats?.Faulted ?? 0}, workers {stats?.Workers.Length ?? 0}, failed workers {stats?.FailedWorkers ?? 0}");
+            lines.Add($"  events dropped: while stopped {stats?.DroppedWhileStopped ?? 0}, unhandled {stats?.DroppedUnhandled ?? 0}, queue full {stats?.DroppedFull ?? 0}; kills {stats?.Kills ?? 0}; punishments {stats?.Punishments ?? 0}; waived overruns {waived}");
+            lines.Add($"  policy: parcel paused {PolicyStats.ParcelPaused}, resumed {PolicyStats.ParcelResumed}; estate paused {PolicyStats.EstatePaused}, resumed {PolicyStats.EstateResumed}; crossing held {PolicyStats.CrossingHeld}, released {PolicyStats.CrossingReleased}");
+            lines.Add(m_stateStore == null
+                ? "  saved state: off"
+                : $"  saved state: state writes done {m_stateStore.WritesDone}, held scripts {CountHeld()}");
+
+            if (shown.Count == 0)
+            {
+                lines.Add(string.IsNullOrWhiteSpace(filter) ? "No scripts." : $"No script matches '{filter}'.");
+                return lines;
+            }
+            for (int i = 0; i < shown.Count && i < StatusListLimit; i++)
+            {
+                (string objectName, string scriptName, ScriptRecord r) = shown[i];
+                SchedulerScript s = r.Script;
+                lines.Add($"{objectName} / {scriptName}  {r.ItemID}");
+                string state;
+                PauseReason paused = PauseReasonsOf(r.ItemID);
+                if (s.StateHeld != null) state = "HELD: " + s.StateHeld;
+                else if (s.Killed) state = "FAULTED: " + s.FaultMessage;
+                else if (!s.Running) state = "stopped";
+                else state = "running";
+                var detail = new System.Text.StringBuilder("  ").Append(state);
+                if (paused != PauseReason.None) detail.Append(", paused: ").Append(paused);
+                detail.Append($", queued {s.QueuedEvents}, dropped while stopped {s.DroppedWhileStopped}, mem {s.MemoryUsed} B");
+                if (s.MinEventDelay > 0) detail.Append($", min event delay {s.MinEventDelay:0.###} s");
+                if (s.WaivedOverruns > 0) detail.Append($", waived overruns {s.WaivedOverruns}");
+                lines.Add(detail.ToString());
+            }
+            if (shown.Count > StatusListLimit)
+                lines.Add($"... {shown.Count - StatusListLimit} more scripts; give an object name, a script name or an item id as a filter to see them");
+            return lines;
+        }
+
+        private int CountHeld()
+        {
+            int held = 0;
+            lock (m_records)
+                foreach (ScriptRecord r in m_records.Values)
+                    if (r.Script.StateHeld != null) held++;
+            return held;
+        }
+
+        private static bool StatusMatches(string filter, UUID item, string objectName, string scriptName)
+        {
+            if (string.IsNullOrWhiteSpace(filter))
+                return true;
+            filter = filter.Trim();
+            if (UUID.TryParse(filter, out UUID id))
+                return item == id;
+            return objectName.Contains(filter, StringComparison.OrdinalIgnoreCase) || scriptName.Contains(filter, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>The region's console: slua status, suspend and resume, with the guard that keeps a command for another region's engine from answering.</summary>
+        private void RegisterConsoleCommands()
+        {
+            if (MainConsole.Instance == null)
+                return;
+            string name = EngineIdentity.EngineName.ToLowerInvariant();
+            MainConsole.Instance.Commands.AddCommand(EngineIdentity.EngineName, false, name + " status", name + " status [object name | script name | item id]",
+                "Read-only: the engine's figures and, for each matching script, its run state, why it is held or paused, its queue, the events dropped while it was stopped, its memory and its minimum event delay.",
+                (module, args) => HandleStatus(args));
+            MainConsole.Instance.Commands.AddCommand(EngineIdentity.EngineName, false, name + " suspend", name + " suspend <object name | script name | item id>",
+                "Pause the matching scripts without dropping their events; not saved, a restart clears it. The Running flag is not touched.",
+                (module, args) => HandleSuspendResume(args, true));
+            MainConsole.Instance.Commands.AddCommand(EngineIdentity.EngineName, false, name + " resume", name + " resume <object name | script name | item id>",
+                "Let the scripts paused by the suspend command go on; the events that waited are delivered.",
+                (module, args) => HandleSuspendResume(args, false));
+        }
+
+        private bool WrongConsoleScene() => !(MainConsole.Instance.ConsoleScene == null || MainConsole.Instance.ConsoleScene == m_scene);
+
+        private void HandleStatus(string[] args)
+        {
+            if (WrongConsoleScene())
+                return;
+            string filter = args.Length > 2 ? string.Join(" ", args, 2, args.Length - 2) : string.Empty;
+            foreach (string line in StatusLines(filter))
+                MainConsole.Instance.Output(line);
+        }
+
+        private void HandleSuspendResume(string[] args, bool suspend)
+        {
+            if (WrongConsoleScene())
+                return;
+            if (args.Length < 3)
+            {
+                MainConsole.Instance.Output($"Usage: {args[0]} {args[1]} <object name | script name | item id>");
+                return;
+            }
+            string filter = string.Join(" ", args, 2, args.Length - 2);
+            int done = 0;
+            var items = new List<UUID>();
+            lock (m_records)
+            {
+                foreach (ScriptRecord r in m_records.Values)
+                {
+                    SceneObjectPart part = m_scene?.GetSceneObjectPart(r.LocalID);
+                    if (StatusMatches(filter, r.ItemID, part?.ParentGroup?.Name ?? part?.Name ?? string.Empty, part?.Inventory?.GetInventoryItem(r.ItemID)?.Name ?? string.Empty))
+                        items.Add(r.ItemID);
+                }
+            }
+            foreach (UUID item in items)
+                if (suspend ? SuspendScript(item) : ResumeScript(item))
+                    done++;
+            MainConsole.Instance.Output($"{(suspend ? "Suspended" : "Resumed")} {done} script(s).");
+        }
+
+        // ---- errors told to the owner ----
+
+        private readonly ErrorRateLimiter m_errors = new ErrorRateLimiter();
+        private System.Threading.Timer m_errorSweep;
+        private readonly object m_errorSweepLock = new object();
+
+        /// <summary>The runtime error of a script is told to its owner once; the same message again is counted and told as a count after a quiet interval.</summary>
+        private void TellRuntimeError(ScriptRecord record, string text)
+        {
+            if (!m_settings.ErrorRateLimit)
+            {
+                TellOwner(record, text);
+                return;
+            }
+            if (m_errors.Offer(record.ItemID, text, Clock.Now))
+            {
+                TellOwner(record, text);
+                return;
+            }
+            EnsureErrorSweep();
+        }
+
+        private void EnsureErrorSweep()
+        {
+            lock (m_errorSweepLock)
+            {
+                if (m_errorSweep != null || m_shuttingDown)
+                    return;
+                int period = (int)Math.Max(50, Math.Min(1000, m_settings.ErrorQuietSeconds * 500));
+                m_errorSweep = new System.Threading.Timer(_ => SweepErrors(), null, period, period);
+            }
+        }
+
+        /// <summary>Tells the owners the counts of the errors that have stopped repeating.</summary>
+        internal void SweepErrors()
+        {
+            foreach ((UUID item, string text, int count) in m_errors.TakeQuiet(Clock.Now, m_settings.ErrorQuietSeconds))
+                TellOwnerOf(item, $"{text} (repeated {count} more time{(count == 1 ? "" : "s")})");
+            if (!m_errors.HasPending)
+                StopErrorSweep();
+        }
+
+        private void StopErrorSweep()
+        {
+            lock (m_errorSweepLock)
+            {
+                m_errorSweep?.Dispose();
+                m_errorSweep = null;
+            }
+        }
+
+        // ---- the module's lifecycle calls ----
+
+        /// <summary>The region asks every engine to start; this one compiles as scripts arrive, so the queue is empty now (Phlox answers the same way).</summary>
+        public void StartProcessing()
+        {
+            m_scene?.EventManager.TriggerEmptyScriptCompileQueue(0, string.Empty);
+        }
+
+        /// <summary>Every started script's state is captured on the workers and written to the database before this returns.</summary>
+        public void SaveAllState()
+        {
+            SLuaScheduler scheduler = m_scheduler;
+            SqliteStateStore sink = m_stateStore;
+            if (scheduler == null || sink == null)
+                return;
+            var records = new List<ScriptRecord>();
+            lock (m_records)
+                foreach (ScriptRecord r in m_records.Values)
+                    if (r.Script.StateHeld == null && r.AssetID != UUID.Zero)
+                        records.Add(r);
+            var scripts = new List<SchedulerScript>(records.Count);
+            foreach (ScriptRecord r in records)
+                scripts.Add(r.Script);
+            Dictionary<long, byte[]> captured = scheduler.CaptureForCarry(scripts, CarriedStateTimeoutMs, out bool timedOut);
+            if (timedOut)
+                m_log.Error($"SaveAllState timed out after {CarriedStateTimeoutMs} ms; the scripts that were captured are saved");
+            foreach (ScriptRecord r in records)
+                if (captured.TryGetValue(r.Script.Id, out byte[] state))
+                    sink.Save(r.ItemID, r.AssetID, state);
+            sink.Flush(CarriedStateTimeoutMs);
+        }
+
+        /// <summary>The bytes the heaps of the given scripts used after their last step.</summary>
+        public int GetScriptsMemory(List<UUID> itemIDs)
+        {
+            if (itemIDs == null)
+                return 0;
+            long total = 0;
+            foreach (UUID item in itemIDs)
+                total += RecordOf(item)?.Script.MemoryUsed ?? 0;
+            return (int)Math.Min(int.MaxValue, total);
         }
 
         // ---- the module's interface ----
@@ -1658,10 +1889,7 @@ namespace SLua.ScriptEngine
                 return script.Running && !script.Killed && script.State != ScriptRunState.Removed && (record.Pause & PauseReason.Core) == 0;
         }
 
-        public void SaveAllState() { }
-        public void StartProcessing() { }
         public float GetScriptExecutionTime(List<UUID> itemIDs) => 0f;
-        public int GetScriptsMemory(List<UUID> itemIDs) => 0;
         public Dictionary<uint, float> GetObjectScriptsExecutionTimes() => new Dictionary<uint, float>();
 
         public ICollection<ScriptTopStatsData> GetTopObjectStats(float mintime, int minmemory, out float totaltime, out float totalmemory)

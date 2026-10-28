@@ -778,6 +778,8 @@ namespace SLua.ScriptEngine
                 long ticks = runTicks = Stopwatch.GetTimestamp() - start;
                 if (dispatching) s.CountDispatch(ticks); else s.CountStep(ticks);
                 Interlocked.Increment(ref m_steps);
+                try { s.MemoryUsed = s.Native.UsedMemory; }
+                catch (Exception) { /* the script is being freed */ }
             }
 
             if (dispatching && r.Status != StepStatus.Refused)
