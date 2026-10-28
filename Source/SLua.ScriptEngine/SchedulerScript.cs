@@ -262,6 +262,9 @@ namespace SLua.ScriptEngine
         /// <summary>The run windows (wall time and CPU time) the overrun decision averages; worker thread only.</summary>
         internal RunWindowAverage Windows;
 
+        /// <summary>The script's recent execution time per run window in milliseconds, for the region's Top Scripts report.</summary>
+        internal readonly ExecutionTimeAverage ExecutionTime = new ExecutionTimeAverage();
+
         private long m_handlerMask;
         private int m_handlersKnown;
 

@@ -837,7 +837,10 @@ namespace SLua.ScriptEngine
                 ReadHandlers(s);
 
             if (r.Status != StepStatus.Idle && r.Status != StepStatus.NotRun)
+            {
+                s.ExecutionTime.Add(runTicks * 1000.0 / Stopwatch.Frequency);
                 RecordWindow(s, runTicks / (double)Stopwatch.Frequency, r.CpuSeconds);
+            }
 
             // The runtime reports, in the step that is running, the delay the script owes after it: what its host calls
             // asked for (AskedSeconds, served below) plus, when the step overran its window, a punishment. What it

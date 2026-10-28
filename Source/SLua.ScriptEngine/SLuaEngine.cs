@@ -1910,14 +1910,83 @@ namespace SLua.ScriptEngine
                 return script.Running && !script.Killed && script.State != ScriptRunState.Removed && (record.Pause & PauseReason.Core) == 0;
         }
 
-        public float GetScriptExecutionTime(List<UUID> itemIDs) => 0f;
-        public Dictionary<uint, float> GetObjectScriptsExecutionTimes() => new Dictionary<uint, float>();
+        /// <summary>The execution times, in milliseconds, of the given scripts that are running, added together (a stopped script adds nothing).</summary>
+        public float GetScriptExecutionTime(List<UUID> itemIDs)
+        {
+            if (itemIDs == null)
+                return 0f;
+            double total = 0;
+            foreach (UUID item in itemIDs)
+            {
+                SchedulerScript s = RecordOf(item)?.Script;
+                if (s != null && s.Running)
+                    total += s.ExecutionTime.Milliseconds;
+            }
+            return (float)total;
+        }
 
+        /// <summary>The scripts' execution times in milliseconds added up per linkset, by the local id of the linkset's root part.</summary>
+        public Dictionary<uint, float> GetObjectScriptsExecutionTimes()
+        {
+            var times = new Dictionary<uint, float>();
+            foreach ((uint root, SchedulerScript s) in ScriptsByRoot())
+            {
+                times.TryGetValue(root, out float t);
+                times[root] = t + (float)s.ExecutionTime.Milliseconds;
+            }
+            return times;
+        }
+
+        /// <summary>
+        /// The region's Top Scripts report: per linkset the scripts' execution time (ms) and memory (bytes), kept when either is over its
+        /// minimum, and the totals over every script, kept or not.
+        /// </summary>
         public ICollection<ScriptTopStatsData> GetTopObjectStats(float mintime, int minmemory, out float totaltime, out float totalmemory)
         {
             totaltime = 0f;
             totalmemory = 0f;
-            return new List<ScriptTopStatsData>();
+            var top = new Dictionary<uint, ScriptTopStatsData>();
+            foreach ((uint root, SchedulerScript s) in ScriptsByRoot())
+            {
+                float time = (float)s.ExecutionTime.Milliseconds;
+                int memory = s.MemoryUsed;
+                totaltime += time;
+                totalmemory += memory;
+                if (time > mintime || memory > minmemory)
+                {
+                    if (top.TryGetValue(root, out ScriptTopStatsData data))
+                    {
+                        data.time += time;
+                        data.memory += memory;
+                    }
+                    else
+                        top[root] = new ScriptTopStatsData { localID = root, time = time, memory = memory };
+                }
+            }
+            return top.Values;
+        }
+
+        /// <summary>Every script of the engine with the local id of the root part of its linkset; a script whose object is gone is left out.</summary>
+        private List<(uint Root, SchedulerScript Script)> ScriptsByRoot()
+        {
+            var found = new List<(uint, SchedulerScript)>();
+            Scene scene = m_scene;
+            if (scene == null)
+                return found;
+            ScriptRecord[] records;
+            lock (m_records)
+            {
+                records = new ScriptRecord[m_records.Count];
+                m_records.Values.CopyTo(records, 0);
+            }
+            foreach (ScriptRecord r in records)
+            {
+                SceneObjectGroup group = scene.GetSceneObjectPart(r.LocalID)?.ParentGroup;
+                if (group == null || group.IsDeleted || r.Script == null)
+                    continue;
+                found.Add((group.RootPart.LocalId, r.Script));
+            }
+            return found;
         }
     }
 }

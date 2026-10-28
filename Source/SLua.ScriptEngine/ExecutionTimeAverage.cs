@@ -5,6 +5,9 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+using System;
+using System.Threading;
+
 namespace SLua.ScriptEngine
 {
     /// <summary>
@@ -14,11 +17,16 @@ namespace SLua.ScriptEngine
     /// </summary>
     internal sealed class ExecutionTimeAverage
     {
-        /// <summary>The figure in milliseconds; 0 until a window has been added.</summary>
-        public double Milliseconds => 0;
+        private long m_bits;
 
+        /// <summary>The figure in milliseconds; 0 until a window has been added. May be read from any thread.</summary>
+        public double Milliseconds => BitConverter.Int64BitsToDouble(Interlocked.Read(ref m_bits));
+
+        /// <summary>Adds one run window. Called by the one worker thread that runs the script.</summary>
         public void Add(double windowMilliseconds)
         {
+            double next = Milliseconds * 0.9 + windowMilliseconds * 0.1;
+            Interlocked.Exchange(ref m_bits, BitConverter.DoubleToInt64Bits(next));
         }
     }
 }

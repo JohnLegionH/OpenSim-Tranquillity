@@ -158,4 +158,39 @@ public class TopScriptsTests
         Assert.Empty(rig.Engine.GetTopObjectStats(0.001f, 1024, out _, out _));
         Assert.Empty(rig.Engine.GetObjectScriptsExecutionTimes());
     }
+
+    [RequiresNativeFact]
+    public void TheTopObjectReportKeepsAnObjectThatIsOverEitherMinimum()
+    {
+        using var rig = new EngineRig();
+        UUID busy = rig.Rez(EngineRig.Slua(Burner));
+        Started(rig, busy);
+
+        ICollection<ScriptTopStatsData> overMemoryOnly = rig.Engine.GetTopObjectStats(10000f, 0, out _, out _);
+        ICollection<ScriptTopStatsData> overTimeOnly = rig.Engine.GetTopObjectStats(0.001f, int.MaxValue, out _, out _);
+
+        Assert.Equal(rig.LocalId, Assert.Single(overMemoryOnly).localID);
+        Assert.Equal(rig.LocalId, Assert.Single(overTimeOnly).localID);
+    }
+
+    [RequiresNativeFact]
+    public void TheTopObjectReportAddsUpTheScriptsOfALinkset()
+    {
+        using var rig = new EngineRig();
+        SceneObjectGroup group = SceneHelpers.AddSceneObject(rig.Scene, 3, EngineRig.Owner, "Example Part ", 0x9000);
+        UUID child1 = rig.Rez(EngineRig.Slua(Burner), part: group.Parts[1]);
+        UUID child2 = rig.Rez(EngineRig.Slua(Burner), part: group.Parts[2]);
+        Started(rig, child1, child2);
+        float time = rig.Engine.GetScriptExecutionTime(new List<UUID> { child1, child2 });
+        int memory = rig.Engine.GetScriptsMemory(new List<UUID> { child1, child2 });
+
+        ICollection<ScriptTopStatsData> top = rig.Engine.GetTopObjectStats(0.001f, 1024, out float totalTime, out float totalMemory);
+
+        ScriptTopStatsData entry = Assert.Single(top);
+        Assert.Equal(group.RootPart.LocalId, entry.localID);
+        Assert.Equal(time, entry.time, 1);
+        Assert.Equal(memory, entry.memory);
+        Assert.Equal(time, totalTime, 1);
+        Assert.Equal((float)memory, totalMemory, 1);
+    }
 }
