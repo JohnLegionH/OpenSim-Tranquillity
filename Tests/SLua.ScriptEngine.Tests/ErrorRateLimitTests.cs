@@ -73,4 +73,23 @@ public class ErrorRateLimitTests
 
         Assert.True(SchedulerHarness.WaitFor(() => Texts(rig).Count(t => t.Contains("same problem")) == 12, 20000), "every one is told");
     }
+
+    [RequiresNativeFact]
+    public void AnErrorTheScriptApiSpeaksOnTheDebugChannelIsLimitedToo()
+    {
+        const int DebugChannel = 0x7fffffff;
+        using var rig = new EngineRig(Quick, productionFunctions: true);
+        var heard = new List<string>();
+        rig.Scene.EventManager.OnChatFromWorld += (sender, chat) =>
+        {
+            if (chat.Channel == DebugChannel)
+                lock (heard) heard.Add(chat.Message);
+        };
+        // llGetScriptState reports "script not found" from the script API itself (not through the engine's own error callback), 8 times
+        rig.Rez(EngineRig.Slua("n = 0\nLLEvents:on('timer', function()\n  n = n + 1\n  if n <= 8 then ll.GetScriptState('no such script') end\nend)\nll.SetTimerEvent(0.1)\nossl.Mark('start')\n"));
+
+        Assert.True(SchedulerHarness.WaitFor(() => { lock (heard) return heard.Any(m => m.Contains("no such script") && !m.Contains("repeated")); }), "the first is spoken");
+        Assert.True(SchedulerHarness.WaitFor(() => { lock (heard) return heard.Any(m => Regex.IsMatch(m, @"repeated 7 more times")); }, 20000), "the count follows the quiet");
+        lock (heard) Assert.Equal(2, heard.Count(m => m.Contains("no such script")));
+    }
 }
