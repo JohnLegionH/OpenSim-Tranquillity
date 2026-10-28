@@ -28,6 +28,9 @@ namespace SLua.ScriptEngine
         public StateLoadKind Kind;
         public ScriptStateRecord Record;
         public string Reason;
+
+        /// <summary>The record came with the script's object (take, rez, crossing) and not from the database.</summary>
+        public bool Carried;
     }
 
     /// <summary>
@@ -39,8 +42,17 @@ namespace SLua.ScriptEngine
     /// </summary>
     internal static class StateJoin
     {
-        public static StateLoadResult Load(SqliteStateStore store, string engine, UUID item, UUID asset, int retries, int retryDelayMs, Action<int> wait, IEngineLog log)
+        public static StateLoadResult Load(SqliteStateStore store, string engine, UUID item, UUID asset, int retries, int retryDelayMs, Action<int> wait, IEngineLog log, byte[] carried = null)
         {
+            // State that came with the object is used before any row: it is what the script was doing when it left.
+            if (carried != null)
+            {
+                if (ScriptStateRecord.Inspect(carried, engine, out ScriptStateRecord brought, out string why) == ScriptStateRecord.RecordReading.Ok)
+                    return new StateLoadResult { Kind = StateLoadKind.Restore, Record = brought, Carried = true };
+                log?.Warn($"Script {item}: the state its object brought cannot be used ({why}); the script starts from its saved state, if it has one");
+            }
+            if (store == null)
+                return new StateLoadResult { Kind = StateLoadKind.Fresh };
             byte[] saved = null;
             ScriptStateLoadException failure = null;
             for (int attempt = 0; attempt <= Math.Max(0, retries); attempt++)

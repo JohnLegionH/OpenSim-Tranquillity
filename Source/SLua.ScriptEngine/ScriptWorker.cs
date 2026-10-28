@@ -1024,7 +1024,7 @@ namespace SLua.ScriptEngine
             Interlocked.Increment(ref m_stateCounts[(int)state]);
         }
 
-        private void Fault(SchedulerScript s, FaultKind kind, string message)
+        private void Fault(SchedulerScript s, FaultKind kind, string message, bool report = true)
         {
             s.Fault = kind;
             s.FaultMessage = message;
@@ -1036,7 +1036,14 @@ namespace SLua.ScriptEngine
             s.SleepGen++;
             s.Waiting = false;
             SetState(s, ScriptRunState.Faulted);
-            try { m_options.ScriptFaulted?.Invoke(s); }
+            try
+            {
+                // A fault is reported when it happens; a script put back stopped from its saved state is only noted.
+                if (report)
+                    m_options.ScriptFaulted?.Invoke(s);
+                else
+                    m_options.ScriptFaultRestored?.Invoke(s);
+            }
             catch (Exception e) { m_log?.Error("the fault callback failed: " + e.Message); }
         }
 
@@ -1136,13 +1143,31 @@ namespace SLua.ScriptEngine
             if (s.NextEventAt > now)
                 record.NextEventIn = s.NextEventAt - now;
             foreach (QueuedEvent e in s.Events)
-                record.Events.Add(new SavedEvent { EventIndex = e.EventIndex, Args = e.Args ?? Array.Empty<Value>() });
+                record.Events.Add(new SavedEvent { EventIndex = e.EventIndex, Args = e.Args ?? Array.Empty<Value>(), Detected = e.Detected });
             ActiveListen[] listens = s.ListenSnapshot?.Invoke();
             if (listens != null)
                 record.Listens.AddRange(listens);
+            try { s.ExtrasFill?.Invoke(record); }
+            catch (Exception e) { m_log?.Error($"script {s.ItemId}: its attributes and permission record could not be captured: {e.Message}"); }
             if (!s.Killed)
                 record.Native = s.Native.Serialize();
             return record.Encode();
+        }
+
+        /// <summary>
+        /// The script's record for the object that carries it (a take, a derez, a crossing), taken here between steps; null when the script
+        /// cannot be captured now (it waits for a call to come back). Worker thread only, like every capture.
+        /// </summary>
+        internal byte[] CaptureForCarry(SchedulerScript s)
+        {
+            if (s.State == ScriptRunState.Removed || s.State == ScriptRunState.Loading || s.StateHeld != null)
+                return null;
+            try { return CaptureState(s); }
+            catch (Exception e)
+            {
+                m_log?.Error($"script {s.Id}: its state could not be captured for its object: {e.Message}");
+                return null;
+            }
         }
 
         /// <summary>Puts the saved state back instead of starting the script. False: nothing was restored and the script is to start fresh.</summary>
@@ -1157,7 +1182,7 @@ namespace SLua.ScriptEngine
                 // A fault stopped the script before the save: it stays stopped, with the reason it was given (reset or set running again starts it).
                 s.Started = true;
                 s.CurrentState = record.LslState;
-                Fault(s, (FaultKind)record.FaultKind, record.FaultMessage);
+                Fault(s, (FaultKind)record.FaultKind, record.FaultMessage, report: false);
                 return true;
             }
 
@@ -1207,13 +1232,15 @@ namespace SLua.ScriptEngine
                 {
                     if (s.Events.Count >= m_options.MaxEventQueue)
                         break;
-                    s.Events.Enqueue(new QueuedEvent(e.EventIndex, e.Args));
+                    s.Events.Enqueue(new QueuedEvent(e.EventIndex, e.Args, e.Detected));
                     if (e.EventIndex == timer)
                         s.TimerQueued = true;
                 }
             }
             try { s.ListenRestore?.Invoke(record.Listens.ToArray()); }
             catch (Exception e) { m_log?.Error($"script {s.ItemId}: its listens could not be put back: {e.Message}"); }
+            try { s.ExtrasRestore?.Invoke(record, s.RestoredFromCarried); }
+            catch (Exception e) { m_log?.Error($"script {s.ItemId}: its attributes and permission record could not be put back: {e.Message}"); }
             if (s.Language == ScriptLanguage.Slua)
                 ReadHandlers(s);
             MarkDirty(s);

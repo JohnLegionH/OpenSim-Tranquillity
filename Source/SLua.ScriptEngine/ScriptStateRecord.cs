@@ -10,6 +10,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using InWorldz.Phlox.VM;
+using OpenMetaverse;
 using SLua.ScriptEngine.Bindings;
 
 namespace SLua.ScriptEngine
@@ -40,7 +41,7 @@ namespace SLua.ScriptEngine
     internal sealed class ScriptStateRecord
     {
         /// <summary>The layout of <see cref="Encode"/>; a record of another layout is not read.</summary>
-        public const int FormatVersion = 1;
+        public const int FormatVersion = 2;
 
         /// <summary>The engine that wrote the record and owns it.</summary>
         public string Engine = "";
@@ -118,6 +119,7 @@ namespace SLua.ScriptEngine
                 {
                     w.Write(e.EventIndex);
                     WriteValues(w, e.Args);
+                    WriteDetected(w, e.Detected);
                 }
                 w.Write(Listens.Count);
                 foreach (ActiveListen l in Listens)
@@ -131,6 +133,19 @@ namespace SLua.ScriptEngine
                     w.Write(l.RegexBitfield);
                     WriteText(w, l.HostKey);
                 }
+                w.Write(Misc.Count);
+                foreach (SavedMisc m in Misc)
+                {
+                    w.Write(m.Key);
+                    w.Write(m.Values?.Length ?? 0);
+                    foreach (object v in m.Values ?? Array.Empty<object>())
+                        WriteObject(w, v);
+                }
+                WriteText(w, PermsGranter);
+                w.Write(PermsMask);
+                WriteText(w, PermsOwner);
+                WriteText(w, PermsExperience);
+                w.Write(PermsUnverified);
                 w.Write(Native?.Length ?? 0);
                 if (Native != null)
                     w.Write(Native);
@@ -204,7 +219,7 @@ namespace SLua.ScriptEngine
                 int events = r.ReadInt32();
                 CheckCount(events, r);
                 for (int i = 0; i < events; i++)
-                    record.Events.Add(new SavedEvent { EventIndex = r.ReadInt32(), Args = ReadValues(r) });
+                    record.Events.Add(new SavedEvent { EventIndex = r.ReadInt32(), Args = ReadValues(r), Detected = ReadDetected(r) });
                 int listens = r.ReadInt32();
                 CheckCount(listens, r);
                 for (int i = 0; i < listens; i++)
@@ -221,6 +236,23 @@ namespace SLua.ScriptEngine
                         HostKey = ReadText(r),
                     });
                 }
+                int misc = r.ReadInt32();
+                CheckCount(misc, r);
+                for (int i = 0; i < misc; i++)
+                {
+                    var m = new SavedMisc { Key = r.ReadInt32() };
+                    int count = r.ReadInt32();
+                    CheckCount(count, r);
+                    m.Values = new object[count];
+                    for (int j = 0; j < count; j++)
+                        m.Values[j] = ReadObject(r);
+                    record.Misc.Add(m);
+                }
+                record.PermsGranter = ReadText(r);
+                record.PermsMask = r.ReadInt32();
+                record.PermsOwner = ReadText(r);
+                record.PermsExperience = ReadText(r);
+                record.PermsUnverified = r.ReadBoolean();
                 int native = r.ReadInt32();
                 CheckCount(native, r);
                 record.Native = r.ReadBytes(native);
@@ -244,6 +276,109 @@ namespace SLua.ScriptEngine
         {
             if (count < 0 || count > r.BaseStream.Length - r.BaseStream.Position)
                 throw new FormatException("a length is larger than the record");
+        }
+
+        /// <summary>True when the value is of a kind <see cref="SavedMisc"/> can hold: nothing, text, a whole number, a decimal number or a flag.</summary>
+        internal static bool CanHold(object value) =>
+            value == null || value is string || value is int || value is long || value is float || value is double || value is bool;
+
+        private static void WriteObject(BinaryWriter w, object v)
+        {
+            switch (v)
+            {
+                case null: w.Write((byte)0); break;
+                case string t: w.Write((byte)1); w.Write(t); break;
+                case int i: w.Write((byte)2); w.Write(i); break;
+                case long l: w.Write((byte)3); w.Write(l); break;
+                case float f: w.Write((byte)4); w.Write(f); break;
+                case double d: w.Write((byte)5); w.Write(d); break;
+                case bool b: w.Write((byte)6); w.Write(b); break;
+                default: throw new ArgumentException("a value of type " + v.GetType().Name + " cannot be saved");
+            }
+        }
+
+        private static object ReadObject(BinaryReader r)
+        {
+            switch (r.ReadByte())
+            {
+                case 0: return null;
+                case 1: return r.ReadString();
+                case 2: return r.ReadInt32();
+                case 3: return r.ReadInt64();
+                case 4: return r.ReadSingle();
+                case 5: return r.ReadDouble();
+                case 6: return r.ReadBoolean();
+                default: throw new FormatException("an unknown attribute value type");
+            }
+        }
+
+        private static void WriteVec(BinaryWriter w, Vector3 v) { w.Write(v.X); w.Write(v.Y); w.Write(v.Z); }
+
+        private static Vector3 ReadVec(BinaryReader r) => new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
+
+        private static void WriteDetected(BinaryWriter w, DetectedRecord[] detected)
+        {
+            w.Write(detected != null);
+            if (detected == null)
+                return;
+            w.Write(detected.Length);
+            foreach (DetectedRecord d in detected)
+            {
+                WriteText(w, d.Key);
+                WriteText(w, d.Name);
+                WriteText(w, d.Owner);
+                WriteText(w, d.Group);
+                WriteVec(w, d.Position);
+                w.Write(d.Rotation.X); w.Write(d.Rotation.Y); w.Write(d.Rotation.Z); w.Write(d.Rotation.W);
+                WriteVec(w, d.Velocity);
+                w.Write(d.LinkNumber);
+                w.Write(d.Type);
+                WriteVec(w, d.OffsetPos);
+                w.Write(d.TouchFace);
+                WriteVec(w, d.TouchUV);
+                WriteVec(w, d.TouchST);
+                WriteVec(w, d.TouchNormal);
+                WriteVec(w, d.TouchBinormal);
+                WriteVec(w, d.TouchPos);
+                w.Write(d.Damage);
+                w.Write(d.DamageType);
+                w.Write(d.OriginalDamage);
+            }
+        }
+
+        private static DetectedRecord[] ReadDetected(BinaryReader r)
+        {
+            if (!r.ReadBoolean())
+                return null;
+            int count = r.ReadInt32();
+            CheckCount(count, r);
+            var list = new DetectedRecord[count];
+            for (int i = 0; i < count; i++)
+            {
+                list[i] = new DetectedRecord
+                {
+                    Key = ReadText(r),
+                    Name = ReadText(r),
+                    Owner = ReadText(r),
+                    Group = ReadText(r),
+                    Position = ReadVec(r),
+                    Rotation = new Quaternion(r.ReadSingle(), r.ReadSingle(), r.ReadSingle(), r.ReadSingle()),
+                    Velocity = ReadVec(r),
+                    LinkNumber = r.ReadInt32(),
+                    Type = r.ReadInt32(),
+                    OffsetPos = ReadVec(r),
+                    TouchFace = r.ReadInt32(),
+                    TouchUV = ReadVec(r),
+                    TouchST = ReadVec(r),
+                    TouchNormal = ReadVec(r),
+                    TouchBinormal = ReadVec(r),
+                    TouchPos = ReadVec(r),
+                    Damage = r.ReadSingle(),
+                    DamageType = r.ReadInt32(),
+                    OriginalDamage = r.ReadSingle(),
+                };
+            }
+            return list;
         }
 
         private static void WriteText(BinaryWriter w, string text)

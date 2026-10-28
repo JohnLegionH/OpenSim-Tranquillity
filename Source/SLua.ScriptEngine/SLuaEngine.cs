@@ -57,6 +57,9 @@ namespace SLua.ScriptEngine
         /// <summary>The database this engine made itself and so closes when the region goes; null for a store it was given.</summary>
         private SqliteStateStore m_ownedStateStore;
 
+        /// <summary>The simulator is shutting down: a script removed now is not deleted, so its saved state is still there for the restart.</summary>
+        private volatile bool m_shuttingDown;
+
         private readonly bool m_makesItsStore;
 
         /// <summary>Builds the loader for a region once the engine is enabled; tests substitute their own.</summary>
@@ -315,6 +318,7 @@ namespace SLua.ScriptEngine
         /// </summary>
         private void OnShutdown()
         {
+            m_shuttingDown = true; // the scripts the region takes out on the way down keep their rows: the restart restores from them
             SLuaScheduler scheduler = m_scheduler;
             m_scheduler = null;
             try { scheduler?.Dispose(); }
@@ -408,6 +412,7 @@ namespace SLua.ScriptEngine
                 EngineName = EngineIdentity.EngineName,
                 StateSaveIntervalMs = m_settings.StateSaveIntervalMs,
                 ScriptFaulted = OnScriptFaulted,
+                ScriptFaultRestored = OnScriptFaultRestored,
                 StateChanged = OnStateChanged,
                 HandlersChanged = OnHandlersChanged,
                 ScriptError = OnScriptError,
@@ -548,9 +553,10 @@ namespace SLua.ScriptEngine
 
             // The script's saved state, if this engine owns one for this item and asset (a record of another engine is left alone; one the
             // store cannot read holds the script back with its row untouched).
+            byte[] carried = TakeCarried(ready.ItemID, ready.AssetID);
             StateLoadResult saved = null;
-            if (m_stateStore != null && ready.AssetID != UUID.Zero)
-                saved = StateJoin.Load(m_stateStore, EngineIdentity.EngineName, ready.ItemID, ready.AssetID, m_settings.StateLoadRetries, m_settings.StateLoadRetryDelayMs, System.Threading.Thread.Sleep, m_log);
+            if (carried != null || (m_stateStore != null && ready.AssetID != UUID.Zero))
+                saved = StateJoin.Load(m_stateStore, EngineIdentity.EngineName, ready.ItemID, ready.AssetID, m_settings.StateLoadRetries, m_settings.StateLoadRetryDelayMs, System.Threading.Thread.Sleep, m_log, carried);
             if (saved?.Kind == StateLoadKind.Held)
                 running = false; // the script is not started over a state it could not read
 
@@ -572,23 +578,25 @@ namespace SLua.ScriptEngine
             {
                 script.ItemId = ready.ItemID;
                 script.AssetId = ready.AssetID;
-                if (saved?.Kind == StateLoadKind.Restore)
-                {
-                    script.RestoreRecord = saved.Record;
-                    if (saved.Record.Faulted)
-                    {
-                        script.Fault = (Bindings.FaultKind)saved.Record.FaultKind;
-                        script.FaultMessage = saved.Record.FaultMessage;
-                    }
-                    else
-                        script.CurrentState = saved.Record.LslState;
-                }
-                else if (saved?.Kind == StateLoadKind.Held)
-                    script.StateHeld = saved.Reason;
             }
+            if (saved?.Kind == StateLoadKind.Restore)
+            {
+                script.RestoreRecord = saved.Record;
+                script.RestoredFromCarried = saved.Carried;
+                if (saved.Record.Faulted)
+                {
+                    script.Fault = (Bindings.FaultKind)saved.Record.FaultKind;
+                    script.FaultMessage = saved.Record.FaultMessage;
+                }
+                else
+                    script.CurrentState = saved.Record.LslState;
+            }
+            else if (saved?.Kind == StateLoadKind.Held)
+                script.StateHeld = saved.Reason;
             var record = new ScriptRecord { ItemID = ready.ItemID, LocalID = ready.LocalID, AssetID = ready.AssetID, Script = script, Start = start, StartupPending = true, LastState = script.CurrentState };
             m_contexts[script.Id] = new ScriptContext(script, CreateScriptApi(script, ready.ItemID, ready.LocalID, UnavailableApi.Create()), ready.ItemID, m_lane);
             WireListens(record);
+            WireExtras(record);
             // The estate switch and the parcel rule decide before the script is visible or started: a script they hold back starts paused, never refused.
             record.Pause = m_policy?.ReasonsFor(ready.ItemID, ready.LocalID) ?? PauseReason.None;
             if (record.Pause != PauseReason.None)
@@ -627,6 +635,10 @@ namespace SLua.ScriptEngine
             }
             else
             {
+                // A script a fault stopped is put back stopped even though its Running flag is off (the fault turned it off): the restore marks
+                // it faulted and quiet, so a later "set running" resets it as it does for any script a fault stopped.
+                if (saved?.Kind == StateLoadKind.Restore && saved.Record.Faulted)
+                    scheduler.Start(script);
                 scheduler.SetRunning(script, false);
                 ApplyEventFlags(record, 0, false);
             }
@@ -660,6 +672,60 @@ namespace SLua.ScriptEngine
                         host = bot;
                     m_chat?.Listens.Restore(record.LocalID, item, host, key, l);
                 }
+            };
+        }
+
+        /// <summary>
+        /// Lets the scheduler save what the API keeps for a script in its runtime state, as Second Life keeps it across a restart, a take
+        /// and a crossing: the repeating sensor and the taken controls (attributes), and the permission record. The record is taken on the
+        /// worker, where the API runs. A restored script gets them back before it runs: the grant is decided as Phlox decides it (a state
+        /// that came with an object is checked again, one from the database comes back whole), a record of taken controls stays only
+        /// while the grant it rests on does, and a script that runs sets its repeating sensor again.
+        /// </summary>
+        private void WireExtras(ScriptRecord record)
+        {
+            UUID item = record.ItemID;
+            record.Script.ExtrasFill = rec =>
+            {
+                Phlox.ScriptEngine.LSLSystemAPI api = RealApiOf(item);
+                RuntimeState state = api?.RuntimeAccess?.ScriptState;
+                if (state == null)
+                    return;
+                api.NoteGrantForCarry();
+                if (state.MiscAttributes != null)
+                {
+                    foreach (KeyValuePair<int, object[]> kv in new List<KeyValuePair<int, object[]>>(state.MiscAttributes))
+                    {
+                        if (kv.Value != null && Array.TrueForAll(kv.Value, ScriptStateRecord.CanHold))
+                            rec.Misc.Add(new SavedMisc { Key = kv.Key, Values = kv.Value });
+                        else
+                            m_log.Warn($"Script {item}: its attribute {kv.Key} holds a value that cannot be saved and is left out");
+                    }
+                }
+                rec.PermsGranter = state.PermsGranter;
+                rec.PermsMask = state.GrantedPermsMask;
+                rec.PermsOwner = state.PermsOwner;
+                rec.PermsExperience = state.PermsExperience;
+                rec.PermsUnverified = state.PermsUnverified;
+            };
+            record.Script.ExtrasRestore = (rec, carried) =>
+            {
+                Phlox.ScriptEngine.LSLSystemAPI api = RealApiOf(item);
+                RuntimeState state = api?.RuntimeAccess?.ScriptState;
+                if (state == null)
+                    return;
+                foreach (SavedMisc m in rec.Misc)
+                    state.MiscAttributes[m.Key] = m.Values;
+                state.PermsGranter = rec.PermsGranter;
+                state.GrantedPermsMask = rec.PermsMask;
+                state.PermsOwner = rec.PermsOwner;
+                state.PermsExperience = rec.PermsExperience;
+                state.PermsUnverified = rec.PermsUnverified;
+                api.RestoreSavedGrant(carried);
+                api.DropGrantRecordsWithoutGrant();
+                // A script that runs takes up its sensor and its controls again; a stopped one does when it is started (OnStartScript).
+                if (record.Script.Running)
+                    api.OnScriptInjected(record.Start?.StateSource == (int)StateSource.PrimCrossing);
             };
         }
 
@@ -827,6 +893,11 @@ namespace SLua.ScriptEngine
             UnloadApi(itemID);
             DropRecord(itemID);
             m_chat?.Listens.Forget(itemID); // an unload ends the script's listens
+            ForgetCarried(itemID);
+            // The script is gone, from its prim or with its object: its row in the engine's own database goes with it. (A take carries the
+            // state in the object, a crossing in the next region's copy.) Not at shutdown, where the rows are what the restart restores from.
+            if (!m_shuttingDown && m_settings.SaveScriptState)
+                m_store?.Delete(itemID);
             OnScriptRemoved?.Invoke(itemID);
         }
 
@@ -911,6 +982,20 @@ namespace SLua.ScriptEngine
             TellOwner(record, $"Script {record.AssetID} encountered a problem and was stopped: {script.FaultMessage}");
         }
 
+        /// <summary>
+        /// A script a fault had stopped was put back stopped from its saved state (a restart, a rez, a crossing). The owner was told when the fault
+        /// happened, so there is one line in the log and the item's Running flag is set off, and no message.
+        /// </summary>
+        private void OnScriptFaultRestored(SchedulerScript script)
+        {
+            ScriptRecord record = FindRecord(script);
+            if (record == null)
+                return;
+            m_log.Info($"Script {record.ItemID} (asset {record.AssetID}) stays stopped by an earlier fault: {script.FaultMessage}");
+            SetItemRunningFlag(record.LocalID, record.ItemID, false);
+            ApplyEventFlags(record, script.CurrentState, false);
+        }
+
         /// <summary>A host function reported an error for the script (on its worker's thread); the scheduler pauses the script for the error pause.</summary>
         private void OnScriptError(SchedulerScript script, string text)
         {
@@ -979,7 +1064,7 @@ namespace SLua.ScriptEngine
 
         // ---- the module's interface ----
 
-        public bool HasSavedScriptState(UUID itemID, UUID assetID) => m_store.HasSavedState(itemID, assetID);
+        public bool HasSavedScriptState(UUID itemID, UUID assetID) => HasCarried(itemID, assetID) || m_store.HasSavedState(itemID, assetID);
 
         /// <summary>The version of the carried-state envelope this build writes and reads.</summary>
         internal const string CarriedStateVersion = "1";
@@ -993,14 +1078,184 @@ namespace SLua.ScriptEngine
         /// <summary>How long a region thread waits for the workers to capture an object's scripts.</summary>
         internal int CarriedStateTimeoutMs = 10 * 1000;
 
+        /// <summary>State that came with an object and waits for its script to load, by item: the asset it was saved for, the record, and when it came.</summary>
+        private readonly Dictionary<UUID, (UUID Asset, byte[] Record, long Taken)> m_carried = new Dictionary<UUID, (UUID, byte[], long)>();
+
+        /// <summary>Records captured for the other scripts of an object, until the core asks for them one at a time (null: that script travels without state).</summary>
+        private readonly Dictionary<UUID, (byte[] Record, UUID Asset, long Taken)> m_capturedForObject = new Dictionary<UUID, (byte[], UUID, long)>();
+
+        private int m_capturePasses;
+
         /// <summary>How many times the workers were asked to capture the scripts of an object (one pass takes all of them).</summary>
-        internal int CarriedCapturePasses => 0;
+        internal int CarriedCapturePasses => Volatile.Read(ref m_capturePasses);
 
         /// <summary>The script functions of the item's script, or null; for the tests.</summary>
         internal Phlox.ScriptEngine.LSLSystemAPI RealApiFor(UUID itemId) => RealApiOf(itemId);
 
-        public string GetXMLState(UUID itemID) => string.Empty;
-        public bool SetXMLState(UUID itemID, string xml) => false;
+        /// <summary>
+        /// The state of the script for its object to carry (a take, a derez, a detach, a crossing), as the envelope
+        /// <c>&lt;State Engine="SLua" UUID=item Asset=asset Version="1"&gt;&lt;ScriptState&gt;base64&lt;/ScriptState&gt;&lt;/State&gt;</c>, or "" when the
+        /// item is not a script of this engine here, is held because its row could not be read, cannot be captured now, or is larger than an
+        /// object carries. The capture is taken on the workers between steps, for all the scripts of the object in one pass: the core asks
+        /// one script at a time, and the others are answered from the pass (the shape of Phlox's and YEngine's envelope).
+        /// </summary>
+        public string GetXMLState(UUID itemID)
+        {
+            ScriptRecord record = RecordOf(itemID);
+            SLuaScheduler scheduler = m_scheduler;
+            if (record == null || scheduler == null || record.Script.StateHeld != null)
+                return string.Empty;
+            long now = Environment.TickCount64;
+            lock (m_capturedForObject)
+            {
+                foreach (UUID stale in new List<UUID>(m_capturedForObject.Keys))
+                    if (now - m_capturedForObject[stale].Taken > Math.Max(CarriedStateTimeoutMs, 1000) * 2L)
+                        m_capturedForObject.Remove(stale);
+                if (m_capturedForObject.Remove(itemID, out var got))
+                    return CarriedEnvelope(itemID, got.Asset, got.Record);
+            }
+
+            var records = new List<ScriptRecord> { record };
+            SceneObjectGroup group = m_scene?.GetSceneObjectPart(record.LocalID)?.ParentGroup;
+            if (group != null)
+            {
+                foreach (SceneObjectPart part in group.Parts)
+                {
+                    foreach (TaskInventoryItem other in part.Inventory.GetInventoryItems(InventoryType.LSL))
+                    {
+                        ScriptRecord r = other.ItemID == itemID ? null : RecordOf(other.ItemID);
+                        if (r != null && r.Script.StateHeld == null)
+                            records.Add(r);
+                    }
+                }
+            }
+            Interlocked.Increment(ref m_capturePasses);
+            var scripts = new List<SchedulerScript>(records.Count);
+            foreach (ScriptRecord r in records)
+                scripts.Add(r.Script);
+            Dictionary<long, byte[]> captured = scheduler.CaptureForCarry(scripts, CarriedStateTimeoutMs, out bool timedOut);
+            if (timedOut)
+            {
+                m_log.Warn($"Timed out after {CarriedStateTimeoutMs} ms capturing the {records.Count} script(s) of {group?.Name ?? itemID.ToString()}; they travel without their state and start fresh where they arrive");
+                captured.Clear();
+            }
+            lock (m_capturedForObject)
+            {
+                for (int i = 1; i < records.Count; i++)
+                    m_capturedForObject[records[i].ItemID] = (captured.TryGetValue(records[i].Script.Id, out byte[] other) ? other : null, records[i].AssetID, now);
+            }
+            captured.TryGetValue(record.Script.Id, out byte[] mine);
+            return CarriedEnvelope(itemID, record.AssetID, mine);
+        }
+
+        private string CarriedEnvelope(UUID itemID, UUID asset, byte[] record)
+        {
+            if (record == null)
+            {
+                m_log.Warn($"Script {itemID} could not be captured for its object; it travels without its state");
+                return string.Empty;
+            }
+            if (record.Length > MaxCarriedStateBytes)
+            {
+                m_log.Warn($"The state of script {itemID} is {record.Length} bytes, above the {MaxCarriedStateBytes} an object carries; it travels without it");
+                return string.Empty;
+            }
+            var doc = new System.Xml.XmlDocument();
+            System.Xml.XmlElement state = doc.CreateElement("", "State", "");
+            doc.AppendChild(state);
+            state.SetAttribute("Engine", EngineIdentity.EngineName);
+            state.SetAttribute("UUID", itemID.ToString());
+            state.SetAttribute("Asset", asset.ToString());
+            state.SetAttribute("Version", CarriedStateVersion);
+            System.Xml.XmlElement data = doc.CreateElement("", "ScriptState", "");
+            data.InnerText = Convert.ToBase64String(record);
+            state.AppendChild(data);
+            return doc.OuterXml;
+        }
+
+        /// <summary>
+        /// The object brought this script's state. True only for this engine's own envelope of this version whose record reads: it is held
+        /// for the item's load, which uses it before the database's row. Anything else is false, so the core offers the state to the next
+        /// engine: another engine's state, another envelope version, XML that does not parse, a record that does not read, one above the
+        /// size cap (checked before anything is decoded). A script given no state starts fresh.
+        /// </summary>
+        public bool SetXMLState(UUID itemID, string xml)
+        {
+            if (string.IsNullOrEmpty(xml) || m_scheduler == null)
+                return false;
+            if (xml.Length > MaxCarriedStateXmlChars)
+            {
+                m_log.Warn($"Script {itemID} brought {xml.Length} characters of state, above the {MaxCarriedStateXmlChars} read; it starts fresh");
+                return false;
+            }
+            System.Xml.XmlElement state;
+            try
+            {
+                var doc = new System.Xml.XmlDocument { XmlResolver = null };
+                doc.LoadXml(xml);
+                state = doc.DocumentElement;
+            }
+            catch (System.Xml.XmlException) { return false; }
+            if (state == null || state.Name != "State" || state.GetAttribute("Engine") != EngineIdentity.EngineName)
+                return false;
+            if (state.GetAttribute("Version") != CarriedStateVersion)
+            {
+                m_log.Warn($"Script {itemID} brought state in envelope version '{state.GetAttribute("Version")}', which this build does not read; it starts fresh");
+                return false;
+            }
+            if (!UUID.TryParse(state.GetAttribute("Asset"), out UUID asset))
+                return false;
+            byte[] bytes;
+            try { bytes = Convert.FromBase64String(state["ScriptState"]?.InnerText ?? string.Empty); }
+            catch (FormatException) { return false; }
+            if (ScriptStateRecord.Inspect(bytes, EngineIdentity.EngineName, out _, out string problem) != ScriptStateRecord.RecordReading.Ok)
+            {
+                m_log.Warn($"Script {itemID} brought state that cannot be read ({problem}); it starts fresh");
+                return false;
+            }
+            long now = Environment.TickCount64;
+            lock (m_carried)
+            {
+                foreach (UUID stale in new List<UUID>(m_carried.Keys))
+                    if (now - m_carried[stale].Taken > CarriedStateKeepMs)
+                        m_carried.Remove(stale);
+                m_carried[itemID] = (asset, bytes, now);
+            }
+            return true;
+        }
+
+        /// <summary>State that came with an object and was never used is forgotten after this long (the script never loaded).</summary>
+        private const long CarriedStateKeepMs = 10 * 60 * 1000;
+
+        /// <summary>The state the object brought for this item, once: null when none came, or when it was saved for another asset (the script was edited since), which is dropped.</summary>
+        private byte[] TakeCarried(UUID itemId, UUID assetId)
+        {
+            (UUID Asset, byte[] Record, long Taken) c;
+            lock (m_carried)
+            {
+                if (!m_carried.Remove(itemId, out c))
+                    return null;
+            }
+            if (c.Asset != assetId)
+            {
+                m_log.Info($"Dropping the state script {itemId} brought for asset {c.Asset}; the script is now asset {assetId}");
+                return null;
+            }
+            return c.Record;
+        }
+
+        private bool HasCarried(UUID itemId, UUID assetId)
+        {
+            lock (m_carried)
+                return m_carried.TryGetValue(itemId, out var c) && c.Asset == assetId;
+        }
+
+        private void ForgetCarried(UUID itemId)
+        {
+            lock (m_carried) m_carried.Remove(itemId);
+            lock (m_capturedForObject) m_capturedForObject.Remove(itemId);
+        }
+
         public bool PostScriptEvent(UUID itemID, string name, object[] args) =>
             PostScriptEvent(itemID, new EventParams(name, args, null));
 

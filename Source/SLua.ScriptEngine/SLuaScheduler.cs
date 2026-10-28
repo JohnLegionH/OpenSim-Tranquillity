@@ -161,6 +161,54 @@ namespace SLua.ScriptEngine
             return new SchedulerStats { Workers = workers };
         }
 
+        /// <summary>
+        /// Captures the scripts' records for the object that carries them, all in one pass: each worker takes its own scripts between steps
+        /// and the caller waits up to <paramref name="timeoutMs"/> for all of them. A script that could not be captured now has no entry.
+        /// With no worker threads (tests) the capture is done on the calling thread.
+        /// </summary>
+        internal System.Collections.Generic.Dictionary<long, byte[]> CaptureForCarry(System.Collections.Generic.IReadOnlyList<SchedulerScript> scripts, int timeoutMs, out bool timedOut)
+        {
+            var results = new System.Collections.Concurrent.ConcurrentDictionary<long, byte[]>();
+            timedOut = false;
+            var byWorker = new System.Collections.Generic.Dictionary<ScriptWorker, System.Collections.Generic.List<SchedulerScript>>();
+            foreach (SchedulerScript s in scripts)
+            {
+                if (s.Worker == null)
+                    continue;
+                if (!byWorker.TryGetValue(s.Worker, out var list))
+                    byWorker[s.Worker] = list = new System.Collections.Generic.List<SchedulerScript>();
+                list.Add(s);
+            }
+            var done = new System.Threading.CountdownEvent(Math.Max(1, byWorker.Count));
+            if (byWorker.Count == 0)
+                done.Signal();
+            foreach (var pair in byWorker)
+            {
+                ScriptWorker worker = pair.Key;
+                var group = pair.Value;
+                Action capture = () =>
+                {
+                    try
+                    {
+                        foreach (SchedulerScript s in group)
+                        {
+                            byte[] record = worker.CaptureForCarry(s);
+                            if (record != null)
+                                results[s.Id] = record;
+                        }
+                    }
+                    finally { done.Signal(); }
+                };
+                if (m_options.RunThreads)
+                    worker.Enqueue(capture);
+                else
+                    capture();
+            }
+            if (!done.Wait(timeoutMs))
+                timedOut = true;
+            return new System.Collections.Generic.Dictionary<long, byte[]>(results);
+        }
+
         /// <summary>Stops every worker, waiting up to five seconds for each, and frees the scripts, images and VMs.</summary>
         public void Dispose()
         {
