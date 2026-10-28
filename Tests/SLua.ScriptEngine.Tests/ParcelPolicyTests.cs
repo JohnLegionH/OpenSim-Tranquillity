@@ -42,8 +42,8 @@ internal sealed class EstateStub : IEstateModule
     public void SetEstateTerrainTextures(List<UUID> textureIDs, int types) { }
     public void setEstateTerrainTextureHeights(int corner, float lowValue, float highValue) { }
     public bool IsTerrainXfer(ulong xferID) => false;
-    public bool handleEstateChangeInfoCap(string estateName, UUID invoice, bool externallyVisible, bool allowDirectTeleport, bool denyAnonymous,
-        bool denyAgeUnverified, bool alloVoiceChat, bool overridePublicAccess, bool allowEnvironmentOverride) => false;
+    public bool handleEstateChangeInfoCap(string estateName, UUID invoice, bool? externallyVisible, bool? allowDirectTeleport, bool? denyAnonymous,
+        bool? denyAgeUnverified, bool? alloVoiceChat, bool? overridePublicAccess, bool? allowEnvironmentOverride) => false;
     public void HandleRegionInfoRequest(IClientAPI remote_client) { }
     public bool SetRegionInfobyCap(OSDMap map) => false;
 }
