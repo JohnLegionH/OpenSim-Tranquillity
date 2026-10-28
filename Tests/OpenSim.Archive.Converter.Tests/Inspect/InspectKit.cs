@@ -199,7 +199,7 @@ internal static class InspectKit
         List<(string, byte[])> entries = new List<(string, byte[])> { ("archive.xml", IarControl()) };
         foreach (IarItem i in items)
         {
-            string folder = "inventory/" + i.Folder.Replace(" ", "%20") + "__" + UUID.Parse("00000000-0000-4000-8000-0000000000aa") + "/";
+            string folder = "inventory/" + i.Folder + "__" + UUID.Parse("00000000-0000-4000-8000-0000000000aa") + "/";
             entries.Add((folder + i.Name + "__" + i.Id + ".xml", Utf8(IarItemXml(i.Name, i.Id, i.Asset, i.AssetType, i.Creator, i.Owner, i.Base, i.Current, i.Group, i.Everyone, i.Next, i.CreatorData))));
         }
         foreach (IarItem i in items.Where(x => x.ObjectXml != null))
