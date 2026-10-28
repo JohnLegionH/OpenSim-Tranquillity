@@ -205,6 +205,7 @@ ll.SetTimerEvent(1.0)
         Run(w.H, 2);
         Assert.True(s.Killed);
         Assert.Contains("boom", s.FaultMessage);
+        Assert.Equal(1, w.H.FaultedScripts.Count(f => ReferenceEquals(f, s))); // the fault was reported when it happened
 
         w.Restart();
         SchedulerScript back = w.Start(item, Faulting);
@@ -214,7 +215,6 @@ ll.SetTimerEvent(1.0)
         Assert.False(back.Running);
         Assert.Equal(ScriptRunState.Faulted, back.State);
         Assert.Contains("boom", back.FaultMessage);
-        Assert.Equal(1, w.H.FaultedScripts.Count(f => ReferenceEquals(f, s))); // the fault was reported when it happened
         Assert.Equal(0, w.H.FaultedScripts.Count(f => ReferenceEquals(f, back))); // and is not reported again at each restart
         Assert.Equal(1, w.H.FaultRestoredScripts.Count(f => ReferenceEquals(f, back))); // the engine is told once, for its log line and the item's flag
         Assert.Equal(0, back.Steps);

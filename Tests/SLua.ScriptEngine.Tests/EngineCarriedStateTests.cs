@@ -317,6 +317,7 @@ public class EngineCarriedStateTests
         Assert.Contains("boom", s.FaultMessage);
         Assert.DoesNotContain("start", there.MarksOf(item)); // it did not run
         Assert.Empty(there.Messages.Shouts); // the owner was told when it first happened
+        Assert.True(SchedulerHarness.WaitFor(() => there.Log.Lines.Any(l => l.Contains(item.ToString()) && l.Contains("boom"))), "the log line");
         Assert.Single(there.Log.Lines, l => l.Contains(item.ToString()) && l.Contains("boom")); // one line in the log
     }
 }

@@ -163,7 +163,7 @@ public class EngineSavedExtrasTests
                 Assert.True(Marked(rig, item, "start"));
                 rig.PostProbe(item, 1);
                 Assert.True(SchedulerHarness.WaitFor(() => rig.Engine.SchedulerScriptFor(item).Killed));
-                Assert.Single(rig.Messages.Shouts); // the first report told the owner
+                Assert.True(SchedulerHarness.WaitFor(() => rig.Messages.Shouts.Length == 1), "the first report told the owner");
             }
             Assert.True(store.Flush());
         }
@@ -175,6 +175,7 @@ public class EngineSavedExtrasTests
             SchedulerScript s = rig.WaitScheduled(item);
             Assert.True(SchedulerHarness.WaitFor(() => s.Killed));
             Assert.Empty(rig.Messages.Shouts);
+            Assert.True(SchedulerHarness.WaitFor(() => rig.Log.Lines.Any(l => l.Contains(item.ToString()) && l.Contains("boom"))), "the log line");
             Assert.Single(rig.Log.Lines, l => l.Contains(item.ToString()) && l.Contains("boom"));
             Assert.False(rig.ItemOf(item).ScriptRunning);
         }
