@@ -18,7 +18,8 @@ namespace SLua.ScriptEngine.Tests;
 /// <summary>
 /// Which engine the region gives a script to (Scene.ResolveScriptEngine), with this engine, Phlox and YEngine loaded
 /// and Phlox the default. The region's own header parse needs no change to route to this engine: its name is the
-/// token. Scripts without our header never come to us.
+/// token. A script without our header comes to us only by its "--!slua" marker or when we are the default
+/// (EngineSelectionTableTests covers the headerless setting).
 /// </summary>
 public class SelectionTests
 {
@@ -56,7 +57,7 @@ public class SelectionTests
         { "//InWorldz.Phlox:\ndefault {}", Phlox, Phlox },
         { "//InWorldz.Phlox:slua\nprint(1)", Phlox, Phlox },
         { "//YEngine:\ndefault {}", Phlox, YEngine },
-        { "--!slua\nprint(1)", Phlox, Phlox },                       // no header: the default engine, never us
+        { "--!slua\nprint(1)", Phlox, Ours },                        // the marker is claimed by the engine while it is enabled
         { "-- plain Lua\nprint(1)", Phlox, Phlox },
         { "default { state_entry() {} }", Phlox, Phlox },
         { "// an ordinary comment\ndefault {}", Phlox, Phlox },
@@ -91,8 +92,10 @@ public class SelectionTests
     [MemberData(nameof(Table))]
     public void OurOwnershipTestAgreesWithTheRegion(string source, string defaultEngine, string expected)
     {
+        // Every engine is offered a rez with the engine the region chose, so the test starts from that choice.
         string[] loaded = { Phlox, YEngine, Ours };
-        Assert.Equal(expected == Ours, EngineHeader.Owner(source, defaultEngine, loaded) == Ours);
+        string chosen = RegionWithAllThree().ResolveScriptEngine(defaultEngine, source)?.ScriptEngineName;
+        Assert.Equal(expected == Ours, EngineHeader.Owner(source, chosen, loaded) == Ours);
     }
 
     [Fact]
