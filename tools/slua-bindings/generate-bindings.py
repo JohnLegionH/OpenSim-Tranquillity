@@ -774,6 +774,12 @@ namespace SLua.ScriptEngine
 # index-semantics and bool-semantics), as written into lsl-definition-marks.txt by extract-marks.py. A position is zero-based in
 # LSL and counts from 1 for an SLua script; a truth value is an integer in LSL and a boolean for an SLua script. Integer
 # parameters whose name suggests a position that the definitions do not mark are listed, not shifted.
+# List results the definitions mark as holding positions (index-semantics on a list return) without saying which elements are:
+# llFindNotecardTextSync answers a strided [line, column, length, ...] (its tooltip, lsl-definitions func-id 508). Line and
+# column are positions in the notecard and count from 1 for an SLua script; the length is a count. This is our reading of the
+# definitions, which only say "there are list indices in the return value"; docs/SLUA.md says so too.
+LIST_POSITIONS = {}
+
 POSITION_LIKE = re.compile(r"^(number|item|line|face|num)$")
 
 
@@ -822,7 +828,16 @@ namespace SLua.ScriptEngine
     out.append(string_array("Returns", "The ll functions whose integer result is a position (-1 for no match).", returns))
     out.append("\n")
     out.append(string_array("NotDerived", "Integer parameters whose name suggests a position that the definitions do not mark; they are not shifted.", not_derived))
-    out.append("    }\n}\n")
+    out.append("\n        /// <summary>The ll functions whose list result holds positions at fixed places of each stride (see LIST_POSITIONS in tools/slua-bindings/generate-bindings.py).</summary>\n")
+    out.append("        internal static readonly IReadOnlyDictionary<string, ListPositions> ListStrides = new Dictionary<string, ListPositions>\n        {\n")
+    for name in sorted(LIST_POSITIONS):
+        stride, places = LIST_POSITIONS[name]
+        if "return:index" not in marks.get(name, []):
+            sys.exit("%s is in LIST_POSITIONS but the definitions do not mark its result as positions" % name)
+        out.append('            ["%s"] = new ListPositions(%d, new[] { %s }),\n' % (name, stride, ", ".join(str(i) for i in places)))
+    out.append("        };\n    }\n\n")
+    out.append('    /// <summary>A list result made of strides of <see cref="Stride"/> elements, of which the elements at <see cref="Positions"/> (zero-based, within a stride) are positions.</summary>\n')
+    out.append("    internal sealed record ListPositions(int Stride, int[] Positions);\n}\n")
     write(out_dir, "LlIndexes.g.cs", "".join(out))
 
     booleans = sorted(n for n in definitions if definitions[n][0] == "integer" and "return:bool" in marks.get(n, []))

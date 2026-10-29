@@ -111,5 +111,13 @@ namespace SLua.ScriptEngine
             "llSetTexture(face)",
             "llSetTextureAnim(face)",
         };
+
+        /// <summary>The ll functions whose list result holds positions at fixed places of each stride (see LIST_POSITIONS in tools/slua-bindings/generate-bindings.py).</summary>
+        internal static readonly IReadOnlyDictionary<string, ListPositions> ListStrides = new Dictionary<string, ListPositions>
+        {
+        };
     }
+
+    /// <summary>A list result made of strides of <see cref="Stride"/> elements, of which the elements at <see cref="Positions"/> (zero-based, within a stride) are positions.</summary>
+    internal sealed record ListPositions(int Stride, int[] Positions);
 }
