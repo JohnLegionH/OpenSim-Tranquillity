@@ -54,7 +54,9 @@ public class OsPositionTests
         public string[] Run(string source, bool lsl = false, int expectedMarks = 1)
         {
             SchedulerScript s = H.AddAndStart(source, lsl);
-            SchedulerHarness.WaitFor(() => { H.Pump(); return H.MarksOf(s).Length >= expectedMarks; }, 10000);
+            SchedulerHarness.WaitFor(() => { H.Pump(); H.Advance(0.5); return H.MarksOf(s).Length >= expectedMarks; }, 10000); // a delayed call sleeps on the harness's clock
+            Assert.True(H.FaultedScripts.IsEmpty, "the script faulted: " + string.Join("; ", H.FaultedScripts.Select(f => f.FaultMessage)));
+            Assert.True(H.ReportedErrors.IsEmpty, "the script reported: " + string.Join("; ", H.ReportedErrors));
             return H.MarksOf(s);
         }
 

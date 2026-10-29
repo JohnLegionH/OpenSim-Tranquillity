@@ -748,7 +748,38 @@ def failure_expr(literal):
 # more than one signature take their positions at different places) to the zero-based places of the position parameters,
 # "return" is true when the integer result is a position (-1 for no match), and "list" is (stride, places) when the list
 # result holds positions at those places of each stride. SLua only: LSL and Phlox keep counting from 0.
-OS_POSITIONS = {}
+OS_POSITIONS = {
+    # a list index (llList2String, llListFindList and the like)
+    "osListAsFloat": {"args": {2: [1]}},
+    "osListAsInteger": {"args": {2: [1]}},
+    "osListAsRotation": {"args": {2: [1]}},
+    "osListAsString": {"args": {2: [1]}},
+    "osListAsVector": {"args": {2: [1]}},
+    "osOldList2ListStrided": {"args": {4: [1, 2]}},
+    "osListSortInPlaceStrided": {"args": {4: [2]}},
+    "osListFindListNext": {"args": {5: [2, 3, 4]}, "return": True},
+    # a character position in a string (llGetSubString, llSubStringIndex, llOrd)
+    "osStringIndexOf": {"args": {5: [2]}, "return": True},
+    "osStringLastIndexOf": {"args": {5: [2]}, "return": True},
+    "osStringRemove": {"args": {3: [1]}},
+    "osStringSubString": {"args": {2: [1], 3: [1]}},
+    "osReplaceString": {"args": {5: [4]}},
+    "iwSubStringIndex": {"args": {4: [2]}, "return": True},
+    "iwChar2Int": {"args": {2: [1]}},
+    # positions inside a strided answer: osMatchString gives [text, position, ...]
+    "osMatchString": {"args": {3: [2]}, "list": (2, [1])},
+    # a line of a notecard and a character offset in it (llGetNotecardLine)
+    "osGetNotecardLine": {"args": {2: [1]}},
+    "iwGetNotecardSegment": {"args": {4: [1, 2]}},
+    "iwGetLinkNotecardLine": {"args": {3: [2]}},
+    "iwGetLinkNotecardSegment": {"args": {5: [2, 3]}},
+    # the number of an inventory item (llGetInventoryName)
+    "iwGetLinkInventoryName": {"args": {3: [2]}},
+    # the number of the detected object of an event (llDetectedKey)
+    "osDetectedCountry": {"args": {1: [0]}},
+    # the first and last match of the outfits to give back
+    "botSearchBotOutfits": {"args": {4: [2, 3]}},
+}
 
 
 def write_os_indexes(out_dir, table):

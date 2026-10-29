@@ -20,16 +20,44 @@ namespace SLua.ScriptEngine
         /// <summary>The functions with integer parameters that are positions: the zero-based places of those parameters, by the number of parameters of the signature.</summary>
         internal static readonly IReadOnlyDictionary<string, IReadOnlyDictionary<int, int[]>> Arguments = new Dictionary<string, IReadOnlyDictionary<int, int[]>>
         {
+            ["botSearchBotOutfits"] = new Dictionary<int, int[]> { [4] = new[] { 2, 3 } },
+            ["iwChar2Int"] = new Dictionary<int, int[]> { [2] = new[] { 1 } },
+            ["iwGetLinkInventoryName"] = new Dictionary<int, int[]> { [3] = new[] { 2 } },
+            ["iwGetLinkNotecardLine"] = new Dictionary<int, int[]> { [3] = new[] { 2 } },
+            ["iwGetLinkNotecardSegment"] = new Dictionary<int, int[]> { [5] = new[] { 2, 3 } },
+            ["iwGetNotecardSegment"] = new Dictionary<int, int[]> { [4] = new[] { 1, 2 } },
+            ["iwSubStringIndex"] = new Dictionary<int, int[]> { [4] = new[] { 2 } },
+            ["osDetectedCountry"] = new Dictionary<int, int[]> { [1] = new[] { 0 } },
+            ["osGetNotecardLine"] = new Dictionary<int, int[]> { [2] = new[] { 1 } },
+            ["osListAsFloat"] = new Dictionary<int, int[]> { [2] = new[] { 1 } },
+            ["osListAsInteger"] = new Dictionary<int, int[]> { [2] = new[] { 1 } },
+            ["osListAsRotation"] = new Dictionary<int, int[]> { [2] = new[] { 1 } },
+            ["osListAsString"] = new Dictionary<int, int[]> { [2] = new[] { 1 } },
+            ["osListAsVector"] = new Dictionary<int, int[]> { [2] = new[] { 1 } },
+            ["osListFindListNext"] = new Dictionary<int, int[]> { [5] = new[] { 2, 3, 4 } },
+            ["osListSortInPlaceStrided"] = new Dictionary<int, int[]> { [4] = new[] { 2 } },
+            ["osMatchString"] = new Dictionary<int, int[]> { [3] = new[] { 2 } },
+            ["osOldList2ListStrided"] = new Dictionary<int, int[]> { [4] = new[] { 1, 2 } },
+            ["osReplaceString"] = new Dictionary<int, int[]> { [5] = new[] { 4 } },
+            ["osStringIndexOf"] = new Dictionary<int, int[]> { [5] = new[] { 2 } },
+            ["osStringLastIndexOf"] = new Dictionary<int, int[]> { [5] = new[] { 2 } },
+            ["osStringRemove"] = new Dictionary<int, int[]> { [3] = new[] { 1 } },
+            ["osStringSubString"] = new Dictionary<int, int[]> { [2] = new[] { 1 }, [3] = new[] { 1 } },
         };
 
         /// <summary>The functions whose integer result is a position (-1 for no match).</summary>
         internal static readonly string[] Returns = new string[]
         {
+            "iwSubStringIndex",
+            "osListFindListNext",
+            "osStringIndexOf",
+            "osStringLastIndexOf",
         };
 
         /// <summary>The functions whose list result holds positions at fixed places of each stride.</summary>
         internal static readonly IReadOnlyDictionary<string, ListPositions> ListStrides = new Dictionary<string, ListPositions>
         {
+            ["osMatchString"] = new ListPositions(2, new[] { 1 }),
         };
     }
 }

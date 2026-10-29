@@ -121,7 +121,7 @@ namespace SLua.ScriptEngine
         /// An SLua script's positions to LSL's (VM/src/llsl.cpp luaSL_checkindexlike): 1 and up count from the start and become
         /// 0 and up, negative positions count from the end and stay as they are, and 0 is an error.
         /// </summary>
-        private static Value[] ShiftArguments(string function, int[] positions, ReadOnlySpan<Value> args)
+        internal static Value[] ShiftArguments(string function, int[] positions, ReadOnlySpan<Value> args)
         {
             Value[] shifted = args.ToArray();
             foreach (int at in positions)
@@ -144,7 +144,7 @@ namespace SLua.ScriptEngine
         /// elements count from 1 (LSL's 0 and up become 1 and up). The other elements, and a list that is not made of such
         /// strides (a "NAK" answer, an empty list), are left as they are.
         /// </summary>
-        private static Value[] ShiftListResult(Value[] result, ListPositions positions)
+        internal static Value[] ShiftListResult(Value[] result, ListPositions positions)
         {
             if (result == null || result.Length == 0 || result[0].Type != Bindings.ValueType.List)
                 return result;
@@ -165,7 +165,7 @@ namespace SLua.ScriptEngine
         }
 
         /// <summary>LSL's position to an SLua script's (VM/src/llsl.cpp luaSL_pushindexlike): -1, no match, is nil; 0 and up count from 1.</summary>
-        private static Value[] ShiftResult(Value[] result)
+        internal static Value[] ShiftResult(Value[] result)
         {
             if (result == null || result.Length == 0 || result[0].Type != Bindings.ValueType.Int)
                 return result;
