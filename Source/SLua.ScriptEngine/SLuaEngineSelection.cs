@@ -34,7 +34,12 @@ namespace SLua.ScriptEngine
             return m_settings.ClaimHeaderlessScripts || BeginsWithSluaMarker(scriptSource);
         }
 
-        public bool AcceptsCompileTarget(ScriptCompileTarget target) => false;
+        /// <summary>
+        /// A script saved with the viewer's "Lua" or "LSL on Lua" choice is this engine's, whatever its first line says.
+        /// Like <see cref="ClaimsScript"/>, an engine that is not running, or has switched itself off, accepts nothing.
+        /// </summary>
+        public bool AcceptsCompileTarget(ScriptCompileTarget target)
+            => m_enabled && !m_disabled && target != ScriptCompileTarget.Unspecified;
 
         /// <summary>
         /// True when the text, after leading white space, begins with "--!slua" and the marker ends there (end of text,
