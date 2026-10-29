@@ -19,6 +19,7 @@ namespace SLua.ScriptEngine.Tests;
 /// the script as the language it names whatever the first line says, owns the script even when its first line names
 /// another engine, keeps the target when the compile fails, and reports it back when the editor asks.
 /// </summary>
+[Collection("native-library")]
 public class CompileTargetTests
 {
     // ---- what the engine accepts ----
