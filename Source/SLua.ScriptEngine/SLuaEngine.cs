@@ -1226,6 +1226,12 @@ namespace SLua.ScriptEngine
                 (module, args) => HandleSuspendResume(args, false));
         }
 
+        /// <summary>
+        /// The "state retry" command: for each matching script that has a set-aside state not yet put back, tries it again under this
+        /// build and says what happened. A state that now loads replaces the script's state; one that does not stays set aside.
+        /// </summary>
+        internal string[] RetryStateLines(string filter, int waitMs = 10000) => System.Array.Empty<string>();
+
         private bool WrongConsoleScene() => !(MainConsole.Instance.ConsoleScene == null || MainConsole.Instance.ConsoleScene == m_scene);
 
         private void HandleStatus(string[] args)

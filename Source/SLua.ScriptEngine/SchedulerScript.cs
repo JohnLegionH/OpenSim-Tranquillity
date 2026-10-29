@@ -17,6 +17,9 @@ namespace SLua.ScriptEngine
     /// <summary>An event waiting for a script: the native event number and its arguments.</summary>
     internal readonly record struct QueuedEvent(int EventIndex, Value[] Args, DetectedRecord[] Detected = null);
 
+    /// <summary>What a retry of a set-aside state found: whether the script now goes on from it, and why not when it does not.</summary>
+    internal readonly record struct RetryOutcome(bool Restored, string Reason);
+
     /// <summary>
     /// A script as its worker sees it. The fields that are not marked "worker only" may be read from any thread;
     /// the rest belong to the worker thread that owns the script's VM. A host function running inside a step

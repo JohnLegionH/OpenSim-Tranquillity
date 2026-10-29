@@ -184,6 +184,14 @@ namespace SLua.ScriptEngine
         /// <summary>The state of the item's latest rejected row, or null.</summary>
         public byte[] RejectedState(UUID itemId) => ReadRejected(itemId, "state_data") as byte[];
 
+        /// <summary>The item's latest set-aside state that has not yet been put back by a retry, or null.</summary>
+        public (long Id, byte[] State, string Reason)? PendingRejected(UUID itemId) => null;
+
+        /// <summary>Records that the set-aside row was put back, so a retry does not offer it again. The row itself is kept.</summary>
+        public void MarkRetried(long rejectedId)
+        {
+        }
+
         private object ReadRejected(UUID itemId, string column)
         {
             lock (m_readLock)

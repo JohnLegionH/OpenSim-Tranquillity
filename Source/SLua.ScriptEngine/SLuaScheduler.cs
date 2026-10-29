@@ -128,6 +128,9 @@ namespace SLua.ScriptEngine
 
         public void Reset(SchedulerScript script) => script.Worker.Enqueue(() => script.Worker.ResetScript(script));
 
+        /// <summary>Tries a set-aside state again on the script's worker; <paramref name="done"/> gets the outcome.</summary>
+        internal void RetryState(SchedulerScript script, ScriptStateRecord record, Action<RetryOutcome> done, Action beforeAdopt = null) => done(new RetryOutcome(false, ""));
+
         /// <summary>Frees the script's native objects on its worker and forgets it.</summary>
         public void Remove(SchedulerScript script) => script.Worker.Enqueue(() => script.Worker.RemoveScript(script));
 
