@@ -540,6 +540,12 @@ namespace SLua.ScriptEngine
             return new[] { LslMarshal.Of(c.Api.llFabs(LslMarshal.Float(a, 0, "Fabs"))) };
         }
 
+        private static Value[] FindNotecardTextCount(ScriptContext c, ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 3, "FindNotecardTextCount");
+            return new[] { LslMarshal.OfKey(c.Api.llFindNotecardTextCount(LslMarshal.String(a, 0, "FindNotecardTextCount"), LslMarshal.String(a, 1, "FindNotecardTextCount"), LslMarshal.List(a, 2, "FindNotecardTextCount"))) };
+        }
+
         private static Value[] FleeFrom(ScriptContext c, ReadOnlySpan<Value> a)
         {
             LslMarshal.Arity(a, 3, "FleeFrom");
@@ -642,6 +648,12 @@ namespace SLua.ScriptEngine
         {
             LslMarshal.Arity(a, 1, "GetAttachedList");
             return new[] { LslMarshal.Of(c.Api.llGetAttachedList(LslMarshal.Key(a, 0, "GetAttachedList"))) };
+        }
+
+        private static Value[] GetAttachedListFiltered(ScriptContext c, ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 2, "GetAttachedListFiltered");
+            return new[] { LslMarshal.Of(c.Api.llGetAttachedListFiltered(LslMarshal.Key(a, 0, "GetAttachedListFiltered"), LslMarshal.List(a, 1, "GetAttachedListFiltered"))) };
         }
 
         private static Value[] GetBoundingBox(ScriptContext c, ReadOnlySpan<Value> a)
@@ -786,6 +798,24 @@ namespace SLua.ScriptEngine
         {
             LslMarshal.Arity(a, 0, "GetGMTclock");
             return new[] { LslMarshal.Of(c.Api.llGetGMTclock()) };
+        }
+
+        private static Value[] GetGameControlMode(ScriptContext c, ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 1, "GetGameControlMode");
+            return new[] { LslMarshal.Of(c.Api.llGetGameControlMode(LslMarshal.Key(a, 0, "GetGameControlMode"))) };
+        }
+
+        private static Value[] GetGameControlModeAxes(ScriptContext c, ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 1, "GetGameControlModeAxes");
+            return new[] { LslMarshal.Of(c.Api.llGetGameControlModeAxes(LslMarshal.Key(a, 0, "GetGameControlModeAxes"))) };
+        }
+
+        private static Value[] GetGameControlModeButtons(ScriptContext c, ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 1, "GetGameControlModeButtons");
+            return new[] { LslMarshal.Of(c.Api.llGetGameControlModeButtons(LslMarshal.Key(a, 0, "GetGameControlModeButtons"))) };
         }
 
         private static Value[] GetGeometricCenter(ScriptContext c, ReadOnlySpan<Value> a)
@@ -1425,6 +1455,18 @@ namespace SLua.ScriptEngine
             return new[] { LslMarshal.Of(c.Api.llGetWallclock()) };
         }
 
+        private static Value[] GiveAgentInventory(ScriptContext c, ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 4, "GiveAgentInventory");
+            return new[] { LslMarshal.Of(c.Api.llGiveAgentInventory(LslMarshal.Key(a, 0, "GiveAgentInventory"), LslMarshal.String(a, 1, "GiveAgentInventory"), LslMarshal.List(a, 2, "GiveAgentInventory"), LslMarshal.List(a, 3, "GiveAgentInventory"))) };
+        }
+
+        private static object[] GiveAgentInventoryArgs(ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 4, "GiveAgentInventory");
+            return new object[] { LslMarshal.Key(a, 0, "GiveAgentInventory"), LslMarshal.String(a, 1, "GiveAgentInventory"), LslMarshal.List(a, 2, "GiveAgentInventory"), LslMarshal.List(a, 3, "GiveAgentInventory") };
+        }
+
         private static Value[] GiveInventory(ScriptContext c, ReadOnlySpan<Value> a)
         {
             LslMarshal.Arity(a, 2, "GiveInventory");
@@ -1954,6 +1996,13 @@ namespace SLua.ScriptEngine
             return LlAdapters.ManageEstateAccess(c, a);
         }
 
+        private static Value[] MapBeacon(ScriptContext c, ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 3, "MapBeacon");
+            c.Api.llMapBeacon(LslMarshal.String(a, 0, "MapBeacon"), LslMarshal.Vector(a, 1, "MapBeacon"), LslMarshal.List(a, 2, "MapBeacon"));
+            return null;
+        }
+
         private static Value[] MapDestination(ScriptContext c, ReadOnlySpan<Value> a)
         {
             LslMarshal.Arity(a, 3, "MapDestination");
@@ -2212,6 +2261,20 @@ namespace SLua.ScriptEngine
         {
             LslMarshal.Arity(a, 4, "RemoteDataReply");
             c.Api.llRemoteDataReply(LslMarshal.Key(a, 0, "RemoteDataReply"), LslMarshal.Key(a, 1, "RemoteDataReply"), LslMarshal.String(a, 2, "RemoteDataReply"), LslMarshal.Int(a, 3, "RemoteDataReply"));
+            return null;
+        }
+
+        private static Value[] RemoteDataSetRegion(ScriptContext c, ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 0, "RemoteDataSetRegion");
+            c.Api.llRemoteDataSetRegion();
+            return null;
+        }
+
+        private static Value[] RemoteLoadScript(ScriptContext c, ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 4, "RemoteLoadScript");
+            c.Api.llRemoteLoadScript(LslMarshal.Key(a, 0, "RemoteLoadScript"), LslMarshal.String(a, 1, "RemoteLoadScript"), LslMarshal.Int(a, 2, "RemoteLoadScript"), LslMarshal.Int(a, 3, "RemoteLoadScript"));
             return null;
         }
 
@@ -2825,6 +2888,12 @@ namespace SLua.ScriptEngine
             return null;
         }
 
+        private static Value[] SetParcelForSale(ScriptContext c, ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 2, "SetParcelForSale");
+            return new[] { LslMarshal.Of(c.Api.llSetParcelForSale(LslMarshal.Int(a, 0, "SetParcelForSale"), LslMarshal.List(a, 1, "SetParcelForSale"))) };
+        }
+
         private static Value[] SetParcelMusicURL(ScriptContext c, ReadOnlySpan<Value> a)
         {
             LslMarshal.Arity(a, 1, "SetParcelMusicURL");
@@ -3283,6 +3352,12 @@ namespace SLua.ScriptEngine
             return new[] { LslMarshal.OfKey(c.Api.llTransferLindenDollars(LslMarshal.Key(a, 0, "TransferLindenDollars"), LslMarshal.Int(a, 1, "TransferLindenDollars"))) };
         }
 
+        private static Value[] TransferOwnership(ScriptContext c, ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 3, "TransferOwnership");
+            return new[] { LslMarshal.Of(c.Api.llTransferOwnership(LslMarshal.Key(a, 0, "TransferOwnership"), LslMarshal.Int(a, 1, "TransferOwnership"), LslMarshal.List(a, 2, "TransferOwnership"))) };
+        }
+
         private static Value[] TriggerSound(ScriptContext c, ReadOnlySpan<Value> a)
         {
             LslMarshal.Arity(a, 2, "TriggerSound");
@@ -3495,6 +3570,7 @@ namespace SLua.ScriptEngine
             new BoundFunction("Evade", "llEvade", FunctionClass.NonBlocking, "void", new[] { "key", "list" }, Evade),
             new BoundFunction("ExecCharacterCmd", "llExecCharacterCmd", FunctionClass.NonBlocking, "void", new[] { "integer", "list" }, ExecCharacterCmd),
             new BoundFunction("Fabs", "llFabs", FunctionClass.NonBlocking, "float", new[] { "float" }, Fabs),
+            new BoundFunction("FindNotecardTextCount", "llFindNotecardTextCount", FunctionClass.NonBlocking, "key", new[] { "string", "string", "list" }, FindNotecardTextCount),
             new BoundFunction("FleeFrom", "llFleeFrom", FunctionClass.NonBlocking, "void", new[] { "vector", "float", "list" }, FleeFrom),
             new BoundFunction("Floor", "llFloor", FunctionClass.NonBlocking, "integer", new[] { "float" }, Floor),
             new BoundFunction("ForceMouselook", "llForceMouselook", FunctionClass.NonBlocking, "void", new[] { "integer" }, ForceMouselook),
@@ -3512,6 +3588,7 @@ namespace SLua.ScriptEngine
             new BoundFunction("GetAnimationOverride", "llGetAnimationOverride", FunctionClass.NonBlocking, "string", new[] { "string" }, GetAnimationOverride),
             new BoundFunction("GetAttached", "llGetAttached", FunctionClass.NonBlocking, "integer", new string[0], GetAttached),
             new BoundFunction("GetAttachedList", "llGetAttachedList", FunctionClass.NonBlocking, "list", new[] { "key" }, GetAttachedList),
+            new BoundFunction("GetAttachedListFiltered", "llGetAttachedListFiltered", FunctionClass.NonBlocking, "list", new[] { "key", "list" }, GetAttachedListFiltered),
             new BoundFunction("GetBoundingBox", "llGetBoundingBox", FunctionClass.NonBlocking, "list", new[] { "key" }, GetBoundingBox),
             new BoundFunction("GetCameraAspect", "llGetCameraAspect", FunctionClass.NonBlocking, "float", new string[0], GetCameraAspect),
             new BoundFunction("GetCameraFOV", "llGetCameraFOV", FunctionClass.NonBlocking, "float", new string[0], GetCameraFOV),
@@ -3534,6 +3611,9 @@ namespace SLua.ScriptEngine
             new BoundFunction("GetFreeMemory", "llGetFreeMemory", FunctionClass.NonBlocking, "integer", new string[0], GetFreeMemory),
             new BoundFunction("GetFreeURLs", "llGetFreeURLs", FunctionClass.NonBlocking, "integer", new string[0], GetFreeURLs),
             new BoundFunction("GetGMTclock", "llGetGMTclock", FunctionClass.NonBlocking, "float", new string[0], GetGMTclock),
+            new BoundFunction("GetGameControlMode", "llGetGameControlMode", FunctionClass.NonBlocking, "integer", new[] { "key" }, GetGameControlMode),
+            new BoundFunction("GetGameControlModeAxes", "llGetGameControlModeAxes", FunctionClass.NonBlocking, "list", new[] { "key" }, GetGameControlModeAxes),
+            new BoundFunction("GetGameControlModeButtons", "llGetGameControlModeButtons", FunctionClass.NonBlocking, "integer", new[] { "key" }, GetGameControlModeButtons),
             new BoundFunction("GetGeometricCenter", "llGetGeometricCenter", FunctionClass.NonBlocking, "vector", new string[0], GetGeometricCenter),
             new BoundFunction("GetHTTPHeader", "llGetHTTPHeader", FunctionClass.NonBlocking, "string", new[] { "key", "string" }, GetHTTPHeader),
             new BoundFunction("GetHealth", "llGetHealth", FunctionClass.NonBlocking, "float", new[] { "key" }, GetHealth),
@@ -3638,6 +3718,7 @@ namespace SLua.ScriptEngine
             new BoundFunction("GetVel", "llGetVel", FunctionClass.NonBlocking, "vector", new string[0], GetVel),
             new BoundFunction("GetVisualParams", "llGetVisualParams", FunctionClass.NonBlocking, "list", new[] { "key", "list" }, GetVisualParams),
             new BoundFunction("GetWallclock", "llGetWallclock", FunctionClass.NonBlocking, "float", new string[0], GetWallclock),
+            new BoundFunction("GiveAgentInventory", "llGiveAgentInventory", FunctionClass.Service, "integer", new[] { "key", "string", "list", "list" }, GiveAgentInventory, -4, GiveAgentInventoryArgs),
             new BoundFunction("GiveInventory", "llGiveInventory", FunctionClass.Async, "void", new[] { "key", "string" }, GiveInventory),
             new BoundFunction("GiveInventoryList", "llGiveInventoryList", FunctionClass.Async, "void", new[] { "key", "string", "list" }, GiveInventoryList),
             new BoundFunction("GiveMoney", "llGiveMoney", FunctionClass.NonBlocking, "integer", new[] { "key", "integer" }, GiveMoney),
@@ -3720,6 +3801,7 @@ namespace SLua.ScriptEngine
             new BoundFunction("MakeFountain", "llMakeFountain", FunctionClass.NonBlocking, "void", new[] { "integer", "float", "float", "float", "float", "integer", "string", "vector", "float" }, MakeFountain),
             new BoundFunction("MakeSmoke", "llMakeSmoke", FunctionClass.NonBlocking, "void", new[] { "integer", "float", "float", "float", "float", "string", "vector" }, MakeSmoke),
             new BoundFunction("ManageEstateAccess", "llManageEstateAccess", FunctionClass.Async, "integer", new[] { "integer", "key" }, ManageEstateAccess),
+            new BoundFunction("MapBeacon", "llMapBeacon", FunctionClass.Delayed, "void", new[] { "string", "vector", "list" }, MapBeacon),
             new BoundFunction("MapDestination", "llMapDestination", FunctionClass.Delayed, "void", new[] { "string", "vector", "vector" }, MapDestination),
             new BoundFunction("MessageLinked", "llMessageLinked", FunctionClass.Unplaced, "void", new[] { "integer", "integer", "string", "key" }, MessageLinked),
             new BoundFunction("MinEventDelay", "llMinEventDelay", FunctionClass.NonBlocking, "void", new[] { "float" }, MinEventDelay),
@@ -3757,6 +3839,8 @@ namespace SLua.ScriptEngine
             new BoundFunction("ReleaseControls", "llReleaseControls", FunctionClass.NonBlocking, "void", new string[0], ReleaseControls),
             new BoundFunction("ReleaseURL", "llReleaseURL", FunctionClass.NonBlocking, "void", new[] { "string" }, ReleaseURL),
             new BoundFunction("RemoteDataReply", "llRemoteDataReply", FunctionClass.Delayed, "void", new[] { "key", "key", "string", "integer" }, RemoteDataReply),
+            new BoundFunction("RemoteDataSetRegion", "llRemoteDataSetRegion", FunctionClass.NonBlocking, "void", new string[0], RemoteDataSetRegion),
+            new BoundFunction("RemoteLoadScript", "llRemoteLoadScript", FunctionClass.Delayed, "void", new[] { "key", "string", "integer", "integer" }, RemoteLoadScript),
             new BoundFunction("RemoteLoadScriptPin", "llRemoteLoadScriptPin", FunctionClass.Unplaced, "void", new[] { "key", "string", "integer", "integer", "integer" }, RemoteLoadScriptPin),
             new BoundFunction("RemoveFromLandBanList", "llRemoveFromLandBanList", FunctionClass.Delayed, "void", new[] { "key" }, RemoveFromLandBanList),
             new BoundFunction("RemoveFromLandPassList", "llRemoveFromLandPassList", FunctionClass.Delayed, "void", new[] { "key" }, RemoveFromLandPassList),
@@ -3846,6 +3930,7 @@ namespace SLua.ScriptEngine
             new BoundFunction("SetObjectDesc", "llSetObjectDesc", FunctionClass.NonBlocking, "void", new[] { "string" }, SetObjectDesc),
             new BoundFunction("SetObjectName", "llSetObjectName", FunctionClass.NonBlocking, "void", new[] { "string" }, SetObjectName),
             new BoundFunction("SetObjectPermMask", "llSetObjectPermMask", FunctionClass.NonBlocking, "void", new[] { "integer", "integer" }, SetObjectPermMask),
+            new BoundFunction("SetParcelForSale", "llSetParcelForSale", FunctionClass.NonBlocking, "integer", new[] { "integer", "list" }, SetParcelForSale),
             new BoundFunction("SetParcelMusicURL", "llSetParcelMusicURL", FunctionClass.Delayed, "void", new[] { "string" }, SetParcelMusicURL),
             new BoundFunction("SetPayPrice", "llSetPayPrice", FunctionClass.NonBlocking, "void", new[] { "integer", "list" }, SetPayPrice),
             new BoundFunction("SetPhysicsMaterial", "llSetPhysicsMaterial", FunctionClass.Unplaced, "void", new[] { "integer", "float", "float", "float", "float" }, SetPhysicsMaterial),
@@ -3911,6 +3996,7 @@ namespace SLua.ScriptEngine
             new BoundFunction("ToLower", "llToLower", FunctionClass.NonBlocking, "string", new[] { "string" }, ToLower),
             new BoundFunction("ToUpper", "llToUpper", FunctionClass.NonBlocking, "string", new[] { "string" }, ToUpper),
             new BoundFunction("TransferLindenDollars", "llTransferLindenDollars", FunctionClass.NonBlocking, "key", new[] { "key", "integer" }, TransferLindenDollars),
+            new BoundFunction("TransferOwnership", "llTransferOwnership", FunctionClass.NonBlocking, "integer", new[] { "key", "integer", "list" }, TransferOwnership),
             new BoundFunction("TriggerSound", "llTriggerSound", FunctionClass.NonBlocking, "void", new[] { "string", "float" }, TriggerSound),
             new BoundFunction("TriggerSoundLimited", "llTriggerSoundLimited", FunctionClass.NonBlocking, "void", new[] { "string", "float", "vector", "vector" }, TriggerSoundLimited),
             new BoundFunction("UnSit", "llUnSit", FunctionClass.NonBlocking, "void", new[] { "key" }, UnSit),

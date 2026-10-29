@@ -450,24 +450,12 @@ ADAPTERS = {
 
 # Runtime functions Phlox does not implement as the runtime defines them. They answer a script with "not available".
 PHLOX_GAPS = {
-    "llClearExperience": "Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
-    "llClearExperiencePermissions": "Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
-    "llFindNotecardTextCount": "Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
-    "llFindNotecardTextSync": "Phlox's llFindNotecardTextSync(name, text, line, caseSensitive) is a plain-text search that returns the first matching line; the runtime's takes a regular expression and returns a strided list of line, column and length (lsl-definitions func-id 508)",
-    "llGetAttachedListFiltered": "Phlox's takes one attachment point; the runtime's takes a list of FILTER_INCLUDE and FILTER_FLAGS options, which no single attachment point expresses",
-    "llGetExperienceList": "Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
-    "llGetGameControlMode": "Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
-    "llGetGameControlModeAxes": "Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
-    "llGetGameControlModeButtons": "Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
-    "llGiveAgentInventory": "Phlox's gives one named item by calling llGiveInventory; the runtime's gives a list of items to the agent as a new named folder, with options, and returns a TRANSFER_* code (lsl-definitions func-id 517)",
-    "llMapBeacon": "Phlox's llMapBeacon(agent, text, color) only writes a debug log line; the runtime's (region_name, pos, options) shows a map beacon (lsl-definitions func-id 516)",
-    "llRemoteDataSetRegion": "Phlox has no method of this name; the function exists only in the older OpenSim LSL_Api",
-    "llRemoteLoadScript": "Phlox has no method of this name; the function exists only in the older OpenSim LSL_Api",
-    "llSetExperienceKey": "Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
-    "llSetParcelForSale": "Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
-    "llTransferOwnership": "Phlox's llTransferOwnership(destination) hands the whole object over and has no flags (TRANSFER_FLAG_COPY, TRANSFER_FLAG_TAKE) or TRANSFER_* result codes; the runtime's takes flags and options (wiki LlTransferOwnership)",
+    "llClearExperience": "deprecated and private in LL's definitions (lsl-definitions func-id 411) with no tooltip and no page on the SL wiki: there is no documented behaviour to build",
+    "llClearExperiencePermissions": "deprecated and private in LL's definitions (lsl-definitions func-id 385) with no tooltip and no page on the SL wiki: there is no documented behaviour to build",
+    "llFindNotecardTextSync": "Phlox's LSLSystemAPI has the runtime's form (a regular expression, a strided [line, column, length] answer) but the seam holds only the earlier four-argument member: the definitions mark the list result as holding positions (lsl-definitions func-id 508, index-semantics) without saying which of the three are, so a Lua script would be given unshifted positions",
+    "llGetExperienceList": "deprecated and private in LL's definitions (lsl-definitions func-id 410) with no tooltip and no page on the SL wiki: there is no documented behaviour to build",
+    "llSetExperienceKey": "deprecated and private in LL's definitions (lsl-definitions func-id 386) with no tooltip and no page on the SL wiki: there is no documented behaviour to build",
 }
-
 
 # ---- matching ----
 
