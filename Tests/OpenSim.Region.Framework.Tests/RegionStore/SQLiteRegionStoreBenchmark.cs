@@ -47,6 +47,7 @@ public sealed class BenchmarkFactAttribute : FactAttribute
 ///   SQLITE_STORE_BENCHMARK_DIR      folder for the database files and the result file (required)
 ///   SQLITE_STORE_BENCHMARK_LABEL    a name for the code under test, written to the result lines (default "run")
 ///   SQLITE_STORE_BENCHMARK_CONN_EXTRA  added to the connection string, e.g. "Journal Mode=Wal;Synchronous=Normal;"
+///   SQLITE_STORE_BENCHMARK_ONLY=batch  run only the backup batch and the outer transaction passes
 ///   SQLITE_STORE_BENCHMARK_FULL=1   also run the full-size cases; without it only the sample runs, and its result
 ///                                   lines extrapolate the sample's cost per linkset to the full sizes
 ///
@@ -235,12 +236,17 @@ public class SQLiteRegionStoreBenchmark : OpenSimTestCase
         Population pop = Build(linksets, prims, items);
         UUID region = UUID.Random();
 
-        // First save of every object: all rows are new.
-        SQLiteSimulationData store = NewFileStore(caseName);
-        Report(caseName, "first save", Pass(store, pop, region), pop, extrapolate);
+        // SQLITE_STORE_BENCHMARK_ONLY=batch leaves out the two passes that commit once per call, which take minutes
+        // on a slow disk.
+        if (Environment.GetEnvironmentVariable("SQLITE_STORE_BENCHMARK_ONLY") != "batch")
+        {
+            // First save of every object: all rows are new.
+            SQLiteSimulationData store = NewFileStore(caseName);
+            Report(caseName, "first save", Pass(store, pop, region), pop, extrapolate);
 
-        // The same objects saved again, nothing changed in them: shows whether unchanged objects cost anything.
-        Report(caseName, "save again, nothing changed", Pass(store, pop, region), pop, extrapolate);
+            // The same objects saved again, nothing changed in them: shows whether unchanged objects cost anything.
+            Report(caseName, "save again, nothing changed", Pass(store, pop, region), pop, extrapolate);
+        }
 
         // The same first save as a backup pass: all of it between BeginBackupBatch and EndBackupBatch.
         SQLiteSimulationData batchStore = NewFileStore(caseName + "-batch");
