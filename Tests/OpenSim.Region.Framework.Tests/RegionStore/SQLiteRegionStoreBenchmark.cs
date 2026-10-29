@@ -46,6 +46,7 @@ public sealed class BenchmarkFactAttribute : FactAttribute
 ///   SQLITE_STORE_BENCHMARK=1        required, otherwise every test here is skipped
 ///   SQLITE_STORE_BENCHMARK_DIR      folder for the database files and the result file (required)
 ///   SQLITE_STORE_BENCHMARK_LABEL    a name for the code under test, written to the result lines (default "run")
+///   SQLITE_STORE_BENCHMARK_CONN_EXTRA  added to the connection string, e.g. "Journal Mode=Wal;Synchronous=Normal;"
 ///   SQLITE_STORE_BENCHMARK_FULL=1   also run the full-size cases; without it only the sample runs, and its result
 ///                                   lines extrapolate the sample's cost per linkset to the full sizes
 ///
@@ -146,7 +147,7 @@ public class SQLiteRegionStoreBenchmark : OpenSimTestCase
     }
 
     /// <summary>One backup pass over the population, the order ProcessBackup uses.</summary>
-    private static Result Pass(SQLiteSimulationData store, Population pop, UUID region)
+    private static Result Pass(SQLiteSimulationData store, Population pop, UUID region, bool inBatch = false)
     {
         SQLiteConnection conn = ConnectionOf(store);
         long commits = 0;
@@ -159,6 +160,8 @@ public class SQLiteRegionStoreBenchmark : OpenSimTestCase
         Stopwatch total = Stopwatch.StartNew();
         try
         {
+            if (inBatch)
+                store.BeginBackupBatch();
             foreach (SceneObjectGroup group in pop.Groups)
             {
                 long c0 = commits;
@@ -178,6 +181,8 @@ public class SQLiteRegionStoreBenchmark : OpenSimTestCase
                     r.StoreInventoryCommits += commits - c0;
                 }
             }
+            if (inBatch)
+                store.EndBackupBatch();
         }
         finally
         {
@@ -218,7 +223,9 @@ public class SQLiteRegionStoreBenchmark : OpenSimTestCase
     private SQLiteSimulationData NewFileStore(string name)
     {
         string path = Path.Combine(Dir(), name + "-" + Guid.NewGuid().ToString("N") + ".db");
-        SQLiteSimulationData store = new SQLiteSimulationData("Data Source=" + path.Replace('\\', '/'));
+        // For example "Journal Mode=Wal;Synchronous=Normal;", to time those connection string options.
+        string extra = Environment.GetEnvironmentVariable("SQLITE_STORE_BENCHMARK_CONN_EXTRA") ?? "";
+        SQLiteSimulationData store = new SQLiteSimulationData("Data Source=" + path.Replace('\\', '/') + ";" + extra);
         m_stores.Add(store);
         return store;
     }
@@ -234,6 +241,10 @@ public class SQLiteRegionStoreBenchmark : OpenSimTestCase
 
         // The same objects saved again, nothing changed in them: shows whether unchanged objects cost anything.
         Report(caseName, "save again, nothing changed", Pass(store, pop, region), pop, extrapolate);
+
+        // The same first save as a backup pass: all of it between BeginBackupBatch and EndBackupBatch.
+        SQLiteSimulationData batchStore = NewFileStore(caseName + "-batch");
+        Report(caseName, "first save in one backup batch", Pass(batchStore, pop, region, inBatch: true), pop, extrapolate);
 
         // Experiment, not store behaviour: the whole first save inside one outer transaction on the store's
         // connection. The gap to the first save is the cost of committing statement by statement.

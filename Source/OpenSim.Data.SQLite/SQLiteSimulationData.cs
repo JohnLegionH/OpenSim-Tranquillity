@@ -41,7 +41,7 @@ namespace OpenSim.Data.SQLite;
 /// <summary>
 /// A RegionData Interface to the SQLite database
 /// </summary>
-public class SQLiteSimulationData : ISimulationDataStore
+public class SQLiteSimulationData : ISimulationDataStore, ISimulationDataBatch
 {
     private static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
     private static readonly string LogHeader = "[REGION DB SQLITE]";
@@ -553,6 +553,14 @@ public class SQLiteSimulationData : ISimulationDataStore
         }
 
         // m_log.LogInformation("[Dump of prims]: " + ds.GetXml());
+    }
+
+    public void BeginBackupBatch()
+    {
+    }
+
+    public void EndBackupBatch()
+    {
     }
 
     /// <summary>

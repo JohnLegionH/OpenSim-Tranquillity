@@ -402,6 +402,135 @@ public class SQLiteRegionStoreTransactionTests : OpenSimTestCase
         Assert.Equal(6L, Scalar(db, "select count(*) from primitems where name = 'replacement'"));
     }
 
+    private static List<SceneObjectGroup> NewObjects(int count, string name)
+    {
+        List<SceneObjectGroup> objects = new();
+        for (int i = 0; i < count; i++)
+            objects.Add(NewObject(i, 3, name + i));
+        return objects;
+    }
+
+    [Fact]
+    public void AWholeBackupPassIsOneCommitMadeAtTheEnd()
+    {
+        string conn = NewMemoryDatabase();
+        SQLiteSimulationData store = NewStore(conn);
+        List<SceneObjectGroup> objects = NewObjects(10, "Pass");
+
+        using CommitCounter commits = new CommitCounter(store);
+        store.BeginBackupBatch();
+        foreach (SceneObjectGroup sog in objects)
+            SaveLikeABackup(store, sog, 1);
+        Assert.Equal(0, commits.Count);
+        store.EndBackupBatch();
+
+        Assert.Equal(1, commits.Count);
+        List<SceneObjectGroup> loaded = NewStore(conn).LoadObjects(s_region);
+        Assert.Equal(10, loaded.Count);
+        Assert.Equal(30L, Scalar(OpenConnection(conn), "select count(*) from prims"));
+        Assert.Equal(30L, Scalar(OpenConnection(conn), "select count(*) from primitems"));
+    }
+
+    [Fact]
+    public void APassThatWritesNothingCommitsNothingAndTakesNoLock()
+    {
+        string conn = NewMemoryDatabase();
+        SQLiteSimulationData store = NewStore(conn);
+        SQLiteConnection other = OpenConnection(conn);
+        Exec(other, "create table lock_probe (x integer)");
+
+        using CommitCounter commits = new CommitCounter(store);
+        store.BeginBackupBatch();
+        Exec(other, "insert into lock_probe values (1)");
+        store.EndBackupBatch();
+
+        Assert.Equal(0, commits.Count);
+        Assert.Equal(1L, Scalar(other, "select count(*) from lock_probe"));
+    }
+
+    [Fact]
+    public void TheLockIsReleasedWhenThePassEnds()
+    {
+        string conn = NewMemoryDatabase();
+        SQLiteSimulationData store = NewStore(conn);
+        SQLiteConnection other = OpenConnection(conn);
+        Exec(other, "create table lock_probe (x integer)");
+
+        store.BeginBackupBatch();
+        SaveLikeABackup(store, NewObject(1, 2, "Locked"), 1);
+        store.EndBackupBatch();
+
+        Exec(other, "insert into lock_probe values (1)");
+        Assert.Equal(1L, Scalar(other, "select count(*) from lock_probe"));
+        store.StoreObject(NewObject(2, 1, "After"), s_region);
+        Assert.Equal(3L, Scalar(other, "select count(*) from prims"));
+    }
+
+    [Fact]
+    public void AFailureInsideAPassUndoesOnlyThatObjectAndTheRestAreCommitted()
+    {
+        string conn = NewMemoryDatabase();
+        SQLiteSimulationData store = NewStore(conn);
+        SceneObjectGroup a = NewObject(1, 2, "Old");
+        SceneObjectGroup b = NewObject(2, 3, "Old");
+        SaveLikeABackup(store, a, 1);
+        SaveLikeABackup(store, b, 1);
+        SQLiteConnection db = OpenConnection(conn);
+        SceneObjectGroup c = NewObject(3, 2, "Added");
+        foreach (SceneObjectPart part in a.Parts)
+            part.Name = "New";
+        foreach (SceneObjectPart part in b.Parts)
+            part.Name = "New";
+        InjectFailure(db, "update", "primshapes", "new.UUID = '" + b.Parts[1].UUID + "'");
+
+        using CommitCounter commits = new CommitCounter(store);
+        store.BeginBackupBatch();
+        store.StoreObject(a, s_region);
+        AssertInjected(Assert.ThrowsAny<Exception>(() => store.StoreObject(b, s_region)));
+        store.StoreObject(c, s_region);
+        store.StorePrimInventory(c.RootPart.UUID, NewItems(c.RootPart, 2));
+        Assert.Equal(0, commits.Count);
+        store.EndBackupBatch();
+
+        Assert.Equal(1, commits.Count);
+        Assert.Equal(2L, Scalar(db, "select count(*) from prims where SceneGroupID = '" + a.UUID + "' and Name = 'New'"));
+        Assert.Equal(3L, Scalar(db, "select count(*) from prims where SceneGroupID = '" + b.UUID + "' and Name like 'Old%'"));
+        Assert.Equal(0L, Scalar(db, "select count(*) from prims where SceneGroupID = '" + b.UUID + "' and Name = 'New'"));
+        Assert.Equal(2L, Scalar(db, "select count(*) from prims where SceneGroupID = '" + c.UUID + "'"));
+        Assert.Equal(2L, Scalar(db, "select count(*) from primitems where primID = '" + c.RootPart.UUID + "'"));
+
+        // The store keeps working: the next pass stores the object that failed.
+        ClearFailure(db);
+        store.BeginBackupBatch();
+        store.StoreObject(b, s_region);
+        store.EndBackupBatch();
+        Assert.Equal(3L, Scalar(db, "select count(*) from prims where SceneGroupID = '" + b.UUID + "' and Name = 'New'"));
+        Assert.Equal(7L, NewStore(conn).LoadObjects(s_region).Sum(g => g.Parts.Length));
+    }
+
+    [Fact]
+    public void NestedPassesCommitAtTheOutermostEndAndAnUnmatchedEndDoesNothing()
+    {
+        string conn = NewMemoryDatabase();
+        SQLiteSimulationData store = NewStore(conn);
+
+        using CommitCounter commits = new CommitCounter(store);
+        store.EndBackupBatch();
+        Assert.Equal(0, commits.Count);
+
+        store.BeginBackupBatch();
+        store.BeginBackupBatch();
+        store.StoreObject(NewObject(1, 2, "Nested"), s_region);
+        store.EndBackupBatch();
+        Assert.Equal(0, commits.Count);
+        store.EndBackupBatch();
+        Assert.Equal(1, commits.Count);
+
+        store.EndBackupBatch();
+        store.StoreObject(NewObject(2, 2, "Single"), s_region);
+        Assert.Equal(2, commits.Count);
+    }
+
     [Fact]
     public void ReplacingTerrainIsOneCommitAndAFailureKeepsTheOldTerrain()
     {
