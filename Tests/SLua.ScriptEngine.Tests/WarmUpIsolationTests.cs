@@ -25,11 +25,15 @@ public class WarmUpIsolationTests
 
     private static string TestsFolder([CallerFilePath] string here = "") => Path.GetDirectoryName(here);
 
+    /// <summary>Whether the text adds an engine to a region: a direct AddRegion on an SLuaEngine, or an EngineRig (which does).</summary>
+    private static bool AddsAnEngine(string text) =>
+        (text.Contains(".AddRegion(") && text.Contains("SLuaEngine")) || text.Contains("new EngineRig(");
+
     /// <summary>The top-level test classes of a source file that add an engine to a region, with how each is guarded.</summary>
     private static IEnumerable<(string Class, bool Serial, bool WarmUpOff)> EngineAddingClasses(string text)
     {
         // A file whose tests never add a region to an engine starts no warm-up.
-        if (!Regex.IsMatch(text, @"\.AddRegion\(") || !Regex.IsMatch(text, @"SLuaEngine|EngineRig"))
+        if (!AddsAnEngine(text))
             yield break;
         if (!Regex.IsMatch(text, @"\[(Fact|Theory|RequiresNativeFact|RequiresNativeTheory)"))
             yield break;
@@ -39,7 +43,7 @@ public class WarmUpIsolationTests
             int start = classes[i].Index;
             int end = i + 1 < classes.Count ? classes[i + 1].Index : text.Length;
             string body = text[start..end];
-            if (!body.Contains(".AddRegion("))
+            if (!AddsAnEngine(body))
                 continue;
             // The attribute lines directly above the declaration.
             string above = text[Math.Max(0, start - 200)..start];
@@ -54,7 +58,7 @@ public class WarmUpIsolationTests
     {
         var unguarded = new List<string>();
         int seen = 0;
-        foreach (string file in Directory.GetFiles(TestsFolder(), "*.cs"))
+        foreach (string file in Directory.GetFiles(TestsFolder(), "*.cs").Where(f => Path.GetFileName(f) != nameof(WarmUpIsolationTests) + ".cs"))
         {
             foreach (var (name, serial, off) in EngineAddingClasses(File.ReadAllText(file)))
             {
@@ -63,7 +67,7 @@ public class WarmUpIsolationTests
                     unguarded.Add(name);
             }
         }
-        Assert.True(seen > 10, "the scan found the classes that add an engine to a region (" + seen + ")");
+        Assert.True(seen > 30, "the scan found the classes that add an engine to a region (" + seen + ")");
         Assert.True(unguarded.Count == 0, "run beside WarmUpTests, these start the warm-up with its work replaced: " + string.Join(", ", unguarded.OrderBy(n => n)));
     }
 
