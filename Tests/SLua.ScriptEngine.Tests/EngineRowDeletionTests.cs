@@ -117,12 +117,29 @@ public class EngineRowDeletionTests
         UUID item = RezSaved(rig, store, asset);
         UUID second = RezSaved(rig, store, other);
 
-        rig.Scene.ScriptsEnabled = false; // the console's "scripts stop": every script is removed, the items stay in their prims
+        SchedulerScript firstBefore = rig.Engine.SchedulerScriptFor(item);
+        SchedulerScript secondBefore = rig.Engine.SchedulerScriptFor(second);
 
-        Assert.True(SchedulerHarness.WaitFor(() => rig.Engine.SchedulerScriptFor(item) == null), "the script was taken out");
+        // "disable scripts" (the viewer's debug tab, the console's "scripts stop") pauses every script and keeps its saved state; the items stay in their prims
+        rig.Scene.RegionInfo.RegionSettings.DisableScripts = true;
+        rig.Scene.ScriptsEnabled = false;
+
+        Assert.Same(firstBefore, rig.Engine.SchedulerScriptFor(item)); // paused, not taken out
+        Assert.Same(secondBefore, rig.Engine.SchedulerScriptFor(second));
+        Assert.Equal(PauseReason.Core, rig.Engine.PauseReasonsOf(item) & PauseReason.Core);
+        Assert.Equal(PauseReason.Core, rig.Engine.PauseReasonsOf(second) & PauseReason.Core);
         Assert.True(store.Flush());
         Assert.True(store.HasSavedState(item, asset), "the row stays when scripts are only switched off");
         Assert.True(store.HasSavedState(second, other));
+
+        // allowing scripts again resumes them from the state they kept
+        rig.Scene.RegionInfo.RegionSettings.DisableScripts = false;
+        rig.Scene.ScriptsEnabled = true;
+
+        Assert.Equal(PauseReason.None, rig.Engine.PauseReasonsOf(item) & PauseReason.Core);
+        Assert.Equal(PauseReason.None, rig.Engine.PauseReasonsOf(second) & PauseReason.Core);
+        Assert.Same(firstBefore, rig.Engine.SchedulerScriptFor(item));
+        Assert.True(store.HasSavedState(item, asset));
 
         rig.Scene.DeleteSceneObject(rig.Object, false); // and the object deleted afterwards takes its scripts' rows
 
