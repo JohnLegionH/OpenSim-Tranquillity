@@ -99,6 +99,30 @@ public class ListBooleanTests
         Assert.Equal("?", Cells("PrimParamGet", PrimType));
     }
 
+    private static string ListMarksPath() =>
+        Path.Combine(LlBindingGeneratorTests.RepoRoot(), "Tests", "SLua.ScriptEngine.Tests", "TestData", "lsl-definition-list-marks.txt");
+
+    [Fact]
+    public void TheTablesAreTheListMarksFileTagForTag()
+    {
+        // lsl-definition-list-marks.txt is written by tools/slua-bindings/extract-marks.py from the definitions
+        string[][] lines = File.ReadAllLines(ListMarksPath()).Where(l => l.Length > 0 && l[0] != '#').Select(l => l.Split('	')).ToArray();
+        string[][] functions = lines.Where(f => f[0] == "function").ToArray();
+        string[][] tags = lines.Where(f => f[0] == "tag").ToArray();
+
+        Assert.Equal(functions.Select(f => f[1] + "=" + f[2]).OrderBy(x => x, StringComparer.Ordinal),
+            LlBooleans.ListRules.Select(kv => kv.Key + "=" + kv.Value).OrderBy(x => x, StringComparer.Ordinal));
+        Assert.True(tags.Length > 100, "the list marks file has " + tags.Length + " tags");
+        Assert.Equal(tags.Length, LlBooleans.Tags.Values.Sum(t => t.Count));
+        foreach (string[] tag in tags)
+        {
+            TagLayout layout = LayoutOf(tag[1], int.Parse(tag[2]));
+            Assert.True(layout != null, tag[3] + " is not in the table");
+            Assert.Equal(tag[4], layout.Cells);
+            Assert.Equal(tag[5] == "face", layout.PerFace);
+        }
+    }
+
     // ---- the conversion: one request, one result ----
 
     [Fact]
@@ -106,6 +130,15 @@ public class ListBooleanTests
     {
         Assert.Equal("b:true,s:box,b:false",
             Converted("llGetObjectDetails", L(I(ObjectPhysics), I(ObjectName), I(ObjectLocked)), I(1), Value.Str("box"), I(0)));
+    }
+
+    [Fact]
+    public void TagsAndFacesThatAScriptWroteAsNumbersAreFoundToo()
+    {
+        // an SLua table of numbers reaches the binding as Number values
+        Assert.Equal("b:true,b:false,n:0.5",
+            Converted("llGetPrimitiveParams", L(Value.Num(PrimPhysics), Value.Num(PrimFullbright), Value.Num(2), Value.Num(PrimGlow), Value.Num(2)), I(1), I(0), Value.Num(0.5)));
+        Assert.Equal("i:1", Converted("llGetPrimitiveParams", L(Value.Num(2.5)), I(1)));
     }
 
     [Fact]
@@ -130,12 +163,12 @@ public class ListBooleanTests
     }
 
     [Fact]
-    public void AllSidesRepeatsTheLayoutOncePerFaceTheResultHolds()
+    public void AllSidesRepeatsATagsValuesOncePerFaceTheResultHolds()
     {
-        // three faces: [fullbright, glow] for each
-        Assert.Equal("b:true,n:0.1,b:false,n:0.2,b:true,n:0.3",
+        // each rule gives its values for every face before the next rule starts; three faces here
+        Assert.Equal("b:true,b:false,b:true,n:0.1,n:0.2,n:0.3",
             Converted("llGetPrimitiveParams", L(I(PrimFullbright), I(AllSides), I(PrimGlow), I(AllSides)),
-                I(1), Value.Num(0.1), I(0), Value.Num(0.2), I(5), Value.Num(0.3)));
+                I(1), I(0), I(5), Value.Num(0.1), Value.Num(0.2), Value.Num(0.3)));
     }
 
     [Fact]
@@ -176,8 +209,8 @@ public class ListBooleanTests
     [Fact]
     public void AFunctionWhoseTagsHaveNoBooleanKeepsItsIntegers()
     {
-        // llParcelMediaQuery is marked bool-semantics but none of its tags has a boolean value
-        Assert.Equal("i:1,s:x", Converted("llParcelMediaQuery", L(I(1), I(2)), I(1), Value.Str("x")));
+        // llParcelMediaQuery is marked bool-semantics but none of its tags has a boolean value: PARCEL_MEDIA_COMMAND_LOOP_SET (13), _SIZE (11)
+        Assert.Equal("i:1,i:640,i:480", Converted("llParcelMediaQuery", L(I(13), I(11)), I(1), I(640), I(480)));
     }
 
     // ---- what the request cannot place ----
@@ -257,11 +290,12 @@ public class ListBooleanTests
     public void AnLslScriptKeepsTheIntegersOfTheList()
     {
         using var rig = new BindingRig();
-        rig.Fake.Returns("llGetObjectDetails", new LSLList(new object[] { 1 }));
-        rig.Fake.Returns("llDumpList2String", "1");
+        // 5, not 1: a converted 5 would reach the script as 1
+        rig.Fake.Returns("llGetObjectDetails", new LSLList(new object[] { 5 }));
+        rig.Fake.Returns("llDumpList2String", "5");
         rig.H.AddAndStart("default { state_entry() { list l = llGetObjectDetails((key)\"" + Target + "\", [21]); llDumpList2String(l, \",\"); } }", lsl: true);
         rig.H.Pump();
 
-        Assert.Contains(rig.Fake.Calls, c => c.Name == "llDumpList2String" && c.Args[0] is LSLList l && l.Data.Length == 1 && l.Data[0] is int i && i == 1);
+        Assert.Contains(rig.Fake.Calls, c => c.Name == "llDumpList2String" && c.Args[0] is LSLList l && l.Data.Length == 1 && l.Data[0] is int i && i == 5);
     }
 }
