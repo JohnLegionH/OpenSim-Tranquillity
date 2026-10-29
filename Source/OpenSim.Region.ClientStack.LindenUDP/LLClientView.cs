@@ -3625,7 +3625,14 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         }
     }
 
+    /// <summary>
+    /// The reply also tells the editor which compile target the script was saved with, which the region keeps with the
+    /// script item.
+    /// </summary>
     public void SendScriptRunningReply(UUID objectID, UUID itemID, bool running)
+        => SendScriptRunningReply(objectID, itemID, running, m_scene.GetScriptCompileTarget(objectID, itemID));
+
+    public void SendScriptRunningReply(UUID objectID, UUID itemID, bool running, ScriptCompileTarget target)
     {
         IEventQueue eq = Scene.RequestModuleInterface<IEventQueue>();
         if (eq is null)
@@ -3638,7 +3645,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         }
         else
         {
-            eq.ScriptRunningEvent(objectID, itemID, running, m_agentId);
+            eq.ScriptRunningEvent(objectID, itemID, running, m_agentId, target);
         }
     }
 

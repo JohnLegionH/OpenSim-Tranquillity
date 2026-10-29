@@ -275,6 +275,7 @@ namespace SLua.ScriptEngine
                 m_log.Error("The script scheduler could not be started; scripts given to this engine will not run: " + e);
             }
             m_scene.EventManager.OnRezScript += OnRezScript;
+            m_scene.EventManager.OnGetScriptRunning += OnGetScriptRunning;
             m_scene.EventManager.OnRemoveScript += OnRemoveScript;
             m_scene.EventManager.OnObjectBeingRemovedFromScene += OnObjectLeavingScene;
             m_scene.EventManager.OnScriptReset += OnScriptReset;
@@ -439,6 +440,7 @@ namespace SLua.ScriptEngine
         {
             if (m_scene == null) return;
             m_scene.EventManager.OnRezScript -= OnRezScript;
+            m_scene.EventManager.OnGetScriptRunning -= OnGetScriptRunning;
             m_scene.EventManager.OnRemoveScript -= OnRemoveScript;
             m_scene.EventManager.OnObjectBeingRemovedFromScene -= OnObjectLeavingScene;
             m_scene.EventManager.OnScriptReset -= OnScriptReset;
@@ -496,7 +498,12 @@ namespace SLua.ScriptEngine
         /// </summary>
         private void OnRezScript(uint localID, UUID itemID, string script, int startParam, bool postOnRez, string engine, int stateSource)
         {
-            if (EngineHeader.Owner(script, engine, LoadedEngineNames()) != ScriptEngineName)
+            // A script saved with a viewer's Luau target belongs to the engine the region chose for it, whatever its first
+            // line says: the region put the target ahead of the first line, and this test must not undo that.
+            TaskInventoryItem rezItem = m_scene?.GetSceneObjectPart(localID)?.Inventory?.GetInventoryItem(itemID);
+            ScriptCompileTarget target = rezItem is null ? ScriptCompileTarget.Unspecified : ScriptCompileTargets.FromFlags(rezItem.Flags);
+            string owner = target != ScriptCompileTarget.Unspecified ? engine : EngineHeader.Owner(script, engine, LoadedEngineNames());
+            if (owner != ScriptEngineName)
             {
                 Disown(itemID);
                 return;
@@ -514,8 +521,28 @@ namespace SLua.ScriptEngine
                 LocalID = localID,
                 ItemID = itemID,
                 AssetID = part?.Inventory?.GetInventoryItem(itemID)?.AssetID ?? UUID.Zero,
+                Target = target,
                 Source = script,
             });
+        }
+
+        /// <summary>
+        /// The viewer's editor asks whether a script runs and which compiler entry to show. Every engine hears the
+        /// question, so this one answers only for a script it holds. The target saved with the item is reported even when
+        /// the compile failed; a script with none is described by the language it was compiled as.
+        /// </summary>
+        private void OnGetScriptRunning(IClientAPI client, UUID objectID, UUID itemID)
+        {
+            if (m_disabled || !IsTracking(itemID))
+                return;
+
+            TaskInventoryItem item = m_scene?.GetSceneObjectPart(objectID)?.Inventory?.GetInventoryItem(itemID);
+            ScriptCompileTarget target = item is null ? ScriptCompileTarget.Unspecified : ScriptCompileTargets.FromFlags(item.Flags);
+            ScriptRecord record = RecordOf(itemID);
+            if (target == ScriptCompileTarget.Unspecified && record != null)
+                target = record.Script.Language == ScriptLanguage.Slua ? ScriptCompileTarget.Luau : ScriptCompileTarget.LslOnLuau;
+
+            client.SendScriptRunningReply(objectID, itemID, record?.Script.IsRunning ?? false, target);
         }
 
         private IEnumerable<string> LoadedEngineNames()
