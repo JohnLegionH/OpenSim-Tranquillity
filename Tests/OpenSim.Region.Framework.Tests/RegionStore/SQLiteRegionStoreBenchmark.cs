@@ -249,7 +249,7 @@ public class SQLiteRegionStoreBenchmark : OpenSimTestCase
         }
     }
 
-    /// <summary>A slice of the small case: the same shape (about 3.3 prims per linkset, one item per 5 prims).</summary>
+    /// <summary>A sample of the small case, with the same shape (about 3.3 prims per linkset, one item per 5 prims).</summary>
     [BenchmarkFact]
     public void Sample_60Linksets_200Prims_37Items()
     {

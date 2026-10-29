@@ -157,6 +157,29 @@ public class SQLiteRegionStoreTransactionTests : OpenSimTestCase
         return cmd.ExecuteScalar();
     }
 
+    /// <summary>
+    /// Makes the next matching insert or update on <paramref name="table"/> fail inside SQLite. The trigger reads a
+    /// switch row, so ClearFailure turns it off with a data change and no schema change.
+    /// </summary>
+    private static void InjectFailure(SQLiteConnection c, string statement, string table, string when)
+    {
+        Exec(c, "create table inject (active integer)");
+        Exec(c, "insert into inject values (1)");
+        Exec(c, "create trigger fail_" + table + " before " + statement + " on " + table +
+                " when (select active from inject) = 1 and " + when +
+                " begin select raise(abort, 'injected failure'); end");
+    }
+
+    private static void ClearFailure(SQLiteConnection c)
+    {
+        Exec(c, "update inject set active = 0");
+    }
+
+    private static void AssertInjected(Exception e)
+    {
+        Assert.Contains("injected failure", e.ToString());
+    }
+
     /// <summary>Every column of every row of a table, as text, in key order.</summary>
     private static string Dump(SQLiteConnection c, string table, string orderBy)
     {
@@ -313,18 +336,17 @@ public class SQLiteRegionStoreTransactionTests : OpenSimTestCase
 
         // The prims rows update first, then the shape rows: the shape update of the last part fails.
         UUID failing = sog.Parts[2].UUID;
-        Exec(db, "create trigger fail_shape before update on primshapes when new.UUID = '" + failing +
-                 "' begin select raise(abort, 'injected failure'); end");
+        InjectFailure(db, "update", "primshapes", "new.UUID = '" + failing + "'");
         foreach (SceneObjectPart part in sog.Parts)
             part.Name = "After";
-        Assert.ThrowsAny<Exception>(() => store.StoreObject(sog, s_region));
+        AssertInjected(Assert.ThrowsAny<Exception>(() => store.StoreObject(sog, s_region)));
 
         Assert.Equal(before, Fingerprint(db));
         Assert.Equal(3L, Scalar(db, "select count(*) from prims where Name like 'Before%'"));
         Assert.Equal(0L, Scalar(db, "select count(*) from prims where Name = 'After'"));
 
         // The failure is gone: the same store saves the object, and a restart reads the new state.
-        Exec(db, "drop trigger fail_shape");
+        ClearFailure(db);
         store.StoreObject(sog, s_region);
         Assert.Equal(3L, Scalar(db, "select count(*) from prims where Name = 'After'"));
         SceneObjectGroup reloaded = NewStore(conn).LoadObjects(s_region).Single();
@@ -343,14 +365,13 @@ public class SQLiteRegionStoreTransactionTests : OpenSimTestCase
         string before = Fingerprint(db);
 
         SceneObjectGroup added = NewObject(2, 3, "Added");
-        Exec(db, "create trigger fail_shape before insert on primshapes when new.UUID = '" + added.Parts[2].UUID +
-                 "' begin select raise(abort, 'injected failure'); end");
-        Assert.ThrowsAny<Exception>(() => store.StoreObject(added, s_region));
+        InjectFailure(db, "insert", "primshapes", "new.UUID = '" + added.Parts[2].UUID + "'");
+        AssertInjected(Assert.ThrowsAny<Exception>(() => store.StoreObject(added, s_region)));
 
         Assert.Equal(before, Fingerprint(db));
         Assert.Equal(2L, Scalar(db, "select count(*) from prims"));
 
-        Exec(db, "drop trigger fail_shape");
+        ClearFailure(db);
         store.StoreObject(added, s_region);
         Assert.Equal(5L, Scalar(db, "select count(*) from prims"));
         Assert.Equal(5L, Scalar(db, "select count(*) from primshapes"));
@@ -370,14 +391,13 @@ public class SQLiteRegionStoreTransactionTests : OpenSimTestCase
         // The old items are removed first; the third replacement item fails to insert.
         List<TaskInventoryItem> replacement = NewItems(sog.RootPart, 6);
         replacement.ForEach(i => i.Name = "replacement");
-        Exec(db, "create trigger fail_item before insert on primitems when new.assetID = '" + replacement[2].AssetID +
-                 "' and new.name = 'replacement' begin select raise(abort, 'injected failure'); end");
-        Assert.ThrowsAny<Exception>(() => store.StorePrimInventory(sog.RootPart.UUID, replacement));
+        InjectFailure(db, "insert", "primitems", "new.assetID = '" + replacement[2].AssetID + "' and new.name = 'replacement'");
+        AssertInjected(Assert.ThrowsAny<Exception>(() => store.StorePrimInventory(sog.RootPart.UUID, replacement)));
 
         Assert.Equal(before, Fingerprint(db));
         Assert.Equal(4L, Scalar(db, "select count(*) from primitems"));
 
-        Exec(db, "drop trigger fail_item");
+        ClearFailure(db);
         store.StorePrimInventory(sog.RootPart.UUID, replacement);
         Assert.Equal(6L, Scalar(db, "select count(*) from primitems where name = 'replacement'"));
     }
@@ -408,8 +428,8 @@ public class SQLiteRegionStoreTransactionTests : OpenSimTestCase
 
         string stored = Dump(db, "terrain", "RegionUUID");
         Assert.NotEqual(before, stored);
-        Exec(db, "create trigger fail_terrain before insert on terrain begin select raise(abort, 'injected failure'); end");
-        Assert.ThrowsAny<Exception>(() => store.StoreTerrain(first, s_region));
+        InjectFailure(db, "insert", "terrain", "1 = 1");
+        AssertInjected(Assert.ThrowsAny<Exception>(() => store.StoreTerrain(first, s_region)));
 
         Assert.Equal(stored, Dump(db, "terrain", "RegionUUID"));
     }
