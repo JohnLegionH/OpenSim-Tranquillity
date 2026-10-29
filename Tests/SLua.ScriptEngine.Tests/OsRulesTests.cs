@@ -260,13 +260,14 @@ public class OsRulesTests
     }
 
     [RequiresNativeFact]
-    public void PositionsAreNotShiftedForAnOsFunctionWhereTheLlTableShiftsThem()
+    public void PositionsAreShiftedForAnOsFunctionAsTheLlTableShiftsThem()
     {
         using var rig = new BindingRig();
         SchedulerScript s = rig.H.AddAndStart("ossl.StringSubString('abcdef', 1)\nll.GetSubString('abcdef', 1, 2)");
         Assert.True(SchedulerHarness.WaitFor(() => { rig.H.Pump(); return rig.CallsOf("llGetSubString") > 0; }, -1), "the script made no call");
 
-        Assert.Equal(1, rig.Fake.Calls.Single(c => c.Name == "osStringSubString").Args[1]);
+        // both count from 1 for an SLua script (OsPositionTests holds the rest of the os, iw and bot positions)
+        Assert.Equal(0, rig.Fake.Calls.Single(c => c.Name == "osStringSubString").Args[1]);
         Assert.Equal(0, rig.Fake.Calls.Single(c => c.Name == "llGetSubString").Args[1]);
     }
 }
