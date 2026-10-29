@@ -561,6 +561,7 @@ def main(builtins_path, interface_path, impl_path, shim_path, out_dir, defaults_
     os_rows = os_functions(defaults_path, shim_path, members, delays, host_needs) if defaults_path else None
     if os_rows is not None:
         write_os_bindings(out_dir, os_rows)
+        write_os_indexes(out_dir, read_compiler_table(defaults_path))
     write_bindings(out_dir, rows, failures)
     write_served(out_dir, [r[0] for r in rows], host_needs)
     write_coverage(out_dir, [r[0] for r in rows], missing, seam_only, mismatch, unplaced)
@@ -738,6 +739,67 @@ def failure_expr(literal):
     if literal == "new LSLList()":
         return "new InWorldz.Phlox.Types.LSLList()"
     return literal
+
+
+# The os, iw and bot functions that take or give a position, by the rule Second Life applies to its ll functions (the definitions'
+# index-semantics: a list index, a character position in a string, the number of the detected object of an event, a notecard
+# line or an inventory item number is zero-based in LSL and counts from 1 in SLua). Link numbers, faces, channels, counts,
+# lengths and strides are not positions and are not listed. Per function: "args" maps a parameter count (the functions with
+# more than one signature take their positions at different places) to the zero-based places of the position parameters,
+# "return" is true when the integer result is a position (-1 for no match), and "list" is (stride, places) when the list
+# result holds positions at those places of each stride. SLua only: LSL and Phlox keep counting from 0.
+OS_POSITIONS = {}
+
+
+def write_os_indexes(out_dir, table):
+    signatures = {}
+    for name, ret, types, names, index in table:
+        signatures.setdefault(name, []).append((ret, types, names))
+    out = [HEADER, """
+using System.Collections.Generic;
+
+namespace SLua.ScriptEngine
+{
+    /// <summary>Which arguments and results of the os, iw and bot functions are positions (see OS_POSITIONS in tools/slua-bindings/generate-bindings.py).</summary>
+    internal static class OsIndexes
+    {
+        /// <summary>The functions with integer parameters that are positions: the zero-based places of those parameters, by the number of parameters of the signature.</summary>
+        internal static readonly IReadOnlyDictionary<string, IReadOnlyDictionary<int, int[]>> Arguments = new Dictionary<string, IReadOnlyDictionary<int, int[]>>
+        {
+"""]
+    returns = []
+    lists = []
+    for name in sorted(OS_POSITIONS):
+        spec = OS_POSITIONS[name]
+        if name not in signatures:
+            sys.exit("%s is in OS_POSITIONS but is not in the compiler table" % name)
+        counts = {}
+        for ret, types, names in signatures[name]:
+            counts[len(types)] = (ret, types, names)
+        for count, places in spec.get("args", {}).items():
+            if count not in counts:
+                sys.exit("%s has no signature of %d parameters" % (name, count))
+            for at in places:
+                if counts[count][1][at] != "integer":
+                    sys.exit("%s parameter %d (%s) is not an integer" % (name, at, counts[count][2][at]))
+        if spec.get("args"):
+            out.append('            ["%s"] = new Dictionary<int, int[]> { %s },\n' % (name, ", ".join("[%d] = new[] { %s }" % (c, ", ".join(str(i) for i in spec["args"][c])) for c in sorted(spec["args"]))))
+        if spec.get("return"):
+            if any(sig[0] != "integer" for sig in signatures[name]):
+                sys.exit("%s is marked as giving a position but does not return an integer" % name)
+            returns.append(name)
+        if spec.get("list"):
+            if any(sig[0] != "list" for sig in signatures[name]):
+                sys.exit("%s is marked as giving positions in a list but does not return a list" % name)
+            lists.append((name, spec["list"]))
+    out.append("        };\n\n")
+    out.append(string_array("Returns", "The functions whose integer result is a position (-1 for no match).", returns))
+    out.append("\n        /// <summary>The functions whose list result holds positions at fixed places of each stride.</summary>\n")
+    out.append("        internal static readonly IReadOnlyDictionary<string, ListPositions> ListStrides = new Dictionary<string, ListPositions>\n        {\n")
+    for name, (stride, places) in lists:
+        out.append('            ["%s"] = new ListPositions(%d, new[] { %s }),\n' % (name, stride, ", ".join(str(i) for i in places)))
+    out.append("        };\n    }\n}\n")
+    write(out_dir, "OsIndexes.g.cs", "".join(out))
 
 
 def string_array(name, doc, items):
