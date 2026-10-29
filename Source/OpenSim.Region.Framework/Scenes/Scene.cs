@@ -2166,6 +2166,12 @@ public partial class Scene : SceneBase
             {
                 // A data service that can save the whole pass in one transaction is told where the pass starts and ends.
                 ISimulationDataBatch batch = SimulationDataService as ISimulationDataBatch;
+                if (batch is not null)
+                {
+                    lock (m_savedInBackupPass)
+                        m_savedInBackupPass.Clear();
+                    m_notingBackupPass = true;
+                }
                 batch?.BeginBackupBatch();
                 try
                 {
@@ -2176,10 +2182,14 @@ public partial class Scene : SceneBase
                     try
                     {
                         batch?.EndBackupBatch();
+                        ForgetObjectsSavedInBackupPass();
                     }
                     catch (Exception e)
                     {
-                        m_log.LogError(e, $"[Scene] Ending the backup batch of {Name} failed, the changes of this backup pass were not saved: {e.Message}");
+                        // nothing of the pass reached the database: every object it saved is marked as changed
+                        // again, so that the next pass saves it
+                        int again = MarkObjectsSavedInBackupPassAsChanged();
+                        m_log.LogError(e, $"[Scene] Ending the backup batch of {Name} failed, the changes of this backup pass were not saved ({again} objects will be saved again by the next pass): {e.Message}");
                     }
                 }
 
@@ -2227,6 +2237,49 @@ public partial class Scene : SceneBase
                 m_backingup = false;
             }
         }
+    }
+
+    // The objects saved while a backup batch is open, until its commit is known to have worked.
+    private readonly List<SceneObjectGroup> m_savedInBackupPass = new();
+    private volatile bool m_notingBackupPass;
+
+    /// <summary>
+    /// Called by an object that has just written itself to the data service. While a backup batch is open the object
+    /// is noted, so that a failed commit of the batch can mark it as changed again.
+    /// </summary>
+    internal void NoteSavedInBackupPass(SceneObjectGroup group)
+    {
+        if (!m_notingBackupPass)
+            return;
+        lock (m_savedInBackupPass)
+            m_savedInBackupPass.Add(group);
+    }
+
+    private void ForgetObjectsSavedInBackupPass()
+    {
+        m_notingBackupPass = false;
+        lock (m_savedInBackupPass)
+            m_savedInBackupPass.Clear();
+    }
+
+    private int MarkObjectsSavedInBackupPassAsChanged()
+    {
+        m_notingBackupPass = false;
+        SceneObjectGroup[] saved;
+        lock (m_savedInBackupPass)
+        {
+            saved = m_savedInBackupPass.ToArray();
+            m_savedInBackupPass.Clear();
+        }
+        int count = 0;
+        foreach (SceneObjectGroup group in saved)
+        {
+            if (group.IsDeleted)
+                continue;
+            group.HasGroupChanged = true;
+            count++;
+        }
+        return count;
     }
 
     /// <summary>

@@ -8,7 +8,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
+using OpenMetaverse;
 using OpenSim.Data.Null;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Tests.Common;
@@ -81,5 +83,90 @@ public class SceneBackupBatchTests : OpenSimTestCase
         scene.Backup(true);
 
         Assert.Equal(new[] { "pass" }, calls);
+    }
+
+    /// <summary>A batching store whose final commit fails the given number of times, and which notes what it is asked to store.</summary>
+    private sealed class FailingCommitService : NullDataService, ISimulationDataService, ISimulationDataBatch
+    {
+        public readonly List<UUID> Stored = new();
+        public int CommitsToFail;
+
+        public new void StoreObject(SceneObjectGroup obj, UUID regionUUID)
+        {
+            Stored.Add(obj.UUID);
+            base.StoreObject(obj, regionUUID);
+        }
+
+        public void BeginBackupBatch() { }
+
+        public void EndBackupBatch()
+        {
+            if (CommitsToFail > 0)
+            {
+                CommitsToFail--;
+                throw new InvalidOperationException("injected commit failure");
+            }
+        }
+    }
+
+    private static UUID[] AddObjects(TestScene scene, int count)
+    {
+        UUID owner = TestHelpers.ParseTail(1);
+        return Enumerable.Range(1, count)
+            .Select(i =>
+            {
+                SceneObjectGroup group = SceneHelpers.AddSceneObject(scene, 1, owner, "object" + i, 0x100 + i);
+                group.AttachToBackup();
+                group.HasGroupChanged = true;
+                return group.UUID;
+            })
+            .ToArray();
+    }
+
+    [Fact]
+    public void WhenTheFinalCommitFailsTheObjectsOfThePassAreSavedAgainByTheNextPass()
+    {
+        FailingCommitService service = new() { CommitsToFail = 1 };
+        TestScene scene = NewScene(service);
+        UUID[] ids = AddObjects(scene, 3);
+
+        scene.Backup(true);
+        Assert.True(ids.All(id => service.Stored.Contains(id)), "the first pass should have written every object");
+        service.Stored.Clear();
+
+        scene.Backup(true);
+
+        Assert.True(ids.All(id => service.Stored.Contains(id)), "the next pass should write every object again");
+    }
+
+    [Fact]
+    public void WhenTheFinalCommitSucceedsTheNextPassWritesNothingAgain()
+    {
+        FailingCommitService service = new();
+        TestScene scene = NewScene(service);
+        UUID[] ids = AddObjects(scene, 3);
+
+        scene.Backup(true);
+        Assert.True(ids.All(id => service.Stored.Contains(id)));
+        service.Stored.Clear();
+
+        scene.Backup(true);
+
+        Assert.Empty(service.Stored);
+    }
+
+    [Fact]
+    public void ObjectsThatAreSavedAgainAfterAFailedCommitAreSavedOnceWhenTheNextCommitWorks()
+    {
+        FailingCommitService service = new() { CommitsToFail = 1 };
+        TestScene scene = NewScene(service);
+        UUID[] ids = AddObjects(scene, 2);
+        scene.Backup(true);
+        scene.Backup(true);
+        service.Stored.Clear();
+
+        scene.Backup(true);
+
+        Assert.Empty(service.Stored);
     }
 }
