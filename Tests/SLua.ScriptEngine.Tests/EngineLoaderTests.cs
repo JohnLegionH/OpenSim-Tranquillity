@@ -54,7 +54,9 @@ public class EngineLoaderTests
         {
             Engine = new SLuaEngine(Log, (settings, log) => true, null, (settings, log, scene) => { FactoryCalls++; return Loader; });
             var source = new IniConfigSource();
-            source.AddConfig(EngineIdentity.ConfigSection).Set("Enabled", enabled ? "true" : "false");
+            IConfig slua = source.AddConfig(EngineIdentity.ConfigSection);
+            slua.Set("Enabled", enabled ? "true" : "false");
+            slua.Set("WarmUp", "false"); // the API warm-up is process-wide and not under test here (see WarmUpIsolationTests)
             Engine.Initialise(source);
             Engine.AddRegion(Scene);
         }

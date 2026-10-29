@@ -38,6 +38,7 @@ public class RegistrationTests
         {
             IConfig c = source.AddConfig(section);
             if (enabled != null) c.Set("Enabled", enabled);
+            c.Set("WarmUp", "false"); // the API warm-up is process-wide and not under test here (see WarmUpIsolationTests)
         }
         return source;
     }
