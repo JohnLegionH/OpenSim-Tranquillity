@@ -457,6 +457,9 @@ PHLOX_GAPS = {
     "llSetExperienceKey": "deprecated and private in LL's definitions (lsl-definitions func-id 386) with no tooltip and no page on the SL wiki: there is no documented behaviour to build",
 }
 
+# Runtime functions that Second Life's definitions mark private (and deprecated): not documented, not for scripts to call.
+PRIVATE_IN_SL = {}
+
 # ---- matching ----
 
 def matches(builtin, member):
@@ -506,9 +509,9 @@ def main(builtins_path, interface_path, impl_path, shim_path, out_dir, defaults_
         bound_members.add((name, tuple(hit[1])))
 
     for name in missing + [n for n, _ in mismatch]:
-        if name not in PHLOX_GAPS:
+        if name not in PHLOX_GAPS and name not in PRIVATE_IN_SL:
             sys.exit("%s is neither bound, adapted nor a named Phlox gap" % name)
-    for name in PHLOX_GAPS:
+    for name in list(PHLOX_GAPS) + list(PRIVATE_IN_SL):
         if name not in missing and name not in {n for n, _ in mismatch}:
             sys.exit("%s is listed as a Phlox gap but is bound" % name)
     mismatch_names = {n for n, _ in mismatch}
@@ -743,6 +746,7 @@ def string_array(name, doc, items):
 def write_coverage(out_dir, bound, missing, seam_only, mismatch, unplaced):
     adapted = ["%s: %s" % (n, ADAPTERS[n][1]) for n in sorted(ADAPTERS)]
     gaps = ["%s: %s" % (n, PHLOX_GAPS[n]) for n in sorted(PHLOX_GAPS)]
+    private = ["%s: %s" % (n, PRIVATE_IN_SL[n]) for n in sorted(PRIVATE_IN_SL)]
     out = [HEADER, """
 namespace SLua.ScriptEngine
 {
@@ -766,6 +770,8 @@ namespace SLua.ScriptEngine
     out.append(string_array("Adapted", "Runtime functions bound through an adapter, each with the source of the conversion.", adapted))
     out.append("\n")
     out.append(string_array("PhloxGaps", "Runtime functions Phlox does not implement as the runtime defines them, each with the reason.", gaps))
+    out.append("\n")
+    out.append(string_array("PrivateInSl", "Runtime functions that Second Life's definitions mark private: intentionally absent, each with the reason.", private))
     out.append("    }\n}\n")
     write(out_dir, "LlCoverage.g.cs", "".join(out))
 

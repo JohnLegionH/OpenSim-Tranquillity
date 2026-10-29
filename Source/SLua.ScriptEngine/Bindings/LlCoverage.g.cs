@@ -646,5 +646,10 @@ namespace SLua.ScriptEngine
             "llGetExperienceList: deprecated and private in LL's definitions (lsl-definitions func-id 410) with no tooltip and no page on the SL wiki: there is no documented behaviour to build",
             "llSetExperienceKey: deprecated and private in LL's definitions (lsl-definitions func-id 386) with no tooltip and no page on the SL wiki: there is no documented behaviour to build",
         };
+
+        /// <summary>Runtime functions that Second Life's definitions mark private: intentionally absent, each with the reason.</summary>
+        internal static readonly string[] PrivateInSl = new string[]
+        {
+        };
     }
 }
