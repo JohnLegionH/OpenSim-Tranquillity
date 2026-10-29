@@ -17,6 +17,9 @@ namespace SLua.ScriptEngine
     /// <summary>An event waiting for a script: the native event number and its arguments.</summary>
     internal readonly record struct QueuedEvent(int EventIndex, Value[] Args, DetectedRecord[] Detected = null);
 
+    /// <summary>What a retry of a set-aside state found: whether the script now goes on from it, and why not when it does not.</summary>
+    internal readonly record struct RetryOutcome(bool Restored, string Reason);
+
     /// <summary>
     /// A script as its worker sees it. The fields that are not marked "worker only" may be read from any thread;
     /// the rest belong to the worker thread that owns the script's VM. A host function running inside a step
@@ -110,6 +113,15 @@ namespace SLua.ScriptEngine
 
         /// <summary>The saved state to restore when the script starts (set by the engine before the start); null for a fresh start.</summary>
         internal ScriptStateRecord RestoreRecord;
+
+        /// <summary>The script's native object already holds the state of <see cref="RestoreRecord"/> (a retry restored it on a spare object first).</summary>
+        internal bool NativeRestored;
+
+        /// <summary>
+        /// The script was restored with a timer its LLTimers asked for, and the library has not told the host about it since: a restored script object
+        /// reads 0 until its timer event has run once, so a 0 read back now is not the script turning the timer off.
+        /// </summary>
+        internal bool SluaTimerUnconfirmed;
 
         /// <summary>Why the script was held and not started: its saved state could not be read. A held script saves nothing, so its row stays as it is.</summary>
         internal string StateHeld;

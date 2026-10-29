@@ -1276,6 +1276,98 @@ namespace SLua.ScriptEngine
             MainConsole.Instance.Commands.AddCommand(EngineIdentity.EngineName, false, name + " resume", name + " resume <object name | script name | item id>",
                 "Let the scripts paused by the suspend command go on; the events that waited are delivered.",
                 (module, args) => HandleSuspendResume(args, false));
+            MainConsole.Instance.Commands.AddCommand(EngineIdentity.EngineName, false, name + " state retry", name + " state retry <object name | script name | item id | all>",
+                "Try the saved state that was set aside for the matching scripts again under this build (a state the runtime refused earlier, for instance after an upgrade). A state that now loads replaces the script's state; one that does not stays set aside, with the reason.",
+                (module, args) => HandleStateRetry(args));
+        }
+
+        /// <summary>
+        /// The "state retry" command: for each matching script that has a set-aside state not yet put back, tries it again under this
+        /// build and says what happened. A state that now loads replaces the script's state; one that does not stays set aside.
+        /// </summary>
+        internal string[] RetryStateLines(string filter, int waitMs = 10000)
+        {
+            var lines = new List<string>();
+            if (m_stateStore == null)
+            {
+                lines.Add("Saved state is off, so there is nothing set aside.");
+                return lines.ToArray();
+            }
+            m_stateStore.Flush(); // a state that was just set aside is on record
+            var matches = new List<(string Label, ScriptRecord Record)>();
+            lock (m_records)
+            {
+                foreach (ScriptRecord r in m_records.Values)
+                {
+                    SceneObjectPart part = m_scene?.GetSceneObjectPart(r.LocalID);
+                    string objectName = part?.ParentGroup?.Name ?? part?.Name ?? "(unknown object)";
+                    string scriptName = part?.Inventory?.GetInventoryItem(r.ItemID)?.Name ?? "(not in a prim)";
+                    if (r.Script.StateHeld == null && StatusMatches(filter, r.ItemID, objectName, scriptName))
+                        matches.Add(($"{objectName} / {scriptName}  {r.ItemID}", r));
+                }
+            }
+            if (matches.Count == 0)
+            {
+                lines.Add(string.IsNullOrWhiteSpace(filter) ? "No scripts." : $"No script matches '{filter}'.");
+                return lines.ToArray();
+            }
+            matches.Sort((a, b) => string.Compare(a.Label, b.Label, StringComparison.OrdinalIgnoreCase));
+            int offered = 0, restored = 0;
+            foreach ((string label, ScriptRecord r) in matches)
+            {
+                (long Id, byte[] State, string Reason)? pending = m_stateStore.PendingRejected(r.ItemID);
+                if (pending == null)
+                    continue;
+                offered++;
+                ScriptStateRecord record = ScriptStateRecord.Decode(pending.Value.State, EngineIdentity.EngineName, out string why);
+                if (record == null)
+                {
+                    lines.Add($"{label}: still set aside: it cannot be read ({why})");
+                    continue;
+                }
+                using var done = new System.Threading.ManualResetEventSlim(false);
+                RetryOutcome outcome = default;
+                UUID item = r.ItemID;
+                m_scheduler.RetryState(r.Script, record, o => { outcome = o; done.Set(); }, () =>
+                {
+                    m_chat?.Listens.Remove(item); // the fresh run's listens, sensors and requests go, as a reset drops them
+                    RealApiOf(item)?.OnScriptReset();
+                });
+                if (!done.Wait(waitMs))
+                {
+                    lines.Add($"{label}: still set aside: the script's worker did not answer in {waitMs / 1000} s; try again");
+                    continue;
+                }
+                if (outcome.Restored)
+                {
+                    m_stateStore.MarkRetried(pending.Value.Id);
+                    restored++;
+                    m_log.Info($"Script {item}: the set-aside state was put back by the retry command");
+                    lines.Add($"{label}: restored from the set-aside state");
+                }
+                else
+                {
+                    lines.Add($"{label}: still set aside: {outcome.Reason} (set aside because: {pending.Value.Reason})");
+                }
+            }
+            lines.Add(offered == 0 ? "No set-aside states." : $"{restored} of {offered} set-aside state(s) restored.");
+            return lines.ToArray();
+        }
+
+        private void HandleStateRetry(string[] args)
+        {
+            if (WrongConsoleScene())
+                return;
+            if (args.Length < 4)
+            {
+                MainConsole.Instance.Output($"Usage: {args[0]} state retry <object name | script name | item id | all>");
+                return;
+            }
+            string filter = string.Join(" ", args, 3, args.Length - 3);
+            if (string.Equals(filter.Trim(), "all", StringComparison.OrdinalIgnoreCase))
+                filter = string.Empty;
+            foreach (string line in RetryStateLines(filter))
+                MainConsole.Instance.Output(line);
         }
 
         private bool WrongConsoleScene() => !(MainConsole.Instance.ConsoleScene == null || MainConsole.Instance.ConsoleScene == m_scene);
