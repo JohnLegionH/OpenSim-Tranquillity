@@ -150,11 +150,11 @@ public class ServiceLaneTests
     };
 
     [RequiresNativeFact]
-    public void NoneOfTheFifteenAsyncAndTwentyServiceFunctionsRunsOnTheScriptWorker()
+    public void NoneOfTheFifteenAsyncAndTwentyTwoServiceFunctionsRunsOnTheScriptWorker()
     {
         BoundFunction[] functions = LlBindings.All.Where(f => f.Class is FunctionClass.Async or FunctionClass.Service).ToArray();
         Assert.Equal(15, functions.Count(f => f.Class == FunctionClass.Async));
-        Assert.Equal(20, functions.Count(f => f.Class == FunctionClass.Service));
+        Assert.Equal(22, functions.Count(f => f.Class == FunctionClass.Service));
 
         using var rig = new LaneRig();
         rig.Fake.Returns("NeedsService", true);
@@ -376,7 +376,7 @@ public class ServiceLaneTests
     {
         Dictionary<string, string> shim = ShimFailures();
         BoundFunction[] services = LlBindings.All.Where(f => f.Class == FunctionClass.Service).ToArray();
-        Assert.Equal(20, services.Length);
+        Assert.Equal(22, services.Length);
 
         foreach (BoundFunction f in services)
         {

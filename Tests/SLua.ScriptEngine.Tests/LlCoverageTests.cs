@@ -47,7 +47,7 @@ public class LlCoverageTests
         string[] expected = LlBindingGeneratorTests.ReadBuiltins()
             .Where(b => members.Any(m => m.Name == b.Name) && LlBindingGeneratorTests.Matching(b, members) == null && !LlCoverage.Adapted.Any(r => r.StartsWith(b.Name + ":")))
             .Select(b => b.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray();
-        Assert.NotEmpty(expected);
+        // llFindNotecardTextSync was the last mismatch; the seam now holds the runtime's form, so the group may be empty
         Assert.Equal(expected, LlCoverage.SignatureMismatch.Select(NameOf).OrderBy(n => n, StringComparer.Ordinal).ToArray());
         // each entry shows both signatures
         Assert.All(LlCoverage.SignatureMismatch, e => { Assert.Contains("runtime: ", e); Assert.Contains("seam: ", e); });

@@ -16,8 +16,9 @@ namespace SLua.ScriptEngine
     /// The os, iw and bot functions bound to ILSLSystemAPI. The table (<c>All</c>) and the host list (<c>HostLines</c>) are
     /// generated from Phlox's compiler table; see tools/slua-bindings. An SLua script calls <c>ossl.X</c>, <c>iw.X</c> and
     /// <c>bot.X</c>; an LSL script calls the function by its plain name, and the library's LSL compiler, given the host list,
-    /// compiles the call to the same function. Positions are not shifted and results are not turned into booleans: Second Life
-    /// defines none of these functions, so they keep the convention Phlox gives them.
+    /// compiles the call to the same function. Second Life defines none of these functions, so they are not turned into booleans, and an
+    /// LSL script keeps the convention Phlox gives them. An SLua script counts the positions they take and give from 1, as it
+    /// does for the ll functions (see <c>OsIndexes</c>).
     /// </summary>
     internal static partial class OsBindings
     {
@@ -149,21 +150,42 @@ namespace SLua.ScriptEngine
                     continue;
                 }
 
+                OsIndexes.Arguments.TryGetValue(function.ApiName, out IReadOnlyDictionary<int, int[]> indexArguments);
+                bool indexResult = Array.IndexOf(OsIndexes.Returns, function.ApiName) >= 0;
+                OsIndexes.ListStrides.TryGetValue(function.ApiName, out ListPositions listPositions);
+
+                // An SLua script counts positions from 1 (see OsIndexes); an LSL script keeps LSL's. The API underneath always sees LSL's.
+                ReadOnlySpan<Value> Given(ScriptContext context, ReadOnlySpan<Value> args) =>
+                    context.Script.Language == ScriptLanguage.Slua && indexArguments != null && indexArguments.TryGetValue(args.Length, out int[] places)
+                        ? LlBindings.ShiftArguments(function.ApiName, places, args)
+                        : args;
+                Value[] Answer(ScriptContext context, Value[] result) =>
+                    context.Script.Language != ScriptLanguage.Slua ? result
+                    : indexResult ? LlBindings.ShiftResult(result)
+                    : listPositions != null ? LlBindings.ShiftListResult(result, listPositions)
+                    : result;
+
                 if (serviceLane && function.Overloads.Any(o => o.Class is FunctionClass.Async or FunctionClass.Service))
                 {
                     vm.RegisterPausing(function.Table, function.Name,
-                        (tag, args) => LlBindings.StartLaneCall(Pick(function, args), contextOf(SchedulerScript.Current), args),
-                        (tag, args) => LlBindings.TakeLaneAnswer());
+                        (tag, args) =>
+                        {
+                            ScriptContext context = contextOf(SchedulerScript.Current);
+                            ReadOnlySpan<Value> given = Given(context, args);
+                            return LlBindings.StartLaneCall(Pick(function, given), context, given);
+                        },
+                        (tag, args) => Answer(contextOf(SchedulerScript.Current), LlBindings.TakeLaneAnswer()));
                     continue;
                 }
 
                 vm.Register(function.Table, function.Name, (tag, args) =>
                 {
-                    BoundFunction signature = Pick(function, args);
                     ScriptContext context = contextOf(SchedulerScript.Current);
-                    Value[] result = LlBindings.RunInContext(signature, context, args, out double delay);
+                    ReadOnlySpan<Value> given = Given(context, args);
+                    BoundFunction signature = Pick(function, given);
+                    Value[] result = LlBindings.RunInContext(signature, context, given, out double delay);
                     if (delay > 0) context.Script.AddSleep(delay);
-                    return result;
+                    return Answer(context, result);
                 });
             }
         }

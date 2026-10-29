@@ -5,6 +5,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+using InWorldz.Phlox.Types;
 using OpenMetaverse;
 using OpenSim.Region.ScriptEngine.Shared;
 using Phlox.ScriptEngine;
@@ -49,13 +50,13 @@ public class EngineHostWiringTests
         using var rig = new EngineRig();
         (ILSLSystemAPI fallback, FakeLslApi fake) = FakeLslApi.Create();
         fake.Returns("llStringLength", 99);
-        fake.Returns("llTransferOwnership", 5);
+        fake.Returns("llGetExperienceDetails", new LSLList(new object[] { "from the fallback" }));
         var script = new SchedulerScript(1, 0, new byte[0], ScriptLanguage.Slua);
 
         ILSLSystemAPI api = rig.Engine.CreateScriptApi(script, UUID.Random(), rig.LocalId, fallback);
 
         Assert.Equal(3, api.llStringLength("abc")); // the real API's answer, not the fake's 99
-        Assert.Equal(5, api.llTransferOwnership("00000000-0000-0000-0000-000000000000")); // the fallback's
-        Assert.Equal(new[] { "llTransferOwnership" }, fake.Calls.Select(c => c.Name).ToArray());
+        Assert.Equal("from the fallback", api.llGetExperienceDetails("00000000-0000-0000-0000-000000000000").Data[0]); // the fallback's
+        Assert.Equal(new[] { "llGetExperienceDetails" }, fake.Calls.Select(c => c.Name).ToArray());
     }
 }

@@ -450,11 +450,20 @@ ADAPTERS = {
 
 # Runtime functions Phlox does not implement as the runtime defines them. They answer a script with "not available".
 PHLOX_GAPS = {
-    "llClearExperience": "deprecated and private in LL's definitions (lsl-definitions func-id 411) with no tooltip and no page on the SL wiki: there is no documented behaviour to build",
-    "llClearExperiencePermissions": "deprecated and private in LL's definitions (lsl-definitions func-id 385) with no tooltip and no page on the SL wiki: there is no documented behaviour to build",
-    "llFindNotecardTextSync": "Phlox's LSLSystemAPI has the runtime's form (a regular expression, a strided [line, column, length] answer) but the seam holds only the earlier four-argument member: the definitions mark the list result as holding positions (lsl-definitions func-id 508, index-semantics) without saying which of the three are, so a Lua script would be given unshifted positions",
-    "llGetExperienceList": "deprecated and private in LL's definitions (lsl-definitions func-id 410) with no tooltip and no page on the SL wiki: there is no documented behaviour to build",
-    "llSetExperienceKey": "deprecated and private in LL's definitions (lsl-definitions func-id 386) with no tooltip and no page on the SL wiki: there is no documented behaviour to build",
+}
+
+# Runtime functions that Second Life's definitions mark private and deprecated (lsl-definitions: "private: true",
+# "deprecated: true", no tooltip, and no page on the SL wiki). Second Life keeps them out of its documentation and its script
+# editor; there is no documented behaviour to build, so they are intentionally absent and answer a script with "not available".
+def _private(func_id):
+    return "private in SL, intentionally absent (lsl-definitions func-id %d: private and deprecated, no description)" % func_id
+
+
+PRIVATE_IN_SL = {
+    "llClearExperience": _private(411),
+    "llClearExperiencePermissions": _private(385),
+    "llGetExperienceList": _private(410),
+    "llSetExperienceKey": _private(386),
 }
 
 # ---- matching ----
@@ -506,9 +515,9 @@ def main(builtins_path, interface_path, impl_path, shim_path, out_dir, defaults_
         bound_members.add((name, tuple(hit[1])))
 
     for name in missing + [n for n, _ in mismatch]:
-        if name not in PHLOX_GAPS:
+        if name not in PHLOX_GAPS and name not in PRIVATE_IN_SL:
             sys.exit("%s is neither bound, adapted nor a named Phlox gap" % name)
-    for name in PHLOX_GAPS:
+    for name in list(PHLOX_GAPS) + list(PRIVATE_IN_SL):
         if name not in missing and name not in {n for n, _ in mismatch}:
             sys.exit("%s is listed as a Phlox gap but is bound" % name)
     mismatch_names = {n for n, _ in mismatch}
@@ -552,6 +561,7 @@ def main(builtins_path, interface_path, impl_path, shim_path, out_dir, defaults_
     os_rows = os_functions(defaults_path, shim_path, members, delays, host_needs) if defaults_path else None
     if os_rows is not None:
         write_os_bindings(out_dir, os_rows)
+        write_os_indexes(out_dir, read_compiler_table(defaults_path))
     write_bindings(out_dir, rows, failures)
     write_served(out_dir, [r[0] for r in rows], host_needs)
     write_coverage(out_dir, [r[0] for r in rows], missing, seam_only, mismatch, unplaced)
@@ -731,6 +741,98 @@ def failure_expr(literal):
     return literal
 
 
+# The os, iw and bot functions that take or give a position, by the rule Second Life applies to its ll functions (the definitions'
+# index-semantics: a list index, a character position in a string, the number of the detected object of an event, a notecard
+# line or an inventory item number is zero-based in LSL and counts from 1 in SLua). Link numbers, faces, channels, counts,
+# lengths and strides are not positions and are not listed. Per function: "args" maps a parameter count (the functions with
+# more than one signature take their positions at different places) to the zero-based places of the position parameters,
+# "return" is true when the integer result is a position (-1 for no match), and "list" is (stride, places) when the list
+# result holds positions at those places of each stride. SLua only: LSL and Phlox keep counting from 0.
+OS_POSITIONS = {
+    # a list index (llList2String, llListFindList and the like)
+    "osListAsFloat": {"args": {2: [1]}},
+    "osListAsInteger": {"args": {2: [1]}},
+    "osListAsRotation": {"args": {2: [1]}},
+    "osListAsString": {"args": {2: [1]}},
+    "osListAsVector": {"args": {2: [1]}},
+    "osOldList2ListStrided": {"args": {4: [1, 2]}},
+    "osListSortInPlaceStrided": {"args": {4: [2]}},
+    "osListFindListNext": {"args": {5: [2, 3, 4]}, "return": True},
+    # a character position in a string (llGetSubString, llSubStringIndex, llOrd)
+    "osStringIndexOf": {"args": {5: [2]}, "return": True},
+    "osStringLastIndexOf": {"args": {5: [2]}, "return": True},
+    "osStringRemove": {"args": {3: [1]}},
+    "osStringSubString": {"args": {2: [1], 3: [1]}},
+    "osReplaceString": {"args": {5: [4]}},
+    "iwSubStringIndex": {"args": {4: [2]}, "return": True},
+    "iwChar2Int": {"args": {2: [1]}},
+    # positions inside a strided answer: osMatchString gives [text, position, ...]
+    "osMatchString": {"args": {3: [2]}, "list": (2, [1])},
+    # a line of a notecard and a character offset in it (llGetNotecardLine)
+    "osGetNotecardLine": {"args": {2: [1]}},
+    "iwGetNotecardSegment": {"args": {4: [1, 2]}},
+    "iwGetLinkNotecardLine": {"args": {3: [2]}},
+    "iwGetLinkNotecardSegment": {"args": {5: [2, 3]}},
+    # the number of an inventory item (llGetInventoryName)
+    "iwGetLinkInventoryName": {"args": {3: [2]}},
+    # the number of the detected object of an event (llDetectedKey)
+    "osDetectedCountry": {"args": {1: [0]}},
+    # the first and last match of the outfits to give back
+    "botSearchBotOutfits": {"args": {4: [2, 3]}},
+}
+
+
+def write_os_indexes(out_dir, table):
+    signatures = {}
+    for name, ret, types, names, index in table:
+        signatures.setdefault(name, []).append((ret, types, names))
+    out = [HEADER, """
+using System.Collections.Generic;
+
+namespace SLua.ScriptEngine
+{
+    /// <summary>Which arguments and results of the os, iw and bot functions are positions (see OS_POSITIONS in tools/slua-bindings/generate-bindings.py).</summary>
+    internal static class OsIndexes
+    {
+        /// <summary>The functions with integer parameters that are positions: the zero-based places of those parameters, by the number of parameters of the signature.</summary>
+        internal static readonly IReadOnlyDictionary<string, IReadOnlyDictionary<int, int[]>> Arguments = new Dictionary<string, IReadOnlyDictionary<int, int[]>>
+        {
+"""]
+    returns = []
+    lists = []
+    for name in sorted(OS_POSITIONS):
+        spec = OS_POSITIONS[name]
+        if name not in signatures:
+            sys.exit("%s is in OS_POSITIONS but is not in the compiler table" % name)
+        counts = {}
+        for ret, types, names in signatures[name]:
+            counts[len(types)] = (ret, types, names)
+        for count, places in spec.get("args", {}).items():
+            if count not in counts:
+                sys.exit("%s has no signature of %d parameters" % (name, count))
+            for at in places:
+                if counts[count][1][at] != "integer":
+                    sys.exit("%s parameter %d (%s) is not an integer" % (name, at, counts[count][2][at]))
+        if spec.get("args"):
+            out.append('            ["%s"] = new Dictionary<int, int[]> { %s },\n' % (name, ", ".join("[%d] = new[] { %s }" % (c, ", ".join(str(i) for i in spec["args"][c])) for c in sorted(spec["args"]))))
+        if spec.get("return"):
+            if any(sig[0] != "integer" for sig in signatures[name]):
+                sys.exit("%s is marked as giving a position but does not return an integer" % name)
+            returns.append(name)
+        if spec.get("list"):
+            if any(sig[0] != "list" for sig in signatures[name]):
+                sys.exit("%s is marked as giving positions in a list but does not return a list" % name)
+            lists.append((name, spec["list"]))
+    out.append("        };\n\n")
+    out.append(string_array("Returns", "The functions whose integer result is a position (-1 for no match).", returns))
+    out.append("\n        /// <summary>The functions whose list result holds positions at fixed places of each stride.</summary>\n")
+    out.append("        internal static readonly IReadOnlyDictionary<string, ListPositions> ListStrides = new Dictionary<string, ListPositions>\n        {\n")
+    for name, (stride, places) in lists:
+        out.append('            ["%s"] = new ListPositions(%d, new[] { %s }),\n' % (name, stride, ", ".join(str(i) for i in places)))
+    out.append("        };\n    }\n}\n")
+    write(out_dir, "OsIndexes.g.cs", "".join(out))
+
+
 def string_array(name, doc, items):
     lines = ["        /// <summary>%s</summary>\n" % doc,
              "        internal static readonly string[] %s = new string[]\n        {\n" % name]
@@ -743,6 +845,7 @@ def string_array(name, doc, items):
 def write_coverage(out_dir, bound, missing, seam_only, mismatch, unplaced):
     adapted = ["%s: %s" % (n, ADAPTERS[n][1]) for n in sorted(ADAPTERS)]
     gaps = ["%s: %s" % (n, PHLOX_GAPS[n]) for n in sorted(PHLOX_GAPS)]
+    private = ["%s: %s" % (n, PRIVATE_IN_SL[n]) for n in sorted(PRIVATE_IN_SL)]
     out = [HEADER, """
 namespace SLua.ScriptEngine
 {
@@ -766,6 +869,8 @@ namespace SLua.ScriptEngine
     out.append(string_array("Adapted", "Runtime functions bound through an adapter, each with the source of the conversion.", adapted))
     out.append("\n")
     out.append(string_array("PhloxGaps", "Runtime functions Phlox does not implement as the runtime defines them, each with the reason.", gaps))
+    out.append("\n")
+    out.append(string_array("PrivateInSl", "Runtime functions that Second Life's definitions mark private: intentionally absent, each with the reason.", private))
     out.append("    }\n}\n")
     write(out_dir, "LlCoverage.g.cs", "".join(out))
 
@@ -774,6 +879,14 @@ namespace SLua.ScriptEngine
 # index-semantics and bool-semantics), as written into lsl-definition-marks.txt by extract-marks.py. A position is zero-based in
 # LSL and counts from 1 for an SLua script; a truth value is an integer in LSL and a boolean for an SLua script. Integer
 # parameters whose name suggests a position that the definitions do not mark are listed, not shifted.
+# List results the definitions mark as holding positions (index-semantics on a list return) without saying which elements are:
+# llFindNotecardTextSync answers a strided [line, column, length, ...] (its tooltip, lsl-definitions func-id 508). Line and
+# column are positions in the notecard and count from 1 for an SLua script; the length is a count. This is our reading of the
+# definitions, which only say "there are list indices in the return value"; docs/SLUA.md says so too.
+LIST_POSITIONS = {
+    "llFindNotecardTextSync": (3, [0, 1]),
+}
+
 POSITION_LIKE = re.compile(r"^(number|item|line|face|num)$")
 
 
@@ -822,7 +935,16 @@ namespace SLua.ScriptEngine
     out.append(string_array("Returns", "The ll functions whose integer result is a position (-1 for no match).", returns))
     out.append("\n")
     out.append(string_array("NotDerived", "Integer parameters whose name suggests a position that the definitions do not mark; they are not shifted.", not_derived))
-    out.append("    }\n}\n")
+    out.append("\n        /// <summary>The ll functions whose list result holds positions at fixed places of each stride (see LIST_POSITIONS in tools/slua-bindings/generate-bindings.py).</summary>\n")
+    out.append("        internal static readonly IReadOnlyDictionary<string, ListPositions> ListStrides = new Dictionary<string, ListPositions>\n        {\n")
+    for name in sorted(LIST_POSITIONS):
+        stride, places = LIST_POSITIONS[name]
+        if "return:index" not in marks.get(name, []):
+            sys.exit("%s is in LIST_POSITIONS but the definitions do not mark its result as positions" % name)
+        out.append('            ["%s"] = new ListPositions(%d, new[] { %s }),\n' % (name, stride, ", ".join(str(i) for i in places)))
+    out.append("        };\n    }\n\n")
+    out.append('    /// <summary>A list result made of strides of <see cref="Stride"/> elements, of which the elements at <see cref="Positions"/> (zero-based, within a stride) are positions.</summary>\n')
+    out.append("    internal sealed record ListPositions(int Stride, int[] Positions);\n}\n")
     write(out_dir, "LlIndexes.g.cs", "".join(out))
 
     booleans = sorted(n for n in definitions if definitions[n][0] == "integer" and "return:bool" in marks.get(n, []))

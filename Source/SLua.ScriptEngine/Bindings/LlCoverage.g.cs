@@ -99,6 +99,7 @@ namespace SLua.ScriptEngine
             "llExecCharacterCmd",
             "llFabs",
             "llFindNotecardTextCount",
+            "llFindNotecardTextSync",
             "llFleeFrom",
             "llFloor",
             "llForceMouselook",
@@ -568,7 +569,7 @@ namespace SLua.ScriptEngine
             "Vector3 llSRGB2Linear(Vector3): not in the runtime list",
             "int llCheckRezError(Vector3, int, int): not in the runtime list",
             "int llClearKeyValue(): not in the runtime list",
-            "int llFindNotecardTextSync(string, string, int, int): the runtime list's signature differs (see the mismatch list)",
+            "int llFindNotecardTextSync(string, string, int, int): another overload of this name is bound",
             "int llGetLocalTime(): not in the runtime list",
             "int llGetParcelFlags2(Vector3): not in the runtime list",
             "int llGetVehicleFlags(): not in the runtime list",
@@ -594,7 +595,6 @@ namespace SLua.ScriptEngine
         /// <summary>In both, with different types or parameter counts: the two signatures.</summary>
         internal static readonly string[] SignatureMismatch = new string[]
         {
-            "llFindNotecardTextSync: runtime: list llFindNotecardTextSync(string, string, integer, integer, list); seam: int llFindNotecardTextSync(string, string, int, int)",
         };
 
         /// <summary>Bound functions whose delay the generator could not read, with the class they were given.</summary>
@@ -640,11 +640,15 @@ namespace SLua.ScriptEngine
         /// <summary>Runtime functions Phlox does not implement as the runtime defines them, each with the reason.</summary>
         internal static readonly string[] PhloxGaps = new string[]
         {
-            "llClearExperience: deprecated and private in LL's definitions (lsl-definitions func-id 411) with no tooltip and no page on the SL wiki: there is no documented behaviour to build",
-            "llClearExperiencePermissions: deprecated and private in LL's definitions (lsl-definitions func-id 385) with no tooltip and no page on the SL wiki: there is no documented behaviour to build",
-            "llFindNotecardTextSync: Phlox's LSLSystemAPI has the runtime's form (a regular expression, a strided [line, column, length] answer) but the seam holds only the earlier four-argument member: the definitions mark the list result as holding positions (lsl-definitions func-id 508, index-semantics) without saying which of the three are, so a Lua script would be given unshifted positions",
-            "llGetExperienceList: deprecated and private in LL's definitions (lsl-definitions func-id 410) with no tooltip and no page on the SL wiki: there is no documented behaviour to build",
-            "llSetExperienceKey: deprecated and private in LL's definitions (lsl-definitions func-id 386) with no tooltip and no page on the SL wiki: there is no documented behaviour to build",
+        };
+
+        /// <summary>Runtime functions that Second Life's definitions mark private: intentionally absent, each with the reason.</summary>
+        internal static readonly string[] PrivateInSl = new string[]
+        {
+            "llClearExperience: private in SL, intentionally absent (lsl-definitions func-id 411: private and deprecated, no description)",
+            "llClearExperiencePermissions: private in SL, intentionally absent (lsl-definitions func-id 385: private and deprecated, no description)",
+            "llGetExperienceList: private in SL, intentionally absent (lsl-definitions func-id 410: private and deprecated, no description)",
+            "llSetExperienceKey: private in SL, intentionally absent (lsl-definitions func-id 386: private and deprecated, no description)",
         };
     }
 }
