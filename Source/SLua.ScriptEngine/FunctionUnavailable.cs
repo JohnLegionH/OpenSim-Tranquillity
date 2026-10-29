@@ -20,6 +20,9 @@ namespace SLua.ScriptEngine
         }
 
         public string Function { get; }
+
+        /// <summary>stub: the text for a private function is not written yet.</summary>
+        public static FunctionUnavailableException Private(string function) => new FunctionUnavailableException(function);
     }
 
     /// <summary>The script API for the functions the engine does not serve: every call is a <see cref="FunctionUnavailableException"/>.</summary>
