@@ -41,7 +41,7 @@ namespace OpenSim.Data.SQLite;
 /// <summary>
 /// A RegionData Interface to the SQLite database
 /// </summary>
-public class SQLiteSimulationData : ISimulationDataStore
+public class SQLiteSimulationData : ISimulationDataStore, ISimulationDataBatch
 {
     private static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
     private static readonly string LogHeader = "[REGION DB SQLITE]";
@@ -72,6 +72,13 @@ public class SQLiteSimulationData : ISimulationDataStore
 
     private SQLiteConnection m_conn;
     private String m_connectionString;
+
+    /// <summary>How many InTransaction calls are open; only changed under lock (ds).</summary>
+    private int m_transactionDepth;
+
+    /// <summary>The transaction of the open backup batch, and how many batches are open; only changed under lock (ds).</summary>
+    private SQLiteTransaction m_batchTransaction;
+    private int m_batchDepth;
 
     protected virtual Assembly Assembly
     {
@@ -535,18 +542,202 @@ public class SQLiteSimulationData : ISimulationDataStore
     {
         lock (ds)
         {
-            foreach (SceneObjectPart prim in obj.Parts)
+            InTransaction(() =>
             {
+                foreach (SceneObjectPart prim in obj.Parts)
+                {
 //                    m_log.LogInformation("[REGION DB]: Adding obj: " + obj.UUID + " to region: " + regionUUID);
-                addPrim(prim, obj.UUID, regionUUID);
-            }
-            primDa.Update(ds, "prims");
-            shapeDa.Update(ds, "primshapes");
-            itemsDa.Update(ds, "primitems");
-            ds.AcceptChanges();
+                    addPrim(prim, obj.UUID, regionUUID);
+                }
+                primDa.Update(ds, "prims");
+                shapeDa.Update(ds, "primshapes");
+                itemsDa.Update(ds, "primitems");
+                ds.AcceptChanges();
+            });
         }
 
         // m_log.LogInformation("[Dump of prims]: " + ds.GetXml());
+    }
+
+    /// <summary>
+    /// Starts a backup batch: until the outermost EndBackupBatch, the calls that write are collected into one
+    /// transaction and committed once at the end. The transaction is the deferred kind, so it takes no lock on the
+    /// database until the first write, and a pass that writes nothing commits nothing. Each call still succeeds or
+    /// fails on its own (see InTransaction). Calls from other threads while the batch is open join it.
+    /// </summary>
+    public void BeginBackupBatch()
+    {
+        lock (ds)
+        {
+            if (m_batchDepth++ == 0)
+                m_batchTransaction = m_conn.BeginTransaction(true); // deferred: no lock until the first write
+        }
+    }
+
+    /// <summary>
+    /// Commits what the batch collected, once the outermost batch ends. Does nothing without a batch.
+    /// </summary>
+    public void EndBackupBatch()
+    {
+        lock (ds)
+        {
+            if (m_batchDepth == 0 || --m_batchDepth > 0)
+                return;
+
+            SQLiteTransaction transaction = m_batchTransaction;
+            m_batchTransaction = null;
+            try
+            {
+                transaction.Commit();
+            }
+            catch
+            {
+                try
+                {
+                    transaction.Rollback();
+                }
+                catch (Exception e)
+                {
+                    m_log.LogError("[SQLITE REGION DB]: Rollback of the backup batch failed: {0}", e.Message);
+                }
+                ReloadTables();
+                throw;
+            }
+            finally
+            {
+                transaction.Dispose();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Runs <paramref name="work"/> in one database transaction. Without one every row the data adapters write is
+    /// its own commit, and each commit waits for the disk, so saving an object with a few prims took a fraction of
+    /// a second and saving a whole region took minutes. If the work throws, its writes are rolled back and the
+    /// in-memory copy of the tables is read again from the database, because the adapters accept rows one at a
+    /// time and would otherwise keep rows the database no longer has.
+    /// Inside a backup batch the work runs in a savepoint of the batch's transaction instead, so a failure undoes
+    /// only this work and the rest of the batch is still committed at its end.
+    /// A call made inside another InTransaction joins the outer one. The caller holds lock (ds).
+    /// </summary>
+    private void InTransaction(Action work)
+    {
+        if (m_transactionDepth > 0)
+        {
+            work();
+            return;
+        }
+
+        m_transactionDepth++;
+        try
+        {
+            if (m_batchTransaction is null)
+                InOwnTransaction(work);
+            else
+                InSavepoint(work);
+        }
+        finally
+        {
+            m_transactionDepth--;
+        }
+    }
+
+    private void InOwnTransaction(Action work)
+    {
+        SQLiteTransaction transaction = m_conn.BeginTransaction();
+        try
+        {
+            work();
+            transaction.Commit();
+        }
+        catch
+        {
+            try
+            {
+                transaction.Rollback();
+            }
+            catch (Exception e)
+            {
+                m_log.LogError("[SQLITE REGION DB]: Rollback failed: {0}", e.Message);
+            }
+            ReloadTables();
+            throw;
+        }
+        finally
+        {
+            transaction.Dispose();
+        }
+    }
+
+    private void InSavepoint(Action work)
+    {
+        ExecuteStatement("savepoint region_work");
+        try
+        {
+            work();
+            ExecuteStatement("release region_work");
+        }
+        catch
+        {
+            try
+            {
+                ExecuteStatement("rollback to region_work");
+                ExecuteStatement("release region_work");
+            }
+            catch (Exception e)
+            {
+                m_log.LogError("[SQLITE REGION DB]: Rollback of one save inside the backup batch failed: {0}", e.Message);
+            }
+            ReloadTables();
+            throw;
+        }
+    }
+
+    private void ExecuteStatement(string sql)
+    {
+        using (SQLiteCommand cmd = new SQLiteCommand(sql, m_conn))
+            cmd.ExecuteNonQuery();
+    }
+
+    private static SQLiteCommand Renewed(SQLiteCommand command)
+    {
+        if (command is null)
+            return null;
+        SQLiteCommand copy = (SQLiteCommand)command.Clone();
+        command.Dispose();
+        return copy;
+    }
+
+    /// <summary>
+    /// Replaces the in-memory copy of every table with what the database holds, and gives every data adapter fresh
+    /// copies of its commands. Used after a rollback: the command that failed is left in an error state, and the
+    /// next use of it fails with "bad parameter or other API misuse". The copies keep the statements as they were
+    /// set up; building them again would add the columns that reading the tables added to the data tables.
+    /// </summary>
+    private void ReloadTables()
+    {
+        (SQLiteDataAdapter adapter, string table)[] tables =
+        {
+            (primDa, "prims"), (shapeDa, "primshapes"), (itemsDa, "primitems"), (terrainDa, "terrain"),
+            (landDa, "land"), (landAccessListDa, "landaccesslist"), (regionSettingsDa, "regionsettings"),
+            (regionWindlightDa, "regionwindlight"), (regionEnvironmentDa, "regionenvironment"),
+            (regionSpawnPointsDa, "spawn_points")
+        };
+        foreach ((SQLiteDataAdapter adapter, string table) in tables)
+        {
+            try
+            {
+                adapter.InsertCommand = Renewed(adapter.InsertCommand);
+                adapter.UpdateCommand = Renewed(adapter.UpdateCommand);
+                adapter.DeleteCommand = Renewed(adapter.DeleteCommand);
+                ds.Tables[table].Clear();
+                adapter.Fill(ds.Tables[table]);
+            }
+            catch (Exception e)
+            {
+                m_log.LogError("[SQLITE REGION DB]: Could not read the {0} table again after a rollback: {1}", table, e.Message);
+            }
+        }
     }
 
     /// <summary>
@@ -564,23 +755,26 @@ public class SQLiteSimulationData : ISimulationDataStore
         string selectExp = "SceneGroupID = '" + obj + "' and RegionUUID = '" + regionUUID + "'";
         lock (ds)
         {
-            DataRow[] primRows = prims.Select(selectExp);
-            foreach (DataRow row in primRows)
+            InTransaction(() =>
             {
-                // Remove shape rows
-                UUID uuid = new UUID((string)row["UUID"]);
-                DataRow shapeRow = shapes.Rows.Find(uuid.ToString());
-                if (shapeRow != null)
+                DataRow[] primRows = prims.Select(selectExp);
+                foreach (DataRow row in primRows)
                 {
-                    shapeRow.Delete();
+                    // Remove shape rows
+                    UUID uuid = new UUID((string)row["UUID"]);
+                    DataRow shapeRow = shapes.Rows.Find(uuid.ToString());
+                    if (shapeRow != null)
+                    {
+                        shapeRow.Delete();
+                    }
+
+                    RemoveItems(uuid);
+
+                    // Remove prim row
+                    row.Delete();
                 }
-
-                RemoveItems(uuid);
-
-                // Remove prim row
-                row.Delete();
-            }
-            Commit();
+                Commit();
+            });
         }
     }
 
@@ -753,30 +947,34 @@ public class SQLiteSimulationData : ISimulationDataStore
     {
         lock (ds)
         {
-            using (SQLiteCommand cmd = new SQLiteCommand("delete from terrain where RegionUUID=:RegionUUID", m_conn))
+            // The old terrain is deleted and the new inserted in one transaction, so a failed insert keeps the old.
+            InTransaction(() =>
             {
-                cmd.Parameters.Add(new SQLiteParameter(":RegionUUID", regionID.ToString()));
-                cmd.ExecuteNonQuery();
-            }
+                using (SQLiteCommand cmd = new SQLiteCommand("delete from terrain where RegionUUID=:RegionUUID", m_conn))
+                {
+                    cmd.Parameters.Add(new SQLiteParameter(":RegionUUID", regionID.ToString()));
+                    cmd.ExecuteNonQuery();
+                }
 
-            // the following is an work around for .NET.  The perf
-            // issues associated with it aren't as bad as you think.
-            String sql = "insert into terrain(RegionUUID, Revision, Heightfield)" +
-                         " values(:RegionUUID, :Revision, :Heightfield)";
+                // the following is an work around for .NET.  The perf
+                // issues associated with it aren't as bad as you think.
+                String sql = "insert into terrain(RegionUUID, Revision, Heightfield)" +
+                             " values(:RegionUUID, :Revision, :Heightfield)";
 
-            int terrainDBRevision;
-            Array terrainDBblob;
-            terrData.GetDatabaseBlob(out terrainDBRevision, out terrainDBblob);
+                int terrainDBRevision;
+                Array terrainDBblob;
+                terrData.GetDatabaseBlob(out terrainDBRevision, out terrainDBblob);
 
-            m_log.LogDebug("{0} Storing terrain format {1}", LogHeader, terrainDBRevision);
+                m_log.LogDebug("{0} Storing terrain format {1}", LogHeader, terrainDBRevision);
 
-            using (SQLiteCommand cmd = new SQLiteCommand(sql, m_conn))
-            {
-                cmd.Parameters.Add(new SQLiteParameter(":RegionUUID", regionID.ToString()));
-                cmd.Parameters.Add(new SQLiteParameter(":Revision", terrainDBRevision));
-                cmd.Parameters.Add(new SQLiteParameter(":Heightfield", terrainDBblob));
-                cmd.ExecuteNonQuery();
-            }
+                using (SQLiteCommand cmd = new SQLiteCommand(sql, m_conn))
+                {
+                    cmd.Parameters.Add(new SQLiteParameter(":RegionUUID", regionID.ToString()));
+                    cmd.Parameters.Add(new SQLiteParameter(":Revision", terrainDBRevision));
+                    cmd.Parameters.Add(new SQLiteParameter(":Heightfield", terrainDBblob));
+                    cmd.ExecuteNonQuery();
+                }
+            });
         }
     }
 
@@ -789,31 +987,34 @@ public class SQLiteSimulationData : ISimulationDataStore
     {
         lock (ds)
         {
-            using (
-                SQLiteCommand cmd = new SQLiteCommand("delete from bakedterrain where RegionUUID=:RegionUUID", m_conn))
+            InTransaction(() =>
             {
-                cmd.Parameters.Add(new SQLiteParameter(":RegionUUID", regionID.ToString()));
-                cmd.ExecuteNonQuery();
-            }
+                using (
+                    SQLiteCommand cmd = new SQLiteCommand("delete from bakedterrain where RegionUUID=:RegionUUID", m_conn))
+                {
+                    cmd.Parameters.Add(new SQLiteParameter(":RegionUUID", regionID.ToString()));
+                    cmd.ExecuteNonQuery();
+                }
 
-            // the following is an work around for .NET.  The perf
-            // issues associated with it aren't as bad as you think.
-            String sql = "insert into bakedterrain(RegionUUID, Revision, Heightfield)" +
-                         " values(:RegionUUID, :Revision, :Heightfield)";
+                // the following is an work around for .NET.  The perf
+                // issues associated with it aren't as bad as you think.
+                String sql = "insert into bakedterrain(RegionUUID, Revision, Heightfield)" +
+                             " values(:RegionUUID, :Revision, :Heightfield)";
 
-            int terrainDBRevision;
-            Array terrainDBblob;
-            terrData.GetDatabaseBlob(out terrainDBRevision, out terrainDBblob);
+                int terrainDBRevision;
+                Array terrainDBblob;
+                terrData.GetDatabaseBlob(out terrainDBRevision, out terrainDBblob);
 
-            m_log.LogDebug("{0} Storing bakedterrain format {1}", LogHeader, terrainDBRevision);
+                m_log.LogDebug("{0} Storing bakedterrain format {1}", LogHeader, terrainDBRevision);
 
-            using (SQLiteCommand cmd = new SQLiteCommand(sql, m_conn))
-            {
-                cmd.Parameters.Add(new SQLiteParameter(":RegionUUID", regionID.ToString()));
-                cmd.Parameters.Add(new SQLiteParameter(":Revision", terrainDBRevision));
-                cmd.Parameters.Add(new SQLiteParameter(":Heightfield", terrainDBblob));
-                cmd.ExecuteNonQuery();
-            }
+                using (SQLiteCommand cmd = new SQLiteCommand(sql, m_conn))
+                {
+                    cmd.Parameters.Add(new SQLiteParameter(":RegionUUID", regionID.ToString()));
+                    cmd.Parameters.Add(new SQLiteParameter(":Revision", terrainDBRevision));
+                    cmd.Parameters.Add(new SQLiteParameter(":Heightfield", terrainDBblob));
+                    cmd.ExecuteNonQuery();
+                }
+            });
         }
     }
 
@@ -1025,6 +1226,7 @@ public class SQLiteSimulationData : ISimulationDataStore
     {
 //            m_log.LogDebug("[SQLITE]: Starting commit");
         //lock (ds) caller must lock
+        InTransaction(() =>
         {
             primDa.Update(ds, "prims");
             shapeDa.Update(ds, "primshapes");
@@ -1046,7 +1248,7 @@ public class SQLiteSimulationData : ISimulationDataStore
                     SqlEx);
             }
             ds.AcceptChanges();
-        }
+        });
     }
 
     /// <summary>
@@ -2560,21 +2762,24 @@ public class SQLiteSimulationData : ISimulationDataStore
         // no matter whether they have changed or not, and replace them with the current set.
         lock (ds)
         {
-            RemoveItems(primID);
-
-            // repalce with current inventory details
-            foreach (TaskInventoryItem newItem in items)
+            InTransaction(() =>
             {
-                //                    m_log.LogInformation(
-                //                        "[DATASTORE]: ",
-                //                        "Adding item {0}, {1} to prim ID {2}",
-                //                        newItem.Name, newItem.ItemID, newItem.ParentPartID);
+                RemoveItems(primID);
 
-                DataRow newItemRow = dbItems.NewRow();
-                fillItemRow(newItemRow, newItem);
-                dbItems.Rows.Add(newItemRow);
-            }
-            Commit();
+                // repalce with current inventory details
+                foreach (TaskInventoryItem newItem in items)
+                {
+                    //                    m_log.LogInformation(
+                    //                        "[DATASTORE]: ",
+                    //                        "Adding item {0}, {1} to prim ID {2}",
+                    //                        newItem.Name, newItem.ItemID, newItem.ParentPartID);
+
+                    DataRow newItemRow = dbItems.NewRow();
+                    fillItemRow(newItemRow, newItem);
+                    dbItems.Rows.Add(newItemRow);
+                }
+                Commit();
+            });
         }
     }
 
