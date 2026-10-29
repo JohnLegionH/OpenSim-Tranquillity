@@ -72,6 +72,7 @@ namespace SLua.ScriptEngine
                 LlIndexes.Arguments.TryGetValue(function.ApiName, out int[] indexArguments);
                 bool indexResult = Array.IndexOf(LlIndexes.Returns, function.ApiName) >= 0;
                 bool booleanResult = Array.IndexOf(LlBooleans.Returns, function.ApiName) >= 0;
+                LlIndexes.ListStrides.TryGetValue(function.ApiName, out ListPositions listPositions);
                 // The "ll" table gives an SLua script its positions and truth values (the definitions' index and bool marks);
                 // "llcompat", and "ll" for an LSL script, keep LSL's. The API underneath always sees LSL's.
                 bool Shifts(ScriptContext context) => !compat && context.Script.Language == ScriptLanguage.Slua;
@@ -88,7 +89,9 @@ namespace SLua.ScriptEngine
                         (tag, args) =>
                         {
                             Value[] answer = TakeLaneAnswer();
-                            return booleanResult && Shifts(contextOf(SchedulerScript.Current)) ? ToBoolean(answer) : answer;
+                            if (!Shifts(contextOf(SchedulerScript.Current)))
+                                return answer;
+                            return listPositions != null ? ShiftListResult(answer, listPositions) : booleanResult ? ToBoolean(answer) : answer;
                         });
                     continue;
                 }
@@ -101,7 +104,7 @@ namespace SLua.ScriptEngine
                     Value[] result = RunInContext(function, context, given, out double delay);
                     if (delay > 0) context.Script.AddSleep(delay);
                     if (!shift) return result;
-                    return indexResult ? ShiftResult(result) : booleanResult ? ToBoolean(result) : result;
+                    return indexResult ? ShiftResult(result) : listPositions != null ? ShiftListResult(result, listPositions) : booleanResult ? ToBoolean(result) : result;
                 });
             }
         }
@@ -134,6 +137,31 @@ namespace SLua.ScriptEngine
                 shifted[at] = n > 0 ? Value.Int(n - 1) : Value.Int(n);
             }
             return shifted;
+        }
+
+        /// <summary>
+        /// A strided list result whose elements at <see cref="ListPositions.Positions"/> are positions, for an SLua script: those
+        /// elements count from 1 (LSL's 0 and up become 1 and up). The other elements, and a list that is not made of such
+        /// strides (a "NAK" answer, an empty list), are left as they are.
+        /// </summary>
+        private static Value[] ShiftListResult(Value[] result, ListPositions positions)
+        {
+            if (result == null || result.Length == 0 || result[0].Type != Bindings.ValueType.List)
+                return result;
+            Value[] items = result[0].Items;
+            if (items == null || items.Length == 0 || items.Length % positions.Stride != 0)
+                return result;
+            var shifted = (Value[])items.Clone();
+            for (int stride = 0; stride < shifted.Length; stride += positions.Stride)
+            {
+                foreach (int at in positions.Positions)
+                {
+                    Value v = shifted[stride + at];
+                    if (v.Type == Bindings.ValueType.Int && v.I >= 0)
+                        shifted[stride + at] = Value.Int(v.I + 1);
+                }
+            }
+            return new[] { Value.List(shifted) };
         }
 
         /// <summary>LSL's position to an SLua script's (VM/src/llsl.cpp luaSL_pushindexlike): -1, no match, is nil; 0 and up count from 1.</summary>

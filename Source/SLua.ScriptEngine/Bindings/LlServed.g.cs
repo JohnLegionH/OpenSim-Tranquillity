@@ -100,6 +100,7 @@ namespace SLua.ScriptEngine
             "llExecCharacterCmd",
             "llFabs",
             "llFindNotecardTextCount",
+            "llFindNotecardTextSync",
             "llFleeFrom",
             "llFloor",
             "llForceMouselook",

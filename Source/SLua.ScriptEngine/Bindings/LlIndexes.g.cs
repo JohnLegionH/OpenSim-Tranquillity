@@ -115,6 +115,7 @@ namespace SLua.ScriptEngine
         /// <summary>The ll functions whose list result holds positions at fixed places of each stride (see LIST_POSITIONS in tools/slua-bindings/generate-bindings.py).</summary>
         internal static readonly IReadOnlyDictionary<string, ListPositions> ListStrides = new Dictionary<string, ListPositions>
         {
+            ["llFindNotecardTextSync"] = new ListPositions(3, new[] { 0, 1 }),
         };
     }
 

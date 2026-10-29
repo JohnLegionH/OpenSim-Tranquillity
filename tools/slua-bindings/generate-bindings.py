@@ -450,15 +450,21 @@ ADAPTERS = {
 
 # Runtime functions Phlox does not implement as the runtime defines them. They answer a script with "not available".
 PHLOX_GAPS = {
-    "llClearExperience": "deprecated and private in LL's definitions (lsl-definitions func-id 411) with no tooltip and no page on the SL wiki: there is no documented behaviour to build",
-    "llClearExperiencePermissions": "deprecated and private in LL's definitions (lsl-definitions func-id 385) with no tooltip and no page on the SL wiki: there is no documented behaviour to build",
-    "llFindNotecardTextSync": "Phlox's LSLSystemAPI has the runtime's form (a regular expression, a strided [line, column, length] answer) but the seam holds only the earlier four-argument member: the definitions mark the list result as holding positions (lsl-definitions func-id 508, index-semantics) without saying which of the three are, so a Lua script would be given unshifted positions",
-    "llGetExperienceList": "deprecated and private in LL's definitions (lsl-definitions func-id 410) with no tooltip and no page on the SL wiki: there is no documented behaviour to build",
-    "llSetExperienceKey": "deprecated and private in LL's definitions (lsl-definitions func-id 386) with no tooltip and no page on the SL wiki: there is no documented behaviour to build",
 }
 
-# Runtime functions that Second Life's definitions mark private (and deprecated): not documented, not for scripts to call.
-PRIVATE_IN_SL = {}
+# Runtime functions that Second Life's definitions mark private and deprecated (lsl-definitions: "private: true",
+# "deprecated: true", no tooltip, and no page on the SL wiki). Second Life keeps them out of its documentation and its script
+# editor; there is no documented behaviour to build, so they are intentionally absent and answer a script with "not available".
+def _private(func_id):
+    return "private in SL, intentionally absent (lsl-definitions func-id %d: private and deprecated, no description)" % func_id
+
+
+PRIVATE_IN_SL = {
+    "llClearExperience": _private(411),
+    "llClearExperiencePermissions": _private(385),
+    "llGetExperienceList": _private(410),
+    "llSetExperienceKey": _private(386),
+}
 
 # ---- matching ----
 
@@ -784,7 +790,9 @@ namespace SLua.ScriptEngine
 # llFindNotecardTextSync answers a strided [line, column, length, ...] (its tooltip, lsl-definitions func-id 508). Line and
 # column are positions in the notecard and count from 1 for an SLua script; the length is a count. This is our reading of the
 # definitions, which only say "there are list indices in the return value"; docs/SLUA.md says so too.
-LIST_POSITIONS = {}
+LIST_POSITIONS = {
+    "llFindNotecardTextSync": (3, [0, 1]),
+}
 
 POSITION_LIKE = re.compile(r"^(number|item|line|face|num)$")
 

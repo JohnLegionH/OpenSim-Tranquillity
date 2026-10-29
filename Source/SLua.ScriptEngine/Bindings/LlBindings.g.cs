@@ -546,6 +546,18 @@ namespace SLua.ScriptEngine
             return new[] { LslMarshal.OfKey(c.Api.llFindNotecardTextCount(LslMarshal.String(a, 0, "FindNotecardTextCount"), LslMarshal.String(a, 1, "FindNotecardTextCount"), LslMarshal.List(a, 2, "FindNotecardTextCount"))) };
         }
 
+        private static Value[] FindNotecardTextSync(ScriptContext c, ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 5, "FindNotecardTextSync");
+            return new[] { LslMarshal.Of(c.Api.llFindNotecardTextSync(LslMarshal.String(a, 0, "FindNotecardTextSync"), LslMarshal.String(a, 1, "FindNotecardTextSync"), LslMarshal.Int(a, 2, "FindNotecardTextSync"), LslMarshal.Int(a, 3, "FindNotecardTextSync"), LslMarshal.List(a, 4, "FindNotecardTextSync"))) };
+        }
+
+        private static object[] FindNotecardTextSyncArgs(ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 5, "FindNotecardTextSync");
+            return new object[] { LslMarshal.String(a, 0, "FindNotecardTextSync"), LslMarshal.String(a, 1, "FindNotecardTextSync"), LslMarshal.Int(a, 2, "FindNotecardTextSync"), LslMarshal.Int(a, 3, "FindNotecardTextSync"), LslMarshal.List(a, 4, "FindNotecardTextSync") };
+        }
+
         private static Value[] FleeFrom(ScriptContext c, ReadOnlySpan<Value> a)
         {
             LslMarshal.Arity(a, 3, "FleeFrom");
@@ -3571,6 +3583,7 @@ namespace SLua.ScriptEngine
             new BoundFunction("ExecCharacterCmd", "llExecCharacterCmd", FunctionClass.NonBlocking, "void", new[] { "integer", "list" }, ExecCharacterCmd),
             new BoundFunction("Fabs", "llFabs", FunctionClass.NonBlocking, "float", new[] { "float" }, Fabs),
             new BoundFunction("FindNotecardTextCount", "llFindNotecardTextCount", FunctionClass.NonBlocking, "key", new[] { "string", "string", "list" }, FindNotecardTextCount),
+            new BoundFunction("FindNotecardTextSync", "llFindNotecardTextSync", FunctionClass.Service, "list", new[] { "string", "string", "integer", "integer", "list" }, FindNotecardTextSync, new InWorldz.Phlox.Types.LSLList(), FindNotecardTextSyncArgs),
             new BoundFunction("FleeFrom", "llFleeFrom", FunctionClass.NonBlocking, "void", new[] { "vector", "float", "list" }, FleeFrom),
             new BoundFunction("Floor", "llFloor", FunctionClass.NonBlocking, "integer", new[] { "float" }, Floor),
             new BoundFunction("ForceMouselook", "llForceMouselook", FunctionClass.NonBlocking, "void", new[] { "integer" }, ForceMouselook),

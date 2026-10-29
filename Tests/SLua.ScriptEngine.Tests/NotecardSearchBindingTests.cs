@@ -45,7 +45,7 @@ public class NotecardSearchBindingTests
         string[] marks = rig.Run("local t = ll.FindNotecardTextSync('card', 'b+', 3, 0, {})\nossl.Mark('n', #t)");
 
         Assert.Equal(new[] { "n:3" }, marks);
-        Assert.Equal(new[] { "llFindNotecardTextSync(card|b+|2|0|[])" }, rig.Calls());
+        Assert.Equal(new[] { "llFindNotecardTextSync(card|b+|2|0|[])" }, rig.Calls().Where(c => !c.StartsWith("NeedsService")).ToArray());
     }
 
     [RequiresNativeFact]
@@ -57,7 +57,7 @@ public class NotecardSearchBindingTests
         string[] marks = rig.Run("local ok, err = pcall(ll.FindNotecardTextSync, 'card', 'b+', 0, 0, {})\nossl.Mark('ok', tostring(ok))");
 
         Assert.Equal(new[] { "ok:false" }, marks);
-        Assert.Empty(rig.Calls());
+        Assert.Empty(rig.Calls().Where(c => !c.StartsWith("NeedsService")).ToArray());
     }
 
     [RequiresNativeFact]
@@ -69,7 +69,7 @@ public class NotecardSearchBindingTests
         string[] marks = rig.Run("local t = llcompat.FindNotecardTextSync('card', 'b+', 0, 0, {})\nossl.Mark('t', table.concat(t, ','))");
 
         Assert.Equal(new[] { "t:0,6,1,0,11,2,1,5,3" }, marks);
-        Assert.Equal(new[] { "llFindNotecardTextSync(card|b+|0|0|[])" }, rig.Calls());
+        Assert.Equal(new[] { "llFindNotecardTextSync(card|b+|0|0|[])" }, rig.Calls().Where(c => !c.StartsWith("NeedsService")).ToArray());
     }
 
     [RequiresNativeFact]
