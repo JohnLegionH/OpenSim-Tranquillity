@@ -98,6 +98,7 @@ namespace SLua.ScriptEngine
             "llEvade",
             "llExecCharacterCmd",
             "llFabs",
+            "llFindNotecardTextCount",
             "llFleeFrom",
             "llFloor",
             "llForceMouselook",
@@ -115,6 +116,7 @@ namespace SLua.ScriptEngine
             "llGetAnimationOverride",
             "llGetAttached",
             "llGetAttachedList",
+            "llGetAttachedListFiltered",
             "llGetBoundingBox",
             "llGetCameraAspect",
             "llGetCameraFOV",
@@ -137,6 +139,9 @@ namespace SLua.ScriptEngine
             "llGetFreeMemory",
             "llGetFreeURLs",
             "llGetGMTclock",
+            "llGetGameControlMode",
+            "llGetGameControlModeAxes",
+            "llGetGameControlModeButtons",
             "llGetGeometricCenter",
             "llGetHTTPHeader",
             "llGetHealth",
@@ -241,6 +246,7 @@ namespace SLua.ScriptEngine
             "llGetVel",
             "llGetVisualParams",
             "llGetWallclock",
+            "llGiveAgentInventory",
             "llGiveInventory",
             "llGiveInventoryList",
             "llGiveMoney",
@@ -323,6 +329,7 @@ namespace SLua.ScriptEngine
             "llMakeFountain",
             "llMakeSmoke",
             "llManageEstateAccess",
+            "llMapBeacon",
             "llMapDestination",
             "llMessageLinked",
             "llMinEventDelay",
@@ -360,6 +367,8 @@ namespace SLua.ScriptEngine
             "llReleaseControls",
             "llReleaseURL",
             "llRemoteDataReply",
+            "llRemoteDataSetRegion",
+            "llRemoteLoadScript",
             "llRemoteLoadScriptPin",
             "llRemoveFromLandBanList",
             "llRemoveFromLandPassList",
@@ -449,6 +458,7 @@ namespace SLua.ScriptEngine
             "llSetObjectDesc",
             "llSetObjectName",
             "llSetObjectPermMask",
+            "llSetParcelForSale",
             "llSetParcelMusicURL",
             "llSetPayPrice",
             "llSetPhysicsMaterial",
@@ -514,6 +524,7 @@ namespace SLua.ScriptEngine
             "llToLower",
             "llToUpper",
             "llTransferLindenDollars",
+            "llTransferOwnership",
             "llTriggerSound",
             "llTriggerSoundLimited",
             "llUnSit",
@@ -541,21 +552,14 @@ namespace SLua.ScriptEngine
         {
             "llClearExperience",
             "llClearExperiencePermissions",
-            "llFindNotecardTextCount",
             "llGetExperienceList",
-            "llGetGameControlMode",
-            "llGetGameControlModeAxes",
-            "llGetGameControlModeButtons",
-            "llRemoteDataSetRegion",
-            "llRemoteLoadScript",
             "llSetExperienceKey",
-            "llSetParcelForSale",
         };
 
         /// <summary>ll members of the interface that are not bound, with the reason.</summary>
         internal static readonly string[] SeamOnly = new string[]
         {
-            "LSLList llGetAttachedListFiltered(string, int): the runtime list's signature differs (see the mismatch list)",
+            "LSLList llGetAttachedListFiltered(string, int): another overload of this name is bound",
             "LSLList llGetLinkGLTFOverrides(int, int): not in the runtime list",
             "LSLList llGetPayPrice(): not in the runtime list",
             "LSLList llSortListStrided(LSLList, int, int, int): not in the runtime list",
@@ -568,7 +572,7 @@ namespace SLua.ScriptEngine
             "int llGetLocalTime(): not in the runtime list",
             "int llGetParcelFlags2(Vector3): not in the runtime list",
             "int llGetVehicleFlags(): not in the runtime list",
-            "int llTransferOwnership(string): the runtime list's signature differs (see the mismatch list)",
+            "int llTransferOwnership(string): another overload of this name is bound",
             "string llCreateKeyValueSL(string, string): not in the runtime list",
             "string llGetGroundTexture(int): not in the runtime list",
             "string llGetMaterialOverride(int, LSLList): not in the runtime list",
@@ -579,9 +583,9 @@ namespace SLua.ScriptEngine
             "string llUpdateKeyValueSL(string, string, string): not in the runtime list",
             "void llCloseFloater(string): not in the runtime list",
             "void llDerezObject(string): another overload of this name is bound",
-            "void llGiveAgentInventory(string, string): the runtime list's signature differs (see the mismatch list)",
+            "void llGiveAgentInventory(string, string): another overload of this name is bound",
             "void llLinkPlaySound(int, string, float): another overload of this name is bound",
-            "void llMapBeacon(string, string, Vector3): the runtime list's signature differs (see the mismatch list)",
+            "void llMapBeacon(string, string, Vector3): another overload of this name is bound",
             "void llRenderMaterial(string): not in the runtime list",
             "void llSetHealth(string, float): not in the runtime list",
             "void llTargetedEmail(int, string, string, string): another overload of this name is bound",
@@ -591,10 +595,6 @@ namespace SLua.ScriptEngine
         internal static readonly string[] SignatureMismatch = new string[]
         {
             "llFindNotecardTextSync: runtime: list llFindNotecardTextSync(string, string, integer, integer, list); seam: int llFindNotecardTextSync(string, string, int, int)",
-            "llGetAttachedListFiltered: runtime: list llGetAttachedListFiltered(key, list); seam: LSLList llGetAttachedListFiltered(string, int)",
-            "llGiveAgentInventory: runtime: integer llGiveAgentInventory(key, string, list, list); seam: void llGiveAgentInventory(string, string)",
-            "llMapBeacon: runtime: void llMapBeacon(string, vector, list); seam: void llMapBeacon(string, string, Vector3)",
-            "llTransferOwnership: runtime: integer llTransferOwnership(key, integer, list); seam: int llTransferOwnership(string)",
         };
 
         /// <summary>Bound functions whose delay the generator could not read, with the class they were given.</summary>
@@ -640,22 +640,11 @@ namespace SLua.ScriptEngine
         /// <summary>Runtime functions Phlox does not implement as the runtime defines them, each with the reason.</summary>
         internal static readonly string[] PhloxGaps = new string[]
         {
-            "llClearExperience: Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
-            "llClearExperiencePermissions: Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
-            "llFindNotecardTextCount: Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
-            "llFindNotecardTextSync: Phlox's llFindNotecardTextSync(name, text, line, caseSensitive) is a plain-text search that returns the first matching line; the runtime's takes a regular expression and returns a strided list of line, column and length (lsl-definitions func-id 508)",
-            "llGetAttachedListFiltered: Phlox's takes one attachment point; the runtime's takes a list of FILTER_INCLUDE and FILTER_FLAGS options, which no single attachment point expresses",
-            "llGetExperienceList: Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
-            "llGetGameControlMode: Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
-            "llGetGameControlModeAxes: Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
-            "llGetGameControlModeButtons: Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
-            "llGiveAgentInventory: Phlox's gives one named item by calling llGiveInventory; the runtime's gives a list of items to the agent as a new named folder, with options, and returns a TRANSFER_* code (lsl-definitions func-id 517)",
-            "llMapBeacon: Phlox's llMapBeacon(agent, text, color) only writes a debug log line; the runtime's (region_name, pos, options) shows a map beacon (lsl-definitions func-id 516)",
-            "llRemoteDataSetRegion: Phlox has no method of this name; the function exists only in the older OpenSim LSL_Api",
-            "llRemoteLoadScript: Phlox has no method of this name; the function exists only in the older OpenSim LSL_Api",
-            "llSetExperienceKey: Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
-            "llSetParcelForSale: Phlox has no method of this name (LSLSystemAPI, ILSLSystemAPI)",
-            "llTransferOwnership: Phlox's llTransferOwnership(destination) hands the whole object over and has no flags (TRANSFER_FLAG_COPY, TRANSFER_FLAG_TAKE) or TRANSFER_* result codes; the runtime's takes flags and options (wiki LlTransferOwnership)",
+            "llClearExperience: deprecated and private in LL's definitions (lsl-definitions func-id 411) with no tooltip and no page on the SL wiki: there is no documented behaviour to build",
+            "llClearExperiencePermissions: deprecated and private in LL's definitions (lsl-definitions func-id 385) with no tooltip and no page on the SL wiki: there is no documented behaviour to build",
+            "llFindNotecardTextSync: Phlox's LSLSystemAPI has the runtime's form (a regular expression, a strided [line, column, length] answer) but the seam holds only the earlier four-argument member: the definitions mark the list result as holding positions (lsl-definitions func-id 508, index-semantics) without saying which of the three are, so a Lua script would be given unshifted positions",
+            "llGetExperienceList: deprecated and private in LL's definitions (lsl-definitions func-id 410) with no tooltip and no page on the SL wiki: there is no documented behaviour to build",
+            "llSetExperienceKey: deprecated and private in LL's definitions (lsl-definitions func-id 386) with no tooltip and no page on the SL wiki: there is no documented behaviour to build",
         };
     }
 }

@@ -215,7 +215,7 @@ public class AdaptedFunctionTests
         string[] marks = rig.Run("ossl.Mark('r', ll.GiveAgentInventory('" + AgentKey + "', 'gifts', {'a', 'b'}, {0, 'x|y'}))");
 
         Assert.Equal(new[] { "r:-4" }, marks);
-        Assert.Equal(new[] { "llGiveAgentInventory(" + AgentKey + "|gifts|[a,b]|[0,x|y])" }, rig.Calls());
+        Assert.Equal(new[] { "llGiveAgentInventory(" + AgentKey + "|gifts|[a,b]|[0,x|y])" }, rig.Calls().Where(c => !c.StartsWith("NeedsService")).ToArray());
     }
 
     [RequiresNativeFact]

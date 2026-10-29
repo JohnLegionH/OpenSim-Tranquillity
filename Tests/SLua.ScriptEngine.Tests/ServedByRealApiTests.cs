@@ -8,6 +8,7 @@
 using System.Collections.Concurrent;
 using System.Reflection;
 using InWorldz.Phlox.Glue;
+using InWorldz.Phlox.Types;
 using Nini.Config;
 using OpenMetaverse;
 using OpenSim.Region.Framework.Interfaces;
@@ -86,14 +87,14 @@ public class ServedByRealApiTests
         ILSLSystemAPI router = ApiRouter.Create(real, fallback);
         realFake.Returns("llStringLength", 11);
         fallbackFake.Returns("llStringLength", 22);
-        realFake.Returns("llTransferOwnership", 33);
-        fallbackFake.Returns("llTransferOwnership", 44);
+        realFake.Returns("llGetExperienceDetails", new LSLList(new object[] { 33 }));
+        fallbackFake.Returns("llGetExperienceDetails", new LSLList(new object[] { 44 }));
 
         Assert.Equal(11, router.llStringLength("x"));
-        Assert.Equal(44, router.llTransferOwnership("00000000-0000-0000-0000-000000000000"));
+        Assert.Equal(new object[] { 44 }, router.llGetExperienceDetails("00000000-0000-0000-0000-000000000000").Data);
 
         Assert.Equal(new[] { "llStringLength" }, realFake.Calls.Select(c => c.Name).ToArray());
-        Assert.Equal(new[] { "llTransferOwnership" }, fallbackFake.Calls.Select(c => c.Name).ToArray());
+        Assert.Equal(new[] { "llGetExperienceDetails" }, fallbackFake.Calls.Select(c => c.Name).ToArray());
     }
 
     [Fact]
@@ -106,7 +107,7 @@ public class ServedByRealApiTests
         fallbackFake.Returns("NeedsService", false);
 
         Assert.True(router.NeedsService("llName2Key", new object[] { "x" }));
-        Assert.False(router.NeedsService("llTransferOwnership", new object[0]));
+        Assert.False(router.NeedsService("llGetExperienceDetails", new object[0]));
     }
 
     [RequiresNativeFact]

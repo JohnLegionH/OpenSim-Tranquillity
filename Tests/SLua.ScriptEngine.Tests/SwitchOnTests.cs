@@ -171,7 +171,7 @@ public class SwitchOnTests
         UUID item = rig.Rez(Slua("pcall(function() ll.RequestExperiencePermissions('00000000-0000-0000-0000-000000000000', '') end)\npcall(function() ll.GetExperienceDetails('00000000-0000-0000-0000-000000000000') end)\nossl.Mark('done')"));
         MarkOf(rig, item, "done");
 
-        string[] counts = rig.Log.Lines.Where(l => l.Contains("511") && l.Contains("18")).ToArray();
+        string[] counts = rig.Log.Lines.Where(l => l.Contains("522") && l.Contains("; 7 answer")).ToArray();
         Assert.Single(counts);
         Assert.StartsWith("INFO ", counts[0]);
         Assert.Empty(rig.Log.Warnings);
