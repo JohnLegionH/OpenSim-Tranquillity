@@ -38,7 +38,9 @@ public class SelectionTests
         scene.StackModuleInterface<IScriptModule>(new OtherEngine(YEngine));
         var engine = new SLuaEngine(new RecordingLog(), (settings, log) => true);
         var source = new IniConfigSource();
-        source.AddConfig(EngineIdentity.ConfigSection).Set("Enabled", "true");
+        IConfig slua = source.AddConfig(EngineIdentity.ConfigSection);
+        slua.Set("Enabled", "true");
+        slua.Set("WarmUp", "false"); // the API warm-up is process-wide and not under test here (see WarmUpIsolationTests)
         engine.Initialise(source);
         engine.AddRegion(scene);
         return scene;
@@ -107,7 +109,9 @@ public class SelectionTests
         var item = new TaskInventoryItem { ItemID = UUID.Random(), AssetID = UUID.Random() };
         var engine = new SLuaEngine(new RecordingLog(), (settings, log) => true, new RowStore(item.ItemID, item.AssetID));
         var source = new IniConfigSource();
-        source.AddConfig(EngineIdentity.ConfigSection).Set("Enabled", "true");
+        IConfig slua = source.AddConfig(EngineIdentity.ConfigSection);
+        slua.Set("Enabled", "true");
+        slua.Set("WarmUp", "false"); // the API warm-up is process-wide and not under test here (see WarmUpIsolationTests)
         engine.Initialise(source);
         engine.AddRegion(scene);
 

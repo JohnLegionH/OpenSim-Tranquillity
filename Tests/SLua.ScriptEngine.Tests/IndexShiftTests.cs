@@ -19,6 +19,8 @@ namespace SLua.ScriptEngine.Tests;
 /// _checkobjectindex). The same functions in the llcompat table, and every function of an LSL script, keep the LSL convention
 /// (0-based, -1 for not found). The API underneath always sees the LSL convention.
 /// </summary>
+// Its rig adds the engine to a region, which starts the process-wide API warm-up: it runs with the other native-library tests.
+[Collection("native-library")]
 public class IndexShiftTests
 {
     // ---- which arguments and returns are indexes, from Second Life's definitions ----

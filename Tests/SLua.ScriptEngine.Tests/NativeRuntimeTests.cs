@@ -175,7 +175,9 @@ public class NativeRuntimeTests
         scene.StackModuleInterface<IScriptModule>(new OtherEngine("InWorldz.Phlox"));
         engine = new SLuaEngine(log, (settings, l) => NativeRuntime.Gate(options, l));
         var source = new IniConfigSource();
-        source.AddConfig(EngineIdentity.ConfigSection).Set("Enabled", "true");
+        IConfig slua = source.AddConfig(EngineIdentity.ConfigSection);
+        slua.Set("Enabled", "true");
+        slua.Set("WarmUp", "false"); // the API warm-up is process-wide and not under test here (see WarmUpIsolationTests)
         engine.Initialise(source);
         engine.AddRegion(scene);
         return scene;
