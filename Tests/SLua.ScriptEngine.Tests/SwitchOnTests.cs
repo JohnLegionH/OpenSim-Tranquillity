@@ -171,7 +171,7 @@ public class SwitchOnTests
         UUID item = rig.Rez(Slua("pcall(function() ll.RequestExperiencePermissions('00000000-0000-0000-0000-000000000000', '') end)\npcall(function() ll.GetExperienceDetails('00000000-0000-0000-0000-000000000000') end)\nossl.Mark('done')"));
         MarkOf(rig, item, "done");
 
-        string[] counts = rig.Log.Lines.Where(l => l.Contains("523") && l.Contains("; 6 answer") && l.Contains("2 wait on host members this engine lacks, 4 are private in SL and intentionally absent, 0 are Phlox gaps")).ToArray();
+        string[] counts = rig.Log.Lines.Where(l => l.Contains("523") && l.Contains("; 6 are refused") && l.Contains("2 wait on host members this engine lacks (\"not available on this engine yet\"), 4 are private in SL and intentionally absent (\"private in SL and not available to scripts\"), 0 are Phlox gaps")).ToArray();
         Assert.Single(counts);
         Assert.StartsWith("INFO ", counts[0]);
         Assert.Empty(rig.Log.Warnings);

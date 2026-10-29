@@ -6,6 +6,7 @@
  */
 
 using System;
+using System.Linq;
 using InWorldz.Phlox.Glue;
 using InWorldz.Phlox.Types;
 using SLua.ScriptEngine.Bindings;
@@ -17,6 +18,9 @@ namespace SLua.ScriptEngine
     {
         /// <summary>The ll functions that answer a script with "not available on this engine yet": the ones the host cannot serve and the ones not bound.</summary>
         internal static readonly System.Collections.Generic.IReadOnlyCollection<string> Unavailable = ListUnavailable();
+
+        /// <summary>The ll functions Second Life's definitions mark private and deprecated; they are intentionally absent (the coverage table's PrivateInSl).</summary>
+        private static readonly System.Collections.Generic.HashSet<string> PrivateInSl = new(LlCoverage.PrivateInSl.Select(NameOf), StringComparer.Ordinal);
 
         private static string[] ListUnavailable()
         {
@@ -60,7 +64,9 @@ namespace SLua.ScriptEngine
                 foreach (string name in Unavailable)
                 {
                     string apiName = name;
-                    vm.Register(table, apiName.Substring(2), (tag, args) => throw new FunctionUnavailableException(apiName));
+                    bool isPrivate = PrivateInSl.Contains(apiName);
+                    vm.Register(table, apiName.Substring(2), (tag, args) =>
+                        throw (isPrivate ? FunctionUnavailableException.Private(apiName) : new FunctionUnavailableException(apiName)));
                 }
             }
 
@@ -72,6 +78,7 @@ namespace SLua.ScriptEngine
                 LlIndexes.Arguments.TryGetValue(function.ApiName, out int[] indexArguments);
                 bool indexResult = Array.IndexOf(LlIndexes.Returns, function.ApiName) >= 0;
                 bool booleanResult = Array.IndexOf(LlBooleans.Returns, function.ApiName) >= 0;
+                bool booleanList = LlBooleans.ListRules.ContainsKey(function.ApiName);
                 LlIndexes.ListStrides.TryGetValue(function.ApiName, out ListPositions listPositions);
                 // The "ll" table gives an SLua script its positions and truth values (the definitions' index and bool marks);
                 // "llcompat", and "ll" for an LSL script, keep LSL's. The API underneath always sees LSL's.
@@ -104,9 +111,26 @@ namespace SLua.ScriptEngine
                     Value[] result = RunInContext(function, context, given, out double delay);
                     if (delay > 0) context.Script.AddSleep(delay);
                     if (!shift) return result;
-                    return indexResult ? ShiftResult(result) : listPositions != null ? ShiftListResult(result, listPositions) : booleanResult ? ToBoolean(result) : result;
+                    return indexResult ? ShiftResult(result) : listPositions != null ? ShiftListResult(result, listPositions) : booleanResult ? ToBoolean(result)
+                        : booleanList ? ConvertListBooleans(function.ApiName, RequestList(given), result) : result;
                 });
             }
+        }
+
+        /// <summary>A whole number in a script's list: an SLua number is a Number, and a list from the API holds Ints.</summary>
+        private static bool IntegerOf(Value v, out long n)
+        {
+            n = v.Type == Bindings.ValueType.Int ? v.I : v.Type == Bindings.ValueType.Number ? (long)v.N : 0;
+            return v.Type == Bindings.ValueType.Int || (v.Type == Bindings.ValueType.Number && v.N == n);
+        }
+
+        /// <summary>The items of the last list among a call's arguments: the request of a function that reads a list of tags.</summary>
+        private static Value[] RequestList(ReadOnlySpan<Value> args)
+        {
+            for (int i = args.Length - 1; i >= 0; i--)
+                if (args[i].Type == Bindings.ValueType.List)
+                    return args[i].Items;
+            return null;
         }
 
         /// <summary>A truth value for an SLua script (VM/src/llsl.cpp luaSL_pushboollike): an integer result becomes true or false.</summary>
@@ -162,6 +186,96 @@ namespace SLua.ScriptEngine
                 }
             }
             return new[] { Value.List(shifted) };
+        }
+
+        /// <summary>
+        /// The truth values of a list result, for an SLua script. The definitions mark these functions' list results bool-semantics
+        /// and give each request tag the type of the value that follows it (<see cref="LlBooleans.Tags"/>), so a value that
+        /// the tag's layout says is a boolean becomes true or false (an integer other than 0 is true) and every other element is
+        /// left as it was. A tag that takes a face returns its values once for the face, or once for each face of the prim for
+        /// ALL_SIDES; the number of faces is what the result's length leaves after the other tags. Where the request does not
+        /// say where an element is (a tag the table does not know, or one whose number of values the definitions do not give),
+        /// the elements before that tag are converted and the rest are left; and a result whose length does not fit the request is
+        /// left as it is.
+        /// </summary>
+        internal static Value[] ConvertListBooleans(string function, Value[] request, Value[] result)
+        {
+            if (request == null || result == null || result.Length != 1 || result[0].Type != Bindings.ValueType.List)
+                return result;
+            Value[] items = result[0].Items;
+            if (items == null || items.Length == 0
+                || !LlBooleans.ListRules.TryGetValue(function, out string rule) || !LlBooleans.Tags.TryGetValue(rule, out var tags))
+                return result;
+
+            // The request's tags in order, as far as the table places them.
+            var layouts = new System.Collections.Generic.List<TagLayout>();
+            var allSides = new System.Collections.Generic.List<bool>();
+            bool placed = true;
+            for (int at = 0; at < request.Length && placed;)
+            {
+                if (!IntegerOf(request[at], out long tag) || !tags.TryGetValue(tag, out TagLayout layout) || layout.Cells.Contains('?'))
+                {
+                    placed = false;
+                    break;
+                }
+                if (layout.PerFace)
+                {
+                    if (at + 1 >= request.Length || !IntegerOf(request[at + 1], out long face))
+                    {
+                        placed = false;
+                        break;
+                    }
+                    allSides.Add(face == -1);
+                    at += 2;
+                }
+                else
+                {
+                    allSides.Add(false);
+                    at += 1;
+                }
+                layouts.Add(layout);
+            }
+
+            int faces = 1;
+            if (placed)
+            {
+                int fixedCount = 0, perFace = 0;
+                for (int i = 0; i < layouts.Count; i++)
+                {
+                    if (allSides[i]) perFace += layouts[i].Cells.Length;
+                    else fixedCount += layouts[i].Cells.Length;
+                }
+                if (perFace == 0 ? items.Length != fixedCount : items.Length <= fixedCount || (items.Length - fixedCount) % perFace != 0)
+                    return result;
+                if (perFace > 0) faces = (items.Length - fixedCount) / perFace;
+            }
+            else
+            {
+                // The elements after an all-sides tag or an unplaced tag cannot be found: keep the tags before the first of them.
+                int keep = allSides.IndexOf(true);
+                if (keep >= 0) layouts.RemoveRange(keep, layouts.Count - keep);
+            }
+
+            Value[] converted = null;
+            int position = 0;
+            for (int i = 0; i < layouts.Count; i++)
+            {
+                for (int face = 0; face < (allSides[i] ? faces : 1); face++)
+                {
+                    foreach (char cell in layouts[i].Cells)
+                    {
+                        if (position >= items.Length)
+                            return converted == null ? result : new[] { Value.List(converted) };
+                        if (cell == 'b' && items[position].Type == Bindings.ValueType.Int)
+                        {
+                            converted ??= (Value[])items.Clone();
+                            converted[position] = Value.Bool(items[position].I != 0);
+                        }
+                        position++;
+                    }
+                }
+            }
+            return converted == null ? result : new[] { Value.List(converted) };
         }
 
         /// <summary>LSL's position to an SLua script's (VM/src/llsl.cpp luaSL_pushindexlike): -1, no match, is nil; 0 and up count from 1.</summary>

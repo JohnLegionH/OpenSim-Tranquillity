@@ -45,13 +45,13 @@ public class PositionAndBooleanTests
     }
 
     [Fact]
-    public void TheListResultsTheDefinitionsMarkAsBooleanAreListedAsNotConverted()
+    public void TheListResultsTheDefinitionsMarkAsBooleanAreListedWithTheirRequestSet()
     {
         string[] expected = ListBooleans();
 
         Assert.Equal(8, expected.Length);
-        Assert.Equal(expected, LlBooleans.ListsNotConverted.OrderBy(n => n, StringComparer.Ordinal));
-        Assert.Contains("llGetObjectDetails", LlBooleans.ListsNotConverted);
+        Assert.Equal(expected, LlBooleans.ListRules.Keys.OrderBy(n => n, StringComparer.Ordinal));
+        Assert.Contains("llGetObjectDetails", LlBooleans.ListRules.Keys);
     }
 
     // ---- what a script sees: booleans ----

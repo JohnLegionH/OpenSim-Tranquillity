@@ -242,16 +242,16 @@ public class AdaptedFunctionTests
         Assert.Equal(new[] { "llGetGameControlMode(" + AgentKey + ")", "llGetGameControlModeAxes(" + AgentKey + ")", "llGetGameControlModeButtons(" + AgentKey + ")", "llMapBeacon(Region|<1, 2, 3>|[])" }, rig.Calls());
     }
 
-    // ---- the private functions stay on the not-available error ----
+    // ---- the private functions answer that they are private ----
 
     [RequiresNativeFact]
-    public void EveryPrivateFunctionAnswersAScriptWithNotAvailableAndEveryAdaptedFunctionDoesNot()
+    public void EveryPrivateFunctionAnswersAScriptThatItIsPrivateAndEveryAdaptedFunctionDoesNot()
     {
         using var rig = new EngineRig(productionFunctions: true);
         string gaps = string.Join(",", Gaps.Select(n => "'" + n.Substring(2) + "'"));
         string adapted = string.Join(",", Adapted.Select(n => "'" + n.Substring(2) + "'"));
         UUID item = rig.Rez(Slua(
-            "local refused = 0 for _, n in ipairs({" + gaps + "}) do local ok, err = pcall(ll[n]) if not ok and string.find(tostring(err), 'is not available on this engine yet', 1, true) then refused = refused + 1 end end\n" +
+            "local refused = 0 for _, n in ipairs({" + gaps + "}) do local ok, err = pcall(ll[n]) if not ok and string.find(tostring(err), 'is private in SL and not available to scripts', 1, true) then refused = refused + 1 end end\n" +
             "local open = 0 for _, n in ipairs({" + adapted + "}) do local ok, err = pcall(ll[n]) if not string.find(tostring(err), 'is not available on this engine yet', 1, true) then open = open + 1 end end\n" +
             "ossl.Mark('refused=' .. refused) ossl.Mark('open=' .. open)"));
 
