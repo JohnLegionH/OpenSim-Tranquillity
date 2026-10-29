@@ -122,6 +122,7 @@ public class CompileTargetTests
     }
 
     private const string LuaMark = "ossl.Mark('lua')\n";
+    private const string BadLua = "local a = = 2";
     private const string LslMark = "default { state_entry() { llOwnerSay(\"lsl\"); } }";
 
     [RequiresNativeFact]
@@ -164,8 +165,8 @@ public class CompileTargetTests
     public void AFailedCompileKeepsTheTargetOnTheItem()
     {
         using var rig = new EngineRig();
-        // LSL text, but the editor asked for Lua: it cannot compile
-        UUID item = RezWithTarget(rig, LslMark, ScriptCompileTarget.Luau);
+        // the editor asked for Lua and the text is not Lua: it cannot compile
+        UUID item = RezWithTarget(rig, BadLua, ScriptCompileTarget.Luau);
 
         Assert.True(SchedulerHarness.WaitFor(() => rig.Messages.Failures.Length == 1));
         Assert.Equal(item, rig.Messages.Failures[0].Item);
@@ -204,7 +205,7 @@ public class CompileTargetTests
     public void TheEditorIsToldTheTargetOfAScriptThatFailedToCompile()
     {
         using var rig = new EngineRig();
-        UUID item = RezWithTarget(rig, LslMark, ScriptCompileTarget.Luau);
+        UUID item = RezWithTarget(rig, BadLua, ScriptCompileTarget.Luau);
         Assert.True(SchedulerHarness.WaitFor(() => rig.Messages.Failures.Length == 1));
 
         var reply = ReplyFor(rig, ClientOf(rig), item);
