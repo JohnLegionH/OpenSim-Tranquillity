@@ -36,10 +36,7 @@ public class AdaptedFunctionTests
 
     private static readonly string[] Gaps =
     {
-        "llClearExperience", "llClearExperiencePermissions", "llFindNotecardTextCount", "llFindNotecardTextSync",
-        "llGetAttachedListFiltered", "llGetExperienceList", "llGetGameControlMode", "llGetGameControlModeAxes",
-        "llGetGameControlModeButtons", "llGiveAgentInventory", "llMapBeacon", "llRemoteDataSetRegion", "llRemoteLoadScript",
-        "llSetExperienceKey", "llSetParcelForSale", "llTransferOwnership",
+        "llClearExperience", "llClearExperiencePermissions", "llFindNotecardTextSync", "llGetExperienceList", "llSetExperienceKey",
     };
 
     /// <summary>The scheduler harness with the generated bindings, a fake API and a service lane.</summary>
@@ -173,6 +170,76 @@ public class AdaptedFunctionTests
 
         Assert.Equal(new[] { "r:0" }, marks);
         Assert.Equal(new[] { "llSetGroundTexture(tex-a|0)", "llSetGroundTexture(tex-c|2)" }, rig.Calls());
+    }
+
+    // ---- functions Phlox gained as Second Life defines them: bound, no longer refused ----
+
+    private static readonly string[] BuiltInPhlox =
+    {
+        "llFindNotecardTextCount", "llGetAttachedListFiltered", "llGetGameControlMode", "llGetGameControlModeAxes",
+        "llGetGameControlModeButtons", "llGiveAgentInventory", "llMapBeacon", "llRemoteDataSetRegion", "llRemoteLoadScript",
+        "llSetParcelForSale", "llTransferOwnership",
+    };
+
+    [Fact]
+    public void TheFunctionsPhloxGainedAreBoundAndAreNoGapAndNoUnavailableName()
+    {
+        Assert.All(BuiltInPhlox, n => Assert.Contains(LlBindings.All, f => f.ApiName == n));
+        Assert.All(BuiltInPhlox, n => Assert.DoesNotContain(n, LlBindings.Unavailable));
+        Assert.All(BuiltInPhlox, n => Assert.DoesNotContain(LlCoverage.PhloxGaps, r => r.StartsWith(n + ":")));
+        Assert.All(BuiltInPhlox, n => Assert.Contains(n, LlServed.Served));
+    }
+
+    // One of each kind, reaching Phlox's interface from a Lua script: a function on existing services with a list argument and a
+    // list result (llGetAttachedListFiltered), one with an integer result code and four arguments (llGiveAgentInventory), one with
+    // a boolean first argument (llSetParcelForSale), and the ones that answer "no game-control data" or do nothing here.
+
+    [RequiresNativeFact]
+    public void GetAttachedListFilteredPassesTheOptionsAndReturnsTheKeysAsATable()
+    {
+        using var rig = new LaneRig();
+        rig.Fake.Returns("llGetAttachedListFiltered", new LSLList(new object[] { KeyOf("a"), KeyOf("b") }));
+
+        string[] marks = rig.Run("local t = ll.GetAttachedListFiltered('" + AgentKey + "', {1, 1, 1, 2})\nossl.Mark('n', #t)\nossl.Mark('first', tostring(t[1]))", expectedMarks: 2);
+
+        Assert.Equal(new[] { "n:2", "first:" + KeyOf("a") }, marks);
+        Assert.Equal(new[] { "llGetAttachedListFiltered(" + AgentKey + "|[1,1,1,2])" }, rig.Calls());
+    }
+
+    [RequiresNativeFact]
+    public void GiveAgentInventoryPassesItsFourArgumentsAndReturnsThePhloxCode()
+    {
+        using var rig = new LaneRig();
+        rig.Fake.Returns("llGiveAgentInventory", -4);
+
+        string[] marks = rig.Run("ossl.Mark('r', ll.GiveAgentInventory('" + AgentKey + "', 'gifts', {'a', 'b'}, {0, 'x|y'}))");
+
+        Assert.Equal(new[] { "r:-4" }, marks);
+        Assert.Equal(new[] { "llGiveAgentInventory(" + AgentKey + "|gifts|[a,b]|[0,x|y])" }, rig.Calls());
+    }
+
+    [RequiresNativeFact]
+    public void SetParcelForSaleTakesABooleanAndTheOptionsAndReturnsThePhloxCode()
+    {
+        using var rig = new LaneRig();
+        rig.Fake.Returns("llSetParcelForSale", 4);
+
+        string[] marks = rig.Run("ossl.Mark('r', ll.SetParcelForSale(true, {1, 0}))");
+
+        Assert.Equal(new[] { "r:4" }, marks);
+        Assert.Equal(new[] { "llSetParcelForSale(1|[1,0])" }, rig.Calls());
+    }
+
+    [RequiresNativeFact]
+    public void TheGameControlFunctionsAndTheMapBeaconReachPhlox()
+    {
+        using var rig = new LaneRig();
+        rig.Fake.Returns("llGetGameControlMode", -1);
+
+        string[] marks = rig.Run("ossl.Mark('m', ll.GetGameControlMode('" + AgentKey + "'))\nossl.Mark('a', #ll.GetGameControlModeAxes('" + AgentKey + "'))\nossl.Mark('b', ll.GetGameControlModeButtons('" + AgentKey + "'))\nll.MapBeacon('Region', vector(1, 2, 3), {})\nossl.Mark('done', 'yes')", expectedMarks: 4);
+
+        Assert.Equal(new[] { "m:-1", "a:0", "b:0", "done:yes" }, marks);
+        Assert.Equal(new[] { "llGetGameControlMode(" + AgentKey + ")", "llGetGameControlModeAxes(" + AgentKey + ")", "llGetGameControlModeButtons(" + AgentKey + ")", "llMapBeacon(Region|<1, 2, 3>|[])" }, rig.Calls());
     }
 
     // ---- the Phlox gaps stay on the not-available error ----

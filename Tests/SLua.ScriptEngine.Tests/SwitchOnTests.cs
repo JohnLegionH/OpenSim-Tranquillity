@@ -48,7 +48,7 @@ public class SwitchOnTests
         foreach (string name in LlCoverage.MissingFromSeam) expected.Add(name);
         foreach (string row in LlCoverage.SignatureMismatch) expected.Add(row.Substring(0, row.IndexOf(':')));
 
-        Assert.Equal(18, expected.Count);
+        Assert.Equal(7, expected.Count);
         Assert.Equal(expected.OrderBy(n => n), LlBindings.Unavailable.OrderBy(n => n));
         Assert.Contains("llRequestExperiencePermissions", LlBindings.Unavailable);
         Assert.Contains("llGetExperienceDetails", LlBindings.Unavailable);
