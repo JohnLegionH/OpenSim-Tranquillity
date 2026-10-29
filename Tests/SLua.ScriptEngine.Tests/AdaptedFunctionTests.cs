@@ -36,7 +36,7 @@ public class AdaptedFunctionTests
 
     private static readonly string[] Gaps =
     {
-        "llClearExperience", "llClearExperiencePermissions", "llFindNotecardTextSync", "llGetExperienceList", "llSetExperienceKey",
+        "llClearExperience", "llClearExperiencePermissions", "llGetExperienceList", "llSetExperienceKey",
     };
 
     /// <summary>The scheduler harness with the generated bindings, a fake API and a service lane.</summary>
@@ -242,10 +242,10 @@ public class AdaptedFunctionTests
         Assert.Equal(new[] { "llGetGameControlMode(" + AgentKey + ")", "llGetGameControlModeAxes(" + AgentKey + ")", "llGetGameControlModeButtons(" + AgentKey + ")", "llMapBeacon(Region|<1, 2, 3>|[])" }, rig.Calls());
     }
 
-    // ---- the Phlox gaps stay on the not-available error ----
+    // ---- the private functions stay on the not-available error ----
 
     [RequiresNativeFact]
-    public void EveryPhloxGapAnswersAScriptWithNotAvailableAndEveryAdaptedFunctionDoesNot()
+    public void EveryPrivateFunctionAnswersAScriptWithNotAvailableAndEveryAdaptedFunctionDoesNot()
     {
         using var rig = new EngineRig(productionFunctions: true);
         string gaps = string.Join(",", Gaps.Select(n => "'" + n.Substring(2) + "'"));
@@ -271,21 +271,23 @@ public class AdaptedFunctionTests
     }
 
     [Fact]
-    public void ThePhloxGapsAreListedWithAReason()
+    public void ThePrivateFunctionsAreListedAsIntentionallyAbsentAndNoPhloxGapIsLeft()
     {
-        Assert.Equal(Gaps, LlCoverage.PhloxGaps.Select(r => r.Substring(0, r.IndexOf(':'))).OrderBy(n => n, StringComparer.Ordinal).ToArray());
-        Assert.All(LlCoverage.PhloxGaps, r => Assert.True(r.Length - r.IndexOf(':') > 20, "no reason named: " + r));
+        // lsl-definitions marks all four deprecated and private (func-ids 410, 386, 411, 385) with no description.
+        Assert.Empty(LlCoverage.PhloxGaps);
+        Assert.Equal(Gaps, LlCoverage.PrivateInSl.Select(r => r.Substring(0, r.IndexOf(':'))).OrderBy(n => n, StringComparer.Ordinal).ToArray());
+        Assert.All(LlCoverage.PrivateInSl, r => Assert.Contains(": private in SL, intentionally absent", r));
         Assert.All(Gaps, n => Assert.DoesNotContain(LlBindings.All, f => f.ApiName == n));
         Assert.All(Gaps, n => Assert.Contains(n, LlBindings.Unavailable));
     }
 
     [Fact]
-    public void EveryRuntimeFunctionIsBoundOrAPhloxGapAndNoneIsBoth()
+    public void EveryRuntimeFunctionIsBoundOrNamedAsAGapOrPrivateAndNoneIsBoth()
     {
         string[] names = File.ReadAllLines(LlBindingGeneratorTests.BuiltinsPath())
             .Select(l => System.Text.RegularExpressions.Regex.Match(l, @"^\w+\s+(ll\w+)\(")).Where(m => m.Success).Select(m => m.Groups[1].Value).ToArray();
         string[] bound = LlBindings.All.Select(f => f.ApiName).ToArray();
-        string[] gaps = LlCoverage.PhloxGaps.Select(r => r.Substring(0, r.IndexOf(':'))).ToArray();
+        string[] gaps = LlCoverage.PhloxGaps.Concat(LlCoverage.PrivateInSl).Select(r => r.Substring(0, r.IndexOf(':'))).ToArray();
 
         Assert.Equal(529, names.Length);
         Assert.Empty(bound.Intersect(gaps));
@@ -295,12 +297,12 @@ public class AdaptedFunctionTests
     }
 
     [Fact]
-    public void EveryRuntimeFunctionRunsOnTheRealApiWaitsOnANamedHostMemberOrIsANamedPhloxGap()
+    public void EveryRuntimeFunctionRunsOnTheRealApiWaitsOnANamedHostMemberOrIsNamedAsAGapOrPrivate()
     {
         string[] names = File.ReadAllLines(LlBindingGeneratorTests.BuiltinsPath())
             .Select(l => System.Text.RegularExpressions.Regex.Match(l, @"^\w+\s+(ll\w+)\(")).Where(m => m.Success).Select(m => m.Groups[1].Value).ToArray();
         string[] waiting = LlServed.NotServed.Select(r => r.Substring(0, r.IndexOf(':'))).ToArray();
-        string[] gaps = LlCoverage.PhloxGaps.Select(r => r.Substring(0, r.IndexOf(':'))).ToArray();
+        string[] gaps = LlCoverage.PhloxGaps.Concat(LlCoverage.PrivateInSl).Select(r => r.Substring(0, r.IndexOf(':'))).ToArray();
 
         Assert.Empty(LlServed.Served.Intersect(waiting));
         Assert.Empty(LlServed.Served.Intersect(gaps));
