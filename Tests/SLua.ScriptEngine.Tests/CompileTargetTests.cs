@@ -156,9 +156,10 @@ public class CompileTargetTests
     public void AScriptWithNoTargetStillGoesByItsFirstLine()
     {
         using var rig = new EngineRig();
-        UUID item = RezWithTarget(rig, "//InWorldz.Phlox:\n" + LuaMark, ScriptCompileTarget.Unspecified, engine: "InWorldz.Phlox");
+        // LSL text, which this engine would run were it given the script
+        UUID item = RezWithTarget(rig, "//InWorldz.Phlox:\n" + LslMark, ScriptCompileTarget.Unspecified, engine: "InWorldz.Phlox");
 
-        Assert.False(SchedulerHarness.WaitFor(() => rig.MarksOf(item).Contains("lua"), 600));
+        Assert.False(SchedulerHarness.WaitFor(() => rig.MarksOf(item).Contains("lsl"), 600));
     }
 
     [RequiresNativeFact]
