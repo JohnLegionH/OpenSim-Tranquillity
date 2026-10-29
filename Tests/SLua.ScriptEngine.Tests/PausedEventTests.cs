@@ -121,4 +121,33 @@ public class PausedEventTests
         string[] marks = rig.MarksOf(item);
         Assert.Equal(new[] { "n1", "n2", "n3" }, marks); // each handled once, in order
     }
+
+    [RequiresNativeFact]
+    public void TheSceneDisablingScriptsPausesAScriptWithItsStateAndAllowingThemAgainRunsItFromThatState()
+    {
+        using var rig = new EngineRig();
+        UUID item = rig.Rez(EngineRig.Lsl("integer n; default { changed(integer c) { n = n + 1; llOwnerSay(\"n\" + (string)n); } }"));
+        rig.WaitScheduled(item);
+        Assert.True(SchedulerHarness.WaitFor(() => rig.MarksOf(item).Contains("n1")), "the start brings its own changed event");
+        rig.PostProbe(item, 1);
+        Assert.True(SchedulerHarness.WaitFor(() => rig.MarksOf(item).Contains("n2")));
+        SchedulerScript before = rig.Engine.SchedulerScriptFor(item);
+
+        // the switch the viewer's debug tab and the console set: the scene asks each engine to suspend its scripts
+        rig.Scene.RegionInfo.RegionSettings.DisableScripts = true;
+        rig.Scene.ScriptsEnabled = false;
+
+        Assert.True(rig.Engine.HasScript(item, out _), "the script is still there");
+        Assert.Same(before, rig.Engine.SchedulerScriptFor(item));
+        Assert.Equal(PauseReason.Core, rig.Engine.PauseReasonsOf(item) & PauseReason.Core);
+
+        rig.Scene.RegionInfo.RegionSettings.DisableScripts = false;
+        rig.Scene.ScriptsEnabled = true;
+
+        Assert.Equal(PauseReason.None, rig.Engine.PauseReasonsOf(item) & PauseReason.Core);
+        rig.PostProbe(item, 2);
+        Assert.True(SchedulerHarness.WaitFor(() => rig.MarksOf(item).Contains("n3")), "the counter went on from 2: the state was kept");
+        Assert.Same(before, rig.Engine.SchedulerScriptFor(item));
+        Assert.Equal(new[] { "n1", "n2", "n3" }, rig.MarksOf(item));
+    }
 }
