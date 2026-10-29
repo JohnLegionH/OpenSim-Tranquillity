@@ -14,6 +14,7 @@ using InWorldz.Phlox.VM;
 using SLua.ScriptEngine.Bindings;
 using Nini.Config;
 using OpenMetaverse;
+using OpenMetaverse.StructuredData;
 using OpenSim.Framework;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
@@ -448,6 +449,8 @@ namespace SLua.ScriptEngine
             m_scene.EventManager.OnStopScript -= OnStopScript;
             m_scene.EventManager.OnShutdown -= OnShutdown;
             StopErrorSweep();
+            m_advertisedLua?.RemoveFeature(LuaScriptsEnabledFeature);
+            m_advertisedLua = null;
             m_chat?.Unsubscribe();
             m_chat = null;
             HostServices?.AsyncCommands?.Shutdown();
@@ -490,7 +493,29 @@ namespace SLua.ScriptEngine
                 return;
             }
             m_chat?.Connect(worldComm);
+            AdvertiseLuaScripts(scene);
         }
+
+        /// <summary>
+        /// Tells viewers the region runs Lua scripts: the simulator feature "LuaScriptsEnabled" is what a viewer reads before it
+        /// offers Lua in its script editor and creates new scripts with the Lua subtype. Said only by an engine that is on and
+        /// working; an engine that is off, or has disabled itself, leaves the region's features as they were.
+        /// </summary>
+        private void AdvertiseLuaScripts(Scene scene)
+        {
+            if (!m_enabled || m_disabled || scene is null)
+                return;
+            ISimulatorFeaturesModule features = scene.RequestModuleInterface<ISimulatorFeaturesModule>();
+            if (features is null)
+                return;
+            features.AddFeature(LuaScriptsEnabledFeature, OSD.FromBoolean(true));
+            m_advertisedLua = features;
+        }
+
+        /// <summary>The simulator feature a viewer reads to know that the region runs Lua scripts.</summary>
+        internal const string LuaScriptsEnabledFeature = "LuaScriptsEnabled";
+
+        private ISimulatorFeaturesModule m_advertisedLua;
 
         /// <summary>
         /// Every engine receives every rez with the engine name the region selected. The first-line header still takes
