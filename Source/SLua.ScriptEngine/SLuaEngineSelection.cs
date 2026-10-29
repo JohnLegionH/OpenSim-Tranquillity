@@ -7,6 +7,7 @@
 
 using System;
 using System.Collections.Generic;
+using OpenSim.Framework;
 using OpenSim.Region.Framework.Interfaces;
 
 namespace SLua.ScriptEngine
@@ -32,6 +33,8 @@ namespace SLua.ScriptEngine
                 return false;
             return m_settings.ClaimHeaderlessScripts || BeginsWithSluaMarker(scriptSource);
         }
+
+        public bool AcceptsCompileTarget(ScriptCompileTarget target) => false;
 
         /// <summary>
         /// True when the text, after leading white space, begins with "--!slua" and the marker ends there (end of text,

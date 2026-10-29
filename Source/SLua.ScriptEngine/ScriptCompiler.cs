@@ -8,6 +8,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using OpenSim.Framework;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -70,6 +71,8 @@ namespace SLua.ScriptEngine
         }
 
         /// <summary>Compile source text as the language its first line (or, without one, its content) selects. Never throws for bad input.</summary>
+        public CompileResult Compile(string source, ScriptCompileTarget target) => Compile(source);
+
         public CompileResult Compile(string source)
         {
             source ??= string.Empty;
