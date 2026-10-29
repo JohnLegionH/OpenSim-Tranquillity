@@ -6,6 +6,7 @@
  */
 
 using System;
+using System.Linq;
 using InWorldz.Phlox.Glue;
 using InWorldz.Phlox.Types;
 using SLua.ScriptEngine.Bindings;
@@ -17,6 +18,9 @@ namespace SLua.ScriptEngine
     {
         /// <summary>The ll functions that answer a script with "not available on this engine yet": the ones the host cannot serve and the ones not bound.</summary>
         internal static readonly System.Collections.Generic.IReadOnlyCollection<string> Unavailable = ListUnavailable();
+
+        /// <summary>The ll functions Second Life's definitions mark private and deprecated; they are intentionally absent (the coverage table's PrivateInSl).</summary>
+        private static readonly System.Collections.Generic.HashSet<string> PrivateInSl = new(LlCoverage.PrivateInSl.Select(NameOf), StringComparer.Ordinal);
 
         private static string[] ListUnavailable()
         {
@@ -60,7 +64,9 @@ namespace SLua.ScriptEngine
                 foreach (string name in Unavailable)
                 {
                     string apiName = name;
-                    vm.Register(table, apiName.Substring(2), (tag, args) => throw new FunctionUnavailableException(apiName));
+                    bool isPrivate = PrivateInSl.Contains(apiName);
+                    vm.Register(table, apiName.Substring(2), (tag, args) =>
+                        throw (isPrivate ? FunctionUnavailableException.Private(apiName) : new FunctionUnavailableException(apiName)));
                 }
             }
 

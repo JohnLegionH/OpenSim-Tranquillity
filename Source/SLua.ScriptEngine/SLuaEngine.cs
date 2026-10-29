@@ -234,7 +234,7 @@ namespace SLua.ScriptEngine
             // the region: it logs one line and registers nothing, and the other engines carry on.
             m_enabled = m_loadRuntime(m_settings, m_log);
             if (m_enabled)
-                m_log.Info($"ll functions: {LlServed.Served.Length} run on the script API; {LlBindings.Unavailable.Count} answer a script with \"not available on this engine yet\" ({LlServed.NotServed.Length} wait on host members this engine lacks, {LlCoverage.PrivateInSl.Length} are private in SL and intentionally absent, {LlCoverage.PhloxGaps.Length} are Phlox gaps)");
+                m_log.Info($"ll functions: {LlServed.Served.Length} run on the script API; {LlBindings.Unavailable.Count} are refused ({LlServed.NotServed.Length} wait on host members this engine lacks (\"not available on this engine yet\"), {LlCoverage.PrivateInSl.Length} are private in SL and intentionally absent (\"private in SL and not available to scripts\"), {LlCoverage.PhloxGaps.Length} are Phlox gaps)");
         }
 
         public void Close() { }
