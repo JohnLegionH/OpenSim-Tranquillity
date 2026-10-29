@@ -53,6 +53,7 @@ public class EngineSelectionTableTests
                                    : new SLuaEngine(new RecordingLog(), (settings, log) => true, store);
         var source = new IniConfigSource();
         IConfig section = source.AddConfig(EngineIdentity.ConfigSection);
+        section.Set("WarmUp", "false"); // the API warm-up is process-wide and not under test here (see WarmUpIsolationTests)
         section.Set("Enabled", slua ? "true" : "false");
         section.Set("ClaimHeaderlessScripts", claimHeaderless ? "true" : "false");
         engine.Initialise(source);

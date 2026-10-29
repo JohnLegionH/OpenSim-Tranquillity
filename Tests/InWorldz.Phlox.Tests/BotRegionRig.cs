@@ -61,7 +61,9 @@ internal sealed class BotRegions : IDisposable
         }
 
         A = new SchedulerHarness(Configure);
-        B = new SchedulerHarness(Configure, regionSize: sizeB, regionX: 1001);
+        // Test regions share one grid store in the process: region B sits far from the default region at 1000,1000, which
+        // a neighbour would change llEdgeOfWorld for in tests running beside it (see RegionNeighbourIsolationTests).
+        B = new SchedulerHarness(Configure, regionSize: sizeB, regionX: 7390);
         foreach (var h in new[] { A, B })
         {
             h.Scene.RegisterModuleInterface<IAvatarService>(Avatars);

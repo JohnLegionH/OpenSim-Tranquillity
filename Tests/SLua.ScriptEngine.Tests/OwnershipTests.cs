@@ -32,7 +32,9 @@ public class OwnershipTests
         {
             Engine = new SLuaEngine(Log, (settings, log) => true, store, (settings, log, scene) => new RecordingLoader());
             var source = new IniConfigSource();
-            source.AddConfig(EngineIdentity.ConfigSection).Set("Enabled", "true");
+            IConfig slua = source.AddConfig(EngineIdentity.ConfigSection);
+            slua.Set("Enabled", "true");
+            slua.Set("WarmUp", "false"); // the API warm-up is process-wide and not under test here (see WarmUpIsolationTests)
             Engine.Initialise(source);
             Engine.AddRegion(Scene);
         }
