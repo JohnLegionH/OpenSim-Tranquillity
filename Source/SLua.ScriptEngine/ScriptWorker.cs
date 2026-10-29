@@ -535,6 +535,34 @@ namespace SLua.ScriptEngine
         {
             if (s.State == ScriptRunState.Removed || s.State == ScriptRunState.Loading)
                 return;
+            ClearRunState(s);
+            try
+            {
+                try { s.Native?.Dispose(); }
+                finally { s.Native = null; }
+                MakeNative(s);
+            }
+            catch (Exception e)
+            {
+                m_log?.Error($"script {s.Id} could not be reset: {e.Message}");
+                Fault(s, FaultKind.Unknown, "script could not be reset: " + e.Message);
+                return;
+            }
+            m_scripts[s.Id] = s;
+            SetState(s, ScriptRunState.Created);
+            s.RestoreRecord = null;
+            MarkDirty(s);
+            if (s.Running)
+                StartScript(s);
+            else
+                Reschedule(s);
+            try { m_options.StateChanged?.Invoke(s); } // back in the first state
+            catch (Exception e) { m_log?.Error("the state-change callback failed: " + e.Message); }
+        }
+
+        /// <summary>The scheduler's side of a script, put back to a new script's: events, timer, sleep, wait, fault and kill (not its native object).</summary>
+        private void ClearRunState(SchedulerScript s)
+        {
             s.Events.Clear();
             // The floor llMinEventDelay set and the time before which the next handler may not start survive the reset, as in Phlox
             // (RuntimeState.Reset does not touch MinEventDelayMs or NextEventAllowedOn); only the wait for the floor is dropped with the queue.
@@ -558,6 +586,7 @@ namespace SLua.ScriptEngine
             s.SetHandlers(0, false);
             s.Windows = null;
             s.SluaTimer = 0;
+            s.SluaTimerUnconfirmed = false;
             s.NeedsStep = false;
             s.Started = false;
             s.ConsecutivePunishments = 0;
@@ -569,28 +598,73 @@ namespace SLua.ScriptEngine
                 s.Killed = false;
                 s.Running = true;
             }
+        }
+
+        /// <summary>
+        /// Tries a set-aside state again. The state is first restored into a spare script object; only when the runtime takes it does the
+        /// script give up what it is running now and go on from the state. When the runtime still refuses it, the script is not touched.
+        /// <paramref name="beforeAdopt"/> runs when the spare took the state, before the script's own state is dropped (the engine lets go of the
+        /// listens and requests of the fresh run there). Worker thread only.
+        /// </summary>
+        internal void RetryState(SchedulerScript s, ScriptStateRecord record, Action beforeAdopt, Action<RetryOutcome> done)
+        {
+            RetryOutcome outcome;
+            try { outcome = TryRetryState(s, record, beforeAdopt); }
+            catch (Exception e)
+            {
+                m_log?.Error($"script {s.Id}: the set-aside state could not be tried again: {e.Message}");
+                outcome = new RetryOutcome(false, "an error while trying it again: " + e.Message);
+            }
+            try { done?.Invoke(outcome); }
+            catch (Exception e) { m_log?.Error("the retry callback failed: " + e.Message); }
+        }
+
+        private RetryOutcome TryRetryState(SchedulerScript s, ScriptStateRecord record, Action beforeAdopt)
+        {
+            if (s.State == ScriptRunState.Removed || s.State == ScriptRunState.Loading || s.Native == null || s.Lease == null)
+                return new RetryOutcome(false, "the script is not loaded");
+            if (record == null || record.Faulted || record.Native == null || record.Native.Length == 0)
+                return new RetryOutcome(false, "the set-aside state holds no runtime state to put back");
+            if (s.Waiting || s.Dispatching)
+                return new RetryOutcome(false, "the script is in the middle of a call; try again");
+
+            Bindings.Script spare = s.Lease.NewScript(m_options.MemoryLimitBytes, s.Id);
+            bool taken;
+            string note;
             try
             {
-                try { s.Native?.Dispose(); }
-                finally { s.Native = null; }
-                MakeNative(s);
+                taken = spare.Restore(record.Native);
+                note = taken ? "" : spare.RestoreNote;
             }
             catch (Exception e)
             {
-                m_log?.Error($"script {s.Id} could not be reset: {e.Message}");
-                Fault(s, FaultKind.Unknown, "script could not be reset: " + e.Message);
-                return;
+                spare.Dispose();
+                return new RetryOutcome(false, "the runtime could not read it (" + e.Message + ")");
             }
+            if (!taken)
+            {
+                spare.Dispose();
+                return new RetryOutcome(false, note.Length > 0 ? note : "the runtime refused it");
+            }
+
+            try { beforeAdopt?.Invoke(); }
+            catch (Exception e) { m_log?.Error($"script {s.Id}: letting go of the fresh run failed: {e.Message}"); }
+            ClearRunState(s);
+            try { s.Native?.Dispose(); }
+            finally { s.Native = spare; }
+            s.NativeRestored = true;
+            s.RestoreRecord = record;
             m_scripts[s.Id] = s;
             SetState(s, ScriptRunState.Created);
-            s.RestoreRecord = null;
             MarkDirty(s);
-            if (s.Running)
-                StartScript(s);
-            else
-                Reschedule(s);
-            try { m_options.StateChanged?.Invoke(s); } // back in the first state
-            catch (Exception e) { m_log?.Error("the state-change callback failed: " + e.Message); }
+            StartScript(s);
+            return new RetryOutcome(true, "");
+        }
+
+        private static string RestoreNoteOf(SchedulerScript s)
+        {
+            try { return s.Native.RestoreNote ?? ""; }
+            catch (Exception) { return ""; }
         }
 
         /// <summary>A host function reported a script error: the host is told, and the script pays the error pause.</summary>
@@ -719,8 +793,12 @@ namespace SLua.ScriptEngine
         private void SyncSluaTimer(SchedulerScript s)
         {
             double wanted = s.Native.TimerInterval;
+            if (wanted != 0)
+                s.SluaTimerUnconfirmed = false;
             if (wanted == s.SluaTimer)
                 return;
+            if (wanted == 0 && s.SluaTimerUnconfirmed)
+                return; // a restored script's object has not been asked yet; the interval saved with it stands until its timer event has run
             s.SluaTimer = wanted;
             SetTimerFor(s, wanted);
         }
@@ -904,7 +982,11 @@ namespace SLua.ScriptEngine
                 s.WaitResult = null;
             }
             if (s.Language == ScriptLanguage.Slua)
+            {
+                if (dispatching && ev.EventIndex == TimerEvent())
+                    s.SluaTimerUnconfirmed = false;   // the timer event has run, so the library has told the host what the timer is now
                 SyncSluaTimer(s);
+            }
         }
 
         /// <summary>Reads the handler set the runtime reports changed and tells the host (worker thread).</summary>
@@ -1194,19 +1276,24 @@ namespace SLua.ScriptEngine
             bool restored;
             try
             {
-                restored = s.Native.Restore(record.Native);
+                restored = s.NativeRestored || s.Native.Restore(record.Native);
             }
             catch (Exception e)
             {
                 RejectState(s, "the runtime could not read the saved state (" + e.Message + ")");
                 return false;
             }
+            finally
+            {
+                s.NativeRestored = false;
+            }
             s.Started = true;
             s.NeedsStep = true;
             if (!restored)
             {
-                // The runtime started the script fresh (another build or another set of host functions); its old state stays on record.
-                RejectState(s, "the runtime refused the saved state (saved by another runtime build or with another set of host functions) and the script started fresh");
+                // The runtime started the script fresh (another build, or a host function the state holds is gone); its old state stays on record.
+                string note = RestoreNoteOf(s);
+                RejectState(s, "the runtime refused the saved state (" + (note.Length > 0 ? note : "saved by another runtime build or holding a host function this build does not have") + ") and the script started fresh");
                 MarkDirty(s);
                 Reschedule(s);
                 return true;
@@ -1217,6 +1304,7 @@ namespace SLua.ScriptEngine
             s.NotHandled = 0;
             s.Running = record.Running;
             s.SluaTimer = record.SluaTimer;
+            s.SluaTimerUnconfirmed = record.SluaTimer > 0;
             s.MinEventDelay = record.MinEventDelay;
             if (record.NextEventIn > 0)
                 s.NextEventAt = now + record.NextEventIn;

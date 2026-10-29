@@ -60,7 +60,7 @@ namespace SLua.ScriptEngine
         private long m_writesDone;
         private bool m_disposed;
 
-        private enum WriteKind { Save, Delete, Reject, Marker }
+        private enum WriteKind { Save, Delete, Reject, Retried, Marker }
 
         private sealed class Write
         {
@@ -69,6 +69,7 @@ namespace SLua.ScriptEngine
             public UUID AssetId;
             public byte[] State;
             public string Reason;
+            public long RejectedId;
             public ManualResetEventSlim Done;
         }
 
@@ -90,6 +91,8 @@ namespace SLua.ScriptEngine
                     "state_data BLOB NOT NULL, saved_at INTEGER NOT NULL, PRIMARY KEY (item_id, engine))");
                 Execute(m_writer, "CREATE TABLE IF NOT EXISTS script_state_rejected (id INTEGER PRIMARY KEY AUTOINCREMENT, item_id TEXT NOT NULL, engine TEXT NOT NULL, " +
                     "asset_id TEXT NOT NULL, state_data BLOB NOT NULL, reason TEXT NOT NULL, rejected_at INTEGER NOT NULL)");
+                // A set-aside row that a retry put back is listed here, so it is not offered again; the set-aside row itself is never removed.
+                Execute(m_writer, "CREATE TABLE IF NOT EXISTS script_state_retried (rejected_id INTEGER PRIMARY KEY, retried_at INTEGER NOT NULL)");
             }
             m_reader = new SQLiteConnection(connection);
             m_reader.Open();
@@ -185,12 +188,24 @@ namespace SLua.ScriptEngine
         public byte[] RejectedState(UUID itemId) => ReadRejected(itemId, "state_data") as byte[];
 
         /// <summary>The item's latest set-aside state that has not yet been put back by a retry, or null.</summary>
-        public (long Id, byte[] State, string Reason)? PendingRejected(UUID itemId) => null;
+        public (long Id, byte[] State, string Reason)? PendingRejected(UUID itemId)
+        {
+            lock (m_readLock)
+            {
+                using SQLiteCommand c = m_reader.CreateCommand();
+                c.CommandText = "SELECT r.id, r.state_data, r.reason FROM script_state_rejected r WHERE r.item_id = @i AND r.engine = @e " +
+                    "AND NOT EXISTS (SELECT 1 FROM script_state_retried t WHERE t.rejected_id = r.id) ORDER BY r.id DESC LIMIT 1";
+                c.Parameters.AddWithValue("@i", itemId.ToString());
+                c.Parameters.AddWithValue("@e", m_engine);
+                using SQLiteDataReader reader = c.ExecuteReader();
+                if (!reader.Read())
+                    return null;
+                return (reader.GetInt64(0), (byte[])reader["state_data"], reader.GetString(2));
+            }
+        }
 
         /// <summary>Records that the set-aside row was put back, so a retry does not offer it again. The row itself is kept.</summary>
-        public void MarkRetried(long rejectedId)
-        {
-        }
+        public void MarkRetried(long rejectedId) => Enqueue(new Write { Kind = WriteKind.Retried, RejectedId = rejectedId });
 
         private object ReadRejected(UUID itemId, string column)
         {
@@ -264,6 +279,9 @@ namespace SLua.ScriptEngine
                         "SELECT item_id, engine, asset_id, state_data, @r, @t FROM script_state WHERE item_id = @i AND engine = @e",
                         ("@i", write.ItemId.ToString()), ("@e", m_engine), ("@r", write.Reason), ("@t", now));
                     Run(tx, "DELETE FROM script_state WHERE item_id = @i AND engine = @e", ("@i", write.ItemId.ToString()), ("@e", m_engine));
+                    break;
+                case WriteKind.Retried:
+                    Run(tx, "INSERT OR IGNORE INTO script_state_retried (rejected_id, retried_at) VALUES (@r, @t)", ("@r", write.RejectedId), ("@t", now));
                     break;
             }
             tx.Commit();

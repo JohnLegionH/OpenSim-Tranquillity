@@ -29,7 +29,7 @@ public class StateSurvivalTests
         public readonly UUID Asset = UUID.Random();
         public SqliteStateStore Store;
         public SchedulerHarness H;
-        private readonly ConcurrentQueue<string> m_marks = new();
+        private ConcurrentQueue<string> m_marks = new();
 
         public World(Functions functions)
         {
@@ -40,6 +40,7 @@ public class StateSurvivalTests
 
         public void Boot(Functions functions)
         {
+            m_marks = new ConcurrentQueue<string>();   // script ids start again at 1 in every boot
             Store = new SqliteStateStore(Db, "SLua");
             H = new SchedulerHarness(configure: o =>
             {
@@ -148,7 +149,7 @@ ossl.Timer(1.0)
         long before = back.Dispatches;
         Run(w.H, 1.5);
         Assert.True(back.Dispatches > before, "the host did not wake the restored script's timer");
-        Assert.Equal(1.0, back.TimerInterval, 3);   // and it still has it after the wake
+        Assert.True(back.TimerInterval > 0 && back.TimerInterval <= 1.0, "the timer was not set again after the wake: " + back.TimerInterval);   // the library gives the time to the next tick
     }
 
     // ---- host functions added or removed between builds ----
