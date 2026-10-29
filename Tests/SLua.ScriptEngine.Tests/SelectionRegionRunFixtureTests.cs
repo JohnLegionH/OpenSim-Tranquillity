@@ -22,8 +22,11 @@ namespace SLua.ScriptEngine.Tests;
 /// Writes a region archive for a run of the engine selection in a real region: one object per first-line form, each with a
 /// script that writes "ran" into its prim's description, so a run shows which scripts started. SLUA_SELECTION_OAR_OUT names the
 /// file; SLUA_SELECTION_SET is "forms" (one object for each header form) or "old" (a single marked SLua script, to be run before
-/// the SLua engine is enabled and left with its saved state). SLUA_REGION_OWNER is the owner's id. It runs only when the file
-/// is named.
+/// the SLua engine is enabled and left with its saved state). "reset-old" and "reset-new" make objects for proving that a reset
+/// does not move a script: each holds the script "probe" (every start appends an "x" to the object's description, so the number
+/// of starts can be read) and a script "resetter" that resets "probe" when the object is touched; "reset-old" is a single
+/// "--!slua" object, to be run before the SLua engine is enabled, "reset-new" is run after. SLUA_REGION_OWNER is the owner's id.
+/// It runs only when the file is named.
 /// </summary>
 public class SelectionRegionRunFixtureTests
 {
@@ -37,6 +40,9 @@ public class SelectionRegionRunFixtureTests
     }
 
     private static string Lsl(string tag) => $"default {{ state_entry() {{ llSetObjectDesc(\"{tag} ran\"); }} }}\n";
+    private const string LslCount = "default { state_entry() { llSetObjectDesc(llGetObjectDesc() + \"x\"); } }\n";
+    private const string LuaCount = "ll.SetObjectDesc(ll.GetObjectDesc() .. 'x')\n";
+    private const string Resetter = "default { touch_start(integer n) { llResetOtherScript(\"probe\"); } }\n";
     private static string Lua(string tag) => $"ll.SetObjectDesc('{tag} ran')\n";
 
     /// <summary>The objects of each set: the object's name, its script's text.</summary>
@@ -44,6 +50,14 @@ public class SelectionRegionRunFixtureTests
     {
         if (set == "old")
             return new[] { ("E17 old-bang", "--!slua\n" + Lua("E17 old-bang")) };
+        if (set == "reset-old")
+            return new[] { ("E18 held-by-phlox", "--!slua\n" + LuaCount) };
+        if (set == "reset-new")
+            return new[]
+            {
+                ("E18 on-slua", "--!slua\n" + LuaCount),
+                ("E18 phlox-header", "//Phlox:\n" + LslCount),
+            };
         return new[]
         {
             ("E17 header-SLua",           "//SLua:\n" + Lua("E17 header-SLua")),
@@ -69,7 +83,7 @@ public class SelectionRegionRunFixtureTests
         new SceneHelpers().SetupScene();
         var assets = new List<(UUID Id, string Text)>();
         var groups = new List<SceneObjectGroup>();
-        int tail = set == "old" ? 0x7B00 : 0x7C00;
+        int tail = set == "old" ? 0x7B00 : set.StartsWith("reset") ? (set == "reset-old" ? 0x7D00 : 0x7E00) : 0x7C00;
         float x = 40;
 
         foreach ((string name, string script) in Objects(set))
@@ -96,6 +110,24 @@ public class SelectionRegionRunFixtureTests
                 ScriptRunning = true,
                 ParentPartID = group.RootPart.UUID,
             }, false);
+
+            if (set.StartsWith("reset"))
+            {
+                UUID resetterAsset = UUID.Random();
+                assets.Add((resetterAsset, Resetter));
+                group.RootPart.Inventory.AddInventoryItem(new TaskInventoryItem
+                {
+                    ItemID = UUID.Random(),
+                    AssetID = resetterAsset,
+                    Name = "resetter",
+                    OwnerID = owner,
+                    CreatorID = owner,
+                    Type = (int)AssetType.LSLText,
+                    InvType = (int)InventoryType.LSL,
+                    ScriptRunning = true,
+                    ParentPartID = group.RootPart.UUID,
+                }, false);
+            }
         }
 
         using var file = File.Create(path);
