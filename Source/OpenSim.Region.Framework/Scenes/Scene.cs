@@ -2148,7 +2148,24 @@ public partial class Scene : SceneBase
             m_backingup = true;
             try
             {
-                EventManager.TriggerOnBackup(SimulationDataService, forced);
+                // A data service that can save the whole pass in one transaction is told where the pass starts and ends.
+                ISimulationDataBatch batch = SimulationDataService as ISimulationDataBatch;
+                batch?.BeginBackupBatch();
+                try
+                {
+                    EventManager.TriggerOnBackup(SimulationDataService, forced);
+                }
+                finally
+                {
+                    try
+                    {
+                        batch?.EndBackupBatch();
+                    }
+                    catch (Exception e)
+                    {
+                        m_log.LogError(e, $"[Scene] Ending the backup batch of {Name} failed, the changes of this backup pass were not saved: {e.Message}");
+                    }
+                }
 
                 if(m_returns.Count == 0)
                     return;

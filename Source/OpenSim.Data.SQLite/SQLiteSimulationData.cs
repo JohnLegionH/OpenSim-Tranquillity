@@ -76,6 +76,10 @@ public class SQLiteSimulationData : ISimulationDataStore, ISimulationDataBatch
     /// <summary>How many InTransaction calls are open; only changed under lock (ds).</summary>
     private int m_transactionDepth;
 
+    /// <summary>The transaction of the open backup batch, and how many batches are open; only changed under lock (ds).</summary>
+    private SQLiteTransaction m_batchTransaction;
+    private int m_batchDepth;
+
     protected virtual Assembly Assembly
     {
         get { return GetType().Assembly; }
@@ -555,20 +559,65 @@ public class SQLiteSimulationData : ISimulationDataStore, ISimulationDataBatch
         // m_log.LogInformation("[Dump of prims]: " + ds.GetXml());
     }
 
+    /// <summary>
+    /// Starts a backup batch: until the outermost EndBackupBatch, the calls that write are collected into one
+    /// transaction and committed once at the end. The transaction is the deferred kind, so it takes no lock on the
+    /// database until the first write, and a pass that writes nothing commits nothing. Each call still succeeds or
+    /// fails on its own (see InTransaction). Calls from other threads while the batch is open join it.
+    /// </summary>
     public void BeginBackupBatch()
     {
+        lock (ds)
+        {
+            if (m_batchDepth++ == 0)
+                m_batchTransaction = m_conn.BeginTransaction(true); // deferred: no lock until the first write
+        }
     }
 
+    /// <summary>
+    /// Commits what the batch collected, once the outermost batch ends. Does nothing without a batch.
+    /// </summary>
     public void EndBackupBatch()
     {
+        lock (ds)
+        {
+            if (m_batchDepth == 0 || --m_batchDepth > 0)
+                return;
+
+            SQLiteTransaction transaction = m_batchTransaction;
+            m_batchTransaction = null;
+            try
+            {
+                transaction.Commit();
+            }
+            catch
+            {
+                try
+                {
+                    transaction.Rollback();
+                }
+                catch (Exception e)
+                {
+                    m_log.LogError("[SQLITE REGION DB]: Rollback of the backup batch failed: {0}", e.Message);
+                }
+                ReloadTables();
+                throw;
+            }
+            finally
+            {
+                transaction.Dispose();
+            }
+        }
     }
 
     /// <summary>
     /// Runs <paramref name="work"/> in one database transaction. Without one every row the data adapters write is
     /// its own commit, and each commit waits for the disk, so saving an object with a few prims took a fraction of
-    /// a second and saving a whole region took minutes. If the work throws, the transaction is rolled back and the
+    /// a second and saving a whole region took minutes. If the work throws, its writes are rolled back and the
     /// in-memory copy of the tables is read again from the database, because the adapters accept rows one at a
     /// time and would otherwise keep rows the database no longer has.
+    /// Inside a backup batch the work runs in a savepoint of the batch's transaction instead, so a failure undoes
+    /// only this work and the rest of the batch is still committed at its end.
     /// A call made inside another InTransaction joins the outer one. The caller holds lock (ds).
     /// </summary>
     private void InTransaction(Action work)
@@ -580,6 +629,21 @@ public class SQLiteSimulationData : ISimulationDataStore, ISimulationDataBatch
         }
 
         m_transactionDepth++;
+        try
+        {
+            if (m_batchTransaction is null)
+                InOwnTransaction(work);
+            else
+                InSavepoint(work);
+        }
+        finally
+        {
+            m_transactionDepth--;
+        }
+    }
+
+    private void InOwnTransaction(Action work)
+    {
         SQLiteTransaction transaction = m_conn.BeginTransaction();
         try
         {
@@ -602,8 +666,37 @@ public class SQLiteSimulationData : ISimulationDataStore, ISimulationDataBatch
         finally
         {
             transaction.Dispose();
-            m_transactionDepth--;
         }
+    }
+
+    private void InSavepoint(Action work)
+    {
+        ExecuteStatement("savepoint region_work");
+        try
+        {
+            work();
+            ExecuteStatement("release region_work");
+        }
+        catch
+        {
+            try
+            {
+                ExecuteStatement("rollback to region_work");
+                ExecuteStatement("release region_work");
+            }
+            catch (Exception e)
+            {
+                m_log.LogError("[SQLITE REGION DB]: Rollback of one save inside the backup batch failed: {0}", e.Message);
+            }
+            ReloadTables();
+            throw;
+        }
+    }
+
+    private void ExecuteStatement(string sql)
+    {
+        using (SQLiteCommand cmd = new SQLiteCommand(sql, m_conn))
+            cmd.ExecuteNonQuery();
     }
 
     private static SQLiteCommand Renewed(SQLiteCommand command)
