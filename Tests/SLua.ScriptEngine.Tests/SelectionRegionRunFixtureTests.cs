@@ -25,7 +25,8 @@ namespace SLua.ScriptEngine.Tests;
 /// the SLua engine is enabled and left with its saved state). "reset-old" and "reset-new" make objects for proving that a reset
 /// does not move a script: each holds the script "probe" (every start appends an "x" to the object's description, so the number
 /// of starts can be read) and a script "resetter" that resets "probe" when the object is touched; "reset-old" is a single
-/// "--!slua" object, to be run before the SLua engine is enabled, "reset-new" is run after. SLUA_REGION_OWNER is the owner's id.
+/// "--!slua" object, to be run before the SLua engine is enabled, "reset-new" is run after; "reset-slua" is one SLua object whose
+/// script resets itself when touched. SLUA_REGION_OWNER is the owner's id.
 /// It runs only when the file is named.
 /// </summary>
 public class SelectionRegionRunFixtureTests
@@ -52,6 +53,8 @@ public class SelectionRegionRunFixtureTests
             return new[] { ("E17 old-bang", "--!slua\n" + Lua("E17 old-bang")) };
         if (set == "reset-old")
             return new[] { ("E18 held-by-phlox", "--!slua\n" + LuaCount) };
+        if (set == "reset-slua")
+            return new[] { ("E18 on-slua-self", "--!slua\n" + LuaCount + "LLEvents:on('touch_start', function() ll.ResetScript() end)\n") };
         if (set == "reset-new")
             return new[]
             {
@@ -83,7 +86,7 @@ public class SelectionRegionRunFixtureTests
         new SceneHelpers().SetupScene();
         var assets = new List<(UUID Id, string Text)>();
         var groups = new List<SceneObjectGroup>();
-        int tail = set == "old" ? 0x7B00 : set.StartsWith("reset") ? (set == "reset-old" ? 0x7D00 : 0x7E00) : 0x7C00;
+        int tail = set == "old" ? 0x7B00 : set.StartsWith("reset") ? (set == "reset-old" ? 0x7D00 : set == "reset-new" ? 0x7E00 : 0x7F00) : 0x7C00;
         float x = 40;
 
         foreach ((string name, string script) in Objects(set))
