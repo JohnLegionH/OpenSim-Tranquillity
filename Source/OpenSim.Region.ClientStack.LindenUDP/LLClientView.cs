@@ -2614,7 +2614,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
                 data.GroupID = item.GroupID;
                 data.GroupOwned = item.GroupOwned;
                 data.GroupMask = item.GroupPermissions;
-                data.Flags = item.Flags;
+                data.Flags = ScriptCompileTargets.ForViewer(item.Flags);
                 data.SalePrice = item.SalePrice;
                 data.SaleType = item.SaleType;
 
@@ -13591,7 +13591,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
                 LLSDxmlEncode2.AddElem("AssetID", item.AssetID, sb);
                 LLSDxmlEncode2.AddElem("Type", item.AssetType, sb);
                 LLSDxmlEncode2.AddElem("InvType", item.InvType, sb);
-                LLSDxmlEncode2.AddElem("Flags", item.Flags, sb);
+                LLSDxmlEncode2.AddElem("Flags", ScriptCompileTargets.ForViewer(item.Flags), sb);
                 LLSDxmlEncode2.AddElem("SaleType", item.SaleType, sb);
                 LLSDxmlEncode2.AddElem("SalePrice", item.SalePrice, sb);
                 LLSDxmlEncode2.AddElem("Name", item.Name, sb);
