@@ -10,6 +10,8 @@
 // implementation and call shims. Do not edit by hand.
 // </auto-generated>
 
+using System.Collections.Generic;
+
 namespace SLua.ScriptEngine
 {
     /// <summary>Which ll results are truth values (see tools/slua-bindings/generate-bindings.py).</summary>
@@ -48,5 +50,12 @@ namespace SLua.ScriptEngine
             "llGetPrimitiveParams",
             "llParcelMediaQuery",
         };
+
+        // stub: filled in by the generator
+        internal static readonly IReadOnlyDictionary<string, string> ListRules = new Dictionary<string, string>();
+
+        internal static readonly IReadOnlyDictionary<string, IReadOnlyDictionary<long, TagLayout>> Tags = new Dictionary<string, IReadOnlyDictionary<long, TagLayout>>();
     }
+
+    internal sealed record TagLayout(bool PerFace, string Cells);
 }

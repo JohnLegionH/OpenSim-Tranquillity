@@ -164,6 +164,9 @@ namespace SLua.ScriptEngine
             return new[] { Value.List(shifted) };
         }
 
+        /// <summary>stub: the list conversion is not written yet.</summary>
+        internal static Value[] ConvertListBooleans(string function, Value[] request, Value[] result) => result;
+
         /// <summary>LSL's position to an SLua script's (VM/src/llsl.cpp luaSL_pushindexlike): -1, no match, is nil; 0 and up count from 1.</summary>
         internal static Value[] ShiftResult(Value[] result)
         {
