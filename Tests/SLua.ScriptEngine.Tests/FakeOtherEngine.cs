@@ -26,6 +26,19 @@ internal sealed class FakeOtherEngine : IScriptModule, IScriptEngine
     private readonly List<(UUID Item, EventParams Params)> m_scriptPosts = new();
     private readonly List<(uint Local, EventParams Params)> m_objectPosts = new();
 
+    private readonly Dictionary<UUID, bool> m_held = new();
+    private readonly List<UUID> m_resets = new();
+    private readonly List<(UUID Item, bool Run)> m_runStates = new();
+
+    /// <summary>Makes this engine the one that runs the script item, with the Running state HasScript reports for it.</summary>
+    public void Hold(UUID item, bool running = true) { lock (m_held) m_held[item] = running; }
+
+    /// <summary>The items it was asked to reset, by ApiResetScript or ResetScript, in order.</summary>
+    public UUID[] Resets { get { lock (m_resets) return m_resets.ToArray(); } }
+
+    /// <summary>The start (true) and stop (false) events the region raised for any script item while this engine was in the region, as a real engine hears them.</summary>
+    public (UUID Item, bool Run)[] RunStates { get { lock (m_runStates) return m_runStates.ToArray(); } }
+
     public (UUID Item, EventParams Params)[] ScriptPosts { get { lock (m_scriptPosts) return m_scriptPosts.ToArray(); } }
     public (uint Local, EventParams Params)[] ObjectPosts { get { lock (m_objectPosts) return m_objectPosts.ToArray(); } }
 
@@ -51,7 +64,12 @@ internal sealed class FakeOtherEngine : IScriptModule, IScriptEngine
 
     public void Initialise(IConfigSource source) { }
     public void Close() { }
-    public void AddRegion(Scene scene) { World = scene; }
+    public void AddRegion(Scene scene)
+    {
+        World = scene;
+        scene.EventManager.OnStartScript += (local, item) => { lock (m_runStates) m_runStates.Add((item, true)); };
+        scene.EventManager.OnStopScript += (local, item) => { lock (m_runStates) m_runStates.Add((item, false)); };
+    }
     public void RemoveRegion(Scene scene) { }
     public void RegionLoaded(Scene scene) { }
 
@@ -62,8 +80,14 @@ internal sealed class FakeOtherEngine : IScriptModule, IScriptEngine
     public string GetXMLState(UUID itemID) => string.Empty;
     public bool SetXMLState(UUID itemID, string xml) => false;
     public ArrayList GetScriptErrors(UUID itemID) => new();
-    public bool HasScript(UUID itemID, out bool running) { running = false; return false; }
-    public bool GetScriptState(UUID itemID) => false;
+    public bool HasScript(UUID itemID, out bool running)
+    {
+        lock (m_held) return m_held.TryGetValue(itemID, out running);
+    }
+    public bool GetScriptState(UUID itemID)
+    {
+        lock (m_held) return m_held.TryGetValue(itemID, out bool running) && running;
+    }
     public void SaveAllState() { }
     public void StartProcessing() { }
     public float GetScriptExecutionTime(List<UUID> itemIDs) => 0f;
@@ -83,8 +107,8 @@ internal sealed class FakeOtherEngine : IScriptModule, IScriptEngine
     public int GetStartParameter(UUID itemID) => 0;
     public void SetScriptState(UUID itemID, bool state, bool self) { }
     public void SetState(UUID itemID, string newState) { }
-    public void ApiResetScript(UUID itemID) { }
-    public void ResetScript(UUID itemID) { }
+    public void ApiResetScript(UUID itemID) { lock (m_resets) m_resets.Add(itemID); }
+    public void ResetScript(UUID itemID) { lock (m_resets) m_resets.Add(itemID); }
     public IScriptApi GetApi(UUID itemID, string name) => null;
     public void SleepScript(UUID itemID, int delay) { }
 }
