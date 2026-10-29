@@ -12,6 +12,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using SLua.ScriptEngine.Bindings;
 using OpenMetaverse;
+using OpenSim.Framework;
 
 namespace SLua.ScriptEngine
 {
@@ -23,6 +24,9 @@ namespace SLua.ScriptEngine
 
         /// <summary>The asset the item had when the request was made; used to fetch the text when <see cref="Source"/> is empty.</summary>
         public UUID AssetID;
+
+        /// <summary>The compile target the viewer's editor saved the script with; it decides the language.</summary>
+        public ScriptCompileTarget Target;
 
         /// <summary>The script text from the rez event; empty when the loader must fetch it.</summary>
         public string Source;
@@ -296,7 +300,7 @@ namespace SLua.ScriptEngine
                     Finish(request, serial, new List<string> { "the script's asset is not script text" });
                     return;
                 }
-                CompileResult result = m_compiler.Compile(text);
+                CompileResult result = m_compiler.Compile(text, request.Target);
                 if (!result.Success)
                 {
                     Finish(request, serial, new List<string>(result.EditorErrors()));

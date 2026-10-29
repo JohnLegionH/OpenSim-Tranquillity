@@ -26,7 +26,8 @@ namespace SLua.ScriptEngine.Tests;
 /// does not move a script: each holds the script "probe" (every start appends an "x" to the object's description, so the number
 /// of starts can be read) and a script "resetter" that resets "probe" when the object is touched; "reset-old" is a single
 /// "--!slua" object, to be run before the SLua engine is enabled, "reset-new" is run after; "reset-slua" is one SLua object whose
-/// script resets itself when touched. SLUA_REGION_OWNER is the owner's id.
+/// script resets itself when touched; "target" makes ten objects holding a placeholder script "probe", for saving scripts
+/// through the script upload capability with each compile target. SLUA_REGION_OWNER is the owner's id.
 /// It runs only when the file is named.
 /// </summary>
 public class SelectionRegionRunFixtureTests
@@ -49,6 +50,16 @@ public class SelectionRegionRunFixtureTests
     /// <summary>The objects of each set: the object's name, its script's text.</summary>
     internal static IReadOnlyList<(string Name, string Script)> Objects(string set)
     {
+        if (set == "target")
+        {
+            string[] names =
+            {
+                "E21 luau-no-header", "E21 lsl-luau-no-header", "E21 luau-over-phlox-header", "E21 lsl-luau-over-phlox-header",
+                "E21 mono-slua-marker", "E21 mono-phlox-header", "E21 lsl2-no-header", "E21 failed-compile", "E21 switch-back",
+                "E21 no-target-field",
+            };
+            return names.Select(n => (n, Lsl(n + " placeholder"))).ToArray();
+        }
         if (set == "old")
             return new[] { ("E17 old-bang", "--!slua\n" + Lua("E17 old-bang")) };
         if (set == "reset-old")
@@ -86,7 +97,7 @@ public class SelectionRegionRunFixtureTests
         new SceneHelpers().SetupScene();
         var assets = new List<(UUID Id, string Text)>();
         var groups = new List<SceneObjectGroup>();
-        int tail = set == "old" ? 0x7B00 : set.StartsWith("reset") ? (set == "reset-old" ? 0x7D00 : set == "reset-new" ? 0x7E00 : 0x7F00) : 0x7C00;
+        int tail = set == "target" ? 0x8100 : set == "old" ? 0x7B00 : set.StartsWith("reset") ? (set == "reset-old" ? 0x7D00 : set == "reset-new" ? 0x7E00 : 0x7F00) : 0x7C00;
         float x = 40;
 
         foreach ((string name, string script) in Objects(set))
