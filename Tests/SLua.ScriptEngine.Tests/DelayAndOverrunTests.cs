@@ -63,10 +63,16 @@ public class DelayAndOverrunTests
     {
         public readonly ConcurrentQueue<(double Cpu, float Sleep)> Queue = new();
 
+        /// <summary>The window (counting from 0) in which the worker is stalled, and for how long: a collection pause, or another process taking the processor. The CPU time the window reports does not include it.</summary>
+        public int StallAtWindow = -1;
+        public int StallMs;
+        private int m_windows;
+
         public StepResult? Next(SchedulerScript s)
         {
             if (!Queue.TryDequeue(out var w)) return null;
-            long end = Stopwatch.GetTimestamp() + Stopwatch.Frequency / 1000;
+            int stallMs = m_windows++ == StallAtWindow ? StallMs : 0;
+            long end = Stopwatch.GetTimestamp() + Stopwatch.Frequency / 1000 + Stopwatch.Frequency / 1000 * stallMs;
             while (Stopwatch.GetTimestamp() < end) { }
             return new StepResult(StepStatus.Ok, 0, w.Sleep, FaultKind.None, w.Cpu);
         }
@@ -124,6 +130,22 @@ public class DelayAndOverrunTests
         using (h)
         {
             Assert.Equal(1, s.Punishments);
+            Assert.Equal(ScriptRunState.Sleeping, s.State);
+        }
+    }
+
+    [RequiresNativeFact]
+    public void AStallInOneWindowDoesNotMakeABusyScriptsOverrunLookLikeTheSystemsDoing()
+    {
+        // Every window shows the script's own CPU time; the worker is stalled for 40 ms once, which the CPU time cannot show.
+        var w = new Windows { StallAtWindow = 5, StallMs = 40 };
+        w.Add(32, 0.001);
+        w.Queue.Enqueue((0.001, 0.5f));
+        SchedulerScript s = RunWindows(w, 33, out SchedulerHarness h);
+        using (h)
+        {
+            Assert.Equal(1, s.Punishments);
+            Assert.Equal(0, s.WaivedOverruns);
             Assert.Equal(ScriptRunState.Sleeping, s.State);
         }
     }

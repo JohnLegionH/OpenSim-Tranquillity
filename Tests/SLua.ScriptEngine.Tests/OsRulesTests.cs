@@ -57,6 +57,17 @@ public class OsGateTests
     }
 
     [RequiresNativeFact]
+    public void ACallThatOverrunsTheScriptsFirstWindowIsStillAnsweredWithTheGatesText()
+    {
+        // The first os call in a process can overrun the script's run window (it compiles code); the runtime then punishes the
+        // script with a delay on the manual clock, which a wait that only pumps never ends. Burn stands in for that overrun.
+        using var rig = new EngineApiRig();
+        string denied = Call(rig, "(function() ossl.Burn(60) return ossl.GetSimulatorVersion() end)()");
+        Assert.StartsWith("false|", denied);
+        Assert.Contains(DeniedByLevel, denied);
+    }
+
+    [RequiresNativeFact]
     public void RaisingTheThreatLevelInTheOsslSectionAllowsTheFunction()
     {
         using var rig = new EngineApiRig(Ossl(("OSFunctionThreatLevel", "High")));
