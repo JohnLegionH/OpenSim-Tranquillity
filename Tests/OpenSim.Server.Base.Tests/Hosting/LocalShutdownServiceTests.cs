@@ -65,6 +65,20 @@ public sealed class LocalShutdownServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SectionWithoutEnabledKey_WithPortAndSecret_DoesNotListen()
+    {
+        int port = FreePort();
+        var config = new IniConfigSource();
+        IConfig section = config.AddConfig("LocalShutdown");
+        section.Set("Port", port.ToString());
+        section.Set("SecretFile", WriteSecret(Secret));
+        LocalShutdownService service = await StartAsync(new FakeServerBase(config));
+
+        Assert.False(service.Listening);
+        Assert.False(CanConnect(port));
+    }
+
+    [Fact]
     public async Task EnabledFalse_WithPortAndSecret_DoesNotListen()
     {
         int port = FreePort();
@@ -295,6 +309,68 @@ public sealed class LocalShutdownServiceTests : IDisposable
         await NothingHappens(server);
     }
 
+    // ---- malformed and hostile requests -------------------------------------------------
+
+    [Fact]
+    public async Task ADocumentTypeDeclaration_IsRefused_EvenWithTheRightSecret()
+    {
+        int port = FreePort();
+        var server = new FakeServerBase(Config("true", port, WriteSecret(Secret)));
+        await StartAsync(server);
+
+        string body = "<?xml version=\"1.0\"?><!DOCTYPE d [<!ENTITY e \"x\">]>" + ShutdownBody(Secret).Replace("<?xml version=\"1.0\"?>", string.Empty);
+        string reply = await PostAsync(port, body);
+
+        Assert.False(Accepted(reply), reply);
+        await NothingHappens(server);
+    }
+
+    [Fact]
+    public async Task ABodyOverTheLimit_IsRefused_AndTheRouteStillAnswersAfterwards()
+    {
+        int port = FreePort();
+        var server = new FakeServerBase(Config("true", port, WriteSecret(Secret)));
+        LocalShutdownService service = await StartAsync(server);
+
+        string big = ShutdownBody(Secret) + new string(' ', 20000);
+        string reply = await PostAsync(port, big);
+        Assert.False(Accepted(reply), reply);
+        Assert.Equal(0, server.ShutdownCalls);
+        Assert.True(service.Listening);
+
+        Assert.True(Accepted(await PostAsync(port, ShutdownBody(Secret))));
+        await WaitForShutdown(server);
+    }
+
+    [Fact]
+    public async Task MalformedXml_IsRefused_AndTheRouteStillAnswersAfterwards()
+    {
+        int port = FreePort();
+        var server = new FakeServerBase(Config("true", port, WriteSecret(Secret)));
+        await StartAsync(server);
+
+        string reply = await PostAsync(port, "<methodCall><methodName>admin_shutdown");
+        Assert.False(Accepted(reply), reply);
+        Assert.Equal(0, server.ShutdownCalls);
+
+        Assert.True(Accepted(await PostAsync(port, ShutdownBody(Secret))));
+        await WaitForShutdown(server);
+    }
+
+    [Fact]
+    public async Task AGetRequest_IsRefused()
+    {
+        int port = FreePort();
+        var server = new FakeServerBase(Config("true", port, WriteSecret(Secret)));
+        await StartAsync(server);
+
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        using HttpResponseMessage response = await http.GetAsync($"http://127.0.0.1:{port}/?password={Secret}");
+
+        Assert.Equal(HttpStatusCode.MethodNotAllowed, response.StatusCode);
+        await NothingHappens(server);
+    }
+
     // ---- the right request ---------------------------------------------------------
 
     [Fact]
@@ -431,7 +507,9 @@ public sealed class LocalShutdownServiceTests : IDisposable
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
         try
         {
-            using var content = new StringContent(body, Encoding.UTF8, "text/xml");
+            // The server matches the content type exactly ("text/xml"), so no charset parameter.
+            using var content = new ByteArrayContent(Encoding.UTF8.GetBytes(body));
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/xml");
             using HttpResponseMessage response = await http.PostAsync($"http://127.0.0.1:{port}/", content);
             return await response.Content.ReadAsStringAsync();
         }
