@@ -60,6 +60,10 @@ public class OsPositionTests
             return H.MarksOf(s);
         }
 
+        /// <summary>Pumps the scheduler until the condition holds or the cap passes.</summary>
+        public bool PumpUntil(Func<bool> condition, int timeoutMs = 10000) =>
+            SchedulerHarness.WaitFor(() => { H.Pump(); return condition(); }, timeoutMs);
+
         public string[] Calls() =>
             Fake.Calls.Select(c => c.Name + "(" + string.Join("|", c.Args.Select(a => a is LSLList l ? "[" + string.Join(",", l.Data) + "]" : Convert.ToString(a))) + ")").Where(c => !c.StartsWith("NeedsService")).ToArray();
 
@@ -68,6 +72,19 @@ public class OsPositionTests
             Lane.Dispose();
             H.Dispose();
         }
+    }
+
+    [RequiresNativeFact]
+    public void AWaitForTheCallsOfAScriptThatOverranBeforeThemEndsWhenTheyAreMade()
+    {
+        using var rig = new PositionRig();
+        rig.Fake.Returns("osStringSubString", "hel");
+        OsBindings.ApplyHostList();
+
+        // Burn holds the thread past the run window, so the runtime puts the script to sleep on the harness's clock.
+        rig.H.AddAndStart("ossl.Burn(60)\nossl.StringSubString('hello', 1, 3)");
+
+        Assert.True(rig.PumpUntil(() => Calls(rig).Length >= 1),"the call was never made");
     }
 
     private static string[] Calls(PositionRig rig) => rig.Calls();

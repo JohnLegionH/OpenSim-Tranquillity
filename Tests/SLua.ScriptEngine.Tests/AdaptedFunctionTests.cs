@@ -71,6 +71,10 @@ public class AdaptedFunctionTests
             return H.MarksOf(s);
         }
 
+        /// <summary>Pumps the scheduler until the condition holds or the cap passes.</summary>
+        public bool PumpUntil(Func<bool> condition) =>
+            SchedulerHarness.WaitFor(() => { H.Pump(); return condition(); });
+
         public string[] Calls() =>
             Fake.Calls.Select(c => c.Name + "(" + string.Join("|", c.Args.Select(a => a is LSLList l ? "[" + string.Join(",", l.Data) + "]" : Convert.ToString(a))) + ")").ToArray();
 
@@ -79,6 +83,30 @@ public class AdaptedFunctionTests
             Lane.Dispose();
             H.Dispose();
         }
+    }
+
+    // ---- a script the runtime punished for overrunning its window still gets its answer ----
+
+    [RequiresNativeFact]
+    public void ARunOfAScriptThatOverranBeforeItsCallStillGetsTheAnswer()
+    {
+        using var rig = new LaneRig();
+        rig.Fake.Runs("llRequestUsername", a => { SyscallContext.Current.SetResult(KeyOf("burned"), 0); return null; });
+
+        // Burn holds the thread past the run window, so the runtime puts the script to sleep on the harness's clock.
+        string[] marks = rig.Run("ossl.Burn(60)\nlocal k = ll.RequestUsername('" + AgentKey + "')\nossl.Mark('k', tostring(k))");
+
+        Assert.Equal(new[] { "k:" + KeyOf("burned") }, marks);
+    }
+
+    [RequiresNativeFact]
+    public void AWaitForACallOfAScriptThatOverranBeforeItEndsWhenTheCallIsMade()
+    {
+        using var rig = new LaneRig();
+
+        rig.H.AddAndStart("ossl.Burn(60)\nll.StringLength('x')");
+
+        Assert.True(rig.PumpUntil(() => rig.Fake.Calls.Any(c => c.Name == "llStringLength")), "the call was never made");
     }
 
     // ---- the three requests that answer with a query key ----

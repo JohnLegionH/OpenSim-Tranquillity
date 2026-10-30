@@ -175,6 +175,18 @@ public class ServiceLaneTests
         Assert.Empty(onWorker);
     }
 
+    [RequiresNativeFact]
+    public void AScriptThatOverranBeforeItsServiceCallStillGetsTheValue()
+    {
+        using var rig = new LaneRig();
+        rig.Fake.Returns("NeedsService", true);
+        rig.Fake.Runs("llName2Key", a => KeyOf(a[0].ToString()));
+        // Burn holds the thread past the run window, so the runtime puts the script to sleep on the harness's clock.
+        SchedulerScript s = rig.H.AddAndStart("ossl.Burn(60)\nlocal k = ll.Name2Key('Dee')\nossl.Mark('k', tostring(k))");
+
+        Assert.True(rig.PumpUntil(() => Marks(rig, s).Contains("k:" + KeyOf("Dee"))), Diag(rig));
+    }
+
     // ---- a slow call stalls only its own script ----
 
     [RequiresNativeFact]

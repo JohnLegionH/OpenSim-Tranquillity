@@ -123,6 +123,17 @@ public class PositionAndBooleanTests
     }
 
     [RequiresNativeFact]
+    public void ADetectedNumberIsShiftedForAScriptThatOverranBeforeTheCalls()
+    {
+        using var rig = new BindingRig();
+        // Burn holds the thread past the run window, so the runtime puts the script to sleep on the harness's clock.
+        rig.H.AddAndStart("ossl.Burn(60)\nll.DetectedKey(1) ll.DetectedName(3) ll.DetectedType(2)");
+
+        Assert.True(rig.PumpUntil(() => rig.Fake.Calls.Length >= 3), "the calls were not all made");
+        Assert.Equal(new[] { "llDetectedKey(0)", "llDetectedName(2)", "llDetectedType(1)" }, rig.Fake.Calls.Select(c => c.Name + "(" + c.Args[0] + ")").ToArray());
+    }
+
+    [RequiresNativeFact]
     public void ZeroIsAnErrorForADetectedNumberAndForTheOccurrenceOfAListSearch()
     {
         using var rig = new BindingRig();
