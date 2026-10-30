@@ -244,11 +244,36 @@ public class OsRulesTests
             };
         });
         SchedulerScript script = h.AddAndStart("local ok, e = pcall(ossl.SHA256, 'abc')\nossl.Mark('r', tostring(ok) .. '|' .. tostring(e))\nossl.Mark('g', tostring(pcall(ossl.GetGridName)))");
-        Assert.True(SchedulerHarness.WaitFor(() => { h.Pump(); return h.MarksOf(script).Any(m => m.StartsWith("g:")); }, -1), "the script said nothing");
+        Assert.True(WaitForMark(h, script, "g:"), "the script said nothing");
         string[] marks = h.MarksOf(script);
         Assert.Contains(marks, m => m.StartsWith("r:false|") && m.Contains("osSHA256 is not available on this engine yet"));
         Assert.Contains("g:true", marks);
         Assert.DoesNotContain(fake.Calls, c => c.Name == "osSHA256");
+    }
+
+    /// <summary>Pumps until the script has made a mark that starts with <paramref name="prefix"/>.</summary>
+    private static bool WaitForMark(SchedulerHarness h, SchedulerScript script, string prefix) =>
+        SchedulerHarness.WaitFor(() => { h.Pump(); return h.MarksOf(script).Any(m => m.StartsWith(prefix)); }, -1);
+
+    [RequiresNativeFact]
+    public void AnOverrunBeforeAnUnavailableFunctionIsCalledStillGetsTheNotAvailableAnswer()
+    {
+        // A script that overruns its first window is punished with a delay on the manual clock; the answer must still come.
+        var (api, fake) = FakeLslApi.Create();
+        using var h = new SchedulerHarness(configure: o =>
+        {
+            Func<Bindings.Vm> inner = o.VmFactory;
+            o.VmFactory = () =>
+            {
+                Bindings.Vm vm = inner();
+                OsBindings.Register(vm, s => new ScriptContext(s, api), unavailable: true, refuse: new[] { "osSHA256" });
+                return vm;
+            };
+        });
+        SchedulerScript script = h.AddAndStart("ossl.Burn(60)\nlocal ok, e = pcall(ossl.SHA256, 'abc')\nossl.Mark('r', tostring(ok) .. '|' .. tostring(e))");
+        Assert.True(WaitForMark(h, script, "r:"), "the script said nothing; punishments: " + script.Punishments);
+        Assert.Contains(h.MarksOf(script), m => m.StartsWith("r:false|") && m.Contains("osSHA256 is not available on this engine yet"));
+        Assert.Equal(1, script.Punishments);
     }
 
     [Fact]
