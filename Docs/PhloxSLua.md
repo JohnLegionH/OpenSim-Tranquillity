@@ -49,7 +49,9 @@ in [PhloxKnownDefects.md](PhloxKnownDefects.md).
   script without a header runs on the default engine.
 - **SLua.** Phlox compiles a script as SLua when its text, after any leading
   white space, begins with `--`; the usual first line is `--!slua`. Such a
-  script runs on Phlox only where Phlox is the default engine.
+  script is claimed by the SLua engine when that engine is enabled (see
+  [ScriptEngineSelection.md](ScriptEngineSelection.md)); with the SLua engine
+  off it runs on Phlox only where Phlox is the default engine.
 - **`//InWorldz.Phlox:slua`.** As the first line, this header puts the script on
   Phlox and compiles the rest as SLua in any region where Phlox is loaded,
   whatever the default engine:
