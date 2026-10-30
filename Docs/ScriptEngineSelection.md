@@ -17,13 +17,19 @@ the engine in this order and stops at the first step that gives an answer:
    `DefaultScriptEngine` first. A running script therefore stays on its engine across a restart, whatever the
    settings below say. Editing a script gives it a new asset and so no saved state.
 3. **A claim.** A script with source is offered to each engine that can claim scripts (an engine that implements
-   `IScriptEngineSelection`), in the order the engines are loaded; the first to say yes gets it. Phlox and YEngine
-   do not claim scripts.
+   `IScriptEngineSelection`), in the order the engines
+   are loaded; the first to say yes gets it. Phlox and YEngine do not claim scripts. The SLua engine claims:
+   - a script whose first line is `--!slua`, whenever the engine is enabled and running;
+   - every script that has no engine header, when `ClaimHeaderlessScripts = true` in the `[SLua]` section (default
+     `false`). Such a script runs as LSL, or as SLua when its text begins with `--`.
 4. **The default.** `[Startup] DefaultScriptEngine`. Two files give it a value, and they differ: the shipped
    `Source/OpenSim.Server.RegionServer/AppData/RegionServerDefaults.ini` sets `DefaultScriptEngine = "InWorldz.Phlox"`,
    while the code default, used when no configuration sets the key (`Source/OpenSim.Region.Framework/Scenes/Scene.cs`),
    is `YEngine`. A region started from the shipped defaults file therefore defaults to Phlox; a host that supplies
    its own configuration without the key defaults to YEngine.
+
+With the SLua engine off (`[SLua] Enabled` unset or false) steps 1, 2 and 4 are all that happen, and a
+`--!slua` script runs where it did before.
 
 An engine that is not a script-selection participant is unaffected: it is chosen by name, by saved state or as
 the default.

@@ -87,7 +87,7 @@ namespace SLua.ScriptEngine
         public int ServiceCallThreads { get; private set; } = 4;
         public int ServiceCallTimeoutMs { get; private set; } = 35000;
 
-        /// <summary>Lowest native log level forwarded to the region log: "debug", "info", "warn" or "error".</summary>
+        /// <summary>Intended lowest native log level to forward to the region log: "debug", "info", "warn" or "error". The value is parsed and validated, but nothing reads it yet: the native library's log output is not filtered by it.</summary>
         public string NativeLogLevel { get; private set; } = "warn";
 
         public bool ResetThrottle { get; private set; } = true;
