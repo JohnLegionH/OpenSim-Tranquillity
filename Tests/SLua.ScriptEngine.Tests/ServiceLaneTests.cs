@@ -56,9 +56,11 @@ public class ServiceLaneTests
             Lane = new ServiceLane(H.Scheduler, deferral, threads, timeoutMs, idleMs);
         }
 
-        /// <summary>Pumps the scheduler until the condition holds; the lane's answers are taken in by the pump.</summary>
-        public bool PumpUntil(Func<bool> condition, int timeoutMs = -1) =>
-            SchedulerHarness.WaitFor(() => { H.Pump(); return condition(); }, timeoutMs);
+        /// <summary>
+        /// Pumps the scheduler until the condition holds; the lane's answers are taken in by the pump. The manual clock moves on
+        /// too, so a script the runtime punished for overrunning wakes (the lane's own deadlines run on real time).
+        /// </summary>
+        public bool PumpUntil(Func<bool> condition, int timeoutMs = -1) => H.PumpAdvancing(condition, timeoutMs);
 
         public int CallsOf(string apiName) => Fake.Calls.Count(c => c.Name == apiName);
 
@@ -173,6 +175,18 @@ public class ServiceLaneTests
             if (call.Thread == Environment.CurrentManagedThreadId) onWorker.Add(f.Name);
         }
         Assert.Empty(onWorker);
+    }
+
+    [RequiresNativeFact]
+    public void AScriptThatOverranBeforeItsServiceCallStillGetsTheValue()
+    {
+        using var rig = new LaneRig();
+        rig.Fake.Returns("NeedsService", true);
+        rig.Fake.Runs("llName2Key", a => KeyOf(a[0].ToString()));
+        // Burn holds the thread past the run window, so the runtime puts the script to sleep on the harness's clock.
+        SchedulerScript s = rig.H.AddAndStart("ossl.Burn(60)\nlocal k = ll.Name2Key('Dee')\nossl.Mark('k', tostring(k))");
+
+        Assert.True(rig.PumpUntil(() => Marks(rig, s).Contains("k:" + KeyOf("Dee"))), Diag(rig));
     }
 
     // ---- a slow call stalls only its own script ----
