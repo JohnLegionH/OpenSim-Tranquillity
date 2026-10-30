@@ -58,9 +58,16 @@ public class DelayAndOverrunTests
 
     // ---- the overrun question ----
 
-    /// <summary>A run window that takes about a millisecond of wall time and uses this much CPU, reporting this much delay.</summary>
+    /// <summary>
+    /// A run window that takes about <see cref="WindowMs"/> of wall time. The CPU time a test gives is for a window of one
+    /// millisecond and is scaled to the window's length, so the share of CPU in the wall time is the one the test names. The
+    /// windows are long so that a few milliseconds of jitter on the worker (a collection pause, another process on the processor)
+    /// cannot move that share across the runtime's threshold of one half.
+    /// </summary>
     private sealed class Windows
     {
+        private const int WindowMs = 10;
+
         public readonly ConcurrentQueue<(double Cpu, float Sleep)> Queue = new();
 
         /// <summary>The window (counting from 0) in which the worker is stalled, and for how long: a collection pause, or another process taking the processor. The CPU time the window reports does not include it.</summary>
@@ -72,9 +79,9 @@ public class DelayAndOverrunTests
         {
             if (!Queue.TryDequeue(out var w)) return null;
             int stallMs = m_windows++ == StallAtWindow ? StallMs : 0;
-            long end = Stopwatch.GetTimestamp() + Stopwatch.Frequency / 1000 + Stopwatch.Frequency / 1000 * stallMs;
+            long end = Stopwatch.GetTimestamp() + Stopwatch.Frequency / 1000 * (WindowMs + stallMs);
             while (Stopwatch.GetTimestamp() < end) { }
-            return new StepResult(StepStatus.Ok, 0, w.Sleep, FaultKind.None, w.Cpu);
+            return new StepResult(StepStatus.Ok, 0, w.Sleep, FaultKind.None, w.Cpu * WindowMs);
         }
 
         public void Add(int count, double cpu) { for (int i = 0; i < count; i++) Queue.Enqueue((cpu, 0f)); }

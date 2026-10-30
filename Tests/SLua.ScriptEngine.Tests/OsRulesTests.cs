@@ -34,7 +34,7 @@ public class OsGateTests
     private static string Call(EngineApiRig rig, string expression)
     {
         SchedulerScript s = rig.H.AddAndStart("local ok, r = pcall(function() return " + expression + " end)\nossl.Mark('r', tostring(ok) .. '|' .. tostring(r))");
-        Assert.True(SchedulerHarness.WaitFor(() => { rig.H.Pump(); return rig.H.MarksOf(s).Any(m => m.StartsWith("r:")); }, -1),
+        Assert.True(rig.H.PumpAdvancing(() => rig.H.MarksOf(s).Any(m => m.StartsWith("r:")), -1),
             "the script said nothing; faulted: [" + string.Join("; ", rig.H.FaultedScripts.Select(f => f.FaultMessage)) + "], reported: [" + string.Join("; ", rig.H.ReportedErrors) + "]");
         return rig.H.MarksOf(s).Single(m => m.StartsWith("r:")).Substring(2);
     }

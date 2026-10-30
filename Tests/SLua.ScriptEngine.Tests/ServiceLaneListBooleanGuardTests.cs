@@ -72,6 +72,9 @@ internal static class ServiceLaneGuard
     /// <summary>The names of the functions that run on the service lane and have a list rule.</summary>
     public static string[] LaneFunctionsWithAListRule(IEnumerable<BoundFunction> functions, IReadOnlyDictionary<string, string> listRules)
     {
-        return new string[0];
+        return functions
+            .Where(f => f.Class is FunctionClass.Async or FunctionClass.Service && listRules.ContainsKey(f.ApiName))
+            .Select(f => f.ApiName)
+            .ToArray();
     }
 }
