@@ -77,7 +77,12 @@ public sealed class RegionConsoleRunnerService : BackgroundService
             {
                 try
                 {
-                    MainConsole.Instance?.Prompt();
+                    ICommandConsole console = MainConsole.Instance;
+                    console?.Prompt();
+
+                    // The input has ended: the console has said so once; reading it again would only repeat the failure.
+                    if (console?.InputClosed == true)
+                        break;
                 }
                 catch (Exception) when (shutdownToken.IsCancellationRequested)
                 {
