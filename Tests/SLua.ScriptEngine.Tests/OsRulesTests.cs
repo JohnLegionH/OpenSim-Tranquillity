@@ -125,7 +125,7 @@ public class OsGateTests
         SchedulerScript s;
         try { s = rig.H.AddAndStart("default { state_entry() { osGetSimulatorVersion(); } }", lsl: true); }
         catch (Bindings.SluaException e) { Assert.Fail("the script did not compile: " + e.Message); return; }
-        Assert.True(SchedulerHarness.WaitFor(() => { rig.H.Pump(); return !rig.H.FaultedScripts.IsEmpty; }, -1), "the script did not fault");
+        Assert.True(rig.H.PumpAdvancing(() => !rig.H.FaultedScripts.IsEmpty, -1), "the script did not fault");
         SchedulerScript faulted = Assert.Single(rig.H.FaultedScripts);
         Assert.Contains(DeniedByLevel, faulted.FaultMessage);
     }
@@ -300,7 +300,7 @@ public class OsRulesTests
     {
         using var rig = new BindingRig();
         SchedulerScript s = rig.H.AddAndStart("ossl.StringSubString('abcdef', 1)\nll.GetSubString('abcdef', 1, 2)");
-        Assert.True(SchedulerHarness.WaitFor(() => { rig.H.Pump(); return rig.CallsOf("llGetSubString") > 0; }, -1), "the script made no call");
+        Assert.True(rig.H.PumpAdvancing(() => rig.CallsOf("llGetSubString") > 0, -1), "the script made no call");
 
         // both count from 1 for an SLua script (OsPositionTests holds the rest of the os, iw and bot positions)
         Assert.Equal(0, rig.Fake.Calls.Single(c => c.Name == "osStringSubString").Args[1]);
