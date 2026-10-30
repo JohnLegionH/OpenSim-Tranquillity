@@ -62,10 +62,10 @@ public class PositionAndBooleanTests
         using var rig = new BindingRig();
         rig.Fake.Returns("llOverMyLand", 1);
         SchedulerScript s1 = rig.H.AddAndStart("local r = ll.OverMyLand('" + AgentKey + "') ossl.Mark('t', type(r) .. ':' .. tostring(r))");
-        rig.H.Pump();
+        Assert.True(rig.PumpUntil(() => rig.H.MarksOf(s1).Length == 1), "the first script made no mark");
         rig.Fake.Returns("llOverMyLand", 0);
         SchedulerScript s0 = rig.H.AddAndStart("local r = ll.OverMyLand('" + AgentKey + "') ossl.Mark('t', type(r) .. ':' .. tostring(r))");
-        rig.H.Pump();
+        Assert.True(rig.PumpUntil(() => rig.H.MarksOf(s0).Length == 1), "the second script made no mark");
 
         Assert.Equal(new[] { "t:boolean:true" }, rig.H.MarksOf(s1));
         Assert.Equal(new[] { "t:boolean:false" }, rig.H.MarksOf(s0));
@@ -78,7 +78,7 @@ public class PositionAndBooleanTests
         rig.Fake.Returns("llStringLength", 1);
         rig.Fake.Returns("llGetListLength", 1);
         SchedulerScript s = rig.H.AddAndStart("local r = ll.StringLength('a') ossl.Mark('t', type(r) .. ':' .. tostring(r))");
-        rig.H.Pump();
+        Assert.True(rig.PumpUntil(() => rig.H.MarksOf(s).Length == 1), "the script made no mark");
 
         Assert.Equal(new[] { "t:number:1" }, rig.H.MarksOf(s));
     }
@@ -90,9 +90,9 @@ public class PositionAndBooleanTests
         rig.Fake.Returns("llOverMyLand", 1);
         rig.Fake.Returns("llStringLength", 0);
         SchedulerScript compat = rig.H.AddAndStart("local r = llcompat.OverMyLand('" + AgentKey + "') ossl.Mark('t', type(r) .. ':' .. tostring(r))");
-        rig.H.Pump();
+        Assert.True(rig.PumpUntil(() => rig.H.MarksOf(compat).Length == 1), "the llcompat script made no mark");
         rig.H.AddAndStart("default { state_entry() { integer r = llOverMyLand(\"" + AgentKey + "\"); llStringLength((string)r); } }", lsl: true);
-        rig.H.Pump();
+        Assert.True(rig.PumpUntil(() => rig.CallsOf("llStringLength") == 1), "the LSL script did not call llStringLength");
 
         Assert.Equal(new[] { "t:number:1" }, rig.H.MarksOf(compat));
         Assert.Contains(rig.Fake.Calls, c => c.Name == "llStringLength" && (string)c.Args[0] == "1");
@@ -116,7 +116,7 @@ public class PositionAndBooleanTests
     {
         using var rig = new BindingRig();
         SchedulerScript s = rig.H.AddAndStart("ll.DetectedKey(1) ll.DetectedName(3) ll.DetectedType(2)");
-        rig.H.Pump();
+        Assert.True(rig.PumpUntil(() => rig.Fake.Calls.Length >= 3), "the calls were not all made");
 
         Assert.Equal(new[] { "llDetectedKey(0)", "llDetectedName(2)", "llDetectedType(1)" }, rig.Fake.Calls.Select(c => c.Name + "(" + c.Args[0] + ")").ToArray());
         Assert.Empty(rig.H.FaultedScripts);
@@ -139,7 +139,7 @@ public class PositionAndBooleanTests
         using var rig = new BindingRig();
         SchedulerScript s = rig.H.AddAndStart(
             "local a = pcall(function() ll.DetectedKey(0) end) local b = pcall(function() ll.ListFindListNext({'a'}, {'a'}, 0) end) ossl.Mark('r', tostring(a) .. tostring(b))");
-        rig.H.Pump();
+        Assert.True(rig.PumpUntil(() => rig.H.MarksOf(s).Length == 1), "the script made no mark");
 
         Assert.Equal(new[] { "r:falsefalse" }, rig.H.MarksOf(s));
         Assert.Empty(rig.Fake.Calls);
@@ -150,7 +150,7 @@ public class PositionAndBooleanTests
     {
         using var rig = new BindingRig();
         rig.H.AddAndStart("ll.MessageLinked(1, 2, 'x', '') ll.SetTexture('t', 3)");
-        rig.H.Pump();
+        Assert.True(rig.PumpUntil(() => rig.Fake.Calls.Length >= 2), "the calls were not both made");
 
         Assert.Equal(new[] { "llMessageLinked(1|2|x|)", "llSetTexture(t|3)" },
             rig.Fake.Calls.Select(c => c.Name + "(" + string.Join("|", c.Args) + ")").ToArray());

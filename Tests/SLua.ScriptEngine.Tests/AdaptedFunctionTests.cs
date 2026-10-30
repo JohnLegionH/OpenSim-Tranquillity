@@ -67,13 +67,12 @@ public class AdaptedFunctionTests
         public string[] Run(string source, bool lsl = false, int expectedMarks = 1)
         {
             SchedulerScript s = H.AddAndStart(source, lsl);
-            SchedulerHarness.WaitFor(() => { H.Pump(); return H.MarksOf(s).Length >= expectedMarks; });
+            PumpUntil(() => H.MarksOf(s).Length >= expectedMarks);
             return H.MarksOf(s);
         }
 
-        /// <summary>Pumps the scheduler until the condition holds or the cap passes.</summary>
-        public bool PumpUntil(Func<bool> condition) =>
-            SchedulerHarness.WaitFor(() => { H.Pump(); return condition(); });
+        /// <summary>Pumps the scheduler until the condition holds or the cap passes, moving the manual clock on so a punished script wakes.</summary>
+        public bool PumpUntil(Func<bool> condition) => H.PumpAdvancing(condition);
 
         public string[] Calls() =>
             Fake.Calls.Select(c => c.Name + "(" + string.Join("|", c.Args.Select(a => a is LSLList l ? "[" + string.Join(",", l.Data) + "]" : Convert.ToString(a))) + ")").ToArray();
@@ -134,7 +133,7 @@ public class AdaptedFunctionTests
         rig.Fake.Runs("llRequestUsername", a => { SyscallContext.Current.SetResult(KeyOf("lsl-query"), 0); return null; });
 
         rig.Run("default { state_entry() { key k = llRequestUsername(\"" + AgentKey + "\"); llStringLength((string)k); } }", lsl: true, expectedMarks: 0);
-        SchedulerHarness.WaitFor(() => { rig.H.Pump(); return rig.Fake.Calls.Any(c => c.Name == "llStringLength"); });
+        rig.PumpUntil(() => rig.Fake.Calls.Any(c => c.Name == "llStringLength"));
 
         Assert.Equal(new[] { "llRequestUsername(" + AgentKey + ")", "llStringLength(" + KeyOf("lsl-query") + ")" }, rig.Calls());
     }

@@ -39,9 +39,8 @@ internal sealed class BindingRig : IDisposable
     /// <summary>How many times the fake saw this function called.</summary>
     public int CallsOf(string apiName) => Fake.Calls.Count(c => c.Name == apiName);
 
-    /// <summary>Pumps the scheduler until the condition holds or the cap passes.</summary>
-    public bool PumpUntil(Func<bool> condition) =>
-        SchedulerHarness.WaitFor(() => { H.Pump(); return condition(); });
+    /// <summary>Pumps the scheduler until the condition holds or the cap passes, moving the manual clock on so a punished script wakes.</summary>
+    public bool PumpUntil(Func<bool> condition) => H.PumpAdvancing(condition);
 
     public void Dispose() => H.Dispose();
 }

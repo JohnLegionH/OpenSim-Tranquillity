@@ -54,15 +54,14 @@ public class OsPositionTests
         public string[] Run(string source, bool lsl = false, int expectedMarks = 1)
         {
             SchedulerScript s = H.AddAndStart(source, lsl);
-            SchedulerHarness.WaitFor(() => { H.Pump(); H.Advance(0.5); return H.MarksOf(s).Length >= expectedMarks; }, 10000); // a delayed call sleeps on the harness's clock
+            PumpUntil(() => H.MarksOf(s).Length >= expectedMarks); // a delayed call sleeps on the harness's clock
             Assert.True(H.FaultedScripts.IsEmpty, "the script faulted: " + string.Join("; ", H.FaultedScripts.Select(f => f.FaultMessage)));
             Assert.True(H.ReportedErrors.IsEmpty, "the script reported: " + string.Join("; ", H.ReportedErrors));
             return H.MarksOf(s);
         }
 
-        /// <summary>Pumps the scheduler until the condition holds or the cap passes.</summary>
-        public bool PumpUntil(Func<bool> condition, int timeoutMs = 10000) =>
-            SchedulerHarness.WaitFor(() => { H.Pump(); return condition(); }, timeoutMs);
+        /// <summary>Pumps the scheduler until the condition holds or the cap passes, moving the manual clock on so a delayed or punished script wakes.</summary>
+        public bool PumpUntil(Func<bool> condition, int timeoutMs = 10000) => H.PumpAdvancing(condition, timeoutMs);
 
         public string[] Calls() =>
             Fake.Calls.Select(c => c.Name + "(" + string.Join("|", c.Args.Select(a => a is LSLList l ? "[" + string.Join(",", l.Data) + "]" : Convert.ToString(a))) + ")").Where(c => !c.StartsWith("NeedsService")).ToArray();
@@ -261,7 +260,7 @@ public class OsPositionTests
         rig.Run(
             "default { state_entry() { string s = osStringSubString(\"hello\", 0, 3); integer i = osStringIndexOf(\"hello\", \"l\", 0, 5, 0); string e = osListAsString([\"a\", \"b\"], 0); llOwnerSay(s + (string)i + e); } }",
             lsl: true, expectedMarks: 0);
-        SchedulerHarness.WaitFor(() => { rig.H.Pump(); return Calls(rig).Length >= 4; }, 10000);
+        rig.PumpUntil(() => Calls(rig).Length >= 4);
 
         Assert.Equal(new[] { "osStringSubString(hello|0|3)", "osStringIndexOf(hello|l|0|5|0)", "osListAsString([a,b]|0)" }, Calls(rig).Where(c => c.StartsWith("os")).ToArray());
         Assert.Contains(rig.Fake.Calls, c => c.Name == "llOwnerSay" && (string)c.Args[0] == "hel2a");

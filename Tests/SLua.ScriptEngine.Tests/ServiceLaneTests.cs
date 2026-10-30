@@ -56,9 +56,11 @@ public class ServiceLaneTests
             Lane = new ServiceLane(H.Scheduler, deferral, threads, timeoutMs, idleMs);
         }
 
-        /// <summary>Pumps the scheduler until the condition holds; the lane's answers are taken in by the pump.</summary>
-        public bool PumpUntil(Func<bool> condition, int timeoutMs = -1) =>
-            SchedulerHarness.WaitFor(() => { H.Pump(); return condition(); }, timeoutMs);
+        /// <summary>
+        /// Pumps the scheduler until the condition holds; the lane's answers are taken in by the pump. The manual clock moves on
+        /// too, so a script the runtime punished for overrunning wakes (the lane's own deadlines run on real time).
+        /// </summary>
+        public bool PumpUntil(Func<bool> condition, int timeoutMs = -1) => H.PumpAdvancing(condition, timeoutMs);
 
         public int CallsOf(string apiName) => Fake.Calls.Count(c => c.Name == apiName);
 
