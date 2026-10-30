@@ -343,6 +343,36 @@ public sealed class LocalShutdownServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ABodyJustOverTheLimit_IsRefused_EvenWithTheRightSecret()
+    {
+        int port = FreePort();
+        var server = new FakeServerBase(Config("true", port, WriteSecret(Secret)));
+        await StartAsync(server);
+
+        // 9000 bytes: over the 8192 byte limit, under the size of the read buffer
+        string body = ShutdownBody(Secret) + new string(' ', 9000 - ShutdownBody(Secret).Length);
+        string reply = await PostAsync(port, body);
+
+        Assert.False(Accepted(reply), reply);
+        await NothingHappens(server);
+    }
+
+    [Fact]
+    public async Task TwoAcceptedRequests_ShutTheServerBaseDownOnce()
+    {
+        int port = FreePort();
+        var server = new FakeServerBase(Config("true", port, WriteSecret(Secret)));
+        await StartAsync(server);
+
+        Assert.True(Accepted(await PostAsync(port, ShutdownBody(Secret))));
+        Assert.True(Accepted(await PostAsync(port, ShutdownBody(Secret))));
+        await WaitForShutdown(server);
+        await Task.Delay(1500);
+
+        Assert.Equal(1, server.ShutdownCalls);
+    }
+
+    [Fact]
     public async Task MalformedXml_IsRefused_AndTheRouteStillAnswersAfterwards()
     {
         int port = FreePort();

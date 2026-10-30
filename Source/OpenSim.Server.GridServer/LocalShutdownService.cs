@@ -5,6 +5,8 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+#nullable enable
+
 using System.Collections;
 using System.Net;
 using System.Net.Sockets;
