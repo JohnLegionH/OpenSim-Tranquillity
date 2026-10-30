@@ -58,17 +58,30 @@ public class DelayAndOverrunTests
 
     // ---- the overrun question ----
 
-    /// <summary>A run window that takes about a millisecond of wall time and uses this much CPU, reporting this much delay.</summary>
+    /// <summary>
+    /// A run window that takes about <see cref="WindowMs"/> of wall time. The CPU time a test gives is for a window of one
+    /// millisecond and is scaled to the window's length, so the share of CPU in the wall time is the one the test names. The
+    /// windows are long so that a few milliseconds of jitter on the worker (a collection pause, another process on the processor)
+    /// cannot move that share across the runtime's threshold of one half.
+    /// </summary>
     private sealed class Windows
     {
+        private const int WindowMs = 10;
+
         public readonly ConcurrentQueue<(double Cpu, float Sleep)> Queue = new();
+
+        /// <summary>The window (counting from 0) in which the worker is stalled, and for how long: a collection pause, or another process taking the processor. The CPU time the window reports does not include it.</summary>
+        public int StallAtWindow = -1;
+        public int StallMs;
+        private int m_windows;
 
         public StepResult? Next(SchedulerScript s)
         {
             if (!Queue.TryDequeue(out var w)) return null;
-            long end = Stopwatch.GetTimestamp() + Stopwatch.Frequency / 1000;
+            int stallMs = m_windows++ == StallAtWindow ? StallMs : 0;
+            long end = Stopwatch.GetTimestamp() + Stopwatch.Frequency / 1000 * (WindowMs + stallMs);
             while (Stopwatch.GetTimestamp() < end) { }
-            return new StepResult(StepStatus.Ok, 0, w.Sleep, FaultKind.None, w.Cpu);
+            return new StepResult(StepStatus.Ok, 0, w.Sleep, FaultKind.None, w.Cpu * WindowMs);
         }
 
         public void Add(int count, double cpu) { for (int i = 0; i < count; i++) Queue.Enqueue((cpu, 0f)); }
@@ -124,6 +137,22 @@ public class DelayAndOverrunTests
         using (h)
         {
             Assert.Equal(1, s.Punishments);
+            Assert.Equal(ScriptRunState.Sleeping, s.State);
+        }
+    }
+
+    [RequiresNativeFact]
+    public void AStallInOneWindowDoesNotMakeABusyScriptsOverrunLookLikeTheSystemsDoing()
+    {
+        // Every window shows the script's own CPU time; the worker is stalled for 40 ms once, which the CPU time cannot show.
+        var w = new Windows { StallAtWindow = 5, StallMs = 40 };
+        w.Add(32, 0.001);
+        w.Queue.Enqueue((0.001, 0.5f));
+        SchedulerScript s = RunWindows(w, 33, out SchedulerHarness h);
+        using (h)
+        {
+            Assert.Equal(1, s.Punishments);
+            Assert.Equal(0, s.WaivedOverruns);
             Assert.Equal(ScriptRunState.Sleeping, s.State);
         }
     }

@@ -34,7 +34,7 @@ public class OsGateTests
     private static string Call(EngineApiRig rig, string expression)
     {
         SchedulerScript s = rig.H.AddAndStart("local ok, r = pcall(function() return " + expression + " end)\nossl.Mark('r', tostring(ok) .. '|' .. tostring(r))");
-        Assert.True(SchedulerHarness.WaitFor(() => { rig.H.Pump(); return rig.H.MarksOf(s).Any(m => m.StartsWith("r:")); }, -1),
+        Assert.True(rig.H.PumpAdvancing(() => rig.H.MarksOf(s).Any(m => m.StartsWith("r:")), -1),
             "the script said nothing; faulted: [" + string.Join("; ", rig.H.FaultedScripts.Select(f => f.FaultMessage)) + "], reported: [" + string.Join("; ", rig.H.ReportedErrors) + "]");
         return rig.H.MarksOf(s).Single(m => m.StartsWith("r:")).Substring(2);
     }
@@ -54,6 +54,17 @@ public class OsGateTests
         Assert.StartsWith("false|", denied);
         Assert.Contains(DeniedByLevel, denied);
         Assert.StartsWith("true|", Call(rig, "ossl.GetGridName()"));
+    }
+
+    [RequiresNativeFact]
+    public void ACallThatOverrunsTheScriptsFirstWindowIsStillAnsweredWithTheGatesText()
+    {
+        // The first os call in a process can overrun the script's run window (it compiles code); the runtime then punishes the
+        // script with a delay on the manual clock, which a wait that only pumps never ends. Burn stands in for that overrun.
+        using var rig = new EngineApiRig();
+        string denied = Call(rig, "(function() ossl.Burn(60) return ossl.GetSimulatorVersion() end)()");
+        Assert.StartsWith("false|", denied);
+        Assert.Contains(DeniedByLevel, denied);
     }
 
     [RequiresNativeFact]
@@ -114,7 +125,7 @@ public class OsGateTests
         SchedulerScript s;
         try { s = rig.H.AddAndStart("default { state_entry() { osGetSimulatorVersion(); } }", lsl: true); }
         catch (Bindings.SluaException e) { Assert.Fail("the script did not compile: " + e.Message); return; }
-        Assert.True(SchedulerHarness.WaitFor(() => { rig.H.Pump(); return !rig.H.FaultedScripts.IsEmpty; }, -1), "the script did not fault");
+        Assert.True(rig.H.PumpAdvancing(() => !rig.H.FaultedScripts.IsEmpty, -1), "the script did not fault");
         SchedulerScript faulted = Assert.Single(rig.H.FaultedScripts);
         Assert.Contains(DeniedByLevel, faulted.FaultMessage);
     }
@@ -181,7 +192,7 @@ public class OsRulesTests
             Lane = new ServiceLane(H.Scheduler, "auto", 4, 35000, 30000);
         }
 
-        public bool PumpUntil(Func<bool> condition) => SchedulerHarness.WaitFor(() => { H.Pump(); return condition(); }, -1);
+        public bool PumpUntil(Func<bool> condition) => H.PumpAdvancing(condition, -1);
 
         public void Dispose()
         {
@@ -233,11 +244,36 @@ public class OsRulesTests
             };
         });
         SchedulerScript script = h.AddAndStart("local ok, e = pcall(ossl.SHA256, 'abc')\nossl.Mark('r', tostring(ok) .. '|' .. tostring(e))\nossl.Mark('g', tostring(pcall(ossl.GetGridName)))");
-        Assert.True(SchedulerHarness.WaitFor(() => { h.Pump(); return h.MarksOf(script).Any(m => m.StartsWith("g:")); }, -1), "the script said nothing");
+        Assert.True(WaitForMark(h, script, "g:"), "the script said nothing");
         string[] marks = h.MarksOf(script);
         Assert.Contains(marks, m => m.StartsWith("r:false|") && m.Contains("osSHA256 is not available on this engine yet"));
         Assert.Contains("g:true", marks);
         Assert.DoesNotContain(fake.Calls, c => c.Name == "osSHA256");
+    }
+
+    /// <summary>Pumps until the script has made a mark that starts with <paramref name="prefix"/>, moving the manual clock on so a script punished for an overrun wakes.</summary>
+    private static bool WaitForMark(SchedulerHarness h, SchedulerScript script, string prefix) =>
+        h.PumpAdvancing(() => h.MarksOf(script).Any(m => m.StartsWith(prefix)), -1);
+
+    [RequiresNativeFact]
+    public void AnOverrunBeforeAnUnavailableFunctionIsCalledStillGetsTheNotAvailableAnswer()
+    {
+        // A script that overruns its first window is punished with a delay on the manual clock; the answer must still come.
+        var (api, fake) = FakeLslApi.Create();
+        using var h = new SchedulerHarness(configure: o =>
+        {
+            Func<Bindings.Vm> inner = o.VmFactory;
+            o.VmFactory = () =>
+            {
+                Bindings.Vm vm = inner();
+                OsBindings.Register(vm, s => new ScriptContext(s, api), unavailable: true, refuse: new[] { "osSHA256" });
+                return vm;
+            };
+        });
+        SchedulerScript script = h.AddAndStart("ossl.Burn(60)\nlocal ok, e = pcall(ossl.SHA256, 'abc')\nossl.Mark('r', tostring(ok) .. '|' .. tostring(e))");
+        Assert.True(WaitForMark(h, script, "r:"), "the script said nothing; punishments: " + script.Punishments);
+        Assert.Contains(h.MarksOf(script), m => m.StartsWith("r:false|") && m.Contains("osSHA256 is not available on this engine yet"));
+        Assert.Equal(1, script.Punishments);
     }
 
     [Fact]
@@ -264,7 +300,7 @@ public class OsRulesTests
     {
         using var rig = new BindingRig();
         SchedulerScript s = rig.H.AddAndStart("ossl.StringSubString('abcdef', 1)\nll.GetSubString('abcdef', 1, 2)");
-        Assert.True(SchedulerHarness.WaitFor(() => { rig.H.Pump(); return rig.CallsOf("llGetSubString") > 0; }, -1), "the script made no call");
+        Assert.True(rig.H.PumpAdvancing(() => rig.CallsOf("llGetSubString") > 0, -1), "the script made no call");
 
         // both count from 1 for an SLua script (OsPositionTests holds the rest of the os, iw and bot positions)
         Assert.Equal(0, rig.Fake.Calls.Single(c => c.Name == "osStringSubString").Args[1]);

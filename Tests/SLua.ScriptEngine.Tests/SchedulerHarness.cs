@@ -177,5 +177,25 @@ internal sealed class SchedulerHarness : IDisposable
         return condition();
     }
 
+    /// <summary>
+    /// Pumps until the condition holds or the cap passes, and moves the manual clock on by <paramref name="stepSeconds"/> on each
+    /// try, so a script the runtime put to sleep wakes: a call that overruns its run window is punished with a delay on this
+    /// clock, and the clock does not move by itself.
+    /// </summary>
+    public bool PumpAdvancing(Func<bool> condition, int timeoutMs = -1, double stepSeconds = 0.5)
+    {
+        if (timeoutMs < 0) timeoutMs = DefaultWaitMs;
+        var end = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        while (DateTime.UtcNow < end)
+        {
+            Pump();
+            if (condition()) return true;
+            Advance(stepSeconds);
+            if (condition()) return true;
+            Thread.Sleep(10);
+        }
+        return condition();
+    }
+
     public void Dispose() => Scheduler.Dispose();
 }
