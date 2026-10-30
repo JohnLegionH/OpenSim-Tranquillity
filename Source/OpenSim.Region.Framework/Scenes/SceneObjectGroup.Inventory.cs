@@ -71,7 +71,7 @@ public partial class SceneObjectGroup : EntityBase
         }
 
         // Don't start scripts if they're turned off in the region!
-        if (!m_scene.RegionInfo.RegionSettings.DisableScripts)
+        if (m_scene.ScriptStartsAllowed)
         {
             SceneObjectPart[] parts = m_parts.GetArray();
             for (int i = 0; i < parts.Length; i++)
