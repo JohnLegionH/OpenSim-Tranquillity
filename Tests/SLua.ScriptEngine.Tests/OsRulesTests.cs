@@ -192,7 +192,7 @@ public class OsRulesTests
             Lane = new ServiceLane(H.Scheduler, "auto", 4, 35000, 30000);
         }
 
-        public bool PumpUntil(Func<bool> condition) => SchedulerHarness.WaitFor(() => { H.Pump(); return condition(); }, -1);
+        public bool PumpUntil(Func<bool> condition) => H.PumpAdvancing(condition, -1);
 
         public void Dispose()
         {
@@ -251,9 +251,9 @@ public class OsRulesTests
         Assert.DoesNotContain(fake.Calls, c => c.Name == "osSHA256");
     }
 
-    /// <summary>Pumps until the script has made a mark that starts with <paramref name="prefix"/>.</summary>
+    /// <summary>Pumps until the script has made a mark that starts with <paramref name="prefix"/>, moving the manual clock on so a script punished for an overrun wakes.</summary>
     private static bool WaitForMark(SchedulerHarness h, SchedulerScript script, string prefix) =>
-        SchedulerHarness.WaitFor(() => { h.Pump(); return h.MarksOf(script).Any(m => m.StartsWith(prefix)); }, -1);
+        h.PumpAdvancing(() => h.MarksOf(script).Any(m => m.StartsWith(prefix)), -1);
 
     [RequiresNativeFact]
     public void AnOverrunBeforeAnUnavailableFunctionIsCalledStillGetsTheNotAvailableAnswer()
