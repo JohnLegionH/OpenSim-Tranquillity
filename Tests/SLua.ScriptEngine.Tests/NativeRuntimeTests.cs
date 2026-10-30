@@ -202,6 +202,11 @@ public class NativeRuntimeTests
     [Fact]
     public void WithAUsableLibraryTheEngineRegisters()
     {
+        // The region's script loader calls into the real library, which the fake options above never load: load it here,
+        // so the test does not depend on another test having done so first.
+        RuntimeLoadResult load = NativeRuntime.Load(new NativeRuntimeOptions());
+        Assert.True(load.Ok, load.Message);
+
         var log = new RecordingLog();
         Scene scene = RegionWithPhloxAndOurEngine(Options(), log, out _);
         Assert.Equal(2, scene.RequestModuleInterfaces<IScriptModule>().Length);
