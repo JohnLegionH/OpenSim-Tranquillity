@@ -203,6 +203,24 @@
     ;ConsolePass = secret
     ;ConsolePort = 0
 
+[LocalShutdown]
+    ;; A shutdown-only route, so the grid server can be stopped without anyone at its console
+    ;; (for example by a deploy script). It is OFF unless Enabled = true.
+    ;;
+    ;; When on, it opens its own listener on the loopback address (127.0.0.1) only, on Port,
+    ;; separate from the service ports above. It answers one XML-RPC method, admin_shutdown,
+    ;; and nothing else, and only for a request that comes from the same machine and carries
+    ;; the secret. The action is the one the console "shutdown" command takes: services stop
+    ;; in order and the process exits.
+    ;;
+    ;; The secret is not written here. SecretFile names a file that holds it on its first line
+    ;; (at least 16 characters); keep that file outside the installation folder and readable only
+    ;; by the account that runs the grid server. If Enabled is true but Port or SecretFile is
+    ;; missing or unusable, the route does not start and the log says why.
+    ; Enabled = false
+    ; Port = 8010
+    ; SecretFile = /path/to/grid-shutdown.secret
+
 [AccessControl]
     ;# {AllowedClients} {} {Bar (|) separated list of allowed clients} {}
     ;; Bar (|) separated list of viewers which may gain access to the regions.

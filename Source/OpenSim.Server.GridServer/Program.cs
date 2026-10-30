@@ -205,6 +205,9 @@ class Program
             services.AddSingleton<GridService>();
             services.AddHostedService(sp => sp.GetRequiredService<GridService>());
             services.AddHostedService<GridConsoleRunnerService>();
+
+            // Shutdown-only loopback route; does nothing unless [LocalShutdown] Enabled = true.
+            services.AddHostedService<LocalShutdownService>();
         });
 
         // ASP.NET / Kestrel is disabled: GridServer has no controllers and the legacy
