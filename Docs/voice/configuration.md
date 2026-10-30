@@ -182,7 +182,7 @@ point the region server, and Robust if it talks to Janus, at the https URLs:
 ```ini
 [JanusWebRtcVoice]
     JanusGatewayURI = https://mixer.example.org:8089/voice
-    JanusGatewayAdminURI = https://mixer.example.org:8090/admin
+    JanusGatewayAdminURI = https://mixer.example.org:7889/admin
 ```
 
 The certificate is checked like any other HTTPS connection: it must chain to a root the operating system trusts and

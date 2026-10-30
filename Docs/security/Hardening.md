@@ -14,7 +14,7 @@ For the active region control-plane checks, configure trusted peer addresses in 
 
 ```ini
 [Network]
-ControlPlaneTrustedHosts = 10.20.0.10, 10.20.0.21, 10.20.0.22
+ControlPlaneTrustedHosts = 192.0.2.10, 192.0.2.21, 192.0.2.22
 ```
 
 The region control-plane endpoints accept trusted hosts from `[Network]` or `[Security]` and may use hostnames, URLs, and the local `[Network] hostname`. The service checks the actual TCP peer address and does not use `X-Forwarded-For`. `/assets` and `/xinventory` are currently excluded from control-plane checks.

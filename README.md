@@ -90,7 +90,7 @@ By default your sim will be available for login on port 9000.  You can login by
 adding -loginuri http://127.0.0.1:9000 to the command that starts Second Life
 (e.g. in the Target: box of the client icon properties on Windows).  You can
 also login using the network IP address of the machine running Tranquillity (e.g.
-http://192.168.1.2:9000)
+http://<server-ip>:9000)
 
 To login, use the avatar details that you gave for your estate ownership or the
 one you set up using the "create user" command.
