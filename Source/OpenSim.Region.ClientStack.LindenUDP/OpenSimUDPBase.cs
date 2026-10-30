@@ -170,6 +170,11 @@ public abstract class OpenSimUDPBase
             if(buf.DataLength < 0)
                 return; // avoid duplicated free that may still happen
 
+            // Senders write into a pooled buffer through raw pointers and assume the standard size, so a buffer of
+            // any other size must never be handed out again. Leave it to the garbage collector.
+            if (buf.Data.Length != UDPPacketBuffer.BUFFER_SIZE)
+                return;
+
             if (m_udpBuffersPoolPtr < 999)
             {
                 buf.RemoteEndPoint = null;
