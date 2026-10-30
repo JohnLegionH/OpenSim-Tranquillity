@@ -59,7 +59,7 @@ internal sealed class EngineRig : IDisposable
     /// <summary>The delay, in seconds, each ossl.PhySleep call asked for.</summary>
     public double[] PhySleeps { get { lock (m_marks) return m_phySleeps.ToArray(); } }
 
-    public EngineRig(Dictionary<string, string> settings = null, Action<SchedulerOptions> tweak = null, double graceMs = 100, NativeCompile compile = null, IPrimEventFlags primFlags = null, bool productionFunctions = false, ISavedStateStore store = null)
+    public EngineRig(Dictionary<string, string> settings = null, Action<SchedulerOptions> tweak = null, double graceMs = 100, NativeCompile compile = null, IPrimEventFlags primFlags = null, bool productionFunctions = false, ISavedStateStore store = null, bool testFunctions = true)
     {
         RealLibrary.Load();
         Engine = new SLuaEngine(Log, (s, l) => true, store,
@@ -73,7 +73,7 @@ internal sealed class EngineRig : IDisposable
                 {
                     // The engine's own VM, with its ll functions, plus the marking functions the tests read back.
                     Func<Vm> production = options.VmFactory;
-                    options.VmFactory = () => { Vm vm = production(); AddTestFunctions(vm); return vm; };
+                    options.VmFactory = () => { Vm vm = production(); if (testFunctions) AddTestFunctions(vm); return vm; };
                 }
                 else
                     options.VmFactory = MakeVm;
