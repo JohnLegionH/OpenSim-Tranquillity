@@ -128,6 +128,11 @@ public partial class Scene : SceneBase
         get { return m_scripts_enabled; }
         set
         {
+            // Set first, so that a script added while the switch is off, or while the scripts are being stopped or
+            // started below, is held back or let through to match. This is the console debug switch: the saved
+            // region setting (RegionSettings.DisableScripts) is not touched.
+            m_scriptsSwitchedOff = !value;
+
             if (m_scripts_enabled != value)
             {
                 // the new value is set first, so a script started from the loops below sees it
@@ -173,6 +178,17 @@ public partial class Scene : SceneBase
     /// <summary>The script items that <see cref="ScriptsEnabled"/> suspended, so that only they are resumed.</summary>
     private readonly HashSet<UUID> m_scriptsSuspendedByDisable = new();
 
+
+    /// <summary>
+    /// True once <see cref="ScriptsEnabled"/> has been set to false and not since set to true.
+    /// </summary>
+    private volatile bool m_scriptsSwitchedOff;
+
+    /// <summary>
+    /// Whether a script that is rezzed or added may be started: not while <see cref="ScriptsEnabled"/> has been
+    /// switched off, and not while the saved region setting disables scripts.
+    /// </summary>
+    public bool ScriptStartsAllowed => !m_scriptsSwitchedOff && !RegionInfo.RegionSettings.DisableScripts;
 
     /// <summary>
     /// Used to prevent simultaneous calls to code that adds and removes agents.
