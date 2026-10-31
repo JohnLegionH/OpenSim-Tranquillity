@@ -1020,6 +1020,7 @@ namespace Phlox.ScriptEngine
                 item.PermsGranter = granter;
                 item.PermsMask = mask;
             }
+            ReportGameControlGrant(item, granter, mask);
             if (experience.IsZero()) ForgetExperienceGrant();
             else
             {
@@ -3013,7 +3014,19 @@ namespace Phlox.ScriptEngine
                 m_host.Inventory.ForceInventoryPersistence();
                 m_host.ParentGroup.HasGroupChanged = true;
                 GrantChanged();
+                ReportGameControlGrant(item, granter, mask);
             }
+        }
+
+        /// <summary>
+        /// Tells the region's game-controller router that this script holds PERMISSION_GAME_CONTROL from the avatar, so
+        /// it finds the script wherever it is (a remote-control script is neither worn nor sat on). The router checks the
+        /// item again before it posts, so a grant that has ended since is not served.
+        /// </summary>
+        private void ReportGameControlGrant(TaskInventoryItem item, UUID granter, int mask)
+        {
+            if ((mask & SlConst.PERMISSION_GAME_CONTROL) != 0 && granter.IsNotZero())
+                World?.EventManager.TriggerScriptPermissionsGranted(m_host.UUID, item.ItemID, granter, mask);
         }
 
         /// <summary>

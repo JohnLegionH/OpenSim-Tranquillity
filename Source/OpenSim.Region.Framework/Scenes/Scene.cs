@@ -940,6 +940,7 @@ public partial class Scene : SceneBase
         m_simulatorVersion = simulatorVersion + " (" + Util.RuntimeInformationStr + ")";
 
         GameControlEnabled = GameControlConfig.IsEnabled(m_config, RegionInfo);
+        m_gameControlRouter = new GameControlRouter(this);
 
         #region Region Config
 
@@ -6445,6 +6446,9 @@ Environment.Exit(1);
     /// region's opt-out when the scene is created (see <see cref="GameControlConfig"/>); off by default.
     /// </summary>
     public bool GameControlEnabled { get; set; }
+
+    // Posts game_control to the scripts that hold PERMISSION_GAME_CONTROL from the sending avatar.
+    private GameControlRouter m_gameControlRouter;
 
     /// <summary>
     /// Takes a viewer's GameControlData message for <paramref name="agentId"/>. Ignored, with no log line, when
