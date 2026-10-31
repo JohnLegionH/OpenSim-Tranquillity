@@ -2632,6 +2632,13 @@ public class EventManager
         }
     }
 
+    // Temporary stub so the tests compile.
+    public delegate void GameControlDataDelegate(UUID agentId, OpenSim.Framework.GameControlSnapshot snapshot);
+    public event GameControlDataDelegate OnGameControlData;
+
+    internal void TriggerGameControlData(UUID agentId, OpenSim.Framework.GameControlSnapshot snapshot)
+    {
+    }
     public void TriggerScriptControlsReleased(UUID agentId, UUID[] scriptItemIds)
     {
         ScriptControlsReleased handlerScriptControlsReleased = OnScriptControlsReleased;

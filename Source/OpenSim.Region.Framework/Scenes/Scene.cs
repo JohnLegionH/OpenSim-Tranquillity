@@ -6437,6 +6437,12 @@ Environment.Exit(1);
         callback(asset);
     }
 
+    // Temporary stub so the tests compile.
+    public bool GameControlEnabled { get; set; }
+
+    public void HandleGameControlData(UUID agentId, OpenMetaverse.Packets.GameControlDataPacket packet)
+    {
+    }
     public string GetExtraSetting(string name)
     {
         if (m_extraSettings is not null && m_extraSettings.TryGetValue(name, out string val))
