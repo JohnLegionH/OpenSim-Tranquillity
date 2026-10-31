@@ -965,6 +965,11 @@ such list.
   script's queue, so a script sees fewer events than the viewer sends; a change of buttons is always its own event.
   `llGetGameControlMode`, `llGetGameControlModeAxes` and `llGetGameControlModeButtons` answer `-1`, an empty list and
   `0` outside a `game_control` event and for any avatar other than the one the event is about.
+  `PERMISSION_GAME_CONTROL` is granted without a dialog to a script in a worn attachment or in an object the avatar
+  sits on. That kind of grant ends when the avatar stands up or detaches the object, and does not survive a region
+  restart (a script asks again); it does survive a region crossing for a seated avatar or a wearer. A grant the
+  avatar answered through the permission dialog stays, across stand-up, detach and a restart, until the script resets
+  or asks again.
 - When an avatar blocks an Experience from its profile while a script that holds no grant from
   that avatar is waiting on `llRequestExperiencePermissions` for it, the simulator raises
   nothing: the request is answered by the avatar's answer to the dialog, or after 5 minutes

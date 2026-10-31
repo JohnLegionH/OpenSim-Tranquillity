@@ -359,4 +359,46 @@ public class GameControlPermissionTests
         Assert.Equal(0, back.GrantedSilentMask);
         Assert.Equal(GameControl, back.GrantedPermsMask);
     }
+
+    [Fact]
+    public void AGameControlGrantCarriedInAnAttachmentComesBackForItsWearerAsAnAutomaticGrant()
+    {
+        using var h = new SchedulerHarness();
+        var wearerId = UUID.Random();
+        Present(h, wearerId);
+        var asset = UUID.Random();
+        var source = UUID.Random();
+        TaskInventoryHelpers.AddScript(h.Scene.AssetService, h.Prim, source, asset, "source", Idle);
+        Assert.True(h.Prim.Inventory.CreateScriptInstance(source, 0, false, Phlox, NewRez));
+        Assert.True(h.PumpUntil(() => h.Said.Contains("entry")), SaidText(h));
+        h.PumpUntilIdle(TimeSpan.FromSeconds(2));
+        var interp = (Interpreter)h.InterpreterFor(source);
+        SerializedRuntimeState st = StateManager.Decode(StateManager.CaptureBlob(interp));
+        st.PermsGranter = wearerId.ToString();
+        st.GrantedPermsMask = GameControl;
+        st.GrantedSilentMask = GameControl;
+        st.PermsOwner = h.Prim.OwnerID.ToString();
+        byte[] blob;
+        using (var ms = new MemoryStream()) { Serializer.Serialize(ms, st); blob = ms.ToArray(); }
+        SavedStateRig.PostRemove(h, h.Prim, source);
+        h.Prim.Inventory.RemoveInventoryItem(source);
+        h.PumpUntilIdle(TimeSpan.FromSeconds(2));
+
+        var copy = SceneHelpers.AddSceneObject(h.Scene, "Example Worn Copy", h.Prim.OwnerID);
+        copy.AttachedAvatar = wearerId; copy.IsAttachment = true; copy.AttachmentPoint = 3;
+        h.Scene.GetScenePresence(wearerId).AddAttachment(copy);
+        var item = UUID.Random();
+        TaskInventoryHelpers.AddScript(h.Scene.AssetService, copy.RootPart, item, asset, "copy", Idle);
+        SavedStateRig.States(h).Carry(item, asset, blob);
+        h.ClearSaid(item);
+        Assert.Equal(1, copy.CreateScriptInstances(0, true, Phlox, NewRez));
+        Assert.True(h.PumpUntil(() => h.InterpreterFor(item) != null), "the rezzed script did not load");
+        h.PumpUntilIdle(TimeSpan.FromSeconds(5));
+        Assert.DoesNotContain("entry", h.Said);   // restored from the carried state, not started fresh
+
+        var back = copy.RootPart.Inventory.GetInventoryItem(item);
+        Assert.Equal(GameControl, back.PermsMask);
+        Assert.Equal(wearerId, back.PermsGranter);
+        Assert.Equal(GameControl, back.SilentPermsMask);
+    }
 }
