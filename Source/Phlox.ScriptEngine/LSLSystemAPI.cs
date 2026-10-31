@@ -929,8 +929,14 @@ namespace Phlox.ScriptEngine
                          && UUID.TryParse(st.PermsGranter, out granter) && UUID.TryParse(st.PermsOwner, out owner)
                          && (string.IsNullOrEmpty(st.PermsExperience) || UUID.TryParse(st.PermsExperience, out experience));
             int mask = st.GrantedPermsMask;
+            int savedSilent = st.GrantedSilentMask;
             bool unverified = st.PermsUnverified;
             ClearSavedGrant(st);
+            // A game-control grant a seat or an attachment gave automatically does not outlive a region restart: the
+            // avatar who sat or wore it is not in the new region, and a script asks again when they are. One the avatar
+            // answered through the dialog does. (A crossing, which is decided as carried state below, re-decides it.)
+            if (!carried && !unverified)
+                mask &= ~(savedSilent & SlConst.PERMISSION_GAME_CONTROL);
             TaskInventoryItem item = GetInventorySelf();
             if (carried && item != null && item.ExperienceID.IsZero()) DropQueuedExperienceGrants(st);
             if (item != null && noted && !experience.IsZero() && experience != item.ExperienceID)
@@ -960,7 +966,7 @@ namespace Phlox.ScriptEngine
                         "experience_permissions_denied", new object[] { granter.ToString(), XP_ERROR_NOT_PERMITTED_LAND }, new DetectParams[0]));
                     return;
                 }
-                SetRestoredGrant(item, granter, mask, experience);
+                SetRestoredGrant(item, granter, mask, experience, savedSilent);
                 return;
             }
             ScenePresence sp = World?.GetScenePresence(granter);
@@ -1009,16 +1015,19 @@ namespace Phlox.ScriptEngine
                     SetRestoredGrant(item, granter, bits, experience);
                 return;
             }
+            // What a silent re-request gives is, by its nature, given without a dialog.
             int silent = mask & GetImplicitPermissions(item, granter);
-            if (silent != 0) SetRestoredGrant(item, granter, silent, UUID.Zero);
+            if (silent != 0) SetRestoredGrant(item, granter, silent, UUID.Zero, silent);
         }
 
-        private void SetRestoredGrant(TaskInventoryItem item, UUID granter, int mask, UUID experience)
+        /// <param name="silent">The bits of <paramref name="mask"/> that were given without a dialog.</param>
+        private void SetRestoredGrant(TaskInventoryItem item, UUID granter, int mask, UUID experience, int silent = 0)
         {
             using (InventoryLock.Write(m_host.TaskInventory))
             {
                 item.PermsGranter = granter;
                 item.PermsMask = mask;
+                item.SilentPermsMask = silent & mask;
             }
             ReportGameControlGrant(item, granter, mask);
             if (experience.IsZero()) ForgetExperienceGrant();
@@ -1029,7 +1038,7 @@ namespace Phlox.ScriptEngine
                 // shortly, off the scheduler thread, and the grant ends then if it cannot run (ExperienceCannotRun).
                 m_ScriptEngine?.ExperienceGrantRestored();
             }
-            NoteGrant(m_thisScript.ScriptState, granter, mask, m_host.OwnerID, experience);
+            NoteGrant(m_thisScript.ScriptState, granter, mask, m_host.OwnerID, experience, silent: silent);
             GrantChanged();
         }
 
@@ -1201,13 +1210,14 @@ namespace Phlox.ScriptEngine
             if (st.ExperienceGranter is string g && st.ExperienceGrant is string e
                 && UUID.TryParse(g, out UUID expGranter) && expGranter == item.PermsGranter)
                 UUID.TryParse(e, out experience);
-            NoteGrant(st, item.PermsGranter, item.PermsMask, objectOwner, experience);
+            NoteGrant(st, item.PermsGranter, item.PermsMask, objectOwner, experience, silent: item.SilentPermsMask);
         }
 
-        private static void NoteGrant(RuntimeState st, UUID granter, int mask, UUID owner, UUID experience, bool unverified = false)
+        private static void NoteGrant(RuntimeState st, UUID granter, int mask, UUID owner, UUID experience, bool unverified = false, int silent = 0)
         {
             st.PermsGranter = granter.ToString();
             st.GrantedPermsMask = mask;
+            st.GrantedSilentMask = silent & mask;
             st.PermsOwner = owner.ToString();
             st.PermsExperience = experience.IsZero() ? null : experience.ToString();
             st.PermsUnverified = unverified;
@@ -1217,6 +1227,7 @@ namespace Phlox.ScriptEngine
         {
             st.PermsGranter = null;
             st.GrantedPermsMask = 0;
+            st.GrantedSilentMask = 0;
             st.PermsOwner = null;
             st.PermsExperience = null;
             st.PermsUnverified = false;
@@ -2997,7 +3008,9 @@ namespace Phlox.ScriptEngine
             return GetInventorySelf()?.ItemID ?? UUID.Zero;
         }
 
-        private void PermsChange(TaskInventoryItem item, UUID granter, int mask)
+        /// <param name="silent">The bits of <paramref name="mask"/> given without a dialog (a seat's or an attachment's
+        /// automatic grants); the item notes them, so standing up or detaching ends only those.</param>
+        private void PermsChange(TaskInventoryItem item, UUID granter, int mask, int silent = 0)
         {
             int silentEstateManagement = (mask & PERMISSION_SILENT_ESTATE_MANAGEMENT) != 0 ? 1 : 0;
             if (m_thisScript?.ScriptState?.MiscAttributes != null)
@@ -3011,6 +3024,7 @@ namespace Phlox.ScriptEngine
                     ForgetExperienceGrant();
                 item.PermsGranter = granter;
                 item.PermsMask = mask;
+                item.SilentPermsMask = silent & mask;
                 m_host.Inventory.ForceInventoryPersistence();
                 m_host.ParentGroup.HasGroupChanged = true;
                 GrantChanged();
@@ -3083,7 +3097,8 @@ namespace Phlox.ScriptEngine
                 item.PermsGranter = agentID;
                 item.PermsMask = perm;
             }
-            PermsChange(item, item.PermsGranter, item.PermsMask);
+            // Every bit of an implicit request was given without a dialog.
+            PermsChange(item, item.PermsGranter, item.PermsMask, silent: perm);
             m_ScriptEngine.PostScriptEvent(m_itemID, new EventParams(
                 "run_time_permissions", new object[] { (int)item.PermsMask },
                 new DetectParams[0]));

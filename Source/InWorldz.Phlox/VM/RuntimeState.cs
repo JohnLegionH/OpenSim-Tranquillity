@@ -435,6 +435,7 @@ namespace InWorldz.Phlox.VM
             RunningEvent = null;
             PermsGranter = String.Empty;
             GrantedPermsMask = 0;
+            GrantedSilentMask = 0;
             PermsOwner = null;
             PermsExperience = null;
             PermsUnverified = false;

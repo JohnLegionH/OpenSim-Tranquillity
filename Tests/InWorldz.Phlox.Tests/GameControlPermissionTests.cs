@@ -327,4 +327,36 @@ public class GameControlPermissionTests
         Assert.NotEqual(UUID.Zero, granter);
         Assert.True(heard);
     }
+
+    [ProtoContract]
+    private class RowWithoutTheAutomaticBits
+    {
+        [ProtoMember(16)] public string PermsGranter;
+        [ProtoMember(17)] public int GrantedPermsMask;
+    }
+
+    [Fact]
+    public void TheAutomaticBitsOfASavedGrantAreWrittenWithTheStateAndAnOldRowLoadsWithNone()
+    {
+        var state = new SerializedRuntimeState { PermsGranter = UUID.Random().ToString(), GrantedPermsMask = GameControl | TakeControls, GrantedSilentMask = GameControl };
+        byte[] blob;
+        using (var ms = new MemoryStream()) { Serializer.Serialize(ms, state); blob = ms.ToArray(); }
+        SerializedRuntimeState back;
+        using (var ms = new MemoryStream(blob)) back = Serializer.Deserialize<SerializedRuntimeState>(ms);
+        Assert.Equal(GameControl, back.GrantedSilentMask);
+        Assert.Equal(GameControl | TakeControls, back.GrantedPermsMask);
+
+        var live = back.ToRuntimeState();   // the copy the loader makes
+        Assert.Equal(GameControl, live.GrantedSilentMask);
+
+        byte[] oldRow;
+        using (var ms = new MemoryStream())
+        {
+            Serializer.Serialize(ms, new RowWithoutTheAutomaticBits { PermsGranter = state.PermsGranter, GrantedPermsMask = GameControl });
+            oldRow = ms.ToArray();
+        }
+        using (var ms = new MemoryStream(oldRow)) back = Serializer.Deserialize<SerializedRuntimeState>(ms);
+        Assert.Equal(0, back.GrantedSilentMask);
+        Assert.Equal(GameControl, back.GrantedPermsMask);
+    }
 }
