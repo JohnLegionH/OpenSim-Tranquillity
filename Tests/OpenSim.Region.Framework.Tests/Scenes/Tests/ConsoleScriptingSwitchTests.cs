@@ -134,7 +134,7 @@ public class ConsoleScriptingSwitchTests : OpenSimTestCase
     }
 
     /// <summary>An engine that records the scripts the scene asks it to start.</summary>
-    private sealed class RecordingEngine : IScriptModule
+    internal sealed class RecordingEngine : IScriptModule
     {
         public List<UUID> Started { get; } = new();
 
