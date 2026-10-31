@@ -474,6 +474,27 @@ public class PluginRegistryTests
     }
 
     /// <summary>
+    /// The game-controller router is a non-shared region module of the core modules assembly: it is listed in the
+    /// assembly's manifest and in its provider, so both the manifest loader and the config-based registry load it.
+    /// </summary>
+    [Fact]
+    public void TestGameControlRouterIsRegisteredAsARegionModule()
+    {
+        string repoRoot = FindRepoRoot();
+        string project = Path.Combine(repoRoot, "Source", "OpenSim.Region.CoreModules");
+        string expected = BuildTriple(
+            "/OpenSim/RegionModules",
+            "GameControlRouterModule",
+            "OpenSim.Region.CoreModules.Avatar.GameControl.GameControlRouterModule");
+
+        XDocument manifest = XDocument.Load(Path.Combine(project, "Resources", "OpenSim.Region.CoreModules.addin.xml"));
+        HashSet<string> provider = ParseProviderTriples(File.ReadAllText(Path.Combine(project, "PluginRegistration.cs")));
+
+        Assert.Contains(expected, ParseManifestTriples(manifest));
+        Assert.Contains(expected, provider);
+    }
+
+    /// <summary>
     /// Guard rail for migration progress: provider registrations should not include
     /// unexpected path/id/class triplets that are absent from the source manifests.
     /// </summary>

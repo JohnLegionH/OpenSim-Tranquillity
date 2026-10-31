@@ -218,6 +218,12 @@ namespace InWorldz.Phlox.VM
         public int GrantedPermsMask;
 
         /// <summary>
+        /// The bits of <see cref="GrantedPermsMask"/> that were given without a dialog (a seat's or an attachment's
+        /// automatic grants).
+        /// </summary>
+        public int GrantedSilentMask;
+
+        /// <summary>
         /// The object's owner when <see cref="PermsGranter"/> and <see cref="GrantedPermsMask"/> were noted. These three
         /// are the grant saved with the state: the script item's grant at capture, or a grant restored from carried state
         /// that is still waiting for its granter. A restore gives a grant back only while the owner is still this one.

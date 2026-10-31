@@ -237,6 +237,7 @@ public class GameControlDeliveryTests
     {
         using var h = new SchedulerHarness();
         h.Scene.GameControlEnabled = true;
+        SceneHelpers.SetupSceneModules(h.Scene, new Nini.Config.IniConfigSource(), new OpenSim.Region.CoreModules.Avatar.GameControl.GameControlRouterModule());
         var wearerId = h.Prim.OwnerID;
         SceneHelpers.AddScenePresence(h.Scene, wearerId);
         var sog = h.Prim.ParentGroup;
@@ -256,6 +257,7 @@ public class GameControlDeliveryTests
     {
         using var h = new SchedulerHarness();
         h.Scene.GameControlEnabled = true;
+        SceneHelpers.SetupSceneModules(h.Scene, new Nini.Config.IniConfigSource(), new OpenSim.Region.CoreModules.Avatar.GameControl.GameControlRouterModule());
         var granter = UUID.Random();
         var other = UUID.Random();
         var client = (TestClient)SceneHelpers.AddScenePresence(h.Scene, granter).ControllingClient;

@@ -923,6 +923,12 @@ public class SceneObjectPartInventory : IEntityInventory , IDisposable
         TriggerScriptPermissionsRemoved(removedGrants);
     }
 
+    public void RemoveScriptsPermissions(int permissions, int silentOnlyPermissions)
+        => RemoveScriptsPermissions(permissions | silentOnlyPermissions);
+
+    public void RemoveScriptsPermissions(ScenePresence sp, int permissions, int silentOnlyPermissions)
+        => RemoveScriptsPermissions(sp, permissions | silentOnlyPermissions);
+
     public void RemoveScriptsPermissions(ScenePresence sp, int permissions)
     {
         m_items.LockItemsForWrite(true);

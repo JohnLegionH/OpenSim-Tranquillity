@@ -217,5 +217,114 @@ public class GameControlPermissionTests
 
         Assert.Equal(GameControl, copy.RootPart.Inventory.GetInventoryItem(item).PermsMask);
         Assert.Equal(sitterId, copy.RootPart.Inventory.GetInventoryItem(item).PermsGranter);
+        // It came back as the seat's automatic grant, so standing up from the object ends it.
+        Assert.Equal(GameControl, copy.RootPart.Inventory.GetInventoryItem(item).SilentPermsMask);
+    }
+
+    // ── the kind of a grant: automatic (a seat's or an attachment's) or answered through the dialog ──────────────
+
+    [Fact]
+    public void AGrantGivenWithoutADialogIsNotedAsAutomaticOnTheItem()
+    {
+        using var h = new SchedulerHarness();
+        Present(h, h.Prim.OwnerID);
+        Wear(h, h.Scene.GetScenePresence(h.Prim.OwnerID));
+        var item = h.RezScript(Asker(h.Prim.OwnerID, GameControl));
+        Assert.True(h.PumpUntil(() => h.Said.Contains("rtp=" + GameControl)), SaidText(h));
+
+        Assert.Equal(GameControl, h.Prim.Inventory.GetInventoryItem(item).SilentPermsMask);
+    }
+
+    [Fact]
+    public void AGrantTheAvatarAnsweredThroughTheDialogIsNotedAsAnswered()
+    {
+        using var h = new SchedulerHarness();
+        var other = UUID.Random();
+        var client = Present(h, other);
+        var item = h.RezScript(Asker(other, GameControl));
+        Assert.True(h.PumpUntil(() => client.ScriptQuestions.Count >= 1), SaidText(h));
+        h.Prim.Inventory.GetInventoryItem(item).SilentPermsMask = GameControl;   // a stale note from an earlier automatic grant
+
+        client.FireScriptAnswer(h.Prim.UUID, item, GameControl);
+
+        Assert.True(h.PumpUntil(() => h.Said.Contains("rtp=" + GameControl)), SaidText(h));
+        Assert.Equal(0, h.Prim.Inventory.GetInventoryItem(item).SilentPermsMask);
+    }
+
+    private const string Listener =
+        "default { state_entry() { llSay(0, \"entry\"); } game_control(key id, integer b, list a) { llSay(0, \"gc b=\" + (string)b); } }";
+
+    /// <summary>
+    /// A region stop with a script that holds a game-control grant of the given kind, then a start: the grant the new
+    /// region has, and whether the script hears the owner's controller.
+    /// </summary>
+    private static (int Mask, UUID Granter, bool Heard) AfterARestart(int silent, bool expectHeard)
+    {
+        UUID owner = UUID.Random(), asset = UUID.Random(), item = UUID.Random();
+        using (var h1 = new SchedulerHarness())
+        {
+            foreach (SceneObjectPart p in h1.Prim.ParentGroup.Parts) p.OwnerID = owner;
+            var inv = TaskInventoryHelpers.AddScript(h1.Scene.AssetService, h1.Prim, item, asset, "seat", Listener);
+            Assert.True(h1.Prim.Inventory.CreateScriptInstance(item, 0, false, Phlox, RegionStart));
+            h1.Prim.ParentGroup.ResumeScripts();
+            Assert.True(h1.PumpUntil(() => h1.Said.Contains("entry")), SaidText(h1));
+            inv.PermsGranter = owner;
+            inv.PermsMask = GameControl;
+            inv.SilentPermsMask = silent;
+            h1.SaveState(item);
+            SavedStateRig.WaitForWrites(h1);
+        }
+
+        using var h2 = new SchedulerHarness();
+        foreach (SceneObjectPart p in h2.Prim.ParentGroup.Parts) p.OwnerID = owner;
+        h2.Scene.GameControlEnabled = true;
+        SceneHelpers.SetupSceneModules(h2.Scene, new Nini.Config.IniConfigSource(), new OpenSim.Region.CoreModules.Avatar.GameControl.GameControlRouterModule());
+        Present(h2, owner);
+        var inv2 = TaskInventoryHelpers.AddScript(h2.Scene.AssetService, h2.Prim, item, asset, "seat", Listener);
+        Assert.Equal(1, h2.Prim.ParentGroup.CreateScriptInstances(0, false, Phlox, RegionStart));
+        h2.Prim.ParentGroup.ResumeScripts();
+        Assert.True(h2.PumpUntil(() => h2.InterpreterFor(item) != null));
+        h2.PumpUntilIdle(TimeSpan.FromSeconds(5));
+        Assert.DoesNotContain("entry", h2.Said);   // restored, not started fresh
+
+        var packet = new OpenMetaverse.Packets.GameControlDataPacket();
+        packet.AgentData.AgentID = owner;
+        packet.AgentData.SessionID = UUID.Random();
+        packet.AgentData.Packet = 1;
+        packet.Axes = new[] { new OpenMetaverse.Packets.GameControlDataPacket.AxesBlock { Value = 100 } };
+        packet.Buttons = new[] { new OpenMetaverse.Packets.GameControlDataPacket.ButtonsBlock { Flags = 0x5u } };
+        packet.ModeAxes = Array.Empty<OpenMetaverse.Packets.GameControlDataPacket.ModeAxesBlock>();
+        packet.ModeButtons = Array.Empty<OpenMetaverse.Packets.GameControlDataPacket.ModeButtonsBlock>();
+        h2.Scene.HandleGameControlData(owner, packet);
+        // A state that should arrive is waited for; one that should not is given a real quiet window to arrive in.
+        bool heard;
+        if (expectHeard)
+            heard = h2.PumpUntil(() => h2.Said.Contains("gc b=5"));
+        else
+        {
+            h2.PumpUntilIdle(TimeSpan.FromSeconds(3));
+            heard = h2.Said.Contains("gc b=5");
+        }
+
+        var now = h2.Prim.Inventory.GetInventoryItem(item);
+        return (now.PermsMask, now.PermsGranter, heard);
+    }
+
+    [Fact]
+    public void ARestartDropsAGameControlGrantThatWasGivenAutomatically()
+    {
+        var (mask, granter, heard) = AfterARestart(silent: GameControl, expectHeard: false);
+        Assert.Equal(0, mask);
+        Assert.Equal(UUID.Zero, granter);
+        Assert.False(heard);
+    }
+
+    [Fact]
+    public void ARestartKeepsAGameControlGrantTheAvatarAnsweredThroughTheDialogAndTheScriptHearsTheController()
+    {
+        var (mask, granter, heard) = AfterARestart(silent: 0, expectHeard: true);
+        Assert.Equal(GameControl, mask);
+        Assert.NotEqual(UUID.Zero, granter);
+        Assert.True(heard);
     }
 }

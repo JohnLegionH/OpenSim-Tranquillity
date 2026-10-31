@@ -122,6 +122,14 @@ public class TaskInventoryItem : ICloneable
     public uint NextPermissions { get; set; } = FULL_MASK_PERMISSIONS_GENERAL;
     public UUID PermsGranter { get; set; }
     public int PermsMask { get; set; }
+
+    /// <summary>
+    /// The bits of <see cref="PermsMask"/> the script was given without a dialog: the grants a sat-upon or worn
+    /// object gets automatically (llRequestPermissions). A bit that is not set here, and is in
+    /// <see cref="PermsMask"/>, was answered by the avatar through the permission dialog.
+    /// </summary>
+    public int SilentPermsMask { get; set; }
+
     public UUID ExperienceID { get; set; }
 
     private bool _ownerChanged = false;
