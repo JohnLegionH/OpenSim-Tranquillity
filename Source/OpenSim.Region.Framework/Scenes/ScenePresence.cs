@@ -1005,6 +1005,9 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
     /// first use. The packet handler for one agent runs on one thread at a time, so no locking is needed.
     /// </summary>
     internal GameControlFilter GameControlFilter => m_gameControlFilter ??= new GameControlFilter();
+
+    /// <summary>Forgets the game-controller filter's sequence number and last state (root/child transitions).</summary>
+    private void ResetGameControlFilter() => m_gameControlFilter?.Reset();
     public bool IsChildAgent { get; set; }
 
     /// <summary>
@@ -1479,6 +1482,7 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
             }
 
             IsChildAgent = false;
+            ResetGameControlFilter();
         }
 
         //m_log.LogDebug("[MakeRootAgent] out lock: {0}ms", Util.EnvironmentTickCountSubtract(ts));
@@ -1784,6 +1788,7 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         //Velocity = new Vector3(0, 0, 0);
 
         IsChildAgent = true;
+        ResetGameControlFilter();
         m_scene.SwapRootAgentCount(true, IsNPC);
         RemoveFromPhysicalScene();
         ClearConstantForce();

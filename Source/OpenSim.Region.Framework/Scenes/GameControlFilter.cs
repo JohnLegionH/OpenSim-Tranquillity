@@ -31,6 +31,11 @@ namespace OpenSim.Region.Framework.Scenes;
 /// Only the last step's drops lose information, and the viewer's repeat of its final state restores it.
 /// A message dropped by the rate cap is not remembered as the last state, so it is not mistaken for a resend.
 ///
+/// The state is reset when the agent becomes a root agent in the region and when it leaves or becomes a child
+/// agent: the sequence number wraps in about six seconds at full rate, so a number kept from before an absence
+/// says nothing about the number the viewer sends next, and the first state after a return is always news to
+/// the scripts even if it equals the last one seen before.
+///
 /// One instance per agent. Not thread safe; the packet handler for one agent runs on one thread at a time.
 /// </remarks>
 public sealed class GameControlFilter
@@ -68,6 +73,11 @@ public sealed class GameControlFilter
     /// <summary>Forgets the sequence number, the last passed state and the rate window.</summary>
     public void Reset()
     {
+        m_haveSequence = false;
+        m_lastSequence = 0;
+        m_lastPassed = null;
+        m_windowStart = -RateWindowMilliseconds;
+        m_passedInWindow = 0;
     }
 
     /// <summary>
