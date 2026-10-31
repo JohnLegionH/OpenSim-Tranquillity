@@ -799,6 +799,12 @@ namespace InWorldz.Phlox.Glue
         int iwWindVolumeRemove(int handle);
         /// <summary>The handles of the volumes this object made, as integers.</summary>
         LSLList iwWindVolumes();
+        /// <summary>The control mode of the game_control event being run for <paramref name="id"/> (a GAME_CONTROL_MODE_* value), or -1.</summary>
+        int llGetGameControlMode(string id);
+        /// <summary>The mode axes of that event as floats; empty when there is none.</summary>
+        LSLList llGetGameControlModeAxes(string id);
+        /// <summary>The mode buttons of that event; 0 when there is none.</summary>
+        int llGetGameControlModeButtons(string id);
         int iwHasParcelPowers(int groupPower);
         Vector3 iwGroundSurfaceNormal(Vector3 offset);
         string iwRequestAnimationData(string name);

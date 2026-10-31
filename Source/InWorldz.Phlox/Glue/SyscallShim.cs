@@ -1062,6 +1062,9 @@ private static string ConvToString(object o)
 								Shim_iwWindVolumeCreate,              //969
 								Shim_iwWindVolumeRemove,              //970
 								Shim_iwWindVolumes,                   //971
+								Shim_llGetGameControlMode,            //972
+								Shim_llGetGameControlModeAxes,        //973
+								Shim_llGetGameControlModeButtons,     //974
         };
 
         /// <summary>
@@ -7444,6 +7447,30 @@ private static string ConvToString(object o)
         static private void Shim_iwWindVolumes(SyscallShim self)
         {
             LSLList ret = self._systemAPI.iwWindVolumes();
+
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_llGetGameControlMode(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+
+            int ret = self._systemAPI.llGetGameControlMode(p0);
+
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_llGetGameControlModeAxes(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+
+            LSLList ret = self._systemAPI.llGetGameControlModeAxes(p0);
+
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_llGetGameControlModeButtons(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+
+            int ret = self._systemAPI.llGetGameControlModeButtons(p0);
 
             self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
         }

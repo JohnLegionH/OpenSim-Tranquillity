@@ -10222,6 +10222,12 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>The handles of the volumes this object made, oldest first. Empty when weather is off or the owner may not use the volumes.</summary>
+        public int llGetGameControlMode(string id) => 0;
+
+        public LSLList llGetGameControlModeAxes(string id) => new LSLList(new object[0]);
+
+        public int llGetGameControlModeButtons(string id) => 0;
+
         public LSLList iwWindVolumes()
         {
             var handles = new List<object>();

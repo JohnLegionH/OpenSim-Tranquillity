@@ -94,7 +94,9 @@ public class DispatchIndexGuardTests
         // seven are type-discriminated overloads of names already here, and the baseline is keyed by name.
         // osMakeNotecard adds one name for its two forms.
         // The wind-volume functions add three names (iwWindVolumeCreate, iwWindVolumeRemove, iwWindVolumes).
-        Assert.Equal(936, baseline.Count);
+        // The game-control functions add three names (llGetGameControlMode, llGetGameControlModeAxes,
+        // llGetGameControlModeButtons) at the end of the table: 972 to 974.
+        Assert.Equal(939, baseline.Count);
     }
 
     /// <summary>

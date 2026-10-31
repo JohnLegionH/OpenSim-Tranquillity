@@ -6904,6 +6904,28 @@ namespace InWorldz.Phlox.Types
                 ParamNames = new string[] { },
                 TableIndex = 971
             }},
+            // Game control (SL function ids 804, 805 and 806): answers from the snapshot of the game_control event being run.
+            {"llGetGameControlMode", new FunctionSig {
+                FunctionName = "llGetGameControlMode",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.Key },
+                ParamNames = new string[] { "id" },
+                TableIndex = 972
+            }},
+            {"llGetGameControlModeAxes", new FunctionSig {
+                FunctionName = "llGetGameControlModeAxes",
+                ReturnType = VarType.List,
+                ParamTypes = new VarType[] { VarType.Key },
+                ParamNames = new string[] { "id" },
+                TableIndex = 973
+            }},
+            {"llGetGameControlModeButtons", new FunctionSig {
+                FunctionName = "llGetGameControlModeButtons",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.Key },
+                ParamNames = new string[] { "id" },
+                TableIndex = 974
+            }},
          };
 
         /// <summary>

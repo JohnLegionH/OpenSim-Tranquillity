@@ -939,3 +939,6 @@ osMakeNotecard 967
 iwWindVolumeCreate 969
 iwWindVolumeRemove 970
 iwWindVolumes 971
+llGetGameControlMode 972
+llGetGameControlModeAxes 973
+llGetGameControlModeButtons 974
