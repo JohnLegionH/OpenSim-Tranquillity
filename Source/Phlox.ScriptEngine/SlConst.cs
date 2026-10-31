@@ -196,6 +196,7 @@ namespace Phlox.ScriptEngine
         public const int PERMISSION_ATTACH = 32;
         public const int PERMISSION_CHANGE_LINKS = 128;
         public const int PERMISSION_CONTROL_CAMERA = 2048;
+        public const int PERMISSION_GAME_CONTROL = 0x100000;
         public const int PERMISSION_DEBIT = 2;
         public const int PERMISSION_OVERRIDE_ANIMATIONS = 32768;
         public const int PERMISSION_RETURN_OBJECTS = 65536;

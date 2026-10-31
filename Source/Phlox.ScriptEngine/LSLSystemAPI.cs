@@ -3039,10 +3039,12 @@ namespace Phlox.ScriptEngine
             if (m_host.ParentGroup.IsAttachment && agentID == m_host.ParentGroup.AttachedAvatar)
                 return SlConst.PERMISSION_TAKE_CONTROLS | SlConst.PERMISSION_TRIGGER_ANIMATION |
                        SlConst.PERMISSION_ATTACH | SlConst.PERMISSION_TRACK_CAMERA |
-                       SlConst.PERMISSION_CONTROL_CAMERA | SlConst.PERMISSION_OVERRIDE_ANIMATIONS;
+                       SlConst.PERMISSION_CONTROL_CAMERA | SlConst.PERMISSION_OVERRIDE_ANIMATIONS |
+                       SlConst.PERMISSION_GAME_CONTROL;
             if (m_host.ParentGroup.HasSittingAvatar(agentID))
                 return SlConst.PERMISSION_TAKE_CONTROLS | SlConst.PERMISSION_TRIGGER_ANIMATION |
-                       SlConst.PERMISSION_TRACK_CAMERA | SlConst.PERMISSION_CONTROL_CAMERA;
+                       SlConst.PERMISSION_TRACK_CAMERA | SlConst.PERMISSION_CONTROL_CAMERA |
+                       SlConst.PERMISSION_GAME_CONTROL;
             // Halcyon LSLSystemAPI.cs:4446-4460: a bot cannot answer a permission dialog, so one the object's owner
             // owns, or one sitting on an object the owner owns, grants PERMISSION_TRIGGER_ANIMATION.
             ScenePresence bot = World.GetScenePresence(agentID);

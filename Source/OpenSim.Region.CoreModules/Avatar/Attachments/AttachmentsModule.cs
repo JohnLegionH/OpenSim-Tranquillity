@@ -895,7 +895,7 @@ public class AttachmentsModule : IAttachmentsModule, INonSharedRegionModule
         m_scene.EventManager.TriggerOnAttach(so.LocalId, so.UUID, UUID.Zero);
 
         // Attach (NULL) stops scripts. We don't want that. Resume them.
-        so.RemoveScriptsPermissions(4 | 2048); // take controls and camera control
+        so.RemoveScriptsPermissions(4 | 2048 | 0x100000); // take controls, camera control and game control
         ClearScriptedCamera(sp, so);
         so.ResumeScripts();
         so.HasGroupChanged = true;
@@ -924,7 +924,7 @@ public class AttachmentsModule : IAttachmentsModule, INonSharedRegionModule
             return;
         }
 
-        so.RemoveScriptsPermissions(4 | 2048); // take controls and camera control
+        so.RemoveScriptsPermissions(4 | 2048 | 0x100000); // take controls, camera control and game control
         ClearScriptedCamera(sp, so);
 
         // If this didn't come from inventory, it also shouldn't go there

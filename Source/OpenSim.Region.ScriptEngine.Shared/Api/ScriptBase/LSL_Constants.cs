@@ -88,6 +88,7 @@ public partial class ScriptBaseClass
     public const int PERMISSION_TELEPORT = 0x1000;
     public const int PERMISSION_SILENT_ESTATE_MANAGEMENT = 0x4000;
     public const int PERMISSION_OVERRIDE_ANIMATIONS = 0x8000;
+    public const int PERMISSION_GAME_CONTROL = 0x100000;
     public const int PERMISSION_RETURN_OBJECTS = 0x10000;
 
     public const int AGENT_FLYING = 0x1;
