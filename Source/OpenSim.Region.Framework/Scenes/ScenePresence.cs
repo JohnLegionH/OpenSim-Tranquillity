@@ -3322,10 +3322,13 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
             // SL llSetCameraParams: "The PERMISSION_CONTROL_CAMERA permission is automatically revoked when the
             // avatar stands up from or detaches the object". Every prim of the object, and only grants this avatar
             // made: a script holds permissions "for only one agent at a time" (llRequestPermissions).
+            // PERMISSION_GAME_CONTROL: a script the seat gave it to automatically gets the sitter's input only while
+            // the avatar sits; a grant the avatar answered through the permission dialog stays until the script resets
+            // or asks again.
             part.ParentGroup.RemoveScriptsPermissions(this,
-                    0x100000 | //PERMISSION_GAME_CONTROL: a sat-upon script gets the sitter's input only while it sits
                     2048 | //PERMISSION_CONTROL_CAMERA
-                    4); // PERMISSION_TAKE_CONTROLS
+                    4, // PERMISSION_TAKE_CONTROLS
+                    0x100000); // PERMISSION_GAME_CONTROL, automatic grants only
 
             ControllingClient.SendClearFollowCamProperties(part.ParentUUID);
 

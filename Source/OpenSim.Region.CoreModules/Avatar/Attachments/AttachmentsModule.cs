@@ -895,7 +895,9 @@ public class AttachmentsModule : IAttachmentsModule, INonSharedRegionModule
         m_scene.EventManager.TriggerOnAttach(so.LocalId, so.UUID, UUID.Zero);
 
         // Attach (NULL) stops scripts. We don't want that. Resume them.
-        so.RemoveScriptsPermissions(4 | 2048 | 0x100000); // take controls, camera control and game control
+        // Take controls and camera control go as before. Game control goes only where the attachment gave it automatically:
+        // a grant the wearer answered through the permission dialog stays until the script resets or asks again.
+        so.RemoveScriptsPermissions(4 | 2048, 0x100000);
         ClearScriptedCamera(sp, so);
         so.ResumeScripts();
         so.HasGroupChanged = true;
@@ -924,7 +926,9 @@ public class AttachmentsModule : IAttachmentsModule, INonSharedRegionModule
             return;
         }
 
-        so.RemoveScriptsPermissions(4 | 2048 | 0x100000); // take controls, camera control and game control
+        // Take controls and camera control go as before. Game control goes only where the attachment gave it automatically:
+        // a grant the wearer answered through the permission dialog stays until the script resets or asks again.
+        so.RemoveScriptsPermissions(4 | 2048, 0x100000);
         ClearScriptedCamera(sp, so);
 
         // If this didn't come from inventory, it also shouldn't go there

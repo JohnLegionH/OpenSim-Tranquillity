@@ -250,6 +250,7 @@ public class SceneObjectPartInventory : IEntityInventory , IDisposable
 
             item.OwnerID = ownerId;
             item.PermsMask = 0;
+            item.SilentPermsMask = 0;
             item.PermsGranter = UUID.Zero;
             item.OwnerChanged = true;
         }
@@ -517,6 +518,7 @@ public class SceneObjectPartInventory : IEntityInventory , IDisposable
             m_items.LockItemsForWrite(true);
             it.OldItemID = restoredStateID;
             it.PermsMask = 0;
+            it.SilentPermsMask = 0;
             it.PermsGranter = UUID.Zero;
             m_items.LockItemsForWrite(false);
 
@@ -547,6 +549,7 @@ public class SceneObjectPartInventory : IEntityInventory , IDisposable
         m_items.LockItemsForWrite(true);
         it.OldItemID = item.OldItemID;
         it.PermsMask = 0;
+        it.SilentPermsMask = 0;
         it.PermsGranter = UUID.Zero;
         m_items.LockItemsForWrite(false);
 
@@ -876,7 +879,15 @@ public class SceneObjectPartInventory : IEntityInventory , IDisposable
         }
     }
 
-    public void RemoveScriptsPermissions(int permissions)
+    public void RemoveScriptsPermissions(int permissions) => RemoveScriptsPermissions(permissions, 0);
+
+    /// <summary>
+    /// Takes <paramref name="permissions"/> from every script item. The bits of <paramref name="silentOnlyPermissions"/>
+    /// are taken only from items that hold them as automatic grants (<see cref="TaskInventoryItem.SilentPermsMask"/>): a
+    /// seat's or an attachment's grant ends with the seat or the attachment, a grant the avatar answered through the
+    /// permission dialog does not.
+    /// </summary>
+    public void RemoveScriptsPermissions(int permissions, int silentOnlyPermissions)
     {
         m_items.LockItemsForWrite(true);
         if (m_scripts == null || m_scripts.Count == 0)
@@ -890,7 +901,6 @@ public class SceneObjectPartInventory : IEntityInventory , IDisposable
         List<UUID> items = new List<UUID>();
         List<(UUID item, UUID granter, int removed)> removedGrants = new();
 
-        permissions = ~permissions;
         foreach (TaskInventoryItem item in m_scripts.Values)
         {
             int curmask = item.PermsMask;
@@ -901,8 +911,9 @@ public class SceneObjectPartInventory : IEntityInventory , IDisposable
                 items.Add(item.ItemID);
             }
             int oldmask = curmask;
-            curmask &= permissions;
+            curmask &= ~(permissions | (silentOnlyPermissions & item.SilentPermsMask));
             item.PermsMask = curmask;
+            item.SilentPermsMask &= curmask;
             if(curmask == 0)
                 item.PermsGranter = UUID.Zero;
             if (curmask != oldmask)
@@ -923,13 +934,10 @@ public class SceneObjectPartInventory : IEntityInventory , IDisposable
         TriggerScriptPermissionsRemoved(removedGrants);
     }
 
-    public void RemoveScriptsPermissions(int permissions, int silentOnlyPermissions)
-        => RemoveScriptsPermissions(permissions | silentOnlyPermissions);
+    public void RemoveScriptsPermissions(ScenePresence sp, int permissions) => RemoveScriptsPermissions(sp, permissions, 0);
 
+    /// <summary>The same for the grants one avatar made.</summary>
     public void RemoveScriptsPermissions(ScenePresence sp, int permissions, int silentOnlyPermissions)
-        => RemoveScriptsPermissions(sp, permissions | silentOnlyPermissions);
-
-    public void RemoveScriptsPermissions(ScenePresence sp, int permissions)
     {
         m_items.LockItemsForWrite(true);
         if (m_scripts == null || m_scripts.Count == 0)
@@ -942,7 +950,6 @@ public class SceneObjectPartInventory : IEntityInventory , IDisposable
         UUID grant = sp.UUID;
         List<UUID> items = new List<UUID>();
 
-        permissions = ~permissions;
         List<(UUID item, UUID granter, int removed)> removedGrants = new();
         foreach (TaskInventoryItem item in m_scripts.Values)
         {
@@ -952,8 +959,9 @@ public class SceneObjectPartInventory : IEntityInventory , IDisposable
                 if (removeControl && ((curmask & 4) != 0))
                     items.Add(item.ItemID);
                 int oldmask = curmask;
-                curmask &= permissions;
+                curmask &= ~(permissions | (silentOnlyPermissions & item.SilentPermsMask));
                 item.PermsMask = curmask;
+                item.SilentPermsMask &= curmask;
                 if(curmask == 0)
                     item.PermsGranter = UUID.Zero;
                 if (curmask != oldmask)
@@ -1826,6 +1834,7 @@ public class SceneObjectPartInventory : IEntityInventory , IDisposable
             item.EveryonePermissions &= item.NextPermissions;
             item.OwnerChanged = true;
             item.PermsMask = 0;
+            item.SilentPermsMask = 0;
             item.PermsGranter = UUID.Zero;
         }
     }
