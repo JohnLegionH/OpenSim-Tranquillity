@@ -491,8 +491,28 @@ public class SceneObjectPartInventory : IEntityInventory , IDisposable
 
         m_part.AddFlag(PrimFlags.Scripted);
 
-        if (!m_part.ParentGroup.Scene.ScriptStartsAllowed)
+        if (!scene.ScriptStartsAllowed)
+        {
+            // No engine is asked to start the script, so no compile reply will come. Answer a waiting editor Save
+            // now instead of letting it time out and log an error for a state the operator chose.
+            string held;
+            if (scene.ScriptsSwitchedOff)
+            {
+                held = "Scripting is switched off in this region; the script is held until scripting is turned on";
+                m_log.LogInformation(
+                    "[PRIM INVENTORY]: Scripting is switched off in {0}; script {1} ({2}) in {3} is held until scripting is turned on",
+                    scene.RegionInfo.RegionName, item.Name, item.ItemID, m_part.Name);
+            }
+            else
+            {
+                held = "Scripts are disabled in this region's settings; the script is not started";
+                m_log.LogInformation(
+                    "[PRIM INVENTORY]: Scripts are disabled in the settings of {0}; script {1} ({2}) in {3} is not started",
+                    scene.RegionInfo.RegionName, item.Name, item.ItemID, m_part.Name);
+            }
+            StoreScriptError(item.ItemID, held);
             return false;
+        }
 
         UUID itemID = item.ItemID;
 

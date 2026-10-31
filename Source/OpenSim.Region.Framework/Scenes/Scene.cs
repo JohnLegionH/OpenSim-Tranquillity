@@ -175,6 +175,12 @@ public partial class Scene : SceneBase
     public bool ScriptStartsAllowed => !m_scriptsSwitchedOff && !RegionInfo.RegionSettings.DisableScripts;
 
     /// <summary>
+    /// True while <see cref="ScriptsEnabled"/> has been switched off from the console and not switched on again.
+    /// Tells a held script from one that the saved region setting stops.
+    /// </summary>
+    internal bool ScriptsSwitchedOff => m_scriptsSwitchedOff;
+
+    /// <summary>
     /// Used to prevent simultaneous calls to code that adds and removes agents.
     /// </summary>
     private readonly object m_removeClientLock = new();
