@@ -2632,12 +2632,32 @@ public class EventManager
         }
     }
 
-    // Temporary stub so the tests compile.
-    public delegate void GameControlDataDelegate(UUID agentId, OpenSim.Framework.GameControlSnapshot snapshot);
+    /// <summary>
+    /// A root agent's game controller reported a new state (the viewer's GameControlData message, validated and
+    /// filtered; see <see cref="Scene.HandleGameControlData"/>).
+    /// </summary>
+    public delegate void GameControlDataDelegate(UUID agentId, GameControlSnapshot snapshot);
     public event GameControlDataDelegate OnGameControlData;
 
-    internal void TriggerGameControlData(UUID agentId, OpenSim.Framework.GameControlSnapshot snapshot)
+    internal void TriggerGameControlData(UUID agentId, GameControlSnapshot snapshot)
     {
+        GameControlDataDelegate handler = OnGameControlData;
+        if (handler is null)
+            return;
+
+        foreach (GameControlDataDelegate d in handler.GetInvocationList())
+        {
+            try
+            {
+                d(agentId, snapshot);
+            }
+            catch (Exception e)
+            {
+                m_log.LogError(
+                    "[EVENT MANAGER]: Delegate for TriggerGameControlData failed - continuing.  {0} {1}",
+                    e.Message, e.StackTrace);
+            }
+        }
     }
     public void TriggerScriptControlsReleased(UUID agentId, UUID[] scriptItemIds)
     {

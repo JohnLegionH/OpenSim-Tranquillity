@@ -998,6 +998,13 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         get { return m_AngularVelocity; }
     }
 
+    private GameControlFilter m_gameControlFilter;
+
+    /// <summary>
+    /// Per-agent filter for game-controller input (see <see cref="Scene.HandleGameControlData"/>). Created on
+    /// first use. The packet handler for one agent runs on one thread at a time, so no locking is needed.
+    /// </summary>
+    internal GameControlFilter GameControlFilter => m_gameControlFilter ??= new GameControlFilter();
     public bool IsChildAgent { get; set; }
 
     /// <summary>

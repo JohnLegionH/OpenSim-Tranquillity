@@ -939,6 +939,8 @@ public partial class Scene : SceneBase
 
         m_simulatorVersion = simulatorVersion + " (" + Util.RuntimeInformationStr + ")";
 
+        GameControlEnabled = GameControlConfig.IsEnabled(m_config, RegionInfo);
+
         #region Region Config
 
         // Region config overrides global config
@@ -6437,11 +6439,31 @@ Environment.Exit(1);
         callback(asset);
     }
 
-    // Temporary stub so the tests compile.
+    /// <summary>
+    /// Whether this region accepts game-controller input (the viewer's GameControlData message) and tells
+    /// viewers so through the SimulatorFeatures key GameControlEnabled. Set from [GameControl] Enabled and the
+    /// region's opt-out when the scene is created (see <see cref="GameControlConfig"/>); off by default.
+    /// </summary>
     public bool GameControlEnabled { get; set; }
 
+    /// <summary>
+    /// Takes a viewer's GameControlData message for <paramref name="agentId"/>. Ignored, with no log line, when
+    /// game control is off for the region, when the agent is not a root agent here, or when the message names a
+    /// different agent. Otherwise the message is validated and filtered per agent (see
+    /// <see cref="GameControlFilter"/>) and, if it carries a new state, raised as one
+    /// <see cref="EventManager.OnGameControlData"/> event.
+    /// </summary>
     public void HandleGameControlData(UUID agentId, OpenMetaverse.Packets.GameControlDataPacket packet)
     {
+        if (!GameControlEnabled || packet?.AgentData is null || packet.AgentData.AgentID != agentId)
+            return;
+
+        if (!TryGetScenePresence(agentId, out ScenePresence presence) || presence.IsChildAgent)
+            return;
+
+        GameControlSnapshot snapshot = presence.GameControlFilter.Process(packet);
+        if (snapshot is not null)
+            EventManager.TriggerGameControlData(agentId, snapshot);
     }
     public string GetExtraSetting(string name)
     {
