@@ -8446,6 +8446,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         { PacketType.Redo, new(HandleRedo, false) },
         { PacketType.RequestObjectPropertiesFamily, new(HandleRequestObjectPropertiesFamily, false) },
         { PacketType.ScriptAnswerYes, new(HandleScriptAnswerYes, false) },
+        { PacketType.GameControlData, new(HandleGameControlData, false) },
         { PacketType.ObjectClickAction, new(HandleObjectClickAction, false) },
         { PacketType.ObjectMaterial, new(HandleObjectMaterial, false) },
         { PacketType.RequestImage, new(HandleRequestImage, false) },
@@ -10038,6 +10039,16 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         ObjectIncludeInSearchPacket packInSearch = (ObjectIncludeInSearchPacket)Pack;
         foreach (ObjectIncludeInSearchPacket.ObjectDataBlock objData in packInSearch.ObjectData)
             c.OnObjectIncludeInSearch?.Invoke(c, objData.IncludeInSearch, objData.ObjectLocalID);
+    }
+
+    /// <summary>
+    /// The viewer's game-controller state (message GameControlData, sent only to a region that advertises
+    /// GameControlEnabled in SimulatorFeatures). The scene decides what to do with it. Handled in packet order on the
+    /// inbound thread because the work is a few comparisons and the sequence number depends on arrival order.
+    /// </summary>
+    private static void HandleGameControlData(LLClientView c, Packet Pack)
+    {
+        c.m_scene.HandleGameControlData(c.m_agentId, (GameControlDataPacket)Pack);
     }
 
     private static void HandleScriptAnswerYes(LLClientView c, Packet Pack)
