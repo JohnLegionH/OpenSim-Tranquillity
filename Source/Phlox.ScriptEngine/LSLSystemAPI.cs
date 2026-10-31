@@ -10222,11 +10222,34 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>The handles of the volumes this object made, oldest first. Empty when weather is off or the owner may not use the volumes.</summary>
-        public int llGetGameControlMode(string id) => 0;
+        /// <summary>
+        /// The state of the game_control event this script is running for <paramref name="id"/>, or null: the script is
+        /// not in a game_control event, or the event is another avatar's. The SL wiki (llGetGameControlMode): the
+        /// functions answer -1 "when the script has no game-control snapshot for id".
+        /// </summary>
+        private GameControlSnapshot GameControlSnapshotFor(string id)
+        {
+            PostedEvent running = m_thisScript?.ScriptState?.RunningEvent;
+            if (running == null || running.EventType != InWorldz.Phlox.Types.SupportedEventList.Events.GAME_CONTROL
+                || running.GameControl == null || running.Args == null || running.Args.Length == 0)
+                return null;
+            return UUID.TryParse(id, out UUID asked) && UUID.TryParse(running.Args[0]?.ToString(), out UUID eventAgent)
+                   && asked == eventAgent ? running.GameControl : null;
+        }
 
-        public LSLList llGetGameControlModeAxes(string id) => new LSLList(new object[0]);
+        /// <summary>A GAME_CONTROL_MODE_* value; -1 with no snapshot or a mode this region does not know.</summary>
+        public int llGetGameControlMode(string id) => GameControlSnapshotFor(id)?.Mode ?? GameControlSnapshot.ModeUnknown;
 
-        public int llGetGameControlModeButtons(string id) => 0;
+        /// <summary>The axes of the current mode (GAME_CONTROL_AXIS_* index them); empty with no snapshot.</summary>
+        public LSLList llGetGameControlModeAxes(string id)
+        {
+            GameControlSnapshot s = GameControlSnapshotFor(id);
+            if (s == null) return new LSLList();
+            return new LSLList(Array.ConvertAll(s.SemanticAxes, a => (object)a));
+        }
+
+        /// <summary>The buttons of the current mode (GAME_CONTROL_BUTTON_* are their masks); 0 with no snapshot.</summary>
+        public int llGetGameControlModeButtons(string id) => (int)(GameControlSnapshotFor(id)?.SemanticButtons ?? 0u);
 
         public LSLList iwWindVolumes()
         {

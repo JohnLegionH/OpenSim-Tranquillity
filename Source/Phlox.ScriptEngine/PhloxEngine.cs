@@ -1619,6 +1619,15 @@ namespace Phlox.ScriptEngine
         public bool PostObjectEvent(UUID localID, string name, object[] args)
             => false;
 
+        /// <summary>
+        /// An event with data that rides with it: game_control carries the <see cref="GameControlSnapshot"/> of the state
+        /// it reports, which llGetGameControlMode and the other two functions answer from while it runs. Data an event
+        /// does not use is ignored.
+        /// </summary>
+        public bool PostScriptEvent(UUID itemID, string name, object[] args, object eventData)
+            => PostScriptEvent(itemID, new EventParams(name, args, null), null, answersOtherScript: false,
+                               eventData as GameControlSnapshot);
+
         public bool PostScriptEvent(UUID itemID, EventParams parms) => PostScriptEvent(itemID, parms, null);
 
         /// <summary>The same, with a completion callback the scheduler fires when the event is done with.</summary>
@@ -1627,6 +1636,10 @@ namespace Phlox.ScriptEngine
 
         /// <param name="answersOtherScript">A dataserver answer to a request another script of the prim made (see PostedEvent).</param>
         internal bool PostScriptEvent(UUID itemID, EventParams parms, Action completed, bool answersOtherScript)
+            => PostScriptEvent(itemID, parms, completed, answersOtherScript, null);
+
+        private bool PostScriptEvent(UUID itemID, EventParams parms, Action completed, bool answersOtherScript,
+                                     GameControlSnapshot gameControl)
         {
             if (m_ExeScheduler == null) return false;
 
@@ -1641,7 +1654,8 @@ namespace Phlox.ScriptEngine
                 Args = ToPhloxArgs(parms.Params),
                 DetectVars = detectVars,
                 Completed = completed,
-                AnswersOtherScript = answersOtherScript
+                AnswersOtherScript = answersOtherScript,
+                GameControl = gameControl
             };
             evt.Normalize();
             if (parms is GrabUpdateParams) m_ExeScheduler.PostGrabUpdate(itemID, evt);

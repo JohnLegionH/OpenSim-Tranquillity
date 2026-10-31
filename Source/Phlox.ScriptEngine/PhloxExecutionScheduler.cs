@@ -1735,6 +1735,8 @@ namespace Phlox.ScriptEngine
                 // state_exit or timer, which RuntimeState.QueueEvent lets past the limit as Halcyon's did. A lost
                 // state event leaves a state change half done, and a lost timer event stops the timer for good: it is
                 // re-armed only when its event runs (CheckAndResetTimer).
+                // A newer axes-only game_control state replaces the one still waiting in the queue.
+                if (pe.Evt.GameControl != null && script.ScriptState.TryFoldGameControl(pe.Evt)) { pe.Evt.SignalCompleted(); continue; }
                 int queueDepth = script.ScriptState.EventQueue.Count;
                 // Another script's dataserver answer: only while the queue is under half its limit, so the script's own
                 // answers and its other events keep the room (counted, not warned about).
@@ -1913,7 +1915,9 @@ namespace Phlox.ScriptEngine
         /// <summary>The kinds RuntimeState.QueueEvent keeps past the queue limit (its OVERFLOWABLE_EVENTS).</summary>
         private static bool OverflowsQueueLimit(SupportedEventList.Events type)
             => type == SupportedEventList.Events.ON_REZ || type == SupportedEventList.Events.STATE_ENTRY
-               || type == SupportedEventList.Events.STATE_EXIT || type == SupportedEventList.Events.TIMER;
+               || type == SupportedEventList.Events.STATE_EXIT || type == SupportedEventList.Events.TIMER
+               // RuntimeState.QueueEvent gives game_control its own room above the limit.
+               || type == SupportedEventList.Events.GAME_CONTROL;
 
         /// <summary>control(key id, integer level, integer edge) with edge 0: the viewer repeating keys held, nothing changed.</summary>
         private static bool IsNullChangeControl(PostedEvent evt)

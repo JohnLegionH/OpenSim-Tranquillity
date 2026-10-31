@@ -113,17 +113,18 @@ public class GameControlDeliveryTests
     {
         using var h = new SchedulerHarness();
         var item = h.RezScript(Script);
+        h.PumpUntilIdle(TimeSpan.FromSeconds(5));   // loaded and waiting: the first state starts at once
         var agent = UUID.Random();
 
         // All posted before the script runs once: the first starts, the rest meet a busy script.
         Post(h, item, agent, Snapshot(0x0, 0.01f));
         for (int i = 2; i <= 60; i++) Post(h, item, agent, Snapshot(0x0, i / 100f));        // axes only
         Post(h, item, agent, Snapshot(0x1, 0.61f));                                         // press
-        for (int i = 62; i <= 120; i++) Post(h, item, agent, Snapshot(0x1, i / 100f));     // axes only
+        for (int i = 62; i <= 120; i++) Post(h, item, agent, Snapshot(0x1, i / 200f));     // axes only
         Post(h, item, agent, Snapshot(0x0, 1.0f));                                          // release
         for (int i = 2; i <= 40; i++) Post(h, item, agent, Snapshot(0x0, -i / 100f));      // axes only
 
-        Assert.True(h.PumpUntil(() => Lines(h).Any(l => l.Contains("a0=-0.400000"))), SaidText(h));
+        Assert.True(h.PumpUntil(() => Lines(h).Any(l => l.Contains("a0=-0.400000"))), SaidText(h) + " // " + h.Diagnose(item));
         h.PumpUntilIdle(TimeSpan.FromSeconds(2));
         var lines = Lines(h);
 
@@ -132,7 +133,7 @@ public class GameControlDeliveryTests
         int press = buttons.IndexOf("b=1");
         Assert.True(press > 0, "no press: " + string.Join(" | ", lines));
         Assert.Contains("b=0", buttons.Skip(press));                                        // and the release after it
-        Assert.Contains("a0=0.610000", string.Join(" ", lines));                            // the press itself, with its own axes
+        Assert.Contains("gc b=1 a0=0.600000", string.Join(" | ", lines));                // the press, with the newest axes sent while it was held
         Assert.Contains("a0=-0.400000", lines.Last());                                      // the newest axes ended it
     }
 
@@ -141,12 +142,13 @@ public class GameControlDeliveryTests
     {
         using var h = new SchedulerHarness();
         var item = h.RezScript(Script);
+        h.PumpUntilIdle(TimeSpan.FromSeconds(5));   // loaded and waiting: the first state starts at once
         var agent = UUID.Random();
 
-        for (int i = 0; i < 30; i++) Post(h, item, agent, Snapshot((uint)(i % 2), 0.1f));   // press, release, press ...
+        for (int i = 0; i < 70; i++) Post(h, item, agent, Snapshot((uint)(i % 2), 0.1f));   // press, release ... more than the queue holds
 
-        Assert.True(h.PumpUntil(() => Lines(h).Count == 30, TimeSpan.FromSeconds(30)), "got " + Lines(h).Count + ": " + SaidText(h));
-        Assert.Equal(Enumerable.Range(0, 30).Select(i => "b=" + (i % 2)), Lines(h).Select(l => l.Split(' ')[1]));
+        Assert.True(h.PumpUntil(() => Lines(h).Count == 70, TimeSpan.FromSeconds(30)), "got " + Lines(h).Count + ": " + SaidText(h));
+        Assert.Equal(Enumerable.Range(0, 70).Select(i => "b=" + (i % 2)), Lines(h).Select(l => l.Split(' ')[1]));
     }
 
     [Fact]
@@ -154,6 +156,7 @@ public class GameControlDeliveryTests
     {
         using var h = new SchedulerHarness();
         var item = h.RezScript(Script);
+        h.PumpUntilIdle(TimeSpan.FromSeconds(5));   // loaded and waiting: the first state starts at once
         var a = UUID.Random();
         var b = UUID.Random();
 
@@ -201,6 +204,74 @@ public class GameControlDeliveryTests
         using (var ms = new MemoryStream(oldRow)) old = Serializer.Deserialize<SerializedPostedEvent>(ms);
         Assert.Equal(InWorldz.Phlox.Types.SupportedEventList.Events.GAME_CONTROL, old.EventType);
         Assert.Null(old.GameControl);
+    }
+
+    // ── the whole way: the viewer's message, the router, the engine ─────────────
+
+    private static int s_sequence;
+
+    private static void FromViewer(Scene scene, UUID agent, short axis0, uint buttons)
+    {
+        var p = new GameControlDataPacket();
+        p.AgentData.AgentID = agent;
+        p.AgentData.SessionID = UUID.Random();
+        p.AgentData.Packet = (byte)(++s_sequence % 120);
+        p.AgentData.ActionMode = 1;
+        p.Axes = new[] { new GameControlDataPacket.AxesBlock { Value = axis0 } };
+        p.Buttons = new[] { new GameControlDataPacket.ButtonsBlock { Flags = buttons } };
+        p.ModeAxes = new[] { new GameControlDataPacket.ModeAxesBlock { Value = 16384 } };
+        p.ModeButtons = new[] { new GameControlDataPacket.ModeButtonsBlock { Flags = 0x800u } };
+        scene.HandleGameControlData(agent, p);
+    }
+
+    private static string Requester(UUID agent) =>
+        "default { state_entry() { llRequestPermissions(\"" + agent + "\", PERMISSION_GAME_CONTROL); } "
+        + "run_time_permissions(integer p) { llSay(0, \"rtp=\" + (string)p); } "
+        + "game_control(key id, integer b, list axes) { llSay(0, \"gc b=\" + (string)b + \" a0=\" + (string)llList2Float(axes, 0)"
+        + " + \" mode=\" + (string)llGetGameControlMode(id) + \" mb=\" + (string)llGetGameControlModeButtons(id)"
+        + " + \" n=\" + (string)llGetListLength(llGetGameControlModeAxes(id)) + \" ax0=\" + (string)llList2Float(llGetGameControlModeAxes(id), 0)"
+        + " + \" other=\" + (string)llGetGameControlMode(NULL_KEY)); } }";
+
+    [Fact]
+    public void AWornScriptGetsItsWearersControllerInputThroughTheRegion()
+    {
+        using var h = new SchedulerHarness();
+        h.Scene.GameControlEnabled = true;
+        var wearerId = h.Prim.OwnerID;
+        SceneHelpers.AddScenePresence(h.Scene, wearerId);
+        var sog = h.Prim.ParentGroup;
+        sog.AttachedAvatar = wearerId; sog.IsAttachment = true; sog.AttachmentPoint = 3;
+        h.Scene.GetScenePresence(wearerId).AddAttachment(sog);
+        h.RezScript(Requester(wearerId));
+        Assert.True(h.PumpUntil(() => h.Said.Contains("rtp=1048576")), SaidText(h));
+
+        FromViewer(h.Scene, wearerId, 32767, 0x5);
+
+        Assert.True(h.PumpUntil(() => Lines(h).Count == 1), SaidText(h));
+        Assert.Equal("gc b=5 a0=1.000000 mode=1 mb=2048 n=5 ax0=0.500015 other=-1", Lines(h)[0]);
+    }
+
+    [Fact]
+    public void AScriptAnotherAvatarGrantedGetsThatAvatarsInputAndNobodyElses()
+    {
+        using var h = new SchedulerHarness();
+        h.Scene.GameControlEnabled = true;
+        var granter = UUID.Random();
+        var other = UUID.Random();
+        var client = (TestClient)SceneHelpers.AddScenePresence(h.Scene, granter).ControllingClient;
+        SceneHelpers.AddScenePresence(h.Scene, other);
+        var item = h.RezScript(Requester(granter));
+        Assert.True(h.PumpUntil(() => client.ScriptQuestions.Count >= 1), SaidText(h));
+        client.FireScriptAnswer(h.Prim.UUID, item, 0x100000);
+        Assert.True(h.PumpUntil(() => h.Said.Contains("rtp=1048576")), SaidText(h));
+
+        FromViewer(h.Scene, other, 100, 0x1);
+        FromViewer(h.Scene, granter, 200, 0x2);
+
+        Assert.True(h.PumpUntil(() => Lines(h).Count >= 1), SaidText(h));
+        h.PumpUntilIdle(TimeSpan.FromSeconds(2));
+        Assert.Single(Lines(h));
+        Assert.StartsWith("gc b=2 ", Lines(h)[0]);
     }
 
     /// <summary>SerializedPostedEvent as it was before the game-control snapshot: tags 1 to 4.</summary>

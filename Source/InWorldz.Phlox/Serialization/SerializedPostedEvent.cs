@@ -29,6 +29,7 @@ namespace InWorldz.Phlox.Serialization
         public int TransitionToState;
 
         /// <summary>The game-controller state a game_control event reports; null for every other event and for rows saved before it existed.</summary>
+        [ProtoMember(5)]
         public SerializedGameControl GameControl;
 
 
@@ -54,6 +55,8 @@ namespace InWorldz.Phlox.Serialization
 
             serEvent.TransitionToState = evt.TransitionToState;
 
+            serEvent.GameControl = SerializedGameControl.From(evt.GameControl);
+
             return serEvent;
         }
 
@@ -67,6 +70,8 @@ namespace InWorldz.Phlox.Serialization
             evt.DetectVars = this.DetectVars;
 
             evt.TransitionToState = this.TransitionToState;
+
+            evt.GameControl = this.GameControl?.ToSnapshot();
 
             return evt;
         }
