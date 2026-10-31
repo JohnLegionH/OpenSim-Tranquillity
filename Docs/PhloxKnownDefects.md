@@ -959,7 +959,12 @@ such list.
   The SL wiki does not say whether only the flexible prim becomes phantom.
 
 ### Events
-- `game_control` compiles but is never raised.
+- `game_control` is raised only in a region where `[GameControl] Enabled` is true (off by default), for a script
+  that holds `PERMISSION_GAME_CONTROL` from the avatar, and only for input a game controller sends through a viewer
+  that supports it. A newer state that changes only the axes replaces the same avatar's state still waiting in the
+  script's queue, so a script sees fewer events than the viewer sends; a change of buttons is always its own event.
+  `llGetGameControlMode`, `llGetGameControlModeAxes` and `llGetGameControlModeButtons` answer `-1`, an empty list and
+  `0` outside a `game_control` event and for any avatar other than the one the event is about.
 - When an avatar blocks an Experience from its profile while a script that holds no grant from
   that avatar is waiting on `llRequestExperiencePermissions` for it, the simulator raises
   nothing: the request is answered by the avatar's answer to the dialog, or after 5 minutes

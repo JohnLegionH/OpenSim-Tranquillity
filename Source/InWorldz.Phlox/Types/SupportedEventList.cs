@@ -393,9 +393,9 @@ namespace InWorldz.Phlox.Types
             }},
 
             // wiki.secondlife.com/wiki/Game_control - "game_control( key id, integer button_levels,
-            // list axes )" - THREE parameters per the wiki, not four. COMPILE-ONLY, and it stays so:
-            // it is, per the wiki, raised by a compatible viewer's new GameControlInput message, a viewer->sim
-            // message Tranquillity does not carry. Nothing here fakes a trigger.
+            // list axes )" - THREE parameters per the wiki, not four. DELIVERED: the region's game-controller
+            // router (GameControlRouter) posts it, from a viewer's GameControlData message, to scripts that hold
+            // PERMISSION_GAME_CONTROL from the avatar; PhloxEngine.PostScriptEvent keeps the state that rides with it.
             {"game_control", new FunctionSig {
                 FunctionName = "game_control",
                 ReturnType = VarType.Void,
