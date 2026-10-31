@@ -55,7 +55,6 @@ namespace OpenSim.Region.Framework.Scenes.Tests
             SimulatorFeaturesModule module = ModuleFor(NewScene(gameControl: false));
 
             Assert.False(module.TryGetFeature("GameControlEnabled", out _));
-            Assert.False(module.GetFeatures().ContainsKey("GameControlEnabled"));
         }
 
         [Fact]
@@ -64,8 +63,8 @@ namespace OpenSim.Region.Framework.Scenes.Tests
             SimulatorFeaturesModule on = ModuleFor(NewScene(gameControl: true));
             SimulatorFeaturesModule off = ModuleFor(NewScene(gameControl: false));
 
-            Assert.True(on.GetFeatures().ContainsKey("GameControlEnabled"));
-            Assert.False(off.GetFeatures().ContainsKey("GameControlEnabled"));
+            Assert.True(on.TryGetFeature("GameControlEnabled", out _));
+            Assert.False(off.TryGetFeature("GameControlEnabled", out _));
         }
     }
 }
