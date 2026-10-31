@@ -27,6 +27,7 @@
         <RegionModule id="CallingCardModule" class="OpenSim.Region.CoreModules.Avatar.Friends.CallingCardModule" />
         <RegionModule id="FriendsModule" class="OpenSim.Region.CoreModules.Avatar.Friends.FriendsModule" />
         <RegionModule id="HGFriendsModule" class="OpenSim.Region.CoreModules.Avatar.Friends.HGFriendsModule" />
+        <RegionModule id="GameControlRouterModule" class="OpenSim.Region.CoreModules.Avatar.GameControl.GameControlRouterModule" />
         <RegionModule id="GesturesModule" class="OpenSim.Region.CoreModules.Avatar.Gestures.GesturesModule" />
         <RegionModule id="GodsModule" class="OpenSim.Region.CoreModules.Avatar.Gods.GodsModule" />
         <RegionModule id="GroupsModule" class="OpenSim.Region.CoreModules.Avatar.Groups.GroupsModule" />
