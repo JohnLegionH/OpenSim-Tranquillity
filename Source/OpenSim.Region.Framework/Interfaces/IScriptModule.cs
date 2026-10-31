@@ -71,6 +71,19 @@ public interface IScriptModule: INonSharedRegionModule
     bool PostObjectEvent(UUID itemID, string name, Object[] args);
 
     /// <summary>
+    /// Post a script event that carries data besides its LSL arguments, for engines that can use it. The game_control
+    /// event carries the <c>OpenSim.Framework.GameControlSnapshot</c> of the state it reports, so that
+    /// llGetGameControlMode, llGetGameControlModeAxes and llGetGameControlModeButtons can answer from it while the
+    /// event runs. An engine that does not take event data posts the plain event, which is what this default does.
+    /// </summary>
+    /// <param name='itemID'>The item ID of the script.</param>
+    /// <param name='name'>The name of the event.</param>
+    /// <param name='args'>The arguments of the event, as for <see cref="PostScriptEvent(UUID, string, object[])"/>.</param>
+    /// <param name='eventData'>Data that rides with this one event; null for none.</param>
+    bool PostScriptEvent(UUID itemID, string name, Object[] args, object eventData)
+        => PostScriptEvent(itemID, name, args);
+
+    /// <summary>
     /// Suspends a script.
     /// </summary>
     /// <param name="itemID">The item ID of the script.</param>
