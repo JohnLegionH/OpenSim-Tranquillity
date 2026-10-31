@@ -831,6 +831,16 @@
     ;DestinationGuideURI = "http://127.0.0.1:9000/guide"
 
 
+[GameControl]
+    ;# {Enabled} {} {Accept game-controller input from viewers} {true false} false
+    ;; Linden Lab viewers (from release 26.5) can send the state of a game controller to the region
+    ;; they are in, but only if the region says it accepts it. When Enabled is true the region says so
+    ;; (SimulatorFeatures key GameControlEnabled) and accepts the viewer's GameControlData message.
+    ;; This is grid-wide and off by default. A region can opt out with GameControlEnabled = false in its
+    ;; own region settings (see Regions.ini.example); a region setting cannot turn it on.
+    ;Enabled = false
+
+
 [Chat]
     ;# {whisper_distance} {} {Distance at which a whisper is heard, in meters?} {} 10
     ;; Distance in meters that whispers should travel.

@@ -32,6 +32,12 @@ ExternalHostName = SYSTEMIP
 ; Addresses = ""
 ; LocalAddress = ""
 
+; *
+; * Game-controller input. When [GameControl] Enabled is true in the simulator configuration, every region
+; * accepts it. Set this to false to turn it off for this region only. It cannot turn it on.
+; *
+; GameControlEnabled = false
+
 ;; Estate ID or Name to connect region to, leave blank for console prompt, remember estate id can not be less than 100
 ;; this value is only used when creating a region and after that will be ignored. 0 Will use the next auto id provided by the database
 ;TargetEstate = 0
