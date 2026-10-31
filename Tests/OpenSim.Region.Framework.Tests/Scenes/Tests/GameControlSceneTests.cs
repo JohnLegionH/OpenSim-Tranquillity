@@ -212,5 +212,57 @@ namespace OpenSim.Region.Framework.Scenes.Tests
             Assert.Single(received.Events);
             Assert.DoesNotContain(log.Messages, m => m.Contains("game", StringComparison.OrdinalIgnoreCase));
         }
+
+        // The viewer's one-byte sequence number wraps in about six seconds at full rate, so an agent that was a child
+        // agent (or away) for a while can come back with a number far "behind" the stored one. A return starts a
+        // fresh filter, so neither the sequence check nor the resend check carries over.
+        private static void LeaveAndReturn(Scene scene, UUID agentId)
+        {
+            ScenePresence sp = scene.GetScenePresence(agentId);
+            sp.MakeChildAgent(scene.RegionInfo.RegionHandle + 1);
+            Assert.True(sp.IsChildAgent);
+            sp.TeleportFlags = (OpenSim.Framework.Constants.TeleportFlags)OpenMetaverse.TeleportFlags.ViaLogin;    // a login arrival does not wait for the departing region's update
+            sp.CompleteMovement(sp.ControllingClient, true);
+            Assert.False(sp.IsChildAgent);
+        }
+
+        [Fact]
+        public void AReturnWithASequenceFarBehindTheStoredOneIsNotDroppedAsLate()
+        {
+            var (scene, received, agentId) = EnabledSceneWithRootAgent();
+            scene.HandleGameControlData(agentId, Packet(agentId, 250, axis0: 100));
+            Assert.Single(received.Events);
+
+            LeaveAndReturn(scene, agentId);
+            scene.HandleGameControlData(agentId, Packet(agentId, 150, axis0: 200));   // 100 behind 250
+
+            Assert.Equal(2, received.Events.Count);
+            Assert.Equal(200 / 32767f, received.Events[1].Snapshot.RawAxes[0]);
+        }
+
+        [Fact]
+        public void AReturnWhoseFirstStateEqualsTheStoredOneStillGetsItDelivered()
+        {
+            var (scene, received, agentId) = EnabledSceneWithRootAgent();
+            scene.HandleGameControlData(agentId, Packet(agentId, 10, axis0: 100));
+            Assert.Single(received.Events);
+
+            LeaveAndReturn(scene, agentId);
+            scene.HandleGameControlData(agentId, Packet(agentId, 11, axis0: 100));    // same state as before leaving
+
+            Assert.Equal(2, received.Events.Count);
+        }
+
+        [Fact]
+        public void AFilterResetForgetsTheSequenceAndTheLastState()
+        {
+            GameControlFilter filter = new();
+            Assert.NotNull(filter.Process(Packet(UUID.Random(), 250, axis0: 100)));
+            Assert.Null(filter.Process(Packet(UUID.Random(), 150, axis0: 200)));      // late: control
+
+            filter.Reset();
+
+            Assert.NotNull(filter.Process(Packet(UUID.Random(), 150, axis0: 100)));   // behind, and equal to the old state
+        }
     }
 }

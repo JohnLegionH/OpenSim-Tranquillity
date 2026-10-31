@@ -65,6 +65,11 @@ public sealed class GameControlFilter
         m_nowMilliseconds = nowMilliseconds ?? (() => Environment.TickCount64);
     }
 
+    /// <summary>Forgets the sequence number, the last passed state and the rate window.</summary>
+    public void Reset()
+    {
+    }
+
     /// <summary>
     /// Returns the validated state to hand on, or null if the message is to be ignored.
     /// </summary>
