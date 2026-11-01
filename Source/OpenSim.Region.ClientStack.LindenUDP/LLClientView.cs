@@ -1753,6 +1753,12 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
     private const int END_OF_PATCHES = 97;
     private const int STRIDE = 264;
 
+    /// <summary>Queues one finished land layer packet on the land throttle.</summary>
+    protected virtual void SendLandLayerBuffer(UDPPacketBuffer buf)
+    {
+        m_udpServer.SendUDPPacket(m_udpClient, buf, ThrottleOutPacketType.Land);
+    }
+
     public void SendLayerData(int[] map)
     {
         if(map is null)
@@ -1799,7 +1805,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
                     data[9] = (byte)(datasize >> 8);
 
                     buf.DataLength = bitpack.BytePos + 1;
-                    m_udpServer.SendUDPPacket(m_udpClient, buf, ThrottleOutPacketType.Land);
+                    SendLandLayerBuffer(buf);
 
                     // start another
                     buf = OpenSimUDPBase.GetNewUDPBuffer(m_udpClient.RemoteEndPoint);
@@ -1827,7 +1833,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             data[9] = (byte)(datasize >> 8);
 
             buf.DataLength = bitpack.BytePos + 1;
-            m_udpServer.SendUDPPacket(m_udpClient, buf, ThrottleOutPacketType.Land);
+            SendLandLayerBuffer(buf);
 
         }
         catch (Exception e)
