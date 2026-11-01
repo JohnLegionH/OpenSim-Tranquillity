@@ -84,11 +84,21 @@ public class LegacyTerrainTests : OpenSimTestCase
         return new Decoded(layer, patches);
     }
 
-    private static CapturingClient Connect(uint regionSize, string channel)
+    private static void Flatten(Scene scene)
+    {
+        TerrainData terrain = scene.Heightmap.GetTerrainData();
+        for (int x = 0; x < terrain.SizeX; x++)
+            for (int y = 0; y < terrain.SizeY; y++)
+                terrain[x, y] = 25f;
+    }
+
+    private static CapturingClient Connect(uint regionSize, string channel, bool flatten = false)
     {
         Util.FireAndForgetMethod = FireAndForgetMethod.RegressionTest;
         Scene scene = new SceneHelpers().SetupScene("Terrain test region", UUID.Random(), 1000, 1000, regionSize,
             regionSize, new IniConfigSource());
+        if (flatten)
+            Flatten(scene);
         TestLLUDPServer udpServer = ClientStackHelpers.AddUdpServer(scene);
         AgentCircuitData circuit = SceneHelpers.GenerateAgentData(UUID.Random());
         circuit.Channel = channel;
@@ -182,8 +192,8 @@ public class LegacyTerrainTests : OpenSimTestCase
     public void LegacyViewerTerrainOfALargeRegionEqualsTheTerrainOfA256mRegion()
     {
         TestHelpers.InMethod();
-        CapturingClient large = Connect(1024, Legacy);
-        CapturingClient small = Connect(256, Varregion);
+        CapturingClient large = Connect(1024, Legacy, flatten: true);
+        CapturingClient small = Connect(256, Varregion, flatten: true);
         try
         {
             int[] map = { 0, 0, 5, 9, 15, 15 };
