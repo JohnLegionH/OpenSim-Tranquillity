@@ -1167,8 +1167,15 @@ public class TestClient : IClientAPI, IClientCore
     {
     }
 
+    /// <summary>The parcel overlay packets this client was sent, in order: the sequence id and a copy of the data.</summary>
+    public List<(int Sequence, byte[] Data)> ParcelOverlayPackets { get; } = new();
+
+    /// <summary>Set to present a larger region to this client as its south-west 256 m.</summary>
+    public bool Only256mRegions { get; set; }
+
     public void SendLandParcelOverlay(byte[] data, int sequence_id)
     {
+        ParcelOverlayPackets.Add((sequence_id, (byte[])data.Clone()));
     }
 
     public void SendParcelMediaCommand(uint flags, ParcelMediaCommandEnum command, float time)
