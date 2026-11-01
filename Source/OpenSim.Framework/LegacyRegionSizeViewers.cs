@@ -25,12 +25,22 @@ public static class LegacyRegionSizeViewers
     /// <summary>Splits a comma or semicolon separated list of channel prefixes. Empty entries are dropped.</summary>
     public static string[] ParseChannels(string list)
     {
-        return Array.Empty<string>();
+        if (string.IsNullOrWhiteSpace(list))
+            return Array.Empty<string>();
+        return list.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     }
 
     /// <summary>True when the channel starts with one of the prefixes (case-insensitive).</summary>
     public static bool IsLegacyChannel(string[] prefixes, string channel)
     {
+        if (prefixes is null || string.IsNullOrWhiteSpace(channel))
+            return false;
+        channel = channel.Trim();
+        foreach (string prefix in prefixes)
+        {
+            if (prefix.Length > 0 && channel.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
         return false;
     }
 }
