@@ -345,6 +345,30 @@ public class LLUDPServer : OpenSimUDPBase
     public int IncomingOrphanedPacketCount { get; protected set; }
 
     public bool SupportViewerObjectsCache = true;
+
+    /// <summary>
+    /// Channel prefixes of the viewers that only take 256 m regions (see <see cref="LegacyRegionSizeViewers"/>).
+    /// Set from [ClientStack.LindenUDP] LegacyRegionSizeViewers; a region's own setting of that name replaces it.
+    /// </summary>
+    private string[] m_regionLegacyChannels;
+    private string[] m_legacyRegionSizeChannels = LegacyRegionSizeViewers.ParseChannels(LegacyRegionSizeViewers.DefaultChannels);
+
+    /// <summary>
+    /// True when a viewer that logged in on this channel only takes 256 m regions, so a larger region must be
+    /// presented to it as its south-west 256 m.
+    /// </summary>
+    public bool IsLegacyRegionSizeChannel(string channel)
+    {
+        if (m_regionLegacyChannels is null)
+        {
+            // read once: RegionInfo.GetSetting logs every miss
+            string regionSetting = Scene?.RegionInfo?.GetSetting("LegacyRegionSizeViewers");
+            m_regionLegacyChannels = regionSetting is null
+                ? m_legacyRegionSizeChannels
+                : LegacyRegionSizeViewers.ParseChannels(regionSetting);
+        }
+        return LegacyRegionSizeViewers.IsLegacyChannel(m_regionLegacyChannels, channel);
+    }
     /// <summary>
     /// Run queue empty processing within a single persistent thread.
     /// </summary>
@@ -407,6 +431,8 @@ public class LLUDPServer : OpenSimUDPBase
             m_ackTimeout = 1000 * config.GetInt("AckTimeout", 60);
             m_pausedAckTimeout = 1000 * config.GetInt("PausedAckTimeout", 300);
             SupportViewerObjectsCache = config.GetBoolean("SupportViewerObjectsCache", SupportViewerObjectsCache);
+            m_legacyRegionSizeChannels = LegacyRegionSizeViewers.ParseChannels(
+                config.GetString("LegacyRegionSizeViewers", LegacyRegionSizeViewers.DefaultChannels));
         }
         else
         {

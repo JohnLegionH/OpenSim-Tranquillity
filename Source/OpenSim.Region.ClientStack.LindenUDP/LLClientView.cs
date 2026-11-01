@@ -556,7 +556,16 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         IsActive = true;
 
         m_supportViewerCache = m_udpServer.SupportViewerObjectsCache;
+
+        // The login channel travels in the circuit data to every region the viewer connects to.
+        string channel = ((Scene)m_scene).AuthenticateHandler?.GetAgentCircuitData(circuitCode)?.Channel;
+        Only256mRegions = m_udpServer.IsLegacyRegionSizeChannel(channel);
+        if (Only256mRegions && (m_scene.RegionInfo.RegionSizeX > Constants.RegionSize || m_scene.RegionInfo.RegionSizeY > Constants.RegionSize))
+            m_log.LogDebug($"{LogHeader} {m_firstName} {m_lastName} is on channel '{channel}', which only takes 256 m regions: sending it the south-west 256 m of {m_scene.Name}");
     }
+
+    /// <inheritdoc/>
+    public bool Only256mRegions { get; }
 
     #region Client Methods
 
