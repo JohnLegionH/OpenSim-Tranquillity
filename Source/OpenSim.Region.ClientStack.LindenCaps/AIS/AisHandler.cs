@@ -62,6 +62,15 @@ public sealed class AisHandler : SimpleStreamHandler
     private readonly IAisInventoryBackend m_destination;
     private readonly UUID m_destinationAgentId;
 
+    /// <summary>
+    /// Inventory cap only: the library cap's handler, asked about any folder or item id that is not the agent's.
+    /// Linden Lab's viewer decides that a folder is the Library's by comparing its owner with an id compiled into
+    /// the viewer, so on a grid whose Library has another owner it sends every Library folder read to the agent's
+    /// InventoryAPIv3. The legacy descendents fetch already copes (it sorts by the owner in the request); this does
+    /// the same for AIS. Null when there is no library.
+    /// </summary>
+    private readonly AisHandler m_libraryReader;
+
     public AisHandler(string capPath, UUID agentId, IAisInventoryBackend backend, AisMode mode = AisMode.Inventory,
         IAisInventoryBackend destination = null, UUID destinationAgentId = default, AisHandler libraryReader = null)
         : base(capPath, mode == AisMode.Library ? AISv3Module.LibraryCapName : AISv3Module.CapName)
@@ -72,6 +81,9 @@ public sealed class AisHandler : SimpleStreamHandler
         m_mode = mode;
         m_destination = destination;
         m_destinationAgentId = destinationAgentId;
+        if (libraryReader is not null && (mode != AisMode.Inventory || libraryReader.Mode != AisMode.Library))
+            throw new ArgumentException("a library reader is a library-mode handler given to an inventory-mode handler", nameof(libraryReader));
+        m_libraryReader = libraryReader;
     }
 
     public UUID AgentId => m_agentId;
@@ -92,6 +104,17 @@ public sealed class AisHandler : SimpleStreamHandler
     /// <summary>Dispatch a parsed route. Public so the HTTP-level tests can drive it without a scene.</summary>
     public void Dispatch(AisRoute route, IOSHttpRequest httpRequest, IOSHttpResponse httpResponse)
     {
+        // Before the body is read: the library handler reads it itself. Anything it takes is answered exactly as
+        // LibraryAPIv3 would answer it (reads served, mutations refused 405, nothing changed).
+        if (m_libraryReader is not null && IsLibraryIdNotAgents(route))
+        {
+            if (m_log.IsEnabled(LogLevel.Debug))
+                m_log.LogDebug("[AIS]: {Operation} on {Id} is a Library id; answered from the library for agent {Agent}",
+                    route.Operation, route.Id, m_agentId);
+            m_libraryReader.Dispatch(route, httpRequest, httpResponse);
+            return;
+        }
+
         var read = ReadBody(httpRequest);
 
         // AIS-SEC-2. A mutating route never runs on a body we could not read. The fetch routes are untouched:
@@ -205,6 +228,42 @@ public sealed class AisHandler : SimpleStreamHandler
                 "the request could not be completed", route);
         }
     }
+
+    /// <summary>
+    /// True when the route names, by UUID, a folder or item that the Library holds and the agent does not. The
+    /// library is held in memory, so it is asked first and the agent's inventory only when the library has the id;
+    /// an id in both stores stays the agent's. COPY is not forwarded: it is the one library operation that writes,
+    /// and it is not something the viewer sends to the inventory cap. Orphans, the Current Outfit alias and routes
+    /// the parser did not recognise are always the agent's own.
+    /// </summary>
+    private bool IsLibraryIdNotAgents(AisRoute route)
+    {
+        if (route.IsAlias || route.Id.IsZero()) return false;
+        switch (route.Operation)
+        {
+            case AisOperation.FetchItem:
+            case AisOperation.UpdateItem:
+            case AisOperation.RemoveItem:
+                return m_libraryReader.HoldsItem(route.Id) && m_backend.GetItem(m_agentId, route.Id) is null;
+
+            case AisOperation.FetchCategoryChildren:
+            case AisOperation.FetchCategorySubset:
+            case AisOperation.FetchCategoryCategories:
+            case AisOperation.FetchCategoryLinks:
+            case AisOperation.CreateInventory:
+            case AisOperation.SlamFolder:
+            case AisOperation.RemoveCategory:
+            case AisOperation.PurgeDescendents:
+            case AisOperation.UpdateCategory:
+                return m_libraryReader.HoldsFolder(route.Id) && m_backend.GetFolder(m_agentId, route.Id) is null;
+
+            default:
+                return false;
+        }
+    }
+
+    private bool HoldsFolder(UUID id) => m_backend.GetFolder(m_agentId, id) is not null;
+    private bool HoldsItem(UUID id) => m_backend.GetItem(m_agentId, id) is not null;
 
     // ------------------------------------------------------------------ the read routes
 
