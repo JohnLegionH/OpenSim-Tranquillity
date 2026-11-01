@@ -220,6 +220,18 @@ public class AisLibraryViaInventoryHttpTests
         Assert.That(Parse(raw)["name"].AsString(), Is.EqualTo("My own"));
     }
 
+    [Test]
+    public void An_item_id_that_is_in_both_stores_answers_as_the_agents()
+    {
+        var w = Build();
+        w.Inventory.SeedItem(LibItem, Alice, AliceRoot, "my own copy");
+        var (status, raw) = Send(w.InventoryWithLibrary, "GET", $"/item/{LibItem}");
+
+        Assert.That(status, Is.EqualTo((int)HttpStatusCode.OK));
+        Assert.That(Parse(raw)["name"].AsString(), Is.EqualTo("my own copy"));
+        Assert.That(Parse(raw)["agent_id"].AsUUID(), Is.EqualTo(Alice));
+    }
+
     // ------------------------------------------------------------------ mutations on a Library id
 
     public static IEnumerable<TestCaseData> LibraryMutations()
