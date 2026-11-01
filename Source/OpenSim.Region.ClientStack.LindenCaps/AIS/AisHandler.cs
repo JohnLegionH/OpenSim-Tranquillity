@@ -63,7 +63,7 @@ public sealed class AisHandler : SimpleStreamHandler
     private readonly UUID m_destinationAgentId;
 
     public AisHandler(string capPath, UUID agentId, IAisInventoryBackend backend, AisMode mode = AisMode.Inventory,
-        IAisInventoryBackend destination = null, UUID destinationAgentId = default)
+        IAisInventoryBackend destination = null, UUID destinationAgentId = default, AisHandler libraryReader = null)
         : base(capPath, mode == AisMode.Library ? AISv3Module.LibraryCapName : AISv3Module.CapName)
     {
         m_capPath = capPath;
