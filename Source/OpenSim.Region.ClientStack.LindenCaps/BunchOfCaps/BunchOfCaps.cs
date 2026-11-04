@@ -689,6 +689,14 @@ public partial class BunchOfCaps
                     break;
             }
         }
+        else if (inventoryType == "script" && assetType == "lsltext")
+        {
+            // A script made from source through this upload (a client library does this) is a script item. Left at
+            // zero it was stored as a texture, which the prim's script list and the script engines' per-prim event
+            // delivery (touch, changed, link_message) do not count as a script.
+            inType = (sbyte)InventoryType.LSL;
+            assType = (sbyte)AssetType.LSLText;
+        }
         else if (inventoryType == "object")
         {
             if (assetType == "mesh") // this code for now is for mesh models uploads only
