@@ -427,6 +427,22 @@ public partial class BunchOfCaps
             m_FileAgentInventoryState = FileAgentInventoryState.processRequest;
         }
 
+        if (!TryGetUploadTypes(llsdRequest.inventory_type, llsdRequest.asset_type, out _, out _))
+        {
+            // Refuse before an uploader is issued: nothing is uploaded, nothing is stored, and the client is told why.
+            LLSDAssetUploadError resperror = new LLSDAssetUploadError();
+            resperror.message = UnsupportedUploadTypeMessage(llsdRequest.inventory_type, llsdRequest.asset_type);
+            resperror.identifier = UUID.Zero;
+
+            LLSDAssetUploadResponse errorResponse = new LLSDAssetUploadResponse();
+            errorResponse.uploader = "";
+            errorResponse.state = "error";
+            errorResponse.error = resperror;
+            lock (m_ModelCost)
+                m_FileAgentInventoryState = FileAgentInventoryState.idle;
+            return errorResponse;
+        }
+
         int cost = 0;
         int nreqtextures = 0;
         int nreqmeshs= 0;
@@ -606,6 +622,107 @@ public partial class BunchOfCaps
     }
 
     /// <summary>
+    /// The inventory type and asset type the NewFileAgentInventory route stores for the type names a client sends.
+    /// The names are the viewer protocol's: the inventory type is LLInventoryType's name for the item ("texture",
+    /// "snapshot", "sound", "animation", "notecard", "gesture", "script", "wearable", "object") and the asset type is
+    /// LLAssetType's name ("texture", "animatn", "notecard", "gesture", "lsltext", "bodypart", "clothing", "mesh").
+    /// LLInventoryType's table lists which asset types belong to each inventory type; a pair that does not belong
+    /// together, or one that no client sends to this route, returns false and nothing is stored for it. An empty
+    /// inventory type is taken from the asset type, which is what the official viewer does when it sends none.
+    /// </summary>
+    public static bool TryGetUploadTypes(string inventoryType, string assetType, out sbyte inType, out sbyte assType)
+    {
+        inType = 0;
+        assType = 0;
+        inventoryType ??= string.Empty;
+        assetType ??= string.Empty;
+
+        if (inventoryType.Length == 0)
+        {
+            switch (assetType)
+            {
+                case "texture": inventoryType = "texture"; break;
+                case "sound": inventoryType = "sound"; break;
+                case "animatn": inventoryType = "animation"; break;
+                case "notecard": inventoryType = "notecard"; break;
+                case "gesture": inventoryType = "gesture"; break;
+                case "lsltext": inventoryType = "script"; break;
+                default: return false;
+            }
+        }
+
+        switch (inventoryType)
+        {
+            case "texture":
+            case "image":
+                if (assetType.Length != 0 && assetType != "texture")
+                    return false;
+                inType = (sbyte)InventoryType.Texture;
+                assType = (sbyte)AssetType.Texture;
+                return true;
+            case "snapshot": // a snapshot is a texture asset
+                inType = (sbyte)InventoryType.Snapshot;
+                assType = (sbyte)AssetType.Texture;
+                return true;
+            case "sound":
+                inType = (sbyte)InventoryType.Sound;
+                assType = (sbyte)AssetType.Sound;
+                return true;
+            case "animation":
+                inType = (sbyte)InventoryType.Animation;
+                assType = (sbyte)AssetType.Animation;
+                return true;
+            case "animset":
+                inType = (sbyte)CustomInventoryType.AnimationSet;
+                assType = (sbyte)CustomAssetType.AnimationSet;
+                return true;
+            case "wearable":
+                inType = (sbyte)InventoryType.Wearable;
+                if (assetType == "bodypart")
+                    assType = (sbyte)AssetType.Bodypart;
+                else if (assetType == "clothing")
+                    assType = (sbyte)AssetType.Clothing;
+                else
+                    return false;
+                return true;
+            case "script":
+                // A script made from source (a client library does this). Left at zero it was stored as a texture,
+                // which the prim's script list and the script engines' per-prim event delivery (touch, changed,
+                // link_message) do not count as a script.
+                if (assetType != "lsltext")
+                    return false;
+                inType = (sbyte)InventoryType.LSL;
+                assType = (sbyte)AssetType.LSLText;
+                return true;
+            case "notecard":
+                if (assetType != "notecard")
+                    return false;
+                inType = (sbyte)InventoryType.Notecard;
+                assType = (sbyte)AssetType.Notecard;
+                return true;
+            case "gesture":
+                if (assetType != "gesture")
+                    return false;
+                inType = (sbyte)InventoryType.Gesture;
+                assType = (sbyte)AssetType.Gesture;
+                return true;
+            case "object": // mesh model uploads only
+                if (assetType != "mesh")
+                    return false;
+                inType = (sbyte)InventoryType.Object;
+                assType = (sbyte)AssetType.Object;
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static string UnsupportedUploadTypeMessage(string inventoryType, string assetType)
+    {
+        return "Upload not supported: inventory type \"" + inventoryType + "\" with asset type \"" + assetType + "\"";
+    }
+
+    /// <summary>
     /// Convert raw uploaded data into the appropriate asset and item.
     /// </summary>
     /// <param name="assetID"></param>
@@ -655,49 +772,17 @@ public partial class BunchOfCaps
             }
         }
 
-        // strings to types
-        if (inventoryType == "sound")
+        // strings to types. The request already refused a pair the route does not store; this stays as the second
+        // check so that data posted to an uploader is never stored with types that do not match.
+        if (!TryGetUploadTypes(inventoryType, assetType, out inType, out assType))
         {
-            inType = (sbyte)InventoryType.Sound;
-            assType = (sbyte)AssetType.Sound;
+            error = UnsupportedUploadTypeMessage(inventoryType, assetType);
+            lock (m_ModelCost)
+                m_FileAgentInventoryState = FileAgentInventoryState.idle;
+            return;
         }
-        else if (inventoryType == "snapshot")
-        {
-            inType = (sbyte)InventoryType.Snapshot;
-        }
-        else if (inventoryType == "animation")
-        {
-            inType = (sbyte)InventoryType.Animation;
-            assType = (sbyte)AssetType.Animation;
-        }
-        else if (inventoryType == "animset")
-        {
-            inType = (sbyte)CustomInventoryType.AnimationSet;
-            assType = (sbyte)CustomAssetType.AnimationSet;
-            m_log.LogDebug("got animset upload request");
-        }
-        else if (inventoryType == "wearable")
-        {
-            inType = (sbyte)InventoryType.Wearable;
-            switch (assetType)
-            {
-                case "bodypart":
-                    assType = (sbyte)AssetType.Bodypart;
-                    break;
-                case "clothing":
-                    assType = (sbyte)AssetType.Clothing;
-                    break;
-            }
-        }
-        else if (inventoryType == "script" && assetType == "lsltext")
-        {
-            // A script made from source through this upload (a client library does this) is a script item. Left at
-            // zero it was stored as a texture, which the prim's script list and the script engines' per-prim event
-            // delivery (touch, changed, link_message) do not count as a script.
-            inType = (sbyte)InventoryType.LSL;
-            assType = (sbyte)AssetType.LSLText;
-        }
-        else if (inventoryType == "object")
+
+        if (inventoryType == "object")
         {
             if (assetType == "mesh") // this code for now is for mesh models uploads only
             {
