@@ -5179,6 +5179,10 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         // make clear we want the all thing
         cAgent.Appearance = new AvatarAppearance(Appearance,true,true);
 
+        // The bakes in that appearance belong to a server-side bake this region may have applied; the region the
+        // agent enters has no record of it, so the version goes along (-1: none).
+        cAgent.BakedCofVersion = m_scene.RequestModuleInterface<IServerSideBakingRegion>()?.BakedCofVersion(UUID) ?? -1;
+
         cAgent.ParentPart = ParentUUID;
         cAgent.SitOffset = PrevSitOffset;
 
@@ -5296,6 +5300,10 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         SetAlwaysRun = cAgent.AlwaysRun;
 
         Appearance = new AvatarAppearance(cAgent.Appearance, true, true);
+
+        // Describe the carried bakes from the first appearance message on, not only once this region has baked.
+        if (cAgent.BakedCofVersion >= 0)
+            m_scene.RequestModuleInterface<IServerSideBakingRegion>()?.RecordCarriedBake(UUID, cAgent.BakedCofVersion);
 
         /*
         bool isFlying = ((m_AgentControlFlags & ACFlags.AGENT_CONTROL_FLY) != 0);

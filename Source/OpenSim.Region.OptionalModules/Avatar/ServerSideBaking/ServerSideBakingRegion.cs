@@ -54,9 +54,8 @@ public sealed class ServerSideBakingRegion : IServerSideBakingRegion
         m_bakedCof[agentId] = cofVersion;
     }
 
-    public void RecordCarriedBake(UUID agentId, int cofVersion)
-    {
-    }
+    /// <inheritdoc/>
+    public void RecordCarriedBake(UUID agentId, int cofVersion) => RecordBake(agentId, cofVersion);
 
     /// <summary>Forget an agent on close, so a returning agent is not credited with a bake this sim no longer knows about.</summary>
     public void Forget(UUID agentId)
