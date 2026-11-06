@@ -85,11 +85,12 @@
     ;; same avatar again for 60 seconds. (default is 30)
     ; ChildPresenceWaitSeconds = 30
 
-    ;# {CrossingChildPresenceWaitSeconds} {} {Seconds a region waits for the viewer of an avatar crossing into it} {} 3
-    ;; The wait for a crossing avatar's viewer to connect, which the region the avatar leaves holds the
-    ;; avatar for. A viewer is told about a neighbouring region before it reaches the border and connects then,
-    ;; so a crossing needs only the time for a connection already on its way. A crossing never waits longer
-    ;; than ChildPresenceWaitSeconds; a teleport uses ChildPresenceWaitSeconds. (default is 3)
+    ;# {CrossingChildPresenceWaitSeconds} {} {Seconds a region waits for the viewer of an avatar crossing into it} {}
+    ;; A shorter wait for an avatar crossing into this region, whose source region holds the avatar until the
+    ;; wait ends. A viewer is told about a neighbouring region before it reaches the border and connects then,
+    ;; so a crossing needs only the time for a connection already on its way. When this is not set, a crossing
+    ;; waits as long as ChildPresenceWaitSeconds. A crossing never waits longer than ChildPresenceWaitSeconds,
+    ;; and a teleport always uses ChildPresenceWaitSeconds.
     ; CrossingChildPresenceWaitSeconds = 3
 
     ;# {ConsolePrompt} {} {ConsolePrompt} {} "Region (\R) "

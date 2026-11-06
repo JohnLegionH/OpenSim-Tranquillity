@@ -982,7 +982,10 @@ public partial class Scene : SceneBase
             StartDisabled = startupConfig.GetBoolean("StartDisabled", false);
 
             ChildPresenceWait = TimeSpan.FromSeconds(Math.Max(0, startupConfig.GetInt("ChildPresenceWaitSeconds", 30)));
-            CrossingChildPresenceWait = TimeSpan.FromSeconds(Math.Max(0, startupConfig.GetInt("CrossingChildPresenceWaitSeconds", 3)));
+            // Absent key: a crossing waits as long as any other update (ChildPresenceWait).
+            CrossingChildPresenceWait = startupConfig.Contains("CrossingChildPresenceWaitSeconds")
+                ? TimeSpan.FromSeconds(Math.Max(0, startupConfig.GetInt("CrossingChildPresenceWaitSeconds", 0)))
+                : null;
 
             m_defaultDrawDistance = startupConfig.GetFloat("DefaultDrawDistance", m_defaultDrawDistance);
             m_maxDrawDistance = startupConfig.GetFloat("MaxDrawDistance", m_maxDrawDistance);
@@ -4845,9 +4848,7 @@ Label_GroupsDone:
         // after receiving the EnableSimulator HTTP Event Queue message (for the v1 teleport protocol)
         // or TeleportFinish (for the v2 teleport protocol).  This triggers the viewer to send
         // a UseCircuitCode packet which in turn calls AddNewAgent which finally creates the ScenePresence.
-        TimeSpan wait = cAgentData.SenderWantsToWaitForRoot || CrossingChildPresenceWait.GetValueOrDefault(TimeSpan.FromSeconds(3)) > ChildPresenceWait
-            ? ChildPresenceWait
-            : CrossingChildPresenceWait.GetValueOrDefault(TimeSpan.FromSeconds(3));
+        TimeSpan wait = cAgentData.SenderWantsToWaitForRoot ? ChildPresenceWait : EffectiveCrossingChildPresenceWait;
         ScenePresence sp = WaitGetScenePresence(cAgentData.AgentID, wait);
 
         if (sp is not null)
@@ -4936,17 +4937,22 @@ Label_GroupsDone:
     public TimeSpan ChildPresenceWait { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
-    /// How long an incoming agent update for a border crossing waits for the viewer to connect to this region. A
-    /// viewer is told about a neighbour well before it reaches the border and connects then, so a crossing needs
-    /// no more than the time for a connection already on its way. The source region holds the avatar in transit
-    /// for as long as this wait runs, so a viewer that never connected must not keep it for the general wait. A
-    /// teleport (the sender waits for the root agent) uses <see cref="ChildPresenceWait"/>, and a crossing never
-    /// waits longer than that. Set from [Startup] CrossingChildPresenceWaitSeconds; the default is 3 seconds.
+    /// A shorter wait for an incoming agent update that is a border crossing, or null when none is set. A
+    /// viewer is told about a neighbour well before it reaches the border and connects then, so a crossing
+    /// needs no more than the time for a connection already on its way, and the source region holds the avatar
+    /// in transit for as long as this wait runs. Set from [Startup] CrossingChildPresenceWaitSeconds. When the
+    /// key is absent a crossing waits <see cref="ChildPresenceWait"/>, as it always did. A teleport (the sender
+    /// waits for the root agent) always uses <see cref="ChildPresenceWait"/>. See
+    /// <see cref="EffectiveCrossingChildPresenceWait"/>.
     /// </summary>
-    public TimeSpan? CrossingChildPresenceWait { get; set; } = TimeSpan.FromSeconds(3);
+    public TimeSpan? CrossingChildPresenceWait { get; set; }
 
-    /// <summary>Stub.</summary>
-    public TimeSpan EffectiveCrossingChildPresenceWait => TimeSpan.Zero;
+    /// <summary>
+    /// How long a border crossing waits for the viewer to connect: <see cref="CrossingChildPresenceWait"/> when
+    /// it is set, never longer than <see cref="ChildPresenceWait"/>; otherwise <see cref="ChildPresenceWait"/>.
+    /// </summary>
+    public TimeSpan EffectiveCrossingChildPresenceWait =>
+        CrossingChildPresenceWait is { } crossing && crossing < ChildPresenceWait ? crossing : ChildPresenceWait;
 
     /// <summary>
     /// The warning for an agent that was authorised in this region but whose viewer never connected, or null
