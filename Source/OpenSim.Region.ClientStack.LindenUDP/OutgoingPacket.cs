@@ -56,6 +56,14 @@ public sealed class OutgoingPacket
     /// <summary>The delegate to be called if this packet is determined to be unacknowledged</summary>
     public UnackedPacketMethod UnackedMethod;
 
+    // Measurement build only: set when a map reply is queued, read when it leaves the socket.
+    public string DiagKind;
+    public int DiagId;
+    public long DiagQueuedAt;
+    public long DiagSearchStart;
+    public int DiagBytes;
+    public int DiagCategory;
+
     /// <summary>
     /// Default constructor
     /// </summary>

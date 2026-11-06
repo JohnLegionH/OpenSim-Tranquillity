@@ -39,6 +39,21 @@ namespace OpenSim.Framework
             t_start = 0;
         }
 
+        [ThreadStatic] private static string t_pendingKind;
+
+        /// <summary>Names the map reply the calling thread is about to queue; the client's queue logs it and clears it.</summary>
+        public static void SetPending(string kind) => t_pendingKind = kind;
+
+        public static string TakePending()
+        {
+            string kind = t_pendingKind;
+            t_pendingKind = null;
+            return kind;
+        }
+
+        /// <summary>Start time of the search running on this thread, 0 if none.</summary>
+        public static long StartTimestamp => t_start;
+
         /// <summary>Id of the search running on this thread, 0 if none.</summary>
         public static int Id => t_id;
 

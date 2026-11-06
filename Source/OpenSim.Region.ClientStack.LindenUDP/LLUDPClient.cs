@@ -517,6 +517,7 @@ public sealed class LLUDPClient
         if (category >= 0 && category < m_packetOutboxes.Length)
         {
             DoubleLocklessQueue<OutgoingPacket> queue = m_packetOutboxes[category];
+            DiagOnQueue(packet, category);
             queue.Enqueue(packet, false);
             return true;
         }
@@ -525,6 +526,42 @@ public sealed class LLUDPClient
             // We don't have a token bucket for this category, so it will not be queued
             return false;
         }
+    }
+
+    /// <summary>Bytes waiting in each category's queue (measurement build only; packets cancelled in the queue are not subtracted).</summary>
+    public readonly long[] DiagQueuedBytes = new long[THROTTLE_CATEGORY_COUNT];
+
+    private static readonly string[] s_diagNames = { "resend", "land", "wind", "cloud", "task", "texture", "asset" };
+
+    /// <summary>Measurement build only: counts the bytes queued, and logs the state of the queues when a map reply is queued.</summary>
+    private void DiagOnQueue(OutgoingPacket packet, int category)
+    {
+        int len = packet.Buffer?.DataLength ?? 0;
+        packet.DiagBytes = len;
+        packet.DiagCategory = category;
+        string kind = DiagMapTrace.TakePending();
+        if (kind is not null)
+        {
+            var sb = new System.Text.StringBuilder(384);
+            sb.Append("[DIAG-MAP] #").Append(DiagMapTrace.Id).Append(" reply-queued kind=").Append(kind)
+              .Append(" agent=").Append(AgentID).Append(" cat=").Append((ThrottleOutPacketType)category)
+              .Append(" len=").Append(len).Append(" sinceEnqueueMs=").Append(DiagMapTrace.SinceEnqueueMs.ToString("F1"))
+              .Append(" ahead:");
+            for (int i = 0; i < s_diagNames.Length; i++)
+                sb.Append(' ').Append(s_diagNames[i]).Append('=').Append(m_packetOutboxes[i].Count).Append("p/")
+                  .Append(Interlocked.Read(ref DiagQueuedBytes[i])).Append('B');
+            sb.Append(" rateBytesPerSec(granted/requested):");
+            for (int i = 0; i < s_diagNames.Length; i++)
+                sb.Append(' ').Append(s_diagNames[i]).Append('=').Append((int)m_throttleCategories[i].DripRate).Append('/')
+                  .Append((int)m_throttleCategories[i].RequestedDripRate);
+            sb.Append(" total=").Append((int)m_throttleClient.DripRate);
+            m_log.LogInformation(sb.ToString());
+            packet.DiagKind = kind;
+            packet.DiagId = DiagMapTrace.Id;
+            packet.DiagSearchStart = DiagMapTrace.StartTimestamp;
+            packet.DiagQueuedAt = DiagMapTrace.Now();
+        }
+        Interlocked.Add(ref DiagQueuedBytes[category], len);
     }
 
     /// <summary>

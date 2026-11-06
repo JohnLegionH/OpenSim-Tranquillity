@@ -2103,6 +2103,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
 
                 buf.DataLength = lastpos;
                 // send it
+                DiagMapTrace.SetPending("MapItemReply");
                 m_udpServer.SendUDPPacket(m_udpClient, buf, MapReplyCategory);
 
                 buf = newbuf;
@@ -2119,6 +2120,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             data[countpos] = (byte)count;
 
             buf.DataLength = pos;
+            DiagMapTrace.SetPending("MapItemReply");
             m_udpServer.SendUDPPacket(m_udpClient, buf, MapReplyCategory);
         }
     }
@@ -2220,6 +2222,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
 
                 buf.DataLength = lastpos;
                 // send it
+                DiagMapTrace.SetPending("MapBlockReply");
                 m_udpServer.SendUDPPacket(m_udpClient, buf, MapReplyCategory);
 
                 buf = newbuf;
@@ -2249,6 +2252,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
                 data[pos++] = 0;
 
             buf.DataLength = pos;
+            DiagMapTrace.SetPending("MapBlockReply");
             m_udpServer.SendUDPPacket(m_udpClient, buf, MapReplyCategory);
         }
     }
@@ -12806,6 +12810,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             ImageID = new UUID("00000000-0000-1111-9999-000000000006")
         };
         mapReply.Header.Zerocoded = true;
+        DiagMapTrace.SetPending("MapLayerReply");
         OutPacket(mapReply, MapReplyCategory);
     }
 

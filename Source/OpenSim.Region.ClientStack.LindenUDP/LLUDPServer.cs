@@ -1146,6 +1146,21 @@ public class LLUDPServer : OpenSimUDPBase
 
         SyncSend(buffer);
 
+        if (outgoingPacket.DiagBytes > 0)
+        {
+            Interlocked.Add(ref udpClient.DiagQueuedBytes[outgoingPacket.DiagCategory], -outgoingPacket.DiagBytes);
+            outgoingPacket.DiagBytes = 0;
+        }
+        if (outgoingPacket.DiagKind is not null)
+        {
+            m_log.LogInformation(
+                "[DIAG-MAP] #{0} reply-left kind={1} agent={2} cat={3} seq={4} len={5} queuedToSocketMs={6:F1} sinceEnqueueMs={7:F1}",
+                outgoingPacket.DiagId, outgoingPacket.DiagKind, udpClient.AgentID, outgoingPacket.Category,
+                outgoingPacket.SequenceNumber, dataLength, DiagMapTrace.MsSince(outgoingPacket.DiagQueuedAt),
+                outgoingPacket.DiagSearchStart == 0 ? -1.0 : DiagMapTrace.MsSince(outgoingPacket.DiagSearchStart));
+            outgoingPacket.DiagKind = null;
+        }
+
         // Keep track of when this packet was sent out (right now)
         Interlocked.Exchange(ref outgoingPacket.TickCount, Environment.TickCount & Int32.MaxValue);
 
