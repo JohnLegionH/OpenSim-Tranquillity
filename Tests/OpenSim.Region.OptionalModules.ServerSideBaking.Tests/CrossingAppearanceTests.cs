@@ -68,6 +68,7 @@ public class CrossingAppearanceTests
         var to = helpers.SetupScene("To", UUID.Random(), 1001, 1000);
 
         var mover = SceneHelpers.AddScenePresence(from, UUID.Random());
+        mover.Appearance.VisualParams = new byte[253];   // the block a viewer uploads
         var observerAcd = SceneHelpers.GenerateAgentData(UUID.Random());
         var observer = new CapturingClient(observerAcd, to);
         SceneHelpers.AddScenePresence(to, observer, observerAcd);
