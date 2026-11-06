@@ -265,11 +265,12 @@ public class RebakeVisualParamsTests
         var height = ParamOf(rig.Lad, "shape");
         Wear(rig, new Dictionary<int, float> { [height.Id] = At(height, 0.9f) });
         var before = rig.Presence.Appearance.VisualParams.ToArray();
+        var sentBefore = rig.Observer.CountFor(rig.Presence.UUID);
 
         var outcome = await rig.Module.BakeAsync(rig.Presence, BakeReason.Login, CancellationToken.None);
 
         Assert.Equal(-1, rig.Module.RegionOf(rig.Scene).BakedCofVersion(rig.Presence.UUID));
-        Assert.Equal(0, rig.Observer.CountFor(rig.Presence.UUID));
+        Assert.Equal(sentBefore, rig.Observer.CountFor(rig.Presence.UUID));
         Assert.Equal(before, rig.Presence.Appearance.VisualParams);
         Assert.Equal(0, outcome.Count(ChannelStatus.Baked) + outcome.Count(ChannelStatus.Reused));
     }
