@@ -281,6 +281,15 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
             return new BakeOutcome(sp.UUID, reason, Array.Empty<ChannelOutcome>(), 0);
         }
 
+        // A visitor from another grid is not baked here: its viewer fetches its bakes from its home grid's service,
+        // where a bake stored by this grid does not exist, so the visitor would see its own avatar as a cloud.
+        // The others fetch its bake assets by id through the region, as before server-side baking.
+        if (sp.IsVisitorFromOtherGrid)
+        {
+            m_log.LogDebug("[SSB]: bake for {Name} ({Agent}) reason={Reason} not run: the agent is from another grid", sp.Name, sp.UUID, reason);
+            return new BakeOutcome(sp.UUID, reason, Array.Empty<ChannelOutcome>(), 0);
+        }
+
         var scene = sp.Scene;
         var backend = Backend;
         if (sp.IsNPC) m_npcScenes[sp.UUID] = scene;

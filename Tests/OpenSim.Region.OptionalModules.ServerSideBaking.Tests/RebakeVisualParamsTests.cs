@@ -54,9 +54,15 @@ public class RebakeVisualParamsTests
 
     private sealed record Rig(Scene Scene, ServerSideBakingModule Module, ScenePresence Presence, CapturingClient Observer, AvatarLad Lad);
 
-    private static Rig Setup()
+    private static Rig Setup(bool? usersLocal = null)
     {
         var scene = new SceneHelpers().SetupScene();
+        if (usersLocal is bool local)
+        {
+            var users = System.Reflection.DispatchProxy.Create<OpenSim.Framework.IUserManagement, CrossingAppearanceTests.StandInUsers>();
+            ((CrossingAppearanceTests.StandInUsers)(object)users).Local = local;
+            scene.RegisterModuleInterface<OpenSim.Framework.IUserManagement>(users);
+        }
 
         var observerAcd = SceneHelpers.GenerateAgentData(UUID.Random());
         var observer = new CapturingClient(observerAcd, scene);
@@ -236,5 +242,36 @@ public class RebakeVisualParamsTests
         Assert.Equal(253, rig.Presence.Appearance.VisualParams.Length);
         Assert.Equal(ByteOf(shape, At(shape, 0.4f)), rig.Presence.Appearance.VisualParams[IndexOf(rig.Lad, shape)]);
         Assert.True(rig.Observer.CountFor(rig.Presence.UUID) > 0);
+    }
+
+    [Fact]
+    public async Task ABakeRunsForAUserOfThisGrid()
+    {
+        var rig = Setup(usersLocal: true);
+        var height = ParamOf(rig.Lad, "shape");
+        Wear(rig, new Dictionary<int, float> { [height.Id] = At(height, 0.9f) });
+
+        await rig.Module.BakeAsync(rig.Presence, BakeReason.Login, CancellationToken.None);
+
+        Assert.True(rig.Module.RegionOf(rig.Scene).BakedCofVersion(rig.Presence.UUID) >= 0);
+        Assert.True(rig.Observer.CountFor(rig.Presence.UUID) > 0);
+    }
+
+    /// <summary>The visitor's own viewer fetches its bakes from its home grid's service, which would not hold a bake stored here.</summary>
+    [Fact]
+    public async Task NoBakeIsStartedForAVisitorFromAnotherGrid()
+    {
+        var rig = Setup(usersLocal: false);
+        var height = ParamOf(rig.Lad, "shape");
+        Wear(rig, new Dictionary<int, float> { [height.Id] = At(height, 0.9f) });
+        var before = rig.Presence.Appearance.VisualParams.ToArray();
+        var sentBefore = rig.Observer.CountFor(rig.Presence.UUID);
+
+        var outcome = await rig.Module.BakeAsync(rig.Presence, BakeReason.Login, CancellationToken.None);
+
+        Assert.Equal(-1, rig.Module.RegionOf(rig.Scene).BakedCofVersion(rig.Presence.UUID));
+        Assert.Equal(sentBefore, rig.Observer.CountFor(rig.Presence.UUID));
+        Assert.Equal(before, rig.Presence.Appearance.VisualParams);
+        Assert.Equal(0, outcome.Count(ChannelStatus.Baked) + outcome.Count(ChannelStatus.Reused));
     }
 }

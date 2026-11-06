@@ -349,8 +349,38 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
     public TeleportFlags TeleportFlags
     {
         get { return m_teleportFlags; }
-        set { m_teleportFlags = value; }
+        set
+        {
+            m_teleportFlags = value;
+            // Set when the agent enters through this grid's gatekeeper; later teleports inside the region do not clear it.
+            if ((value & TeleportFlags.ViaHGLogin) != 0)
+                m_arrivedViaHypergridLogin = true;
+        }
     }
+
+    private bool m_arrivedViaHypergridLogin;
+    private bool? m_visitorFromOtherGrid;
+
+    /// <summary>
+    /// True for an agent whose user account is not in this grid's user service (a hypergrid visitor). Its viewer
+    /// logged in at its home grid and fetches its baked textures from that grid's service. Never true for an NPC
+    /// or on a region with no user management module. Looked up once.
+    /// </summary>
+    public bool IsVisitorFromOtherGrid
+    {
+        get
+        {
+            if (IsNPC || m_scene?.UserManagementModule is not { } users)
+                return false;
+            return m_visitorFromOtherGrid ??= !users.IsLocalGridUser(UUID);
+        }
+    }
+
+    /// <summary>
+    /// True for an agent that came from another grid: a visitor, or a user of this grid who entered through the
+    /// gatekeeper on the way home. What another grid's service held for such an agent says nothing about this grid.
+    /// </summary>
+    public bool IsFromOtherGrid => !IsNPC && (m_arrivedViaHypergridLogin || IsVisitorFromOtherGrid);
 
     private uint m_requestedSitTargetID;
     // The experience whose llSitOnLink seated this avatar; Zero for a manual sit or when not seated.
@@ -4556,6 +4586,12 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
             // region, as it always did. On a copy: the parameter is a property of the message, not of the
             // appearance. A server-baking region bakes its NPCs, so there they send what an avatar sends.
             visualParams = AvatarAppearance.WithAppearanceVersion(Appearance.VisualParams, 0);
+        else if (IsFromOtherGrid)
+            // An agent from another grid that this region has not baked: its viewer fetches baked textures from its
+            // own grid, and a 1 beside no AppearanceData block would send the other viewers to this grid's appearance
+            // service, which holds none. Say 0 (the message every avatar carried before server-side baking), so they
+            // fetch the stored bake assets the faces name from the region. On a copy, as for an NPC above.
+            visualParams = AvatarAppearance.WithAppearanceVersion(Appearance.VisualParams, 0);
         else
             visualParams = Appearance.VisualParams;
 
@@ -5302,7 +5338,9 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         Appearance = new AvatarAppearance(cAgent.Appearance, true, true);
 
         // Describe the carried bakes from the first appearance message on, not only once this region has baked.
-        if (cAgent.BakedCofVersion >= 0)
+        // A version carried from another grid names a bake this grid never held, so only a crossing from a region
+        // of this grid is credited. A hypergrid transfer sends the same AgentData.
+        if (cAgent.BakedCofVersion >= 0 && !IsFromOtherGrid)
             m_scene.RequestModuleInterface<IServerSideBakingRegion>()?.RecordCarriedBake(UUID, cAgent.BakedCofVersion);
 
         /*
