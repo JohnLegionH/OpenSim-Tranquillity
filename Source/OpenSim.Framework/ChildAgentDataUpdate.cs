@@ -365,6 +365,8 @@ public class AgentData : IAgentData
     //public Byte GodLevel;
     public bool AlwaysRun;
     public UUID PreyAgent;
+    /// <summary>The COF version of the server-side bake the sending region applied to this agent, or -1.</summary>
+    public int BakedCofVersion;
     public Byte AgentAccess;
     public UUID ActiveGroupID;
     public string ActiveGroupName;

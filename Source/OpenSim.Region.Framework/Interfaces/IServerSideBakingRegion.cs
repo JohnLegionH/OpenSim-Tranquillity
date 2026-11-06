@@ -43,4 +43,7 @@ public interface IServerSideBakingRegion
     /// form it always has, with no <c>AppearanceData</c> block.
     /// </summary>
     int BakedCofVersion(UUID agentId);
+
+    /// <summary>Record a bake another region applied to an agent that has just arrived from it.</summary>
+    void RecordCarriedBake(UUID agentId, int cofVersion);
 }
