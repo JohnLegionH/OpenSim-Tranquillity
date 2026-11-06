@@ -65,12 +65,20 @@ public sealed class UnackedPacketCollection
     /// <summary>Holds information about pending removals</summary>
     private LocklessQueue<uint> m_pendingRemoves = new LocklessQueue<uint>();
     private uint m_older;
+    private volatile bool m_cleared;
+
+    /// <summary>
+    /// Empties the collection when the client is closed. The send loop runs on another thread and may still be
+    /// adding a packet it had already taken from the client's queues, so a cleared collection stays usable: it
+    /// drops what it is given and stays empty.
+    /// </summary>
     public void Clear()
     {
+        m_cleared = true;
         m_packets.Clear();
-        m_pendingAdds = null;
-        m_pendingAcknowledgements = null;
-        m_pendingRemoves = null;
+        m_pendingAdds = new LocklessQueue<OutgoingPacket>();
+        m_pendingAcknowledgements = new LocklessQueue<PendingAck>();
+        m_pendingRemoves = new LocklessQueue<uint>();
         m_older = 0;
     }
 
@@ -94,6 +102,17 @@ public sealed class UnackedPacketCollection
     /// it only queues it so it can be added in a thread-safe way later</remarks>
     public void Add(OutgoingPacket packet)
     {
+        if (m_cleared)
+        {
+            // the client is closed: nobody will acknowledge this packet, so give its buffer back
+            if (packet.Buffer != null)
+            {
+                OpenSimUDPBase.FreeUDPBuffer(packet.Buffer);
+                packet.Buffer = null;
+            }
+            return;
+        }
+
         m_pendingAdds.Enqueue(packet);
         Interlocked.Add(ref packet.Client.UnackedBytes, packet.Buffer.DataLength);
     }
@@ -111,6 +130,9 @@ public sealed class UnackedPacketCollection
     /// queues the ack so it can be handled in a thread-safe way later</remarks>
     public void Acknowledge(uint sequenceNumber, int currentTime, bool fromResend)
     {
+        if (m_cleared)
+            return;
+
         m_pendingAcknowledgements.Enqueue(new PendingAck(sequenceNumber, currentTime, fromResend));
     }
 
@@ -126,6 +148,9 @@ public sealed class UnackedPacketCollection
     /// so it can be handled in a thread safe way later</remarks>
     public void Remove(uint sequenceNumber)
     {
+        if (m_cleared)
+            return;
+
         m_pendingRemoves.Enqueue(sequenceNumber);
     }
 
