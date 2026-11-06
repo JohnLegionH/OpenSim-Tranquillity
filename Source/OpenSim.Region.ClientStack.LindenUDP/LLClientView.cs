@@ -8587,7 +8587,8 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
 
         { PacketType.MapLayerRequest, new(HandleMapLayerRequest, true) },
         { PacketType.MapBlockRequest, new(HandleMapBlockRequest, true) },
-        { PacketType.MapNameRequest, new(HandleMapNameRequest, true) },
+        // Not on the client's queue: see HandleMapNameRequest.
+        { PacketType.MapNameRequest, new(HandleMapNameRequest, false) },
 
         { PacketType.TeleportLandmarkRequest, new(HandleTeleportLandmarkRequest, true) },
         { PacketType.TeleportCancel, new(HandleTeleportCancel, true) },
@@ -10664,7 +10665,13 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         string mapName = map.NameData.Name.Length == 0 ? c.m_scene.RegionInfo.RegionName :
             Util.UTF8.GetString(map.NameData.Name, 0, map.NameData.Name.Length - 1);
 
-        c.OnMapNameRequest?.Invoke(c, mapName, map.AgentData.Flags);
+        uint flags = map.AgentData.Flags;
+
+        // The search asks the grid service, which can take a while, and it does not depend on anything else the client
+        // has asked for. The client's queue runs its requests one after another, so on it a search waits behind
+        // every request of the client's login that is still running (the arrival in the region takes seconds);
+        // it runs on a worker thread of its own instead.
+        Util.FireAndForget(_ => c.OnMapNameRequest?.Invoke(c, mapName, flags), null, "MapNameRequest", false);
     }
 
     private static void HandleTeleportLandmarkRequest(LLClientView c, Packet Pack)
