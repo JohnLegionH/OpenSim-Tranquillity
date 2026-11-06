@@ -1747,7 +1747,25 @@ public class LLUDPServer : OpenSimUDPBase
                         client.RemoteEndPoint == remoteEndPoint &&
                         client.SceneAgent.ControllingClient.SecureSessionId.Equals(sessionInfo.LoginInfo.SecureSession))
                     return client;
+
+                // A repeated UseCircuitCode for the circuit and session this client already serves, sent from
+                // another end point (the viewer resent it from a new socket). Closing the client here would also
+                // remove the circuit data that adding the replacement needs, and adding it would then fail, so the
+                // agent would be left without a presence in this region. Keep the client we have, as OpenSim does
+                // ("Ignoring a repeated UseCircuitCode").
+                if (client.CircuitCode == circuitCode && client.SessionId == sessionID)
+                {
+                    m_log.LogDebug(
+                        $"[LLUDPSERVER]: Ignoring a repeated UseCircuitCode ({circuitCode}) for {client.Name} in {Scene.Name} from {remoteEndPoint}, the client is at {client.RemoteEndPoint}");
+                    return null;
+                }
+
+                // Another session for the same agent replaces the client. Closing the agent also removes the
+                // circuit data the new session was authorised with, which the replacement needs, so put it back.
+                AgentCircuitData circuit = m_circuitManager.GetAgentCircuitData(circuitCode);
                 Scene.CloseAgent(agentID, true);
+                if (circuit is not null && m_circuitManager.GetAgentCircuitData(circuitCode) is null)
+                    m_circuitManager.AddNewCircuit(circuitCode, circuit);
             }
 
             LLUDPClient udpClient = new(this, ThrottleRates, Throttle, circuitCode, agentID, remoteEndPoint, m_defaultRTO, m_maxRTO);

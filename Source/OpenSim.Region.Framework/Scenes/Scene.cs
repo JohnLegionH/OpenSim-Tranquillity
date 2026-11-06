@@ -982,6 +982,7 @@ public partial class Scene : SceneBase
             StartDisabled = startupConfig.GetBoolean("StartDisabled", false);
 
             ChildPresenceWait = TimeSpan.FromSeconds(Math.Max(0, startupConfig.GetInt("ChildPresenceWaitSeconds", 30)));
+            CrossingChildPresenceWait = TimeSpan.FromSeconds(Math.Max(0, startupConfig.GetInt("CrossingChildPresenceWaitSeconds", 3)));
 
             m_defaultDrawDistance = startupConfig.GetFloat("DefaultDrawDistance", m_defaultDrawDistance);
             m_maxDrawDistance = startupConfig.GetFloat("MaxDrawDistance", m_maxDrawDistance);
@@ -4844,7 +4845,10 @@ Label_GroupsDone:
         // after receiving the EnableSimulator HTTP Event Queue message (for the v1 teleport protocol)
         // or TeleportFinish (for the v2 teleport protocol).  This triggers the viewer to send
         // a UseCircuitCode packet which in turn calls AddNewAgent which finally creates the ScenePresence.
-        ScenePresence sp = WaitGetScenePresence(cAgentData.AgentID);
+        TimeSpan wait = cAgentData.SenderWantsToWaitForRoot || CrossingChildPresenceWait > ChildPresenceWait
+            ? ChildPresenceWait
+            : CrossingChildPresenceWait;
+        ScenePresence sp = WaitGetScenePresence(cAgentData.AgentID, wait);
 
         if (sp is not null)
         {
@@ -4932,6 +4936,16 @@ Label_GroupsDone:
     public TimeSpan ChildPresenceWait { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
+    /// How long an incoming agent update for a border crossing waits for the viewer to connect to this region. A
+    /// viewer is told about a neighbour well before it reaches the border and connects then, so a crossing needs
+    /// no more than the time for a connection already on its way. The source region holds the avatar in transit
+    /// for as long as this wait runs, so a viewer that never connected must not keep it for the general wait. A
+    /// teleport (the sender waits for the root agent) uses <see cref="ChildPresenceWait"/>, and a crossing never
+    /// waits longer than that. Set from [Startup] CrossingChildPresenceWaitSeconds; the default is 3 seconds.
+    /// </summary>
+    public TimeSpan CrossingChildPresenceWait { get; set; } = TimeSpan.FromSeconds(3);
+
+    /// <summary>
     /// The warning for an agent that was authorised in this region but whose viewer never connected, or null
     /// when no circuit was authorised for the agent.
     /// </summary>
@@ -4955,7 +4969,15 @@ Label_GroupsDone:
     /// <param name='agentID'></param>
     protected virtual ScenePresence WaitGetScenePresence(UUID agentID)
     {
-        int ntimes = (int)Math.Ceiling(ChildPresenceWait.TotalMilliseconds / 250.0);
+        return WaitGetScenePresence(agentID, ChildPresenceWait);
+    }
+
+    /// <summary>
+    /// Poll until the requested ScenePresence appears or the given wait has passed.
+    /// </summary>
+    protected ScenePresence WaitGetScenePresence(UUID agentID, TimeSpan wait)
+    {
+        int ntimes = (int)Math.Ceiling(wait.TotalMilliseconds / 250.0);
         ScenePresence sp;
         while ((sp = GetScenePresence(agentID)) is null && (ntimes-- > 0))
             Thread.Sleep(250);

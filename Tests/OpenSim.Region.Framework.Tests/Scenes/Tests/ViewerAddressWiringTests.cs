@@ -597,6 +597,72 @@ public class ViewerAddressWiringTests : OpenSimTestCase
         Assert.Equal(RegionRegistered, rig.LastInform());
     }
 
+    // ---- a crossing into a region the viewer holds no circuit to ends in seconds ----
+
+    [Fact]
+    public void ACrossingWaitsThreeSecondsForTheViewerByDefaultAndTheWaitCanBeSet()
+    {
+        TestHelpers.InMethod();
+        Assert.Equal(TimeSpan.FromSeconds(3), new SceneHelpers().SetupScene().CrossingChildPresenceWait);
+
+        IConfigSource config = new IniConfigSource();
+        config.AddConfig("Startup").Set("CrossingChildPresenceWaitSeconds", "5");
+        Assert.Equal(TimeSpan.FromSeconds(5),
+            new SceneHelpers().SetupScene("s", UUID.Random(), 1000, 1000, config).CrossingChildPresenceWait);
+    }
+
+    [Fact]
+    public void ACrossingIntoARegionTheViewerNeverReachedEndsAtTheCrossingWait()
+    {
+        TestHelpers.InMethod();
+        Rig rig = BuildViewerThatNeverReachedB(new CrossingBackOffTests.TestClock());
+        rig.SceneB.ChildPresenceWait = TimeSpan.FromSeconds(8);
+        rig.SceneB.CrossingChildPresenceWait = TimeSpan.FromMilliseconds(500);
+
+        TimeSpan took = TimedCrossing(rig);
+
+        Assert.True(took >= TimeSpan.FromMilliseconds(400), $"took {took}");
+        Assert.True(took < TimeSpan.FromSeconds(4), $"took {took}");
+        Assert.Empty(rig.Crossings);
+        Assert.False(rig.Presence.IsChildAgent);
+        Assert.False(rig.Presence.IsInTransit);
+    }
+
+    [Fact]
+    public void AnUpdateThatWantsToWaitForTheRootKeepsTheLongWait()
+    {
+        TestHelpers.InMethod();
+        Rig rig = BuildViewerThatNeverReachedB(new CrossingBackOffTests.TestClock());
+        rig.SceneB.ChildPresenceWait = TimeSpan.FromMilliseconds(1500);
+        rig.SceneB.CrossingChildPresenceWait = TimeSpan.FromMilliseconds(100);
+
+        AgentData teleportUpdate = new()
+        {
+            AgentID = rig.Presence.UUID,
+            SessionID = rig.Presence.ControllingClient.SessionId,
+            SenderWantsToWaitForRoot = true
+        };
+        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+        bool taken = rig.SceneB.IncomingUpdateChildAgent(teleportUpdate);
+
+        Assert.False(taken);
+        Assert.True(watch.Elapsed >= TimeSpan.FromMilliseconds(1200), $"took {watch.Elapsed}");
+    }
+
+    [Fact]
+    public void ACrossingWaitIsNeverLongerThanTheGeneralWait()
+    {
+        TestHelpers.InMethod();
+        Rig rig = BuildViewerThatNeverReachedB(new CrossingBackOffTests.TestClock());
+        rig.SceneB.ChildPresenceWait = TimeSpan.FromMilliseconds(300);
+        rig.SceneB.CrossingChildPresenceWait = TimeSpan.FromSeconds(60);
+
+        TimeSpan took = TimedCrossing(rig);
+
+        Assert.True(took < TimeSpan.FromSeconds(10), $"took {took}");
+        Assert.False(rig.Presence.IsInTransit);
+    }
+
     /// <summary>Exposes the protected viewer-source lookup.</summary>
     private sealed class ProbeEntityTransferModule : EntityTransferModule
     {
