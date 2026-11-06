@@ -143,4 +143,252 @@ public class MapNameRequestQueueTests : OpenSimTestCase
             client.Close(false, false);
         }
     }
+
+    // ---- one name search at a time per client ----
+
+    /// <summary>
+    /// Stands in for the grid service behind the map search: records every search it is given and how many ran at
+    /// the same moment, and holds each search until the test lets it finish.
+    /// </summary>
+    private sealed class CountingSearch
+    {
+        private readonly object m_lock = new();
+        private readonly SemaphoreSlim m_release = new(0);
+        private int m_running;
+        private int m_started;
+        private int m_maxRunning;
+        private readonly List<string> m_answered = new();
+        public bool ThrowOnFirst;
+
+        public int Started => Volatile.Read(ref m_started);
+        public int MaxRunning => Volatile.Read(ref m_maxRunning);
+
+        public void Attach(LLClientView client)
+        {
+            client.OnMapNameRequest += (_, name, _) =>
+            {
+                int now = Interlocked.Increment(ref m_running);
+                int started = Interlocked.Increment(ref m_started);
+                lock (m_lock)
+                {
+                    m_maxRunning = Math.Max(m_maxRunning, now);
+                }
+                m_release.Wait(TimeSpan.FromSeconds(60));
+                lock (m_lock)
+                {
+                    m_answered.Add(name);
+                }
+                Interlocked.Decrement(ref m_running);
+                if (ThrowOnFirst && started == 1)
+                    throw new InvalidOperationException("the grid service failed");
+            };
+        }
+
+        public void Let(int searches) => m_release.Release(searches);
+
+        public string[] Snapshot()
+        {
+            lock (m_lock)
+            {
+                return m_answered.ToArray();
+            }
+        }
+    }
+
+    private static void Wait(Func<bool> condition, string what)
+    {
+        DateTime end = DateTime.UtcNow + Generous;
+        while (!condition())
+        {
+            Assert.True(DateTime.UtcNow < end, what);
+            Thread.Sleep(20);
+        }
+    }
+
+    private static void Ask(LLClientView client, string name) => client.ProcessInPacket(NameRequest(name));
+
+    [Fact]
+    public void ABurstOfFiftySearchesFromOneClientNeverHasMoreThanOneRunning()
+    {
+        TestHelpers.InMethod();
+        LLClientView client = Connect(out Scene _);
+        CountingSearch grid = new();
+        grid.Attach(client);
+        try
+        {
+            for (int i = 1; i <= 50; i++)
+                Ask(client, $"Region {i:00}");
+            Wait(() => grid.Started >= 1, "no search started");
+            grid.Let(100);
+            Wait(() => grid.Snapshot().Length >= 5, "the kept searches were not answered");
+            Thread.Sleep(300); // a window in which nothing more may start
+
+            Assert.Equal(1, grid.MaxRunning);
+            Assert.Equal(5, grid.Snapshot().Length);
+        }
+        finally
+        {
+            grid.Let(100);
+            client.Close(false, false);
+        }
+    }
+
+    [Fact]
+    public void TheKeptSearchesAreAnsweredInOrderAndTheOldestWaitingOnesAreDropped()
+    {
+        TestHelpers.InMethod();
+        LLClientView client = Connect(out Scene _);
+        CountingSearch grid = new();
+        grid.Attach(client);
+        try
+        {
+            for (int i = 1; i <= 50; i++)
+                Ask(client, $"Region {i:00}");
+            Wait(() => grid.Started >= 1, "no search started");
+            grid.Let(100);
+            Wait(() => grid.Snapshot().Length >= 5, "the kept searches were not answered");
+            Thread.Sleep(300);
+
+            // The first one was already running; of the 49 that waited, the 4 asked last are kept.
+            Assert.Equal(new[] { "Region 01", "Region 47", "Region 48", "Region 49", "Region 50" }, grid.Snapshot());
+        }
+        finally
+        {
+            grid.Let(100);
+            client.Close(false, false);
+        }
+    }
+
+    [Fact]
+    public void OneRunningAndFourWaitingSearchesAreAllAnsweredInOrder()
+    {
+        TestHelpers.InMethod();
+        LLClientView client = Connect(out Scene _);
+        CountingSearch grid = new();
+        grid.Attach(client);
+        try
+        {
+            for (int i = 1; i <= 5; i++)
+                Ask(client, $"Region {i}");
+            Wait(() => grid.Started >= 1, "no search started");
+            grid.Let(100);
+            Wait(() => grid.Snapshot().Length >= 5, "not every search was answered");
+
+            Assert.Equal(new[] { "Region 1", "Region 2", "Region 3", "Region 4", "Region 5" }, grid.Snapshot());
+            Assert.Equal(1, grid.MaxRunning);
+        }
+        finally
+        {
+            grid.Let(100);
+            client.Close(false, false);
+        }
+    }
+
+    [Fact]
+    public void AFifthWaitingSearchDropsTheOldestWaitingOne()
+    {
+        TestHelpers.InMethod();
+        LLClientView client = Connect(out Scene _);
+        CountingSearch grid = new();
+        grid.Attach(client);
+        try
+        {
+            for (int i = 1; i <= 6; i++)
+                Ask(client, $"Region {i}");
+            Wait(() => grid.Started >= 1, "no search started");
+            grid.Let(100);
+            Wait(() => grid.Snapshot().Length >= 5, "the kept searches were not answered");
+            Thread.Sleep(300);
+
+            Assert.Equal(new[] { "Region 1", "Region 3", "Region 4", "Region 5", "Region 6" }, grid.Snapshot());
+        }
+        finally
+        {
+            grid.Let(100);
+            client.Close(false, false);
+        }
+    }
+
+    [Fact]
+    public void AnotherClientsSearchIsAnsweredWhileTheFirstClientsBurstRuns()
+    {
+        TestHelpers.InMethod();
+        LLClientView first = Connect(out Scene _);
+        LLClientView second = Connect(out Scene _);
+        CountingSearch firstGrid = new();
+        firstGrid.Attach(first);
+        CountingSearch secondGrid = new();
+        secondGrid.Attach(second);
+        try
+        {
+            for (int i = 1; i <= 50; i++)
+                Ask(first, $"Region {i:00}");
+            Wait(() => firstGrid.Started >= 1, "the first client's search did not start");
+
+            Ask(second, "Other Region");
+            Wait(() => secondGrid.Started >= 1, "the other client's search waited behind the first client's burst");
+            secondGrid.Let(1);
+            Wait(() => secondGrid.Snapshot().Length == 1, "the other client's search was not answered");
+
+            Assert.Equal(new[] { "Other Region" }, secondGrid.Snapshot());
+            Assert.Empty(firstGrid.Snapshot()); // the first client's search is still held
+        }
+        finally
+        {
+            firstGrid.Let(100);
+            secondGrid.Let(100);
+            first.Close(false, false);
+            second.Close(false, false);
+        }
+    }
+
+    [Fact]
+    public void ASearchThatFailsDoesNotStopTheNextOne()
+    {
+        TestHelpers.InMethod();
+        LLClientView client = Connect(out Scene _);
+        CountingSearch grid = new() { ThrowOnFirst = true };
+        grid.Attach(client);
+        try
+        {
+            Ask(client, "Region 1");
+            Ask(client, "Region 2");
+            Wait(() => grid.Started >= 1, "no search started");
+            grid.Let(100);
+            Wait(() => grid.Snapshot().Length >= 2, "the search after the failed one was not answered");
+
+            Assert.Equal(new[] { "Region 1", "Region 2" }, grid.Snapshot());
+        }
+        finally
+        {
+            grid.Let(100);
+            client.Close(false, false);
+        }
+    }
+
+    [Fact]
+    public void AClosedClientDoesNotRunItsWaitingSearches()
+    {
+        TestHelpers.InMethod();
+        LLClientView client = Connect(out Scene _);
+        CountingSearch grid = new();
+        grid.Attach(client);
+        try
+        {
+            for (int i = 1; i <= 4; i++)
+                Ask(client, $"Region {i}");
+            Wait(() => grid.Started >= 1, "no search started");
+
+            client.Close(false, false);
+            grid.Let(100);
+            Wait(() => grid.Snapshot().Length >= 1, "the running search did not finish");
+            Thread.Sleep(300); // a window in which nothing more may start
+
+            Assert.Equal(new[] { "Region 1" }, grid.Snapshot());
+        }
+        finally
+        {
+            grid.Let(100);
+        }
+    }
 }

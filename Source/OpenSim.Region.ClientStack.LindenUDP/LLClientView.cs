@@ -324,6 +324,9 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
     public LLImageManager ImageManager { get; private set; }
 
     public JobEngine m_asyncPacketProcess;
+
+    /// <summary>Runs this client's map name searches one at a time, off its request queue.</summary>
+    private readonly OneAtATimeRequestLane m_mapNameLane = new("MapNameRequest");
     private readonly LLUDPServer m_udpServer;
     private readonly LLUDPClient m_udpClient;
     internal readonly UUID m_sessionId;
@@ -625,6 +628,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         OnConnectionClosed?.Invoke(this);
 
         m_asyncPacketProcess.Stop();
+        m_mapNameLane.Stop();
 
         // Flush all of the packets out of the UDP server for this client
         m_udpServer?.Flush(m_udpClient);
@@ -10670,8 +10674,10 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         // The search asks the grid service, which can take a while, and it does not depend on anything else the client
         // has asked for. The client's queue runs its requests one after another, so on it a search waits behind
         // every request of the client's login that is still running (the arrival in the region takes seconds);
-        // it runs on a worker thread of its own instead.
-        Util.FireAndForget(_ => c.OnMapNameRequest?.Invoke(c, mapName, flags), null, "MapNameRequest", false);
+        // it runs on a worker thread of its own instead. A client that asks again before the answer comes (typing
+        // in the search box sends a request per change) must not start a grid search per request, so the client's
+        // searches run one at a time, in order, with at most a few waiting.
+        c.m_mapNameLane.Submit(() => c.OnMapNameRequest?.Invoke(c, mapName, flags));
     }
 
     private static void HandleTeleportLandmarkRequest(LLClientView c, Packet Pack)
