@@ -383,9 +383,13 @@ public class GridServicesConnector : BaseServiceConnector, IGridService
 
         try
         {
+            int diagId = DiagMapTrace.Id;
+            m_log.LogInformation("[DIAG-MAP] #{0} rest-call-start sinceEnqueueMs={1:F1}", diagId, DiagMapTrace.SinceEnqueueMs);
+            long diagRest = DiagMapTrace.Now();
             string reply = SynchronousRestFormsRequester.MakePostRequest(
                     m_ServerGridURI,
                     ServerUtils.BuildQueryString(sendData), m_Auth);
+            m_log.LogInformation("[DIAG-MAP] #{0} rest-call-end restMs={1:F1} replyLen={2}", diagId, DiagMapTrace.MsSince(diagRest), reply?.Length ?? -1);
 
             if (reply.Length > 0)
             {

@@ -10688,7 +10688,24 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         // it runs on a worker thread of its own instead. A client that asks again before the answer comes (typing
         // in the search box sends a request per change) must not start a grid search per request, so the client's
         // searches run one at a time, in order, with at most a few waiting.
-        c.m_mapNameLane.Submit(() => c.OnMapNameRequest?.Invoke(c, mapName, flags));
+        int diagId = DiagMapTrace.NextId();
+        long diagEnqueued = DiagMapTrace.Now();
+        string diagWho = c.Name;
+        m_log.LogInformation("[DIAG-MAP] #{0} enqueue client={1} name='{2}' {3}", diagId, diagWho, mapName, DiagMapTrace.Pool());
+        c.m_mapNameLane.Submit(() =>
+        {
+            DiagMapTrace.Begin(diagId, diagEnqueued);
+            try
+            {
+                m_log.LogInformation("[DIAG-MAP] #{0} callback-start poolWaitMs={1:F1} {2}", diagId, DiagMapTrace.SinceEnqueueMs, DiagMapTrace.Pool());
+                c.OnMapNameRequest?.Invoke(c, mapName, flags);
+                m_log.LogInformation("[DIAG-MAP] #{0} callback-end totalMs={1:F1}", diagId, DiagMapTrace.SinceEnqueueMs);
+            }
+            finally
+            {
+                DiagMapTrace.End();
+            }
+        });
     }
 
     private static void HandleTeleportLandmarkRequest(LLClientView c, Packet Pack)

@@ -119,10 +119,17 @@ public class MapSearchModule : ISharedRegionModule
             bool needOriginalName = indx >= 0;
 
             // try to fetch from GridServer
+            int diagId = DiagMapTrace.Id;
+            m_log.LogInformation("[DIAG-MAP] #{0} grid-call-start sinceEnqueueMs={1:F1} gridservice={2}", diagId, DiagMapTrace.SinceEnqueueMs, m_gridservice.GetType().Name);
+            long diagGrid = DiagMapTrace.Now();
             List<GridRegion> regionInfos = m_gridservice.GetRegionsByName(m_stupidScope, mapName, 20);
+            m_log.LogInformation("[DIAG-MAP] #{0} grid-call-end gridMs={1:F1} found={2} sinceEnqueueMs={3:F1}", diagId, DiagMapTrace.MsSince(diagGrid), regionInfos?.Count ?? -1, DiagMapTrace.SinceEnqueueMs);
 
             if (!remoteClient.IsActive)
+            {
+                m_log.LogInformation("[DIAG-MAP] #{0} client-not-active, no reply sinceEnqueueMs={1:F1}", diagId, DiagMapTrace.SinceEnqueueMs);
                 return;
+            }
 
             //m_log.LogDebug("[MAPSEARCHMODULE]: search {0} returned {1} regions", mapName, regionInfos.Count);
 
@@ -149,6 +156,7 @@ public class MapSearchModule : ISharedRegionModule
             // flags are agent flags sent from the viewer.
             // they have different values depending on different viewers, apparently
             remoteClient.SendMapBlock(blocks, flags);
+            m_log.LogInformation("[DIAG-MAP] #{0} reply-sent blocks={1} sinceEnqueueMs={2:F1}", diagId, blocks.Count, DiagMapTrace.SinceEnqueueMs);
 
             // send extra user messages for V3
             // because the UI is very confusing
@@ -159,7 +167,10 @@ public class MapSearchModule : ISharedRegionModule
                     remoteClient.SendAgentAlertMessage("No regions found with that name.", true);
             }
         }
-        catch{ }
+        catch (Exception diagE)
+        {
+            m_log.LogInformation("[DIAG-MAP] #{0} exception-swallowed {1}: {2}", DiagMapTrace.Id, diagE.GetType().Name, diagE.Message);
+        }
     }
 
     private static void MapBlockFromGridRegion(MapBlockData block, GridRegion r, uint flag)

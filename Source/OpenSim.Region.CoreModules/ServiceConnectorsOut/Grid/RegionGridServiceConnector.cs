@@ -354,7 +354,9 @@ public class RegionGridServicesConnector : ISharedRegionModule, IGridService
         if(!uri.IsValid)
             return null;
 
+        long diagLocal = DiagMapTrace.Now();
         List<GridRegion> rinfo = m_LocalGridService.GetRegionsByURI(scopeID, uri, maxNumber);
+        m_log.LogInformation("[DIAG-MAP] #{0} local-grid-lookup localMs={1:F1} found={2} remote={3}", DiagMapTrace.Id, DiagMapTrace.MsSince(diagLocal), rinfo?.Count ?? -1, m_RemoteGridService != null && uri.IsLocalGrid);
         //m_log.LogDebug("[REMOTE GRID CONNECTOR]: Local GetRegionsByName {0} found {1} regions", name, rinfo.Count);
 
         if (m_RemoteGridService == null || !uri.IsLocalGrid)
