@@ -5,6 +5,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+using System.Reflection;
 using Nini.Config;
 using OpenMetaverse;
 using OpenSim.Framework;
@@ -47,6 +48,24 @@ public class CrossingAppearanceTests
         }
     }
 
+    /// <summary>A stand-in for the user service that says whether every user belongs to this grid.</summary>
+    public class StandInUsers : DispatchProxy
+    {
+        public bool Local = true;
+        protected override object? Invoke(MethodInfo? method, object?[]? args)
+        {
+            if (method!.Name == "IsLocalGridUser") return Local;
+            return method.ReturnType.IsValueType && method.ReturnType != typeof(void) ? Activator.CreateInstance(method.ReturnType) : null;
+        }
+    }
+
+    private static void UsersOfDestinationAreLocal(Scene scene, bool local)
+    {
+        var users = DispatchProxy.Create<IUserManagement, StandInUsers>();
+        ((StandInUsers)(object)users).Local = local;
+        scene.RegisterModuleInterface<IUserManagement>(users);
+    }
+
     private sealed record Rig(Scene From, ServerSideBakingRegion FromRegion, Scene To, ServerSideBakingRegion ToRegion,
         ScenePresence Mover, CapturingClient Observer);
 
@@ -61,7 +80,7 @@ public class CrossingAppearanceTests
     }
 
     /// <summary>Two regions side by side, a root agent in the first, and an observer standing in the second.</summary>
-    private static Rig Setup(bool destinationFlag = true)
+    private static Rig Setup(bool destinationFlag = true, bool? usersLocal = null)
     {
         var helpers = new SceneHelpers();
         var from = helpers.SetupScene("From", UUID.Random(), 1000, 1000);
@@ -73,6 +92,7 @@ public class CrossingAppearanceTests
         var observer = new CapturingClient(observerAcd, to);
         SceneHelpers.AddScenePresence(to, observer, observerAcd);
 
+        if (usersLocal is bool local) UsersOfDestinationAreLocal(to, local);
         var fromRegion = AddModule(from, true);
         var toRegion = AddModule(to, destinationFlag);
         return new Rig(from, fromRegion, to, toRegion, mover, observer);
@@ -88,9 +108,10 @@ public class CrossingAppearanceTests
         return back;
     }
 
-    private static ScenePresence Arrive(Rig rig, AgentData data)
+    private static ScenePresence Arrive(Rig rig, AgentData data, Constants.TeleportFlags? flags = null)
     {
         var child = SceneHelpers.AddChildScenePresence(rig.To, rig.Mover.UUID);
+        if (flags is Constants.TeleportFlags f) child.TeleportFlags = f;
         child.UpdateChildAgent(data);
         return child;
     }
@@ -181,5 +202,112 @@ public class CrossingAppearanceTests
         rig.ToRegion.RecordBake(rig.Mover.UUID, 12);
 
         Assert.Equal(12, rig.ToRegion.BakedCofVersion(rig.Mover.UUID));
+    }
+
+    [Fact]
+    public void ACrossingBetweenRegionsOfTheSameGridIsCreditedOnTheObjectPath()
+    {
+        var rig = Setup(usersLocal: true);
+        rig.FromRegion.RecordBake(rig.Mover.UUID, 9);
+        var sent = new AgentData();
+        rig.Mover.CopyTo(sent, true);
+
+        Arrive(rig, sent, Constants.TeleportFlags.Default);
+
+        Assert.Equal(9, rig.ToRegion.BakedCofVersion(rig.Mover.UUID));
+    }
+
+    [Fact]
+    public void ACrossingBetweenRegionsOfTheSameGridIsCreditedOnThePackedPath()
+    {
+        var rig = Setup(usersLocal: true);
+        rig.FromRegion.RecordBake(rig.Mover.UUID, 9);
+
+        Arrive(rig, Leave(rig.Mover), Constants.TeleportFlags.ViaLocation);
+
+        Assert.Equal(9, rig.ToRegion.BakedCofVersion(rig.Mover.UUID));
+    }
+
+    [Fact]
+    public void AVisitorFromAnotherGridIsNotCreditedForAVersionItCarries()
+    {
+        var rig = Setup(usersLocal: false);
+        rig.FromRegion.RecordBake(rig.Mover.UUID, 9);
+
+        var arrived = Arrive(rig, Leave(rig.Mover), Constants.TeleportFlags.ViaHGLogin);
+        arrived.SendAppearanceToAgentNF(rig.To.GetScenePresence(rig.Observer.AgentId));
+
+        Assert.Equal(-1, rig.ToRegion.BakedCofVersion(rig.Mover.UUID));
+        Assert.Equal(-1, rig.Observer.LastFor(rig.Mover.UUID).Cof);
+    }
+
+    [Fact]
+    public void AVisitorInASecondRegionOfThisGridIsNotCreditedEitherWhateverTheFlags()
+    {
+        var rig = Setup(usersLocal: false);
+        rig.FromRegion.RecordBake(rig.Mover.UUID, 9);
+
+        Arrive(rig, Leave(rig.Mover), Constants.TeleportFlags.Default);
+
+        Assert.Equal(-1, rig.ToRegion.BakedCofVersion(rig.Mover.UUID));
+    }
+
+    [Fact]
+    public void AUserOfThisGridComingHomeFromAnotherGridIsNotCredited()
+    {
+        var rig = Setup(usersLocal: true);
+        rig.FromRegion.RecordBake(rig.Mover.UUID, 9);
+
+        var arrived = Arrive(rig, Leave(rig.Mover), Constants.TeleportFlags.ViaHGLogin);
+        arrived.SendAppearanceToAgentNF(rig.To.GetScenePresence(rig.Observer.AgentId));
+
+        Assert.Equal(-1, rig.ToRegion.BakedCofVersion(rig.Mover.UUID));
+        Assert.Equal(-1, rig.Observer.LastFor(rig.Mover.UUID).Cof);
+    }
+
+    /// <summary>The viewer reads a 1 beside no block as "fetch my bakes from the appearance service", which holds none of a visitor's.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TheMessageForAnAgentFromAnotherGridHasNoBlockAndVersionParameterZero(bool usersLocal)
+    {
+        var rig = Setup(usersLocal: usersLocal);
+        rig.Mover.Appearance.VisualParams[VersionIndex] = 1;
+
+        var arrived = Arrive(rig, Leave(rig.Mover), Constants.TeleportFlags.ViaHGLogin);
+        arrived.SendAppearanceToAgentNF(rig.To.GetScenePresence(rig.Observer.AgentId));
+
+        var sent = rig.Observer.LastFor(rig.Mover.UUID);
+        Assert.Equal(-1, sent.Cof);
+        Assert.Equal(0, sent.Params[VersionIndex]);
+        Assert.Equal(1, arrived.Appearance.VisualParams[VersionIndex]);   // a property of the message, not of the appearance
+    }
+
+    [Fact]
+    public void TheMessageForAVisitorIsTheSameOnARegionThatDoesNotBake()
+    {
+        var rig = Setup(destinationFlag: false, usersLocal: false);
+        rig.Mover.Appearance.VisualParams[VersionIndex] = 1;
+
+        var arrived = Arrive(rig, Leave(rig.Mover), Constants.TeleportFlags.Default);
+        arrived.SendAppearanceToAgentNF(rig.To.GetScenePresence(rig.Observer.AgentId));
+
+        var sent = rig.Observer.LastFor(rig.Mover.UUID);
+        Assert.Equal(-1, sent.Cof);
+        Assert.Equal(0, sent.Params[VersionIndex]);
+    }
+
+    [Fact]
+    public void TheMessageForALocalAgentThisRegionHasNotBakedIsUnchanged()
+    {
+        var rig = Setup(usersLocal: true);
+        rig.Mover.Appearance.VisualParams[VersionIndex] = 1;
+
+        var arrived = Arrive(rig, Leave(rig.Mover), Constants.TeleportFlags.ViaLocation);
+        arrived.SendAppearanceToAgentNF(rig.To.GetScenePresence(rig.Observer.AgentId));
+
+        var sent = rig.Observer.LastFor(rig.Mover.UUID);
+        Assert.Equal(-1, sent.Cof);
+        Assert.Equal(1, sent.Params[VersionIndex]);
     }
 }

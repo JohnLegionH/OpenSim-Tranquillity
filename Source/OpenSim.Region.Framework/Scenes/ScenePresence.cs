@@ -352,6 +352,12 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         set { m_teleportFlags = value; }
     }
 
+    /// <summary>True for an agent whose user account is not in this grid's user service (a hypergrid visitor).</summary>
+    public bool IsVisitorFromOtherGrid => false;
+
+    /// <summary>True for an agent that came from another grid, a user of this grid coming home included.</summary>
+    public bool IsFromOtherGrid => false;
+
     private uint m_requestedSitTargetID;
     // The experience whose llSitOnLink seated this avatar; Zero for a manual sit or when not seated.
     private UUID m_experienceUsedForSit;
