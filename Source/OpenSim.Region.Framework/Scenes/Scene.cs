@@ -4931,6 +4931,9 @@ Label_GroupsDone:
     /// </summary>
     public TimeSpan ChildPresenceWait { get; set; } = TimeSpan.FromSeconds(30);
 
+    /// <summary>Stub: how long a crossing waits for the viewer to connect.</summary>
+    public TimeSpan CrossingChildPresenceWait { get; set; }
+
     /// <summary>
     /// The warning for an agent that was authorised in this region but whose viewer never connected, or null
     /// when no circuit was authorised for the agent.
