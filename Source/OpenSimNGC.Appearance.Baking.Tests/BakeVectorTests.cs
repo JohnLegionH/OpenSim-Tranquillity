@@ -37,7 +37,10 @@ public class BakeVectorTests
 
     [Theory]
     [MemberData(nameof(BakeVectors))]
-    public void BakeMatchesReference(string id)
+    public void BakeMatchesReference(string id) => AssertVectorMatches(Compositor, id);
+
+    /// <summary>Runs one bake vector through <paramref name="compositor"/> and compares it with the stored result.</summary>
+    internal static void AssertVectorMatches(AvatarBakeCompositor compositor, string id)
     {
         var dir = Path.Combine(VectorRoot, id);
         using var doc = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(dir, "manifest.json")));
@@ -76,7 +79,7 @@ public class BakeVectorTests
             });
         }
 
-        var result = Compositor.Bake(channel, worn, size, overlay);
+        var result = compositor.Bake(channel, worn, size, overlay);
 
         var expected = root.GetProperty("result");
         Assert.Equal(expected.GetProperty("invisible").GetBoolean(), result.Invisible);
