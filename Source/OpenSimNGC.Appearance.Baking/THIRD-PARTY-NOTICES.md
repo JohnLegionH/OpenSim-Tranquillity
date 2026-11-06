@@ -1,5 +1,18 @@
 # Third-party notices — OpenSimNGC.Appearance.Baking
 
+## This library's own code
+
+Copyright (c) 2026 Legion Builds. New source files of this library are under the Mozilla Public License, version 2.0 (file-level
+copyleft); each carries the MPL header, and the repository's `LICENSE.txt`, which holds that notice and the licence of
+the OpenSim code it builds on, is shipped in this package.
+
+## Character folder supplied by the caller
+
+`AvatarBakeCompositor.FromCharacterFolder(folder)` reads `avatar_lad.xml` and the `.tga` files from a folder the
+caller names (the layout of the official viewer's `character/` folder), instead of the embedded copies below. The
+library does not copy, change or redistribute that folder; its files stay under the Linden Lab viewer's licences
+named in the next section, and the caller who supplies them is responsible for having the right to use them.
+
 ## `Data/avatar_lad.xml`
 
 **Origin:** Linden Lab Second Life viewer, file `indra/newview/character/avatar_lad.xml`.

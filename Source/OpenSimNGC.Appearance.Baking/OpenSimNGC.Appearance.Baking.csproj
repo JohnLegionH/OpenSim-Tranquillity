@@ -58,6 +58,8 @@
     -->
     <EmbeddedResource Include="Data\character\*.tga" LogicalName="OpenSimNGC.Appearance.Baking.Data.character.%(Filename)%(Extension)" />
     <None Include="THIRD-PARTY-NOTICES.md" Pack="true" PackagePath="" />
+    <!-- The repository's licence file: the MPL-2.0 notice of this library's own files and the OpenSim code licence. -->
+    <None Include="..\..\LICENSE.txt" Pack="true" PackagePath="" Link="LICENSE.txt" />
     <!-- The licence notices that accompany the Second Life viewer data above; shipped beside THIRD-PARTY-NOTICES.md. -->
     <None Include="..\..\ThirdPartyLicenses\SecondLifeViewer-LICENSE-source.txt" Pack="true" PackagePath="ThirdPartyLicenses\" Link="ThirdPartyLicenses\SecondLifeViewer-LICENSE-source.txt" />
     <None Include="..\..\ThirdPartyLicenses\SecondLifeViewer-LGPL-2.1.txt" Pack="true" PackagePath="ThirdPartyLicenses\" Link="ThirdPartyLicenses\SecondLifeViewer-LGPL-2.1.txt" />
