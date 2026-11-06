@@ -60,6 +60,12 @@ public sealed record BakeOutcome(UUID AgentId, BakeReason Reason, IReadOnlyList<
     /// <summary>Whether the ADR-004 bake index was written to the avatar service on this run.</summary>
     public bool IndexWritten { get; init; }
 
+    /// <summary>
+    /// The wearables the bake read, in wear order (a later wearable of a type is on top of an earlier one), with the
+    /// parameters each stores. Empty when the run read none. The visual parameters of the avatar are recomputed from these.
+    /// </summary>
+    public IReadOnlyList<ParsedWearable> Worn { get; init; } = Array.Empty<ParsedWearable>();
+
     /// <summary>Resolver and reuse notes: why a channel was not reused, a wearable worn with no asset, and so on.</summary>
     public IReadOnlyList<string> Notes { get; init; } = Array.Empty<string>();
 
