@@ -4533,19 +4533,34 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         //m_log.LogDebug("[SCENE PRESENCE] SendAppearanceToAllOtherAgents: {0} {1}", Name, UUID);
         // only send update from root agents to other clients; children are only "listening posts"
         if (IsChildAgent)
+        {
+            m_log.LogInformation("[DIAG-APPEAR] {0} in {1}: SendAppearanceToAllOtherAgents skipped, this presence is a child agent", Name, m_scene.Name);
             return;
+        }
 
         int count = 0;
+        m_log.LogInformation("[DIAG-APPEAR] {0} in {1}: SendAppearanceToAllOtherAgents start, {2} presences in the scene (root + child)", Name, m_scene.Name, m_scene.GetRootAgentCount() + m_scene.GetChildAgentCount());
         m_scene.ForEachScenePresence(delegate(ScenePresence scenePresence)
         {
+            string diagKind = scenePresence.IsChildAgent ? "child" : "root";
             if(scenePresence.IsNPC)
+            {
+                m_log.LogInformation("[DIAG-APPEAR] {0} in {1}: skip {2} ({3}) in {4}: reason=npc", Name, m_scene.Name, scenePresence.Name, diagKind, scenePresence.Scene.Name);
                 return;
+            }
 
             // only send information to other root agents
             if (scenePresence.m_localId == m_localId)
+            {
+                m_log.LogInformation("[DIAG-APPEAR] {0} in {1}: skip {2} ({3}) in {4}: reason=self", Name, m_scene.Name, scenePresence.Name, diagKind, scenePresence.Scene.Name);
                 return;
+            }
 
-            SendAppearanceToAgent(scenePresence);
+            bool diagSent = TrySendAppearanceToAgent(scenePresence);
+            if (diagSent)
+                m_log.LogInformation("[DIAG-APPEAR] {0} in {1}: sent to {2} ({3}) in {4} clientActive={5}", Name, m_scene.Name, scenePresence.Name, diagKind, scenePresence.Scene.Name, scenePresence.ControllingClient?.IsActive);
+            else
+                m_log.LogInformation("[DIAG-APPEAR] {0} in {1}: skip {2} ({3}) in {4}: reason=parcel-hidden (this avatar's parcel {5}, theirs {6})", Name, m_scene.Name, scenePresence.Name, diagKind, scenePresence.Scene.Name, currentParcelUUID, scenePresence.currentParcelUUID);
             count++;
         });
         m_scene.StatsReporter.AddAgentUpdates(count);
@@ -4553,11 +4568,18 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
 
     public void SendAppearanceToAgent(ScenePresence avatar)
     {
+        TrySendAppearanceToAgent(avatar);
+    }
+
+    // Measurement build: same as SendAppearanceToAgent, and says whether the appearance was sent.
+    private bool TrySendAppearanceToAgent(ScenePresence avatar)
+    {
         //            m_log.LogDebug(
         //                "[SCENE PRESENCE]: Sending appearance data from {0} {1} to {2} {3}", Name, m_uuid, avatar.Name, avatar.UUID);
         if (ParcelHideThisAvatar && currentParcelUUID != avatar.currentParcelUUID && !avatar.IsViewerUIGod)
-            return;
+            return false;
         SendAppearanceToAgentNF(avatar);
+        return true;
     }
 
     public void SendAppearanceToAgentNF(ScenePresence avatar)
