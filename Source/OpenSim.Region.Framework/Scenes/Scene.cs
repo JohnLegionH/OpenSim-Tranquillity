@@ -4845,9 +4845,9 @@ Label_GroupsDone:
         // after receiving the EnableSimulator HTTP Event Queue message (for the v1 teleport protocol)
         // or TeleportFinish (for the v2 teleport protocol).  This triggers the viewer to send
         // a UseCircuitCode packet which in turn calls AddNewAgent which finally creates the ScenePresence.
-        TimeSpan wait = cAgentData.SenderWantsToWaitForRoot || CrossingChildPresenceWait > ChildPresenceWait
+        TimeSpan wait = cAgentData.SenderWantsToWaitForRoot || CrossingChildPresenceWait.GetValueOrDefault(TimeSpan.FromSeconds(3)) > ChildPresenceWait
             ? ChildPresenceWait
-            : CrossingChildPresenceWait;
+            : CrossingChildPresenceWait.GetValueOrDefault(TimeSpan.FromSeconds(3));
         ScenePresence sp = WaitGetScenePresence(cAgentData.AgentID, wait);
 
         if (sp is not null)
@@ -4943,7 +4943,10 @@ Label_GroupsDone:
     /// teleport (the sender waits for the root agent) uses <see cref="ChildPresenceWait"/>, and a crossing never
     /// waits longer than that. Set from [Startup] CrossingChildPresenceWaitSeconds; the default is 3 seconds.
     /// </summary>
-    public TimeSpan CrossingChildPresenceWait { get; set; } = TimeSpan.FromSeconds(3);
+    public TimeSpan? CrossingChildPresenceWait { get; set; } = TimeSpan.FromSeconds(3);
+
+    /// <summary>Stub.</summary>
+    public TimeSpan EffectiveCrossingChildPresenceWait => TimeSpan.Zero;
 
     /// <summary>
     /// The warning for an agent that was authorised in this region but whose viewer never connected, or null
