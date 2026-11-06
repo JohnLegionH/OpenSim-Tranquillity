@@ -2037,6 +2037,17 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             0xff, 0xff, 1, 155 // ID 411 (low frequency bigendian)
             };
 
+    /// <summary>
+    /// The throttle category of the replies to a viewer's map requests: the map layer, the map blocks (also the
+    /// answer to a region name search) and the map items. They are a few small packets that a user is waiting for.
+    /// The Land category holds the region's terrain, which a login queues in bulk at a rate the viewer usually keeps
+    /// low, so a reply queued there leaves only after all the terrain queued before it. Task is the category for
+    /// packets that fit none of the others, it is not filled by terrain, textures or assets, and the entity updates
+    /// queue on it only what its rate can send in 30 ms (see HandleQueueEmpty), so its queue stays short. The viewer's
+    /// throttle still applies. The three replies share one category so that they stay in the order they were queued.
+    /// </summary>
+    private const ThrottleOutPacketType MapReplyCategory = ThrottleOutPacketType.Task;
+
     public void SendMapItemReply(mapItemReply[] replies, uint mapitemtype, uint flags)
     {
         UDPPacketBuffer buf = OpenSimUDPBase.GetNewUDPBuffer(m_udpClient.RemoteEndPoint);
@@ -2092,7 +2103,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
 
                 buf.DataLength = lastpos;
                 // send it
-                m_udpServer.SendUDPPacket(m_udpClient, buf, ThrottleOutPacketType.Land);
+                m_udpServer.SendUDPPacket(m_udpClient, buf, MapReplyCategory);
 
                 buf = newbuf;
                 data = buf.Data;
@@ -2108,7 +2119,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             data[countpos] = (byte)count;
 
             buf.DataLength = pos;
-            m_udpServer.SendUDPPacket(m_udpClient, buf, ThrottleOutPacketType.Land);
+            m_udpServer.SendUDPPacket(m_udpClient, buf, MapReplyCategory);
         }
     }
 
@@ -2209,7 +2220,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
 
                 buf.DataLength = lastpos;
                 // send it
-                m_udpServer.SendUDPPacket(m_udpClient, buf, ThrottleOutPacketType.Land);
+                m_udpServer.SendUDPPacket(m_udpClient, buf, MapReplyCategory);
 
                 buf = newbuf;
                 data = buf.Data;
@@ -2238,7 +2249,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
                 data[pos++] = 0;
 
             buf.DataLength = pos;
-            m_udpServer.SendUDPPacket(m_udpClient, buf, ThrottleOutPacketType.Land);
+            m_udpServer.SendUDPPacket(m_udpClient, buf, MapReplyCategory);
         }
     }
 
@@ -12778,7 +12789,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             ImageID = new UUID("00000000-0000-1111-9999-000000000006")
         };
         mapReply.Header.Zerocoded = true;
-        OutPacket(mapReply, ThrottleOutPacketType.Land);
+        OutPacket(mapReply, MapReplyCategory);
     }
 
     public static void RequestMapBlocksX(int minX, int minY, int maxX, int maxY)
