@@ -2252,7 +2252,10 @@ public class SceneGraph
                         m_scenePartsLock.ExitWriteLock();
                 }
 
-                copy.IsSelected = createSelected;
+                if (createSelected)
+                    copy.RootPart.SelectBy(AgentID);
+                else
+                    copy.IsSelected = false;
 
                 if (rot != Quaternion.Identity)
                     copy.UpdateGroupRotationR(rot);

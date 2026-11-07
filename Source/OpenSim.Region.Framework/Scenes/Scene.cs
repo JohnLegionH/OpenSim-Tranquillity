@@ -2685,7 +2685,7 @@ public partial class Scene : SceneBase
 
             if ((addFlags & (uint)PrimFlags.CreateSelected) != 0)
             {
-                sceneObject.IsSelected = true;
+                sceneObject.RootPart.SelectBy(ownerID);
                 sceneObject.RootPart.CreateSelected = true;
             }
 
@@ -3904,6 +3904,10 @@ public partial class Scene : SceneBase
             {
                 isChildAgent = avatar.IsChildAgent;
 
+                // the agent can no longer send the deselects for what it had selected; done before the steps below
+                // that talk to other services, so a failure there cannot leave an object held
+                ClearSelectionsBy(agentID);
+
                 m_log.LogDebug(
                     "[SCENE]: Removing {0} agent {1} {2} from {3}",
                     isChildAgent ? "child" : "root", avatar.Name, agentID, Name);
@@ -3935,6 +3939,7 @@ public partial class Scene : SceneBase
 
                 m_eventManager.TriggerClientClosed(agentID, this);
 //                    m_log.LogDebug("[Scene]TriggerClientClosed done");
+
                 m_eventManager.TriggerOnRemovePresence(agentID);
 //                    m_log.LogDebug("[Scene]TriggerOnRemovePresence done");
 

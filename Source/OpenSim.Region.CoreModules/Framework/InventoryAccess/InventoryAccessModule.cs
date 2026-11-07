@@ -1080,7 +1080,10 @@ public class BasicInventoryAccessModule : INonSharedRegionModule, IInventoryAcce
             {
                 if(RezSelected)
                 {
-                    group.IsSelected = true;
+                    if (remoteClient is not null)
+                        group.RootPart.SelectBy(remoteClient.AgentId);
+                    else
+                        group.IsSelected = true;
                     group.RootPart.CreateSelected = true;
                 }
                 if (rootPart.Shape.PCode == (byte)PCode.Prim)

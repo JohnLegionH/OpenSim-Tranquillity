@@ -749,18 +749,67 @@ public class SceneObjectPart : EntityBase, IDisposable
         }
     }
 
-    /// <summary>True when <paramref name="agentId"/> currently holds this part selected.</summary>
-    public bool IsSelectedBy(UUID agentId) => false;
+    // The agents that hold this part selected; null while none does. Guarded by s_selectionLock: the critical
+    // sections are a few instructions, so one lock for all parts costs nothing and spares every part a lock object.
+    private HashSet<UUID> m_selectedBy;
+    private static readonly object s_selectionLock = new();
 
+    /// <summary>True when <paramref name="agentId"/> currently holds this part selected.</summary>
+    public bool IsSelectedBy(UUID agentId)
+    {
+        if (m_selectedBy is null)
+            return false;
+        lock (s_selectionLock)
+            return m_selectedBy is not null && m_selectedBy.Contains(agentId);
+    }
+
+    /// <summary>
+    /// True while the part is selected by anyone, or was marked selected without an agent (<see cref="IsSelected"/>).
+    /// Setting it true marks the part selected without naming an agent; setting it false ends every agent's selection.
+    /// </summary>
     public bool IsSelected
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         get { return m_isSelected; }
         set
         {
+            if (!value && m_selectedBy is not null)
+            {
+                lock (s_selectionLock)
+                    m_selectedBy = null;
+            }
             m_isSelected = value;
             ParentGroup?.PartSelectChanged(value);
         }
+    }
+
+    /// <summary>Records that <paramref name="agentId"/> has selected this part. Selecting again changes nothing.</summary>
+    public void SelectBy(UUID agentId)
+    {
+        lock (s_selectionLock)
+            (m_selectedBy ??= new HashSet<UUID>()).Add(agentId);
+        m_isSelected = true;
+        ParentGroup?.PartSelectChanged(true);
+    }
+
+    /// <summary>
+    /// Ends <paramref name="agentId"/>'s selection of this part. The part stays selected while another agent holds it;
+    /// an agent that never selected it changes nothing there, except that a part marked selected without an agent is released.
+    /// </summary>
+    public void DeselectBy(UUID agentId)
+    {
+        lock (s_selectionLock)
+        {
+            if (m_selectedBy is not null)
+            {
+                m_selectedBy.Remove(agentId);
+                if (m_selectedBy.Count > 0)
+                    return;
+                m_selectedBy = null;
+            }
+        }
+        m_isSelected = false;
+        ParentGroup?.PartSelectChanged(false);
     }
 
     /// <summary>
@@ -2413,6 +2462,7 @@ public class SceneObjectPart : EntityBase, IDisposable
 
         dupe.m_UndoRedo = null;
         dupe.m_isSelected = false;
+        dupe.m_selectedBy = null;
 
         dupe.IgnoreUndoUpdate = false;
         dupe.Undoing = false;

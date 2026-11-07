@@ -195,6 +195,10 @@ public partial class Scene
     /// <param name="remoteClient"></param>
     public void SelectPrim(List<uint> primIDs, IClientAPI remoteClient)
     {
+        // a select that was still queued when the agent left would otherwise hold the object for good
+        if (remoteClient.SceneAgent is not ScenePresence presence || presence.IsDeleted)
+            return;
+
         foreach(uint primLocalID in primIDs)
         {
             SceneObjectPart part = GetSceneObjectPart(primLocalID);
@@ -212,12 +216,13 @@ public partial class Scene
                 part.SendFullUpdate(remoteClient);
 
             // A prim is only tainted if it's allowed to be edited by the person clicking it.
-            if (Permissions.CanChangeSelectedState(part, (ScenePresence)remoteClient.SceneAgent))
+            // Selection is kept per agent: the object stays selected until every agent that selected it has deselected it.
+            if (Permissions.CanChangeSelectedState(part, presence))
             {
-                bool oldsel = part.IsSelected;
-                part.IsSelected = true;
-                if(!oldsel)
-                    EventManager.TriggerParcelPrimCountTainted();
+                bool oldsel = sog.IsSelected;
+                part.SelectBy(remoteClient.AgentId);
+                if (!oldsel && sog.IsSelected)
+                    EventManager.TriggerParcelPrimCountSelectionChanged(sog, true);
             }
 
             part.SendPropertiesToClient(remoteClient);
@@ -275,23 +280,39 @@ public partial class Scene
         if (part == null)
             return;
 
-        bool oldgprSelect = part.ParentGroup.IsSelected;
-        part.IsSelected = false;
-
-        if (oldgprSelect != part.ParentGroup.IsSelected)
-        {
-            if (!part.ParentGroup.IsAttachment )
-                EventManager.TriggerParcelPrimCountTainted();
-        }
+        ReleaseSelection(part, remoteClient.AgentId);
 
         // restore targetOmega
         if (part.AngularVelocity != Vector3.Zero)
             part.ScheduleTerseUpdate();
     }
 
-    /// <summary>Drops every selection <paramref name="agentId"/> holds in this region.</summary>
+    /// <summary>Ends one agent's selection of a part and tells the parcel counts when the whole object stopped being selected.</summary>
+    private void ReleaseSelection(SceneObjectPart part, UUID agentId)
+    {
+        SceneObjectGroup group = part.ParentGroup;
+        bool oldGroupSelect = group.IsSelected;
+        part.DeselectBy(agentId);
+
+        if (oldGroupSelect && !group.IsSelected && !group.IsAttachment)
+            EventManager.TriggerParcelPrimCountSelectionChanged(group, false);
+    }
+
+    /// <summary>
+    /// Ends every selection <paramref name="agentId"/> holds in this region, for an agent that logged out, lost its
+    /// connection, teleported away or crossed out: nothing else would ever send the deselect. What the selections held
+    /// still (a physical object, a keyframe animation) resumes.
+    /// </summary>
     public void ClearSelectionsBy(UUID agentId)
     {
+        ForEachSOG(group =>
+        {
+            foreach (SceneObjectPart part in group.Parts)
+            {
+                if (part.IsSelectedBy(agentId))
+                    ReleaseSelection(part, agentId);
+            }
+        });
     }
 
     public virtual void ProcessMoneyTransferRequest(UUID source, UUID destination, int amount,

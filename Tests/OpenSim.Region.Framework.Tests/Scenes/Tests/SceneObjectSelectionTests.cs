@@ -43,11 +43,19 @@ public class SceneObjectSelectionTests : OpenSimTestCase
             => Scene.DeselectPrim((part ?? Root).LocalId, by.ControllingClient);
     }
 
+    // each avatar needs its own circuit code, or the second one replaces the first one's circuit
+    private static ScenePresence AddAvatar(TestScene scene, int tail, uint circuitCode)
+    {
+        var acd = SceneHelpers.GenerateAgentData(TestHelpers.ParseTail(tail));
+        acd.circuitcode = circuitCode;
+        return SceneHelpers.AddScenePresence(scene, acd);
+    }
+
     private static Fixture Make(int parts = 1)
     {
         var f = new Fixture { Scene = new SceneHelpers().SetupScene() };
-        f.A = SceneHelpers.AddScenePresence(f.Scene, TestHelpers.ParseTail(0x21));
-        f.B = SceneHelpers.AddScenePresence(f.Scene, TestHelpers.ParseTail(0x22));
+        f.A = AddAvatar(f.Scene, 0x21, 1001);
+        f.B = AddAvatar(f.Scene, 0x22, 1002);
         f.Group = SceneHelpers.AddSceneObject(f.Scene, parts, f.A.UUID, "sel", 0x200);
         f.Actor = new SelectionActor();
         f.Root.PhysActor = f.Actor;

@@ -853,13 +853,18 @@ public class EventManager
     /// <see cref="OpenSim.Region.CoreModules.Avatar.Attachments.AttachmentsModule.DetachSingleAttachmentToGround"/>,
     /// <see cref="OpenSim.Region.CoreModules.Avatar.Attachments.AttachmentsModule.AttachToAgent"/>,
     /// <see cref="Scene.DeleteSceneObject"/>,
-    /// <see cref="Scene.SelectPrim"/>,
-    /// <see cref="Scene.DeselectPrim"/>,
     /// <see cref="SceneObjectGroup.UpdateFlags"/>,
     /// <see cref="SceneObjectGroup.AbsolutePosition"/>
     /// </remarks>
     public delegate void ParcelPrimCountTainted();
     public event ParcelPrimCountTainted OnParcelPrimCountTainted;
+
+    /// <summary>
+    /// Triggered when an object becomes selected by someone or is no longer selected by anyone, so that the parcel's
+    /// "selected prims" count can follow without a recount of every object in the region.
+    /// </summary>
+    public delegate void ParcelPrimCountSelectionChangedDelegate(SceneObjectGroup obj, bool selected);
+    public event ParcelPrimCountSelectionChangedDelegate OnParcelPrimCountSelectionChanged;
 
     /// <summary>
     /// Triggered when a scene object's position lands on a different parcel than the last one recorded for it.
@@ -2773,6 +2778,27 @@ public class EventManager
                 {
                     m_log.LogError(
                         "[EVENT MANAGER]: Delegate for TriggerRequestParcelPrimCountUpdate failed - continuing.  {0} {1}",
+                        e.Message, e.StackTrace);
+                }
+            }
+        }
+    }
+
+    public void TriggerParcelPrimCountSelectionChanged(SceneObjectGroup obj, bool selected)
+    {
+        ParcelPrimCountSelectionChangedDelegate handler = OnParcelPrimCountSelectionChanged;
+        if (handler != null)
+        {
+            foreach (ParcelPrimCountSelectionChangedDelegate d in handler.GetInvocationList())
+            {
+                try
+                {
+                    d(obj, selected);
+                }
+                catch (Exception e)
+                {
+                    m_log.LogError(
+                        "[EVENT MANAGER]: Delegate for TriggerParcelPrimCountSelectionChanged failed - continuing.  {0} {1}",
                         e.Message, e.StackTrace);
                 }
             }

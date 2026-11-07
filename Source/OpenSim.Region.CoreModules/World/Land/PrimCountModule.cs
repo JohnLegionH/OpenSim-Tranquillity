@@ -87,6 +87,7 @@ public class PrimCountModule : IPrimCountModule, INonSharedRegionModule
         m_Scene.EventManager.OnObjectAddedToScene += OnParcelPrimCountAdd;
         m_Scene.EventManager.OnObjectBeingRemovedFromScene +=  OnObjectBeingRemovedFromScene;
         m_Scene.EventManager.OnParcelPrimCountTainted +=  OnParcelPrimCountTainted;
+        m_Scene.EventManager.OnParcelPrimCountSelectionChanged += OnSelectionChanged;
         m_Scene.EventManager.OnLandObjectAdded += delegate(ILandObject lo) { OnParcelPrimCountTainted(); };
     }
 
@@ -109,6 +110,47 @@ public class PrimCountModule : IPrimCountModule, INonSharedRegionModule
 
     /// <summary>Number of full recounts of the region's objects done so far; diagnostic and test hook.</summary>
     public int RecountCount { get; private set; }
+
+    /// <summary>
+    /// The objects counted as selected (or sat on) in the last count, with the parcel each was counted on and the
+    /// number of parts counted, so a later deselect takes back exactly what was added. Guarded by the taint lock.
+    /// </summary>
+    private readonly Dictionary<UUID, (UUID parcel, int parts)> m_selectedCounted = new();
+
+    // A select or deselect moves one object's parts in or out of its parcel's selected count. It does not taint the
+    // counts: a viewer that selects and deselects a region's worth of objects would otherwise cost a recount of
+    // every object in the region each time a count is read.
+    private void OnSelectionChanged(SceneObjectGroup obj, bool selected)
+    {
+        lock (m_TaintLock)
+        {
+            if (m_Tainted || obj.IsAttachment)
+                return; // a recount reads the object's state itself; attachments are never counted
+
+            if (selected)
+            {
+                if (m_selectedCounted.ContainsKey(obj.UUID))
+                    return; // already counted as selected, or sat on
+
+                if ((obj.RootPart.Flags & PrimFlags.TemporaryOnRez) != 0)
+                    return;
+
+                ILandObject landObject = m_Scene.LandChannel.GetLandObject(obj.AbsolutePosition.X, obj.AbsolutePosition.Y);
+                if (landObject == null || !m_ParcelCounts.TryGetValue(landObject.LandData.GlobalID, out ParcelCounts counts))
+                    return;
+
+                int parts = obj.GetPartCount();
+                counts.Selected += parts;
+                m_selectedCounted[obj.UUID] = (landObject.LandData.GlobalID, parts);
+            }
+            else if (obj.GetSittingAvatarsCount() == 0
+                && m_selectedCounted.Remove(obj.UUID, out var counted)
+                && m_ParcelCounts.TryGetValue(counted.parcel, out ParcelCounts parcel))
+            {
+                parcel.Selected -= counted.parts;
+            }
+        }
+    }
 
     private void OnParcelPrimCountAdd(SceneObjectGroup obj)
     {
@@ -210,7 +252,10 @@ public class PrimCountModule : IPrimCountModule, INonSharedRegionModule
                 parcelCounts.Users[obj.OwnerID] = partCount;
 
             if (obj.IsSelected || obj.GetSittingAvatarsCount() > 0)
+            {
                 parcelCounts.Selected += partCount;
+                m_selectedCounted[obj.UUID] = (landData.GlobalID, partCount);
+            }
 
             if (obj.OwnerID.Equals(landData.OwnerID))
                 parcelCounts.Owner += partCount;
@@ -453,6 +498,7 @@ public class PrimCountModule : IPrimCountModule, INonSharedRegionModule
         m_OwnerMap.Clear();
         m_SimwideCounts.Clear();
         m_ParcelCounts.Clear();
+        m_selectedCounted.Clear();
 
         List<ILandObject> land = m_Scene.LandChannel.AllParcels();
 

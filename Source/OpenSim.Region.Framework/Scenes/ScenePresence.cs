@@ -1783,6 +1783,9 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         EndAttachmentPhysics(UUID.Zero, true);
         ParentID = 0; // Child agents can't be sitting
 
+        // no longer here: its selections end here as they do at a logout
+        m_scene.ClearSelectionsBy(UUID);
+
 // we dont have land information for child
         m_previusParcelHide = false;
         m_previusParcelUUID = UUID.Zero;

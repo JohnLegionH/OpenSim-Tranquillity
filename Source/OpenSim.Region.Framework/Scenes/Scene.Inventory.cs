@@ -2954,7 +2954,10 @@ public partial class Scene
 
             if (rezSelected)
             {
-                group.IsSelected = true;
+                if (humanRez)
+                    group.RootPart.SelectBy(rezzerID);
+                else
+                    group.IsSelected = true;
                 group.RootPart.CreateSelected = true;
             }
 
