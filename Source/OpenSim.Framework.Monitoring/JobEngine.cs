@@ -220,9 +220,14 @@ public class JobEngine
             Interlocked.Increment(ref m_droppedJobs);
             if (m_warnOverMaxQueue)
             {
-                m_log.LogWarning(
-                    "[{0}]: Job queue at maximum capacity, not recording job from {1} in {2}",
-                    LoggingName, job.Name, Name);
+                if (QuietLogging)
+                    m_log.LogDebug(
+                        "[{0}]: Job queue at maximum capacity, not recording job from {1} in {2}",
+                        LoggingName, job.Name, Name);
+                else
+                    m_log.LogWarning(
+                        "[{0}]: Job queue at maximum capacity, not recording job from {1} in {2}",
+                        LoggingName, job.Name, Name);
 
                 m_warnOverMaxQueue = false;
             }
@@ -263,8 +268,12 @@ public class JobEngine
             catch(Exception e)
             {
                 Interlocked.Increment(ref m_failedJobs);
-                m_log.LogError(
-                    "[{0}]: Job {1} failed, continuing.  Exception {2}",LoggingName, currentJob.Name, e);
+                if (QuietLogging)
+                    m_log.LogDebug(
+                        "[{0}]: Job {1} failed, continuing.  Exception {2}",LoggingName, currentJob.Name, e);
+                else
+                    m_log.LogError(
+                        "[{0}]: Job {1} failed, continuing.  Exception {2}",LoggingName, currentJob.Name, e);
             }
 
             if(LogLevel >= 1)

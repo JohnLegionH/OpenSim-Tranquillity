@@ -552,7 +552,9 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
 
         RegisterLocalPacketHandlers();
         string name = $"AsyncInUDP-{m_agentId}";
-        m_asyncPacketProcess = new JobEngine(name, name, 5000);
+        // One viewer can queue thousands of select and property requests a second (an object search does); a full
+        // queue or a failing handler is counted, not logged at a level that fills the log.
+        m_asyncPacketProcess = new JobEngine(name, name, 5000) { QuietLogging = true };
         IsActive = true;
 
         m_supportViewerCache = m_udpServer.SupportViewerObjectsCache;

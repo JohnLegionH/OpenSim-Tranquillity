@@ -2575,7 +2575,16 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
     public void GetResourcesCosts(SceneObjectPart apart,
         out float linksetResCost, out float linksetPhysCost, out float partCost, out float partPhysCost)
     {
-        // this information may need to be cached
+        GetResourcesCosts(apart, null, out linksetResCost, out linksetPhysCost, out partCost, out partPhysCost);
+    }
+
+    /// <summary>
+    /// The linkset's costs in one pass over its parts. When <paramref name="perPart"/> is given, it receives the
+    /// (resource, physics) cost of every part, so a request for many parts of one linkset needs only one pass.
+    /// </summary>
+    public void GetResourcesCosts(SceneObjectPart apart, Dictionary<SceneObjectPart, (float resource, float physics)> perPart,
+        out float linksetResCost, out float linksetPhysCost, out float partCost, out float partPhysCost)
+    {
         Interlocked.Increment(ref ResourceCostPasses);
 
         float cost;
@@ -2615,6 +2624,7 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
                 linksetPhysCost += tmpcost;
                 linksetResCost += cost;
 
+                perPart?.Add(p, (cost, tmpcost));
                 if (p == apart)
                 {
                     partCost = cost;
@@ -2628,6 +2638,11 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
             partCost = 1.0f;
             linksetResCost = parts.Length;
             linksetPhysCost = linksetResCost;
+            if (perPart is not null)
+            {
+                for (int i = 0; i < parts.Length; i++)
+                    perPart.Add(parts[i], (1.0f, 1.0f));
+            }
         }
     }
 

@@ -1503,6 +1503,8 @@ public partial class BunchOfCaps
         }
 
         bool haveone = false;
+        // one pass over a linkset serves every id of its parts in this request
+        var linksets = new Dictionary<SceneObjectGroup, (float resource, float physics, Dictionary<SceneObjectPart, (float resource, float physics)> parts)>();
         LLSDxmlEncode2.AddMap(lsl);
         for (int i = 0; i < objectIds.Count; i++)
         {
@@ -1516,7 +1518,21 @@ public partial class BunchOfCaps
             {
                 haveone = true;
 
-                grp.GetResourcesCosts(part, out float linksetCost, out float linksetPhysCost, out float partCost, out float partPhysCost);
+                if (!linksets.TryGetValue(grp, out var costs))
+                {
+                    var perPart = new Dictionary<SceneObjectPart, (float resource, float physics)>();
+                    grp.GetResourcesCosts(part, perPart, out float setCost, out float setPhysCost, out _, out _);
+                    costs = (setCost, setPhysCost, perPart);
+                    linksets[grp] = costs;
+                }
+                float linksetCost = costs.resource;
+                float linksetPhysCost = costs.physics;
+                // a part that joined the linkset after the pass was made is costed on its own
+                float partCost, partPhysCost;
+                if (costs.parts.TryGetValue(part, out var own))
+                    (partCost, partPhysCost) = own;
+                else
+                    grp.GetResourcesCosts(part, out _, out _, out partCost, out partPhysCost);
 
                 LLSDxmlEncode2.AddMap(uuid.ToString(), lsl);
 
