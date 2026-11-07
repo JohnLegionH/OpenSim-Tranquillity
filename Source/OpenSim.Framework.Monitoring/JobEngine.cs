@@ -38,6 +38,20 @@ public class JobEngine
 
     public int LogLevel { get; set; }
 
+    /// <summary>
+    /// When true, a full queue and a failing job are logged at debug level only. For an engine fed by a remote client,
+    /// where one misbehaving or very busy client can queue thousands of jobs a second.
+    /// </summary>
+    public bool QuietLogging { get; set; }
+
+    /// <summary>Jobs refused because the queue was full, since the engine was made.</summary>
+    public long DroppedJobs => Interlocked.Read(ref m_droppedJobs);
+    private long m_droppedJobs;
+
+    /// <summary>Jobs that threw, since the engine was made.</summary>
+    public long FailedJobs => Interlocked.Read(ref m_failedJobs);
+    private long m_failedJobs;
+
     private object JobLock = new object();
 
     public string Name { get; private set; }
@@ -203,6 +217,7 @@ public class JobEngine
         }
         else
         {
+            Interlocked.Increment(ref m_droppedJobs);
             if (m_warnOverMaxQueue)
             {
                 m_log.LogWarning(
@@ -247,6 +262,7 @@ public class JobEngine
             }
             catch(Exception e)
             {
+                Interlocked.Increment(ref m_failedJobs);
                 m_log.LogError(
                     "[{0}]: Job {1} failed, continuing.  Exception {2}",LoggingName, currentJob.Name, e);
             }

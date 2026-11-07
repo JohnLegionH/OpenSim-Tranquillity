@@ -107,6 +107,9 @@ public class PrimCountModule : IPrimCountModule, INonSharedRegionModule
         get { return "PrimCountModule"; }
     }
 
+    /// <summary>Number of full recounts of the region's objects done so far; diagnostic and test hook.</summary>
+    public int RecountCount { get; private set; }
+
     private void OnParcelPrimCountAdd(SceneObjectGroup obj)
     {
         // If we're tainted already, don't bother to add. The next
@@ -444,6 +447,7 @@ public class PrimCountModule : IPrimCountModule, INonSharedRegionModule
     // NOTE: This method MUST be called while holding the taint lock!
     private void Recount()
     {
+        RecountCount++;
 //            m_log.LogDebug("[PRIM COUNT MODULE]: Recounting prims on {0}", m_Scene.RegionInfo.RegionName);
 
         m_OwnerMap.Clear();

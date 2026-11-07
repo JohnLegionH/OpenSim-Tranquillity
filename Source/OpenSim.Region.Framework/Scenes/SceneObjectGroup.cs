@@ -2569,10 +2569,14 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
         return m_boundsRadius.Value;
     }
 
+    /// <summary>How many times the whole linkset's costs have been worked out; diagnostic and test hook.</summary>
+    public int ResourceCostPasses;
+
     public void GetResourcesCosts(SceneObjectPart apart,
         out float linksetResCost, out float linksetPhysCost, out float partCost, out float partPhysCost)
     {
         // this information may need to be cached
+        Interlocked.Increment(ref ResourceCostPasses);
 
         float cost;
         float tmpcost;

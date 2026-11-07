@@ -1481,54 +1481,66 @@ public partial class BunchOfCaps
             return;
         }
 
-        osUTF8 lsl = LLSDxmlEncode2.Start(512);
-        
-        if(object_ids.Count == 0)
-            LLSDxmlEncode2.AddEmptyMap(lsl);
-        else
-        {
-            bool haveone = false;
-            LLSDxmlEncode2.AddMap(lsl);
-            for (int i = 0; i < object_ids.Count; i++)
-            {
-                UUID uuid = object_ids[i].AsUUID();
-
-                SceneObjectPart part = m_Scene.GetSceneObjectPart(uuid);
-                SceneObjectGroup grp = null;
-                if (part != null)
-                    grp = part.ParentGroup;
-                if (grp != null)
-                {
-                    haveone = true;
-
-                    grp.GetResourcesCosts(part, out float linksetCost, out float linksetPhysCost, out float partCost, out float partPhysCost);
-
-                    LLSDxmlEncode2.AddMap(uuid.ToString(), lsl);
-
-                    LLSDxmlEncode2.AddElem("linked_set_resource_cost", linksetCost, lsl);
-                    LLSDxmlEncode2.AddElem("resource_cost", partCost, lsl);
-                    LLSDxmlEncode2.AddElem("physics_cost", partPhysCost, lsl);
-                    LLSDxmlEncode2.AddElem("linked_set_physics_cost", linksetPhysCost, lsl);
-                    LLSDxmlEncode2.AddElem("resource_limiting_type", "legacy", lsl);
-
-                    LLSDxmlEncode2.AddEndMap(lsl);
-                }
-            }
-            if(!haveone)
-            {
-                LLSDxmlEncode2.AddMap(UUID.Zero.ToString(), lsl);
-                LLSDxmlEncode2.AddElem("linked_set_resource_cost", 0, lsl);
-                LLSDxmlEncode2.AddElem("resource_cost", 0, lsl);
-                LLSDxmlEncode2.AddElem("physics_cost", 0, lsl);
-                LLSDxmlEncode2.AddElem("linked_set_physics_cost", 0, lsl);
-                LLSDxmlEncode2.AddElem("resource_limiting_type", "legacy", lsl);
-                LLSDxmlEncode2.AddEndMap(lsl);
-            }
-            LLSDxmlEncode2.AddEndMap(lsl);
-        }
+        osUTF8 lsl = BuildObjectCostReply(m_Scene, object_ids);
 
         httpResponse.RawBuffer = LLSDxmlEncode2.EndToNBBytes(lsl);
         httpResponse.StatusCode = (int)HttpStatusCode.OK;
+    }
+
+    /// <summary>
+    /// The body of the GetObjectCost capability reply: per object id, its own and its linkset's resource and physics cost.
+    /// Viewers ask for every object they have not costed yet in one request (the Second Life viewer and Firestorm both send
+    /// a region's whole stale set in a single POST), so the request has no id limit.
+    /// </summary>
+    public static osUTF8 BuildObjectCostReply(Scene scene, OSDArray objectIds)
+    {
+        osUTF8 lsl = LLSDxmlEncode2.Start(512);
+
+        if (objectIds.Count == 0)
+        {
+            LLSDxmlEncode2.AddEmptyMap(lsl);
+            return lsl;
+        }
+
+        bool haveone = false;
+        LLSDxmlEncode2.AddMap(lsl);
+        for (int i = 0; i < objectIds.Count; i++)
+        {
+            UUID uuid = objectIds[i].AsUUID();
+
+            SceneObjectPart part = scene.GetSceneObjectPart(uuid);
+            SceneObjectGroup grp = null;
+            if (part != null)
+                grp = part.ParentGroup;
+            if (grp != null)
+            {
+                haveone = true;
+
+                grp.GetResourcesCosts(part, out float linksetCost, out float linksetPhysCost, out float partCost, out float partPhysCost);
+
+                LLSDxmlEncode2.AddMap(uuid.ToString(), lsl);
+
+                LLSDxmlEncode2.AddElem("linked_set_resource_cost", linksetCost, lsl);
+                LLSDxmlEncode2.AddElem("resource_cost", partCost, lsl);
+                LLSDxmlEncode2.AddElem("physics_cost", partPhysCost, lsl);
+                LLSDxmlEncode2.AddElem("linked_set_physics_cost", linksetPhysCost, lsl);
+                LLSDxmlEncode2.AddElem("resource_limiting_type", "legacy", lsl);
+
+                LLSDxmlEncode2.AddEndMap(lsl);
+            }
+        }
+        if (!haveone)
+        {
+            LLSDxmlEncode2.AddMap(UUID.Zero.ToString(), lsl);
+            LLSDxmlEncode2.AddElem("linked_set_resource_cost", 0, lsl);
+            LLSDxmlEncode2.AddElem("resource_cost", 0, lsl);
+            LLSDxmlEncode2.AddElem("physics_cost", 0, lsl);
+            LLSDxmlEncode2.AddElem("linked_set_physics_cost", 0, lsl);
+            LLSDxmlEncode2.AddElem("resource_limiting_type", "legacy", lsl);
+            LLSDxmlEncode2.AddEndMap(lsl);
+        }
+        LLSDxmlEncode2.AddEndMap(lsl);
+        return lsl;
     }
 
     public struct AttachmentScriptInfo
