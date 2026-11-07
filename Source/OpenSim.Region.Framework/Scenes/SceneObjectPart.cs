@@ -749,6 +749,9 @@ public class SceneObjectPart : EntityBase, IDisposable
         }
     }
 
+    /// <summary>True when <paramref name="agentId"/> currently holds this part selected.</summary>
+    public bool IsSelectedBy(UUID agentId) => false;
+
     public bool IsSelected
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

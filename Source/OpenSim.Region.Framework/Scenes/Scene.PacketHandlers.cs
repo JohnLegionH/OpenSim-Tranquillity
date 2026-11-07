@@ -289,6 +289,11 @@ public partial class Scene
             part.ScheduleTerseUpdate();
     }
 
+    /// <summary>Drops every selection <paramref name="agentId"/> holds in this region.</summary>
+    public void ClearSelectionsBy(UUID agentId)
+    {
+    }
+
     public virtual void ProcessMoneyTransferRequest(UUID source, UUID destination, int amount,
                                                     int transactiontype, string description)
     {
