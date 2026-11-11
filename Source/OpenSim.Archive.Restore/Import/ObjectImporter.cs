@@ -58,21 +58,53 @@ public static partial class ObjectImporter
         result.Provenance = provenance.ToString();
         say("read " + string.Join(", ", model.Names));
         TextureCatalog catalog = new TextureCatalog(Path.Combine(folder, "no-original-textures"));
-        BuiltPart built = BuildPart(model, catalog, result, say, null, options.Pbr, options.JointPositions);
-        List<(Guid Id, byte[] Data, AssetType Type)> assets = built.Assets;
+        long created = options.Created != 0 ? options.Created : DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        SingleObject single = BuildSingleObject(model, baseName, options.Name, options.Description, options.Avatar, created, options.Position, catalog, result, say, options.Pbr, options.JointPositions);
+        List<(Guid Id, byte[] Data, AssetType Type)> assets = single.Built.Assets;
         foreach (KeyValuePair<Guid, byte[]> t in catalog.NewAssets)
             assets.Add((t.Key, t.Value, AssetType.Texture));
+        string objectXml = "<SceneObjectGroup>" + single.PartXml + "<OtherParts /></SceneObjectGroup>";
+
+        result.Name = single.Name;
+        result.ObjectId = single.PartId;
+        result.Size = new SysVector3(single.Built.Size.X, single.Built.Size.Y, single.Built.Size.Z);
+        result.Centre = new SysVector3(single.GroupPosition.X, single.GroupPosition.Y, single.GroupPosition.Z);
+        WriteArchive(outputPath, created, ArchiveConstants.CreateOarObjectPath(FileSafe(single.Name), new UUID(single.PartId), single.GroupPosition),
+            Encoding.UTF8.GetBytes(objectXml), assets, provenance.ToBytes());
+        result.Written = true;
+        say("wrote " + outputPath);
+        return result;
+    }
+
+    /// <summary>The one part of an object made from a model folder, and what it was built from.</summary>
+    private sealed class SingleObject
+    {
+        public BuiltPart Built;
+        public string Name;
+        public Guid PartId;
+        public Vector3 GroupPosition;
+        /// <summary>The SceneObjectPart element of the part.</summary>
+        public string PartXml;
+    }
+
+    /// <summary>
+    /// The part of a one-part object made from the levels of a model folder: link number 0, no offset, the avatar as creator and owner and full permissions.
+    /// <paramref name="position"/> is where the model's origin lands, and the part's centre is the centre of its model's box from there; null puts the centre at 0, 0, 0.
+    /// </summary>
+    private static SingleObject BuildSingleObject(ModelLevels model, string baseName, string requestedName, string requestedDescription, Guid avatarId, long created, SysVector3? position,
+        TextureCatalog catalog, ImportResult result, Action<string> say, bool pbr, bool jointPositions)
+    {
+        BuiltPart built = BuildPart(model, catalog, result, say, null, pbr, jointPositions);
         (Vector3 size, Vector3 center, List<EncoderFace> highFaces, Guid meshId, int shapeType, Primitive.TextureEntry te) = (built.Size, built.Centre, built.HighFaces, built.MeshId, built.ShapeType, built.TextureEntry);
 
-        // the object: one part, alone, so link number 0 and no offset
-        string name = Clean(string.IsNullOrWhiteSpace(options.Name) ? baseName : options.Name);
+        string name = Clean(string.IsNullOrWhiteSpace(requestedName) ? baseName : requestedName);
         if (name.Length > 63)
             name = name.Substring(0, 63);
-        string description = Clean(options.Description ?? string.Empty);
-        long created = options.Created != 0 ? options.Created : DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        Vector3 centre = new Vector3(options.Position.X + center.X, options.Position.Y + center.Y, options.Position.Z + center.Z);
-        Guid partId = MeshId.FromBytes(Encoding.UTF8.GetBytes("oar-import|" + meshId.ToString("D") + "|" + name + "|" + options.Avatar.ToString("D")));
-        string avatar = options.Avatar.ToString("D");
+        string description = Clean(requestedDescription ?? string.Empty);
+        // no position puts the part's centre at the origin (an object kept in an inventory, which the region places when it is rezzed)
+        Vector3 centre = position.HasValue ? new Vector3(position.Value.X + center.X, position.Value.Y + center.Y, position.Value.Z + center.Z) : Vector3.Zero;
+        Guid partId = MeshId.FromBytes(Encoding.UTF8.GetBytes("oar-import|" + meshId.ToString("D") + "|" + name + "|" + avatarId.ToString("D")));
+        string avatar = avatarId.ToString("D");
         Dictionary<string, string> values = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["OwnerID/UUID"] = avatar, ["LastOwnerID/UUID"] = avatar, ["RezzerID/UUID"] = avatar,
@@ -81,22 +113,11 @@ public static partial class ObjectImporter
             ["GroupPosition/X"] = Text(centre.X), ["GroupPosition/Y"] = Text(centre.Y), ["GroupPosition/Z"] = Text(centre.Z)
         };
         string part = ArchiveRestorer.NewPartXml(path => values.TryGetValue(path, out string v) ? v : null, null, partId, name, description, 0,
-            new float[] { 0f, 0f, 0f }, new float[] { 0f, 0f, 0f, 1f }, size, te.GetBytes(), options.Avatar);
+            new float[] { 0f, 0f, 0f }, new float[] { 0f, 0f, 0f, 1f }, size, te.GetBytes(), avatarId);
         List<ElementEdit> edits = new List<ElementEdit>(MeshShape.Edits(highFaces.Count, meshId, null));
         edits.Add(ElementEdit.SetText("PhysicsShapeType", shapeType.ToString(Inv)));
         AddPbrFaces(edits, built.PbrFaces);
-        part = PartXml.Edit(part, partId, edits);
-        string objectXml = "<SceneObjectGroup>" + part + "<OtherParts /></SceneObjectGroup>";
-
-        result.Name = name;
-        result.ObjectId = partId;
-        result.Size = new SysVector3(size.X, size.Y, size.Z);
-        result.Centre = new SysVector3(centre.X, centre.Y, centre.Z);
-        WriteArchive(outputPath, created, ArchiveConstants.CreateOarObjectPath(FileSafe(name), new UUID(partId), centre),
-            Encoding.UTF8.GetBytes(objectXml), assets, provenance.ToBytes());
-        result.Written = true;
-        say("wrote " + outputPath);
-        return result;
+        return new SingleObject { Built = built, Name = name, PartId = partId, GroupPosition = centre, PartXml = PartXml.Edit(part, partId, edits) };
     }
 
     // ------------------------------------------------------------------ one part

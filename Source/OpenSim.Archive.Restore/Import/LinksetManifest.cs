@@ -97,12 +97,18 @@ public sealed class LinksetManifest
 {
     /// <summary>The most parts a linked object has in the viewer.</summary>
     public const int MaxParts = 256;
-    public static readonly string[] ContentTypes = { "script", "notecard", "texture" };
+    public static readonly string[] ContentTypes = { "script", "notecard", "texture", "wearable", "object" };
+
+    /// <summary>
+    /// The number of texture entries of an avatar: TEX_NUM_INDICES of ETextureIndex in the viewer's llavatarappearancedefines.h. A wearable's textures block
+    /// names its pictures by these numbers (1 the upper shirt, 21 the lower alpha, 22 the upper alpha), and the viewer refuses a wearable that names a higher one.
+    /// </summary>
+    public const int AvatarTextureEntries = 45;
 
     private static readonly string[] ManifestKeys = { "name", "description", "pbr", "jointPositions", "parts" };
     private static readonly string[] PartKeys = { "name", "description", "folder", "base", "glb", "node", "lod2", "lod1", "lod0", "physics", "position", "rotation", "contents", "sit", "faces" };
     private static readonly string[] SourceKeys = { "glb", "node" };
-    private static readonly string[] ContentKeys = { "type", "file", "name", "description" };
+    private static readonly string[] ContentKeys = { "type", "file", "name", "description", "textures", "folder", "base", "jointPositions" };
     private static readonly string[] SitKeys = { "position", "rotation" };
     private static readonly string[] FaceKeys = { "material", "face", "glow", "fullbright", "specular" };
     private static readonly string[] SpecularKeys = { "map", "color", "glossiness", "environment" };
@@ -217,19 +223,7 @@ public sealed class LinksetManifest
                     {
                         if (ce.ValueKind != JsonValueKind.Object)
                             throw new ImportException(label + ": each item of \"contents\" must be a JSON object");
-                        Known(ce, ContentKeys, label + " contents");
-                        string type = Text(ce, "type", label + " contents", required: true);
-                        if (Array.IndexOf(ContentTypes, type) < 0)
-                            throw new ImportException(label + ": the content type '" + type + "' is not one of " + string.Join(", ", ContentTypes));
-                        string file = Resolve(folder, Text(ce, "file", label + " contents", required: true));
-                        if (!File.Exists(file))
-                            throw new ImportException(label + ": the " + type + " file '" + file + "' does not exist");
-                        part.Contents.Add(new LinksetContent
-                        {
-                            Type = type, File = file,
-                            Name = Text(ce, "name", label + " contents", required: false) ?? Path.GetFileNameWithoutExtension(file),
-                            Description = Text(ce, "description", label + " contents", required: false) ?? string.Empty
-                        });
+                        part.Contents.Add(ReadContent(ce, label, folder));
                     }
                 }
                 if (pe.TryGetProperty("sit", out JsonElement sit))
@@ -241,6 +235,63 @@ public sealed class LinksetManifest
             }
             return m;
         }
+    }
+
+    /// <summary>
+    /// One item of a part's contents. A script, notecard, texture or wearable is made from its "file"; a wearable can also give "textures", a picture file for
+    /// each texture entry number of its textures block. An object is made from a mesh tool's output "folder" (with "base" and "jointPositions" as for a folder part).
+    /// </summary>
+    private static LinksetContent ReadContent(JsonElement ce, string label, string folder)
+    {
+        string where = label + " contents";
+        Known(ce, ContentKeys, where);
+        string type = Text(ce, "type", where, required: true);
+        if (Array.IndexOf(ContentTypes, type) < 0)
+            throw new ImportException(label + ": the content type '" + type + "' is not one of " + string.Join(", ", ContentTypes));
+        bool isObject = type == "object";
+        if (!isObject)
+            foreach (string key in new[] { "folder", "base", "jointPositions" })
+                if (ce.TryGetProperty(key, out _))
+                    throw new ImportException(where + ": \"" + key + "\" is for an object, not a " + type);
+        if (type != "wearable" && ce.TryGetProperty("textures", out _))
+            throw new ImportException(where + ": \"textures\" is for a wearable, not a " + type);
+        LinksetContent c = new LinksetContent { Type = type, Description = Text(ce, "description", where, required: false) ?? string.Empty };
+        string name = Text(ce, "name", where, required: false);
+        if (isObject)
+        {
+            if (ce.TryGetProperty("file", out _))
+                throw new ImportException(where + ": an object is made from a \"folder\" (a mesh tool's output folder), not a \"file\"");
+            c.Folder = Resolve(folder, Text(ce, "folder", where, required: true));
+            if (!Directory.Exists(c.Folder))
+                throw new ImportException(label + ": the object folder '" + c.Folder + "' does not exist");
+            c.Base = Text(ce, "base", where, required: false) ?? string.Empty;
+            c.JointPositions = Flag(ce, "jointPositions", where);
+            c.Name = name ?? (c.Base.Length > 0 ? c.Base : Path.GetFileName(c.Folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)));
+            return c;
+        }
+        c.File = Resolve(folder, Text(ce, "file", where, required: true));
+        if (!File.Exists(c.File))
+            throw new ImportException(label + ": the " + type + " file '" + c.File + "' does not exist");
+        c.Name = name ?? Path.GetFileNameWithoutExtension(c.File);
+        if (ce.TryGetProperty("textures", out JsonElement textures))
+        {
+            string at = where + " \"textures\"";
+            if (textures.ValueKind != JsonValueKind.Object)
+                throw new ImportException(at + " must be an object: a texture entry number for each picture file, for example { \"1\": \"shirt.png\" }");
+            foreach (JsonProperty p in textures.EnumerateObject())
+            {
+                if (!int.TryParse(p.Name, NumberStyles.None, CultureInfo.InvariantCulture, out int entry) || entry >= AvatarTextureEntries)
+                    throw new ImportException(at + ": '" + p.Name + "' is not a texture entry number; the viewer's numbers are 0 to " + (AvatarTextureEntries - 1).ToString(CultureInfo.InvariantCulture));
+                if (p.Value.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(p.Value.GetString()))
+                    throw new ImportException(at + ": the picture of texture entry " + p.Name + " must be a file name");
+                string picture = Resolve(folder, p.Value.GetString());
+                if (!File.Exists(picture))
+                    throw new ImportException(at + ": the picture file '" + picture + "' does not exist");
+                if (!c.Textures.TryAdd(entry, picture))
+                    throw new ImportException(at + ": texture entry " + p.Name + " is given twice");
+            }
+        }
+        return c;
     }
 
     /// <summary>A sit target: "position" (x, y, z in the part's own axes) and an optional "rotation" (x, y, z, w; none when left out).</summary>

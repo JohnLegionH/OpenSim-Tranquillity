@@ -115,7 +115,7 @@ public static partial class ObjectImporter
             w.Id = MeshId.FromBytes(Encoding.UTF8.GetBytes("oar-import|" + w.Built.MeshId.ToString("D") + "|" + name + "|" + avatar + "|" + work.IndexOf(w).ToString(Inv)));
             foreach ((Guid id, byte[] data, AssetType type) in w.Built.Assets)
                 assets[id] = (data, type);
-            w.TaskInventory = BuildContents(w, label, avatar, created, catalog, assets);
+            w.TaskInventory = BuildContents(w, label, options.Avatar, created, catalog, assets, options.Pbr || manifest.Pbr, options.JointPositions || manifest.JointPositions);
         }
         foreach (KeyValuePair<Guid, byte[]> t in catalog.NewAssets)
             assets[t.Key] = (t.Value, AssetType.Texture);
@@ -251,7 +251,18 @@ public static partial class ObjectImporter
                 if (s != null)
                     files.Add(s.Glb);
         }
-        files.AddRange(w.Part.Contents.Select(c => c.File));
+        foreach (LinksetContent c in w.Part.Contents)
+        {
+            if (c.Type == "object")
+            {
+                // the files of the object's model folder, as the single-model import reads them
+                ModelLevels model = ReadFolderModel(c.Folder, FindBaseName(c.Folder, c.Base), new List<string>());
+                files.AddRange(FolderModelFiles(c.Folder, model));
+                continue;
+            }
+            files.Add(c.File);
+            files.AddRange(c.Textures.Values);
+        }
         HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (string file in files)
             if (seen.Add(Path.GetFullPath(file)))
@@ -369,20 +380,21 @@ public static partial class ObjectImporter
 
     // ------------------------------------------------------------------ contents
 
-    private static string BuildContents(LinksetPartWork w, string label, string avatar, long created, TextureCatalog catalog, Dictionary<Guid, (byte[] Data, AssetType Type)> assets)
+    /// <summary>
+    /// The items of a part as its TaskInventory: each content's asset goes into <paramref name="assets"/> (pictures through the texture catalog), and each item
+    /// has the avatar as creator and owner and full permissions. A wearable's item is of inventory type Wearable with the wearable type in its flags, as the
+    /// viewer reads it; an object's item is of inventory type Object.
+    /// </summary>
+    private static string BuildContents(LinksetPartWork w, string label, Guid avatarId, long created, TextureCatalog catalog, Dictionary<Guid, (byte[] Data, AssetType Type)> assets, bool pbr, bool jointPositions)
     {
+        string avatar = avatarId.ToString("D");
         StringBuilder sb = new StringBuilder();
         int j = 0;
         foreach (LinksetContent c in w.Part.Contents)
         {
-            byte[] bytes;
-            try { bytes = File.ReadAllBytes(c.File); }
-            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
-            {
-                throw new ImportException(label + ": the " + c.Type + " file '" + c.File + "' cannot be read: " + e.Message);
-            }
+            byte[] bytes = c.Type == "object" ? null : ReadContentFile(c.File, c.Type, label);
             Guid asset;
-            int type;
+            int type, invType, flags = 0;
             switch (c.Type)
             {
                 case "script":
@@ -390,6 +402,7 @@ public static partial class ObjectImporter
                     asset = MeshId.FromBytes(bytes);
                     assets[asset] = (bytes, AssetType.LSLText);
                     type = (int)AssetType.LSLText;
+                    invType = (int)InventoryType.LSL;
                     break;
                 case "notecard":
                     string text = Utf8.GetString(bytes).Replace("\r\n", "\n");
@@ -400,6 +413,7 @@ public static partial class ObjectImporter
                     asset = MeshId.FromBytes(card);
                     assets[asset] = (card, AssetType.Notecard);
                     type = (int)AssetType.Notecard;
+                    invType = (int)InventoryType.Notecard;
                     break;
                 case "texture":
                     Guid? id = catalog.Resolve(bytes, out _, out string problem);
@@ -407,7 +421,17 @@ public static partial class ObjectImporter
                         throw new ImportException(label + ": the texture '" + c.Name + "' (" + Path.GetFileName(c.File) + ") cannot be used: " + problem);
                     asset = id.Value;
                     type = (int)AssetType.Texture;
+                    invType = (int)InventoryType.Texture;
                     w.Result.Textures.Add((asset, c.Name, "contents"));
+                    break;
+                case "wearable":
+                    (asset, type, flags) = BuildWearable(c, bytes, label, avatarId, catalog, assets, w.Result);
+                    invType = (int)InventoryType.Wearable;
+                    break;
+                case "object":
+                    asset = BuildObjectItem(c, label, avatarId, created, catalog, assets, w.Result, pbr, c.JointPositions ?? jointPositions);
+                    type = (int)AssetType.Object;
+                    invType = (int)InventoryType.Object;
                     break;
                 default:
                     throw new ImportException(label + ": the content type '" + c.Type + "' is not one of " + string.Join(", ", LinksetManifest.ContentTypes));
@@ -419,8 +443,8 @@ public static partial class ObjectImporter
             sb.Append("<AssetID><UUID>").Append(asset.ToString("D")).Append("</UUID></AssetID>");
             sb.Append("<BasePermissions>").Append(FullPermissions).Append("</BasePermissions><CreationDate>").Append(created.ToString(Inv)).Append("</CreationDate>");
             sb.Append("<CreatorID><UUID>").Append(avatar).Append("</UUID></CreatorID>");
-            sb.Append("<Description>").Append(SecurityElement.Escape(Limit(Clean(c.Description ?? string.Empty), MaxDescriptionChars))).Append("</Description><EveryonePermissions>0</EveryonePermissions><Flags>0</Flags>");
-            sb.Append("<GroupID><UUID>").Append(zero).Append("</UUID></GroupID><GroupPermissions>0</GroupPermissions><InvType>").Append(type.ToString(Inv)).Append("</InvType>");
+            sb.Append("<Description>").Append(SecurityElement.Escape(Limit(Clean(c.Description ?? string.Empty), MaxDescriptionChars))).Append("</Description><EveryonePermissions>0</EveryonePermissions><Flags>").Append(flags.ToString(Inv)).Append("</Flags>");
+            sb.Append("<GroupID><UUID>").Append(zero).Append("</UUID></GroupID><GroupPermissions>0</GroupPermissions><InvType>").Append(invType.ToString(Inv)).Append("</InvType>");
             sb.Append("<ItemID><UUID>").Append(item.ToString("D")).Append("</UUID></ItemID><OldItemID><UUID>").Append(zero).Append("</UUID></OldItemID>");
             sb.Append("<LastOwnerID><UUID>").Append(avatar).Append("</UUID></LastOwnerID>");
             sb.Append("<Name>").Append(SecurityElement.Escape(itemName)).Append("</Name><NextPermissions>").Append(FullPermissions).Append("</NextPermissions>");
@@ -432,5 +456,71 @@ public static partial class ObjectImporter
             j++;
         }
         return sb.ToString();
+    }
+
+    private static byte[] ReadContentFile(string file, string type, string label)
+    {
+        try { return File.ReadAllBytes(file); }
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+        {
+            throw new ImportException(label + ": the " + type + " file '" + file + "' cannot be read: " + e.Message);
+        }
+    }
+
+    /// <summary>
+    /// A wearable's asset: the text of its file with the avatar as creator and owner, and each picture of "textures" stored as a texture asset (as a texture
+    /// item's picture is) and named in the textures block by its texture entry number. Clothing (asset type Clothing) or, for wearable types 0 to 3, a body
+    /// part (asset type Bodypart); the item flags are the wearable type, which the viewer reads to know what the item is.
+    /// </summary>
+    private static (Guid Asset, int Type, int Flags) BuildWearable(LinksetContent c, byte[] bytes, string label, Guid avatar, TextureCatalog catalog, Dictionary<Guid, (byte[] Data, AssetType Type)> assets, ImportResult result)
+    {
+        string display = label + ": the wearable '" + c.Name + "' (" + Path.GetFileName(c.File) + ")";
+        string text = WearableText.Read(bytes);
+        int wearableType = WearableText.WearableType(text, display);
+        Dictionary<int, Guid> pictures = new Dictionary<int, Guid>();
+        foreach (KeyValuePair<int, string> t in c.Textures)
+        {
+            Guid? id = catalog.Resolve(ReadContentFile(t.Value, "picture", label), out _, out string problem);
+            if (id == null)
+                throw new ImportException(display + ": the picture of texture entry " + t.Key.ToString(Inv) + " (" + Path.GetFileName(t.Value) + ") cannot be used: " + problem);
+            pictures[t.Key] = id.Value;
+            result.Textures.Add((id.Value, c.Name, "wearable texture entry " + t.Key.ToString(Inv)));
+        }
+        byte[] data = Utf8.GetBytes(WearableText.Rewrite(text, avatar, pictures, display));
+        AssetType assetType = wearableType <= WearableText.LastBodyPart ? AssetType.Bodypart : AssetType.Clothing;
+        Guid asset = MeshId.FromBytes(data);
+        assets[asset] = (data, assetType);
+        return (asset, (int)assetType, wearableType);
+    }
+
+    /// <summary>
+    /// An object's asset: the folder built into a one-part object as the single-model import builds it, its centre at the origin, written in the form the region
+    /// reads when it rezzes an object from an inventory (SceneObjectSerializer.FromOriginalXmlFormat reads the part inside RootPart). Its mesh, pictures and
+    /// materials go into the archive's assets.
+    /// </summary>
+    private static Guid BuildObjectItem(LinksetContent c, string label, Guid avatar, long created, TextureCatalog catalog, Dictionary<Guid, (byte[] Data, AssetType Type)> assets, ImportResult result, bool pbr, bool jointPositions)
+    {
+        ImportResult inner = new ImportResult();
+        SingleObject single;
+        try
+        {
+            string baseName = FindBaseName(c.Folder, c.Base);
+            ModelLevels model = ReadFolderModel(c.Folder, baseName, inner.Notes);
+            single = BuildSingleObject(model, baseName, c.Name, c.Description, avatar, created, null, catalog, inner, _ => { }, pbr, jointPositions);
+        }
+        catch (ImportException e)
+        {
+            throw new ImportException(label + ": the object '" + c.Name + "': " + e.Message);
+        }
+        foreach ((Guid id, byte[] data, AssetType type) in single.Built.Assets)
+            assets[id] = (data, type);
+        result.Notes.AddRange(inner.Notes.Select(n => "object '" + c.Name + "': " + n));
+        result.Textures.AddRange(inner.Textures);
+        result.Materials.AddRange(inner.Materials);
+        result.PbrMaterials.AddRange(inner.PbrMaterials);
+        byte[] xml = Utf8.GetBytes("<SceneObjectGroup><RootPart>" + single.PartXml + "</RootPart><OtherParts /></SceneObjectGroup>");
+        Guid asset = MeshId.FromBytes(xml);
+        assets[asset] = (xml, AssetType.Object);
+        return asset;
     }
 }

@@ -68,11 +68,21 @@ A linked object: a JSON manifest, linkset.json, lists the parts, root part first
     ""faces"": [ { ""material"": ""<glTF material name>"" (or ""face"": <number>), ""glow"": 0 to 1, ""fullbright"": true,
                  ""specular"": { ""map"": ""<picture file>"", ""color"": [r, g, b] (0 to 1), ""glossiness"": 0 to 255, ""environment"": 0 to 255 } } ]
   A specular map is a legacy one: colour in red, green and blue, glossiness in alpha. It goes in the face's legacy material beside the normal map.
-  ""contents"" puts items into the part: ""script"" (LSL text, set running; the region compiles it when the object loads), ""notecard"" (a text file) or ""texture""
-  (a PNG or JPEG picture, stored as a JPEG 2000 codestream the viewer can decode), each with a ""file"" and an optional ""name"" and ""description"". Creator and owner are the
-  avatar, with full permission on parts and items. Unknown keys are refused by name.
+  ""contents"" puts items into the part: ""script"" (LSL text, set running; the region compiles it when the object loads), ""notecard"" (a text file), ""texture""
+  (a PNG or JPEG picture, stored as a JPEG 2000 codestream the viewer can decode), each with a ""file"", and ""wearable"" or ""object"" (below); every item has an
+  optional ""name"" and ""description"". Creator and owner are the avatar, with full permission on parts and items. Unknown keys are refused by name.
+    { ""type"": ""wearable"", ""file"": ""shirt.txt"", ""textures"": { ""1"": ""shirt.png"" } }
+        system clothing or a body part: an LLWearable text file as a viewer saves one (first line ""LLWearable version"", and a ""type N"" line with the wearable
+        type: 0 to 3 are body parts, the rest clothing, 13 an alpha). Its creator, owner and last owner become the avatar (@CREATOR@ and @OWNER@ in the file work
+        too). ""textures"" gives a PNG or JPEG picture for a texture entry number of the wearable's textures block; each is stored as a texture and its id written
+        into that entry (replacing the entry's line, or adding one). The viewer's numbers: 1 upper shirt, 2 lower pants, 21 lower alpha, 22 upper alpha (0 to 44).
+    { ""type"": ""object"", ""folder"": ""shirt-mesh"", ""base"": ""shirt"", ""jointPositions"": false }
+        an object built from a mesh tool output folder exactly as oar-import <folder> builds it (rigged levels, collision shape, pictures), kept in the part as an
+        object item, so a box can hold rigged garments that are taken out with ""Copy to inventory"" in the viewer. ""base"" names the model as --base does;
+        ""jointPositions"" left out takes the manifest's setting.
   The check for a linked object writes the archive out with the exporter and compares link order, names, descriptions, places and turns (half a millimetre), triangle
-  counts and contents (scripts byte for byte, notecard text, texture pixels) with the manifest and the files.
+  counts and contents (scripts byte for byte, notecard text, texture pixels) with the manifest and the files. A wearable's text must be its file's apart from the
+  creator, the owner and the pictures, and each picture's pixels its file's; an object is checked as a single model is, its lines named after the item.
 Exit codes: 0 done (and the check passed, if asked); 1 written, but the check failed; 2 the folder cannot be imported, nothing written; 64 bad command line.";
 
     public static int Run(string[] args)

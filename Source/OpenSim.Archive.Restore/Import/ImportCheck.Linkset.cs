@@ -5,7 +5,9 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+using System.Formats.Tar;
 using System.Globalization;
+using System.IO.Compression;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Xml.Linq;
@@ -23,7 +25,6 @@ namespace OpenSim.Archive.Restore.Import;
 public static partial class ImportCheck
 {
     private const float RotationTolerance = 1e-4f;
-    private static readonly Dictionary<string, string> ContentTypeNames = new Dictionary<string, string> { ["script"] = "LSLText", ["notecard"] = "Notecard", ["texture"] = "Texture" };
 
     /// <summary>
     /// The round trip of a linked object. The archive is written out to glTF by the exporter and each part of the build it makes is compared with the manifest
@@ -36,7 +37,7 @@ public static partial class ImportCheck
         ImportCheckResult result = new ImportCheckResult();
         try
         {
-            RunLinksetCore(result, archivePath, manifest, workFolder);
+            RunLinksetCore(result, archivePath, manifest, options, workFolder);
         }
         catch (Exception e) when (e is ImportException || e is IOException || e is InvalidDataException || e is OpenSim.MeshAsset.MeshFormatException || e is InvalidOperationException || e is ArgumentException
             || e is UnauthorizedAccessException || e is System.Text.Json.JsonException || e is KeyNotFoundException)
@@ -58,7 +59,7 @@ public static partial class ImportCheck
         return sb.ToString();
     }
 
-    private static void RunLinksetCore(ImportCheckResult result, string archivePath, LinksetManifest manifest, string workFolder)
+    private static void RunLinksetCore(ImportCheckResult result, string archivePath, LinksetManifest manifest, ImportOptions options, string workFolder)
     {
         Dictionary<string, byte[]> entries = ReadEntries(archivePath);
 
@@ -147,18 +148,102 @@ public static partial class ImportCheck
                 Detail = outputTriangles == inputTriangles[i] ? "the full mesh has the triangles of the input" : "the exported part has " + outputTriangles + " triangles, the input " + inputTriangles[i]
             });
 
-            result.Lines.Add(CompareContents(part, got, i < xmlParts.Count ? xmlParts[i] : null, entries));
+            XElement xmlPart = i < xmlParts.Count ? xmlParts[i] : null;
+            result.Lines.Add(CompareContents(part, got, xmlPart, entries, options?.Avatar ?? Guid.Empty));
+            // each object in the contents, checked as the single-model check checks its folder
+            for (int c = 0; c < part.Contents.Count; c++)
+                if (part.Contents[c].Type == "object")
+                    result.Lines.AddRange(CheckObjectItem(part.Contents[c], xmlPart, entries, options, manifest.JointPositions,
+                        Path.Combine(workFolder, "contents", (i + 1).ToString(CultureInfo.InvariantCulture) + "-" + (c + 1).ToString(CultureInfo.InvariantCulture))));
         }
+    }
+
+    /// <summary>
+    /// The check of an object in a part's contents: its object asset is put alone into an archive of its own (with the archive's assets it names: its mesh, and
+    /// every texture and material), which the single-model check compares with the object's folder. The lines are named after the item.
+    /// </summary>
+    private static List<CheckLine> CheckObjectItem(LinksetContent content, XElement xmlPart, Dictionary<string, byte[]> entries, ImportOptions options, bool manifestJointPositions, string workFolder)
+    {
+        string itemName = Cut(Plain(content.Name), 63);
+        List<CheckLine> lines = new List<CheckLine>();
+        XElement item = xmlPart?.Element("TaskInventory")?.Elements("TaskInventoryItem").FirstOrDefault(i => i.Element("Name")?.Value == itemName);
+        string assetId = item?.Element("AssetID")?.Element("UUID")?.Value;
+        if (assetId == null || !entries.TryGetValue("assets/" + assetId + "_object.xml", out byte[] stored))
+        {
+            lines.Add(new CheckLine { What = itemName, Ok = false, Detail = "the object asset of the item is not in the archive" });
+            return lines;
+        }
+        XElement group = XDocument.Parse(Encoding.UTF8.GetString(stored)).Root;
+        XElement inner = group.Element("RootPart")?.Element("SceneObjectPart");
+        if (group.Name.LocalName != "SceneObjectGroup" || inner == null)
+        {
+            lines.Add(new CheckLine { What = itemName, Ok = false, Detail = "the object asset is not a SceneObjectGroup with a RootPart, the form the region reads when it rezzes from an inventory" });
+            return lines;
+        }
+        string meshId = inner.Element("Shape")?.Element("SculptTexture")?.Element("UUID")?.Value;
+        Directory.CreateDirectory(workFolder);
+        string archive = Path.Combine(workFolder, "object.oar");
+        using (FileStream fs = new FileStream(archive, FileMode.Create, FileAccess.Write))
+        using (GZipStream gz = new GZipStream(fs, CompressionLevel.Fastest))
+        using (TarWriter tar = new TarWriter(gz))
+        {
+            void Write(string name, byte[] data)
+            {
+                PaxTarEntry e = new PaxTarEntry(TarEntryType.RegularFile, name) { DataStream = new MemoryStream(data) };
+                tar.WriteEntry(e);
+            }
+            Write("archive.xml", entries["archive.xml"]);
+            // the region archive form of the object: the part directly under the group
+            Write(OpenSim.Framework.Serialization.ArchiveConstants.CreateOarObjectPath("object", new UUID(Guid.NewGuid()), Vector3.Zero), Encoding.UTF8.GetBytes("<SceneObjectGroup>" + inner.ToString(SaveOptions.DisableFormatting) + "<OtherParts /></SceneObjectGroup>"));
+            foreach (KeyValuePair<string, byte[]> asset in entries)
+            {
+                if (!asset.Key.StartsWith("assets/", StringComparison.Ordinal))
+                    continue;
+                bool mesh = asset.Key.EndsWith("_mesh.llmesh", StringComparison.Ordinal);
+                if ((mesh && asset.Key == "assets/" + meshId + "_mesh.llmesh") || asset.Key.EndsWith("_texture.jp2", StringComparison.Ordinal) || asset.Key.EndsWith("_material.xml", StringComparison.Ordinal))
+                    Write(asset.Key, asset.Value);
+            }
+        }
+        ImportOptions single = new ImportOptions
+        {
+            Avatar = options?.Avatar ?? Guid.Empty, BaseName = content.Base,
+            JointPositions = content.JointPositions ?? ((options?.JointPositions ?? false) || manifestJointPositions)
+        };
+        ImportCheckResult check = Run(archive, content.Folder, single, Path.Combine(workFolder, "export"));
+        foreach (CheckLine l in check.Lines)
+        {
+            l.What = itemName + ": " + l.What;
+            lines.Add(l);
+        }
+        return lines;
     }
 
     private static string F(float v) => v.ToString("0.####", CultureInfo.InvariantCulture);
 
-    private static CheckLine CompareContents(LinksetPart part, JsonNode got, XElement xml, Dictionary<string, byte[]> entries)
+    /// <summary>The asset type name the exporter lists for an item, and the ending of its asset's file name in the archive.</summary>
+    private static (string TypeName, string Ending) ContentAssetType(LinksetContent c)
+    {
+        switch (c.Type)
+        {
+            case "script": return ("LSLText", "_script.lsl");
+            case "notecard": return ("Notecard", "_notecard.txt");
+            case "texture": return ("Texture", "_texture.jp2");
+            case "object": return ("Object", "_object.xml");
+            default:
+                // a wearable is a body part or clothing by the wearable type of its file
+                int type;
+                try { type = WearableText.WearableType(WearableText.Read(File.ReadAllBytes(c.File)), c.File); }
+                catch (ImportException) { type = WearableText.WearableTypes; }
+                return type <= WearableText.LastBodyPart ? ("Bodypart", "_bodypart.txt") : ("Clothing", "_clothing.txt");
+        }
+    }
+
+    private static CheckLine CompareContents(LinksetPart part, JsonNode got, XElement xml, Dictionary<string, byte[]> entries, Guid avatar)
     {
         CheckLine line = new CheckLine { What = "contents of " + part.Name };
         List<string> problems = new List<string>();
         List<string> listed = (got?["contents"]?.AsArray() ?? new JsonArray()).Select(c => (c["name"]?.GetValue<string>() ?? string.Empty) + "|" + (c["type"]?.GetValue<string>() ?? string.Empty)).ToList();
-        List<string> wanted = part.Contents.Select(c => Cut(Plain(c.Name), 63) + "|" + ContentTypeNames[c.Type]).ToList();
+        List<string> wanted = part.Contents.Select(c => Cut(Plain(c.Name), 63) + "|" + ContentAssetType(c).TypeName).ToList();
         if (!wanted.SequenceEqual(listed))
             problems.Add("the exporter lists [" + string.Join(", ", listed.Select(s => s.Replace('|', ' '))) + "] and the manifest has [" + string.Join(", ", wanted.Select(s => s.Replace('|', ' '))) + "]");
         List<XElement> items = xml?.Element("TaskInventory")?.Elements("TaskInventoryItem").ToList() ?? new List<XElement>();
@@ -172,16 +257,24 @@ public static partial class ImportCheck
                 continue;
             }
             string assetId = item.Element("AssetID")?.Element("UUID")?.Value;
-            string suffix = c.Type == "script" ? "_script.lsl" : c.Type == "notecard" ? "_notecard.txt" : "_texture.jp2";
+            string suffix = ContentAssetType(c).Ending;
             if (!entries.TryGetValue("assets/" + assetId + suffix, out byte[] stored))
             {
                 problems.Add("'" + itemName + "': the asset " + assetId + " is not in the archive");
                 continue;
             }
+            if (c.Type == "object")
+                continue;   // its own lines follow, from the single-model check
             byte[] input = File.ReadAllBytes(c.File);
             bool equal;
             switch (c.Type)
             {
+                case "wearable":
+                    string difference = CompareWearable(c, input, stored, entries, avatar);
+                    equal = difference == null;
+                    if (!equal)
+                        problems.Add("'" + itemName + "' (wearable): " + difference);
+                    continue;
                 case "script":
                     equal = stored.AsSpan().SequenceEqual(input);
                     break;
@@ -204,6 +297,48 @@ public static partial class ImportCheck
             ? part.Contents.Count + (part.Contents.Count == 1 ? " item" : " items") + (part.Contents.Count == 0 ? string.Empty : ": " + string.Join(", ", part.Contents.Select(c => Cut(Plain(c.Name), 63) + " (" + c.Type + ")")) + ", all equal to their files")
             : string.Join("; ", problems);
         return line;
+    }
+
+    /// <summary>
+    /// A wearable's text against its file: equal apart from the creator, owner and last owner ids (which must be the avatar) and the textures block, in which
+    /// every entry of the file the manifest does not give a picture for is kept, and each entry it does is a texture of the archive with the pixels of its picture.
+    /// Null when they agree, else what differs.
+    /// </summary>
+    private static string CompareWearable(LinksetContent c, byte[] input, byte[] stored, Dictionary<string, byte[]> entries, Guid avatar)
+    {
+        (string Lines, Dictionary<int, string> Textures, Dictionary<string, string> Ids) source, written;
+        try
+        {
+            source = WearableText.Split(WearableText.Read(input), c.File);
+            written = WearableText.Split(Encoding.UTF8.GetString(stored), c.Name);
+        }
+        catch (ImportException e)
+        {
+            return e.Message;
+        }
+        if (source.Lines != written.Lines)
+            return "the text differs from " + Path.GetFileName(c.File) + " in more than the creator, the owner and the pictures";
+        string id = avatar.ToString("D");
+        foreach (KeyValuePair<string, string> named in written.Ids)
+            if (avatar != Guid.Empty && named.Value != id)
+                return named.Key + " is " + named.Value + ", not the avatar " + id;
+        foreach (KeyValuePair<int, string> kept in source.Textures.Where(t => !c.Textures.ContainsKey(t.Key)))
+            if (!written.Textures.TryGetValue(kept.Key, out string writtenId) || writtenId != kept.Value)
+                return "texture entry " + kept.Key.ToString(CultureInfo.InvariantCulture) + " of the file is not kept";
+        foreach (int extra in written.Textures.Keys.Where(k => !source.Textures.ContainsKey(k) && !c.Textures.ContainsKey(k)))
+            return "texture entry " + extra.ToString(CultureInfo.InvariantCulture) + " is in the text but neither in the file nor in the manifest";
+        foreach (KeyValuePair<int, string> picture in c.Textures)
+        {
+            string entry = picture.Key.ToString(CultureInfo.InvariantCulture);
+            if (!written.Textures.TryGetValue(picture.Key, out string textureId))
+                return "texture entry " + entry + " is not in the textures block";
+            if (!entries.TryGetValue("assets/" + textureId + "_texture.jp2", out byte[] texture))
+                return "the texture " + textureId + " of texture entry " + entry + " is not in the archive";
+            byte[] a = DecodedPixels(File.ReadAllBytes(picture.Value), false, out int aw, out int ah), b = DecodedPixels(texture, true, out int bw, out int bh);
+            if (a == null || b == null || aw != bw || ah != bh || !a.AsSpan().SequenceEqual(b))
+                return "the picture of texture entry " + entry + " differs from " + Path.GetFileName(picture.Value);
+        }
+        return null;
     }
 
     private static byte[] DecodedPixels(byte[] encoded, bool jpeg2000, out int width, out int height)
