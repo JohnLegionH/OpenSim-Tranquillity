@@ -405,6 +405,8 @@ internal static class RigBuilder
                 if (IsTurned(UndoTurn(rest, quarterTurns)))
                     turned.Add(names[i]);
             }
+            else if (CollisionVolumeFrames.Frames.TryGetValue(names[i], out CollisionVolumeFrame volume))
+                viewerMatrix = VolumeInverse(files[0], parent, names[i], volume, rest, plan.Notes);
             else
                 viewerMatrix = fromViewer * inverseBind * s_toViewer;
             plan.Skin.InverseBind.Add(ToAsset(viewerMatrix));
@@ -415,6 +417,8 @@ internal static class RigBuilder
                 Vector3 own = WorldPosition(files[0], parent, node);
                 Vector3 above = parent[node] >= 0 ? WorldPosition(files[0], parent, parent[node]) : Vector3.Zero;
                 Vector3 offset = ToViewerAxes(own - above);
+                if (CollisionVolumeFrames.Frames.TryGetValue(names[i], out CollisionVolumeFrame ownFrame))
+                    offset = ownFrame.Position;       // a volume stands where the viewer's skeleton puts it under its bone
                 double[] alt = ToAsset(viewerMatrix);
                 alt[12] = offset.X; alt[13] = offset.Y; alt[14] = offset.Z;
                 (plan.Skin.AltInverseBind ??= new List<double[]>()).Add(alt);
@@ -426,6 +430,34 @@ internal static class RigBuilder
             plan.Notes.Add(turned.Count.ToString(CultureInfo.InvariantCulture) + (turned.Count == 1 ? " bone has" : " bones have") + " a turned rest frame in the file (" + string.Join(", ", turned.Take(6)) + (turned.Count > 6 ? " and " + (turned.Count - 6).ToString(CultureInfo.InvariantCulture) + " more" : string.Empty)
                 + "); the viewer's bones are not turned, so only their positions were used");
         return plan;
+    }
+
+    /// <summary>
+    /// The inverse bind matrix of a collision volume: the inverse of the volume's frame in the viewer's skeleton at rest (its own scale and turn, stood
+    /// where the viewer puts it under its bone, which is where the file has that bone). The orientation and scale of the file's own bone for the volume
+    /// play no part. A file with no node for the volume's bone leaves the volume where the file has it, and says so.
+    /// </summary>
+    private static Matrix4x4 VolumeInverse(GlbFile file, int[] parent, string name, CollisionVolumeFrame volume, Matrix4x4 fileRest, List<string> notes)
+    {
+        Vector3 at = Vector3.Zero;
+        bool found = false;
+        for (int node = 0; node < file.Nodes.Count && !found; node++)
+        {
+            if (ViewerJointNames.Canonical(file.Nodes[node].Name) != volume.Parent)
+                continue;
+            at = ToViewerAxes(WorldPosition(file, parent, node)) + volume.Position;
+            found = true;
+        }
+        if (!found)
+        {
+            at = ToViewerAxes(fileRest.Translation);
+            notes.Add("the collision volume " + name + " stands under the bone " + volume.Parent + ", which is not in the file; the volume was left where the file has it");
+        }
+        Matrix4x4 turn = Matrix4x4.CreateRotationX(volume.RotationDegrees.X * MathF.PI / 180f) * Matrix4x4.CreateRotationY(volume.RotationDegrees.Y * MathF.PI / 180f) * Matrix4x4.CreateRotationZ(volume.RotationDegrees.Z * MathF.PI / 180f);
+        Matrix4x4 world = Matrix4x4.CreateScale(volume.Scale) * turn * Matrix4x4.CreateTranslation(at);
+        if (!Matrix4x4.Invert(world, out Matrix4x4 inverse))
+            throw new ImportException("the collision volume " + name + " has a frame that cannot be inverted");
+        return inverse;
     }
 
     // a rest frame is turned when its axes are more than about a degree off the file's

@@ -15,3 +15,16 @@ say which of them covers these data files, so all are kept): `ThirdPartyLicenses
 Creative Commons Attribution-Share Alike 3.0 statement for the viewer's data and logos). See also `Source/OpenSimNGC.Appearance.Baking/THIRD-PARTY-NOTICES.md`.
 
 **Modifications:** the names were copied into C# string lists and sets; the aliases into a dictionary. Nothing else.
+
+## `Import/CollisionVolumeFrames.cs`
+
+**Origin:** Linden Lab Second Life viewer, file `indra/newview/character/avatar_skeleton.xml`, as shipped in the viewer source.
+
+**What was taken:** for each of the 26 collision volumes, the name of its parent bone and its `pos`, `rot` and `scale` values, as numbers in a table. No code.
+`oar-import` uses them to give a mesh weighted to a collision volume the inverse bind matrix the viewer poses that joint with (the volume's own scale and turn).
+
+**Licence:** the same as the file named above and as `Import/ViewerJointNames.cs` (see that section): the GNU Lesser General Public License v2.1 and the viewer's
+other licence statements, kept in `ThirdPartyLicenses/SecondLifeViewer-LGPL-2.1.txt`, `ThirdPartyLicenses/SecondLifeViewer-LICENSE-source.txt` and
+`ThirdPartyLicenses/SecondLifeViewer-LICENSE-logos.txt`.
+
+**Modifications:** the values were copied into a C# dictionary of records. Nothing else.
