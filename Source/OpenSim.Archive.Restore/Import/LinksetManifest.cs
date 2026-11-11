@@ -25,15 +25,23 @@ public sealed class ModelSource
     public bool IsFolder => !string.IsNullOrEmpty(Folder);
 }
 
-/// <summary>One item in a part's contents: a script, a notecard or a texture, from a file.</summary>
+/// <summary>One item in a part's contents: a script, a notecard, a texture or a wearable from a file, or an object from a mesh tool's output folder.</summary>
 public sealed class LinksetContent
 {
-    /// <summary>script, notecard or texture.</summary>
+    /// <summary>script, notecard, texture, wearable or object.</summary>
     public string Type { get; set; }
-    /// <summary>The file, absolute.</summary>
+    /// <summary>The file, absolute; null for an object.</summary>
     public string File { get; set; }
     public string Name { get; set; }
     public string Description { get; set; } = string.Empty;
+    /// <summary>For a wearable: the picture file (absolute) for each texture entry number of the wearable's textures block.</summary>
+    public SortedDictionary<int, string> Textures { get; } = new SortedDictionary<int, string>();
+    /// <summary>For an object: the mesh tool's output folder, absolute.</summary>
+    public string Folder { get; set; }
+    /// <summary>For an object: the file name prefix inside <see cref="Folder"/>; empty finds it as the single-object import does.</summary>
+    public string Base { get; set; } = string.Empty;
+    /// <summary>For an object: write the joint positions of a rigged mesh; null takes the manifest's (or the command line's) setting.</summary>
+    public bool? JointPositions { get; set; }
 }
 
 /// <summary>A part's sit target: where an avatar sits and how it is turned, in the part's own axes.</summary>
