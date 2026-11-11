@@ -83,16 +83,20 @@ since 1970; without it the time of the run is used.
 | `script` | LSL text | The text as written, in an item of the part. The script has no saved state, so the region compiles it when the object loads and it starts running. |
 | `notecard` | a text file | A notecard in the Linden text format; line endings are written as line feeds. At most 65 536 bytes. |
 | `texture` | a PNG or JPEG picture | A lossless JPEG 2000 texture asset (see below), in an item of the part. |
+| `wearable` | an LLWearable text file | System clothing or a body part, with its pictures; see [OAR-IMPORT-RIGGED.md](OAR-IMPORT-RIGGED.md#a-box-of-clothing). |
+| `object` | none: `folder` | An object built from a mesh tool's output folder as `oar-import <folder>` builds it, in an object item; see [OAR-IMPORT-RIGGED.md](OAR-IMPORT-RIGGED.md#a-box-of-clothing). |
 
-Each item has the key `name` (default: the file name without its extension) and an optional `description`. Creator, owner and last owner of the parts and
-the items are the `--avatar`; the parts and items have full permissions (copy, modify and transfer) for the base, owner and next owner.
+Each item has the key `name` (default: the file name without its extension; for an object, its `base` or its folder's name) and an optional `description`.
+Creator, owner and last owner of the parts and the items are the `--avatar`; the parts and items have full permissions (copy, modify and transfer) for the
+base, owner and next owner.
 
 ### The check
 
 `--check <folder>` writes the archive out again with the exporter into `<folder>` and compares it with the input. For a linked object it compares link
 order; each part's name and description; each part's place and turn against the manifest (places within half a millimetre); each part's triangle count; and
 the contents: the names and types the exporter lists, and, from the archive itself, every script byte for byte, every notecard's text and every texture's
-pixels. Exit code 1 means the archive was written and the check failed.
+pixels; a wearable's text and pictures, and each object as a single model is checked (see [OAR-IMPORT-RIGGED.md](OAR-IMPORT-RIGGED.md#a-box-of-clothing)).
+Exit code 1 means the archive was written and the check failed.
 
 ## Where an archive came from
 

@@ -53,6 +53,54 @@ rigged part:
 line `skin and weights`: the joints, the inverse bind matrices, the bind shape matrix and, for every stored vertex of all four levels, the weights against
 the file's vertex at that place.
 
+## A box of clothing
+
+A linked-object manifest (`linkset.json`, see [OAR-TOOLS-0.4.md](OAR-TOOLS-0.4.md)) can put garments into a part's `contents`, so the archive holds a box
+that hands them out: in the viewer, "Copy to inventory" on the box (or opening it) copies every item into the avatar's inventory, to be worn from there.
+
+```json
+{
+  "name": "Clothing Box", "description": "an outfit",
+  "parts": [
+    { "name": "Box", "folder": "box",
+      "contents": [
+        { "type": "object", "folder": "shirt-mesh", "base": "shirt", "name": "Shirt (mesh)", "jointPositions": false },
+        { "type": "object", "folder": "skirt-mesh", "name": "Skirt (mesh)" },
+        { "type": "wearable", "file": "undershirt.txt", "name": "Undershirt", "textures": { "1": "undershirt.png" } },
+        { "type": "wearable", "file": "alpha.txt", "name": "Body alpha", "textures": { "21": "lower-alpha.png", "22": "upper-alpha.png" } }
+      ] }
+  ]
+}
+```
+
+**`"object"`**: an object built from a mesh tool's output folder exactly as `oar-import <folder>` builds it (the rigged levels of detail, the collision
+shape, the pictures and materials), kept in the part as an object item rather than placed in the region. `folder` is required and `file` is refused; `base`
+names the model as `--base` does; `jointPositions` left out takes the manifest's `jointPositions` (or `--joint-positions`). The item's name is its `name`,
+else the `base`, else the folder's name, and the object inside has the same name and description. The object's centre is its origin, so it is rezzed where it is
+put and a worn one sits on its attachment point. The asset is written in the form the region reads when it rezzes an object from an inventory (a
+`SceneObjectGroup` holding its part in `RootPart`).
+
+**`"wearable"`**: system clothing or a body part, from an LLWearable text file as a viewer saves one. Its first line is `LLWearable version`, and it has a
+`type N` line, the wearable type: 0 shape, 1 skin, 2 hair and 3 eyes are body parts; 4 shirt, 5 pants, 6 shoes, 7 socks, 8 jacket, 9 gloves, 10 undershirt,
+11 underpants, 12 skirt, 13 alpha, 14 tattoo, 15 physics and 16 universal are clothing (the viewer's `llwearabletype.h`). A file without either line is refused.
+What is written:
+
+* the text of the file with its line endings as line feeds, and the avatar as its `creator_id`, `owner_id` and `last_owner_id` (the placeholders
+  `@CREATOR@` and `@OWNER@` are filled in too);
+* for each entry of `textures`, a texture entry number and a PNG or JPEG picture: the picture is stored as a texture, as a `texture` item's is, and its id
+  is written into the wearable's textures block for that entry, replacing the entry's line when the file has one and adding a line when it has not, with the
+  `textures N` count line kept right. The pictures are not items of the part of their own. One wearable can carry several pictures: an alpha holds both its
+  lower and its upper alpha. The numbers are the viewer's texture entries (`ETextureIndex` in `llavatarappearancedefines.h`), 0 to 44, among them 1 upper
+  shirt, 2 lower pants, 7 lower shoes, 12 lower socks, 13 upper jacket, 14 lower jacket, 15 upper gloves, 16 upper undershirt, 17 lower underpants, 18 skirt,
+  21 lower alpha, 22 upper alpha, 23 head alpha, 24 eyes alpha, 25 hair alpha, 26 head tattoo, 27 upper tattoo and 28 lower tattoo;
+* an item of inventory type Wearable whose flags are the wearable type, which the viewer reads to know what the item is; the asset is of type Clothing, or
+  Bodypart for types 0 to 3.
+
+The check compares each wearable's text with its file, apart from the creator, the owner and the entries `textures` gave, which must be the avatar and
+textures with the pixels of their pictures; every other entry of the file's textures block must be kept. Each object is checked as `oar-import <folder>
+--check` checks its folder (every level of detail, the skin and weights, the collision shape, the pictures), with each line named after the item, for
+example `Shirt (mesh): skin and weights`.
+
 ## What this does not do
 
 * It does not fit a mesh to a body. Weights come from the file; copy them from the body mesh in the modelling tool before exporting.
