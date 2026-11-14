@@ -82,6 +82,12 @@ public sealed class ExternalIPResolver : IDisposable
     /// <summary>Interval between automatic refreshes; <see cref="TimeSpan.Zero"/> when disabled.</summary>
     public TimeSpan RefreshInterval { get; }
 
+    /// <summary>STUB</summary>
+    public IReadOnlyList<IPAddress> DnsServers { get; } = Array.Empty<IPAddress>();
+
+    /// <summary>STUB</summary>
+    public static bool IsPrivateLoopbackOrLinkLocal(IPAddress ip) => false;
+
     /// <summary>
     /// The most recently resolved address as a string, or an empty string if no lookup has
     /// succeeded yet. Never reverts to empty once set.
@@ -100,7 +106,9 @@ public sealed class ExternalIPResolver : IDisposable
         string host,
         TimeSpan refreshInterval,
         ILogger log = null,
-        OsResolveFunc osResolver = null)
+        OsResolveFunc osResolver = null,
+        IReadOnlyList<IPAddress> dnsServers = null,
+        Func<string, IPAddress> dnsLookup = null)
     {
         Host = host ?? string.Empty;
         m_log = log ?? LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
@@ -122,7 +130,8 @@ public sealed class ExternalIPResolver : IDisposable
         IConfig serverConfig,
         string gatekeeperHost,
         ILogger log = null,
-        OsResolveFunc osResolver = null)
+        OsResolveFunc osResolver = null,
+        Func<string, IPAddress> dnsLookup = null)
     {
         string publicAddress = serverConfig?.GetString("PublicAddress", string.Empty)?.Trim() ?? string.Empty;
         int refreshMinutes = serverConfig?.GetInt("ExternalIPRefreshMinutes", 30) ?? 30;
@@ -140,8 +149,9 @@ public sealed class ExternalIPResolver : IDisposable
         IConfigSource config,
         string gatekeeperHost,
         ILogger log = null,
-        OsResolveFunc osResolver = null)
-        => FromConfig(config?.Configs["UserAgentService"], gatekeeperHost, log, osResolver);
+        OsResolveFunc osResolver = null,
+        Func<string, IPAddress> dnsLookup = null)
+        => FromConfig(config?.Configs["UserAgentService"], gatekeeperHost, log, osResolver, dnsLookup);
 
     /// <summary>
     /// Performs one lookup now. Returns true if an address was obtained. On failure the previous
