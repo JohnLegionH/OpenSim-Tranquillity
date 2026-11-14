@@ -178,7 +178,7 @@ public sealed class ExternalIPResolver : IDisposable
         if (IPAddress.TryParse(resolver.CurrentIP, out IPAddress settled) && IsPrivateLoopbackOrLinkLocal(settled))
             log.LogWarning("{0}: {1} resolved to {2}, a private, loopback or link-local address. Client verification's " +
                 "NAT fallback compares a visitor's public address with this one, so users logged in from that network " +
-                "will be refused when they go to another grid. Set [UserAgentService] PublicAddress to the grid's " +
+                "will be refused when they go to a grid outside it. Set [UserAgentService] PublicAddress to the grid's " +
                 "public host name or IP address, and DnsServers if this machine resolves that name to a private " +
                 "address (a hosts-file entry or router loopback)", LogTag, resolver.Host, settled);
 
