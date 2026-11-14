@@ -5,7 +5,6 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-using Nini.Config;
 using OpenMetaverse;
 using OpenSim.Framework;
 using OpenSim.Region.PhysicsModules.SharedBase;
@@ -22,6 +21,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// Serial with the other native tests (the native library is process-wide).
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[DeleteScratchFolders]
 public class PhysicsSitTests
 {
     private readonly ITestOutputHelper _out;
@@ -33,22 +33,11 @@ public class PhysicsSitTests
     private static readonly Vector3 C = new(128f, 128f, 25.25f);        // a 0.5 m box resting on the ground
     private static uint _id = 52000;
 
+    // The shared scene with the prim mesher wired in (a hollow box is cooked from its triangles).
     private static JoltScene NewScene(bool? physicsSit = null)
-    {
-        var config = new IniConfigSource();
-        IConfig startup = config.AddConfig("Startup");
-        startup.Set("physics", "Jolt");
-        startup.Set("meshing", "Meshmerizer");
-        IConfig jolt = config.AddConfig("Jolt");
-        if (physicsSit.HasValue)
-            jolt.Set("PhysicsSit", physicsSit.Value ? "true" : "false");
-        var scene = new JoltScene();
-        scene.Initialise(config);
-        float[] heights = new float[256 * 256];
-        Array.Fill(heights, Ground);
-        scene.InitialiseWithoutScene("Test Region", 256, 256, heights, 20f, 1f / 11f);
-        return scene;
-    }
+        => physicsSit.HasValue
+            ? MeshShapesTodayTests.NewScene(MeshShapesTodayTests.Scratch(), ("PhysicsSit", physicsSit.Value ? "true" : "false"))
+            : MeshShapesTodayTests.NewScene(MeshShapesTodayTests.Scratch());
 
     private static PhysicsActor Add(JoltScene scene, PrimitiveBaseShape pbs, Vector3 at, Vector3 size, Quaternion rot, bool phantom = false)
     {
