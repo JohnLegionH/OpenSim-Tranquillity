@@ -2953,7 +2953,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 JoltPrim p;
                 lock (_prims)
                     _prims.TryGetValue(bs.UserData, out p);
-                p?.ApplyStepState(in bs);
+                p?.ApplyStepState(in bs, timeStep);
                 _diagnostics?.BodyUpdated(in bs);   // the test commands' drop tracker
             }
 
