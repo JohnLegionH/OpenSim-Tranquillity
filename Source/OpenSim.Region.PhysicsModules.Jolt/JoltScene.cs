@@ -2887,10 +2887,53 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // Everything after the backend step: metrics, capacity, the body / character drains and the collision
         // dispatch. `r` is the step whose body and character states are reported; the contact count, overflow,
         // physics time and timing cover every backend step of this heartbeat (one, unless substepping).
+        // A physics step this slow (ms) is logged at once with what the region held, not only in the metrics interval line.
+        internal const float SlowStepWarnMs = 40f;
+        // At most one slow-step line per region in this many seconds; the ones held back are counted in the next.
+        internal const double SlowStepLogSeconds = 10.0;
+        private long _slowStepLoggedAt;
+        private long _slowStepsHeldBack;
+
+        /// <summary>The warning for one slow physics step, or null when the step was not slow (under
+        /// <see cref="SlowStepWarnMs"/>).</summary>
+        internal static string SlowStepLine(string region, float physicsMs, float timeStep, long step, in StepResult r, int contactCount,
+                                            in PhysicsCapacityStats s, long heldBack)
+        {
+            if (!(physicsMs >= SlowStepWarnMs))
+                return null;
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            string line = string.Format(ci,
+                "{0} {1}: physics step {2} took {3:0.00} ms (step length {4:0.0} ms): active={5}, bodies={6}, shapes={7}, avatars={8}, " +
+                "bodyUpdates={9}, contacts={10}, updateError={11}, poolWaitMax={12:0.00} ms",
+                LogHeader, region, step, physicsMs, timeStep * 1000f, r.ActiveBodyCount, s.LiveBodyCount, s.LiveShapeCount, s.CharacterCount,
+                r.BodyUpdateCount, contactCount, s.LastUpdateError, s.UpdateGateWaitMsMax);
+            return heldBack > 0 ? line + string.Format(ci, " ({0} more held back since the last line)", heldBack) : line;
+        }
+
+        // Logs a slow step at once (SlowStepLine), at most once per SlowStepLogSeconds per region.
+        private void WarnIfSlowStep(IPhysicsBackend backend, in StepResult r, float timeStep, int contactCount, float physicsMs)
+        {
+            if (!(physicsMs >= SlowStepWarnMs))
+                return;
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            long last = _slowStepLoggedAt;
+            if (last != 0 && now - last < (long)(SlowStepLogSeconds * System.Diagnostics.Stopwatch.Frequency))
+            {
+                _slowStepsHeldBack++;
+                return;
+            }
+            PhysicsCapacityStats s = backend.GetCapacityStats();
+            string line = SlowStepLine(RegionName, physicsMs, timeStep, _stepCount, in r, contactCount, in s, _slowStepsHeldBack);
+            _slowStepLoggedAt = now;
+            _slowStepsHeldBack = 0;
+            m_log.LogWarning(line);
+        }
+
         private void ReportStep(IPhysicsBackend backend, in StepResult r, float timeStep, int contactCount, bool contactsOverflowed, float physicsMs, bool mergeSubsteps,
                                 in HeartbeatTiming timing)
         {
             _lastActiveBodyCount = r.ActiveBodyCount;
+            WarnIfSlowStep(backend, in r, timeStep, contactCount, physicsMs);
             double gapMs = _pendingGapTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
             _pendingGapTicks = 0;
             JoltMetrics.RecordStep(RegionName, physicsMs, r.ActiveBodyCount, in timing, gapMs, timeStep * 1000.0,   // step-time instrumentation (`jolt metrics`)
