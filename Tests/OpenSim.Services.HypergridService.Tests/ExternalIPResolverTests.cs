@@ -566,6 +566,10 @@ public class ExternalIPResolverTests
         string warning = Assert.Single(log.Entries, e => e.Level == LogLevel.Warning).Message;
         Assert.Contains(Ip(address).ToString(), warning);
         Assert.Contains("NAT fallback", warning);
+        // Visitors to grids on the same network still pass on the login address comparison, so the warning is
+        // only about grids outside that network.
+        Assert.Contains("users logged in from that network will be refused when they go to a grid outside it", warning);
+        Assert.DoesNotContain("another grid", warning);
         Assert.Contains("PublicAddress", warning);
         Assert.Contains("DnsServers", warning);
     }
@@ -596,7 +600,7 @@ public class ExternalIPResolverTests
 
         Assert.Equal("10.0.0.5", r.CurrentIP);
         Assert.Contains(log.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("10.0.0.5")
-            && e.Message.Contains("NAT fallback"));
+            && e.Message.Contains("NAT fallback") && e.Message.Contains("when they go to a grid outside it"));
     }
 
     [Theory]
