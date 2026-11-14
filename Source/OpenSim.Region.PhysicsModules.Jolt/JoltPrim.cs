@@ -168,6 +168,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private ShapeId _compoundShape = ShapeId.Invalid;                  // root: the built compound (Invalid = single shape)
 
         internal BodyId BodyHandle => _body;
+        // The body a ray at this part tests: its own, or its linkset root's when it is welded into the root's body.
+        internal BodyId PartBody => IsWeldedChild ? _linkRoot._body : _body;
         internal string ShapeKind => _shapeKind;
         internal ShapeId ShapeHandle => _shape;
         // Read by the `jolt reloadcheck` / `jolt vehiclestatus` console commands.

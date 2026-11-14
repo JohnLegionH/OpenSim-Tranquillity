@@ -2264,8 +2264,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         //    ray after login or teleport (ScenePresence.MakeRootAgent), and by OpenSim's LSL_Api.llCastRay (YEngine)
         //    through Scene.RayCastFiltered. Its flags and hit count do not tell a script's cast from the simulator's (a
         //    script can ask for exactly the same ones), so it is charged to RayCastBudget.Simulator; see BudgetFor.
-        // The viewer camera's collision ray and the sit ray do not come here: this module does not override
-        // SupportsRayCast() or the sit query, so the base class answers them.
+        // The viewer camera's collision ray does not come here: this module does not override SupportsRayCast(), so the
+        // base class answers it. The sit query (SitAvatar) casts at one part only, through RaycastActor below.
         public override List<ContactResult> RaycastWorld(Vector3 position, Vector3 direction, float length, int Count)
         {
             List<ContactResult> results = CastAll(position, direction, length, Count, QueryFilter.Default,
@@ -2277,6 +2277,76 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         public override object RaycastWorld(Vector3 position, Vector3 direction, float length, int Count, RayFilterFlags filter)
             => CastAll(position, direction, length, Count, ToQueryFilter(filter), _warmingUpRays ? RayCastBudget.None : BudgetFor(filter), out _);
+
+        /// <summary>
+        /// A ray against one part only, as ubODE's RaycastActor: whatever lies in front of the part is passed through. A
+        /// part welded into its linkset root's body is hit on its own shape, not the rest of the linkset. The part's kind
+        /// must be in <paramref name="flags"/> (physical or nonphysical, phantom, volume detect), as ubODE checks it. Only
+        /// prims are answered; an avatar gets no hits. Charged to the simulator's ray budget; a refused or cut-short cast
+        /// gives no hits.
+        /// </summary>
+        public override List<ContactResult> RaycastActor(PhysicsActor actor, Vector3 position, Vector3 direction, float length, int Count, RayFilterFlags flags)
+        {
+            var results = new List<ContactResult>();
+            IPhysicsBackend backend = _backend;   // read once: a teardown on another thread nulls it
+            if (backend == null || actor is not JoltPrim prim || prim.IsRemoved)
+                return results;
+            BodyId body = prim.PartBody;
+            if (!body.IsValid || !(length > 0f) || !float.IsFinite(length) || !position.IsFinite() || !direction.IsFinite())
+                return results;
+
+            RayFilterFlags kind = prim.IsPhysical ? RayFilterFlags.physical : RayFilterFlags.nonphysical;
+            if (prim.Phantom)
+                kind |= RayFilterFlags.phantom;
+            if (prim.IsVolumeDtc)
+                kind |= RayFilterFlags.volumedtc;
+            if ((kind & flags) == 0)
+                return results;
+
+            Vector3 dn = direction;
+            dn.Normalize();
+            if (!dn.IsFinite() || dn == Vector3.Zero)
+                return results;
+            if (!ClipRay(position, dn, length, out float from, out float to))
+                return results;
+            Vector3 start = position + dn * from;
+
+            int want = (flags & RayFilterFlags.ClosestHit) != 0 ? 1 : Math.Clamp(Count, 1, _joltConfig.RayCastMaxHits);
+            var hits = new RayHit[want];
+            // As ubODE's actor ray: back faces count unless the caller asks to cull them, so a ray that starts inside the part
+            // (the sit's edge search) hits the face it leaves by.
+            bool backFaces = (flags & RayFilterFlags.BackFaceCull) == 0;
+            int n = backend.RayCastBody(body, prim.LocalID, new SVector3(start.X, start.Y, start.Z), new SVector3(dn.X, dn.Y, dn.Z),
+                                        to - from, backFaces, _warmingUpRays ? RayCastBudget.None : RayCastBudget.Simulator, hits, out _);
+            for (int i = 0; i < n; i++)
+            {
+                results.Add(new ContactResult
+                {
+                    ConsumerID = prim.LocalID,
+                    Pos = new Vector3(hits[i].Point.X, hits[i].Point.Y, hits[i].Point.Z),
+                    Normal = new Vector3(hits[i].Normal.X, hits[i].Normal.Y, hits[i].Normal.Z),
+                    Depth = from + hits[i].Distance,         // from the caller's start, not the clipped one
+                });
+            }
+            return results;
+        }
+
+        /// <summary>
+        /// Sitting on a part with no sit target (ScenePresence.PhysicsSit): where the avatar sits is worked out off the
+        /// caller's thread, as ubODE does, and handed to <paramref name="PhysicsSitResponse"/> (JoltSitAvatar). Returns 1
+        /// when the answer will come through the callback; 0 with [Jolt] PhysicsSit = false, and core then seats the
+        /// avatar at the clicked point itself.
+        /// </summary>
+        public override int SitAvatar(PhysicsActor actor, Vector3 AbsolutePosition, Vector3 CameraPosition, Vector3 offset, Vector3 AvatarSize, SitAvatarCallback PhysicsSitResponse)
+        {
+            if (!_joltConfig.PhysicsSit)
+                return 0;
+            Util.FireAndForget(delegate
+            {
+                new JoltSitAvatar(this).Sit(actor, AbsolutePosition, CameraPosition, offset, AvatarSize, PhysicsSitResponse);
+            });
+            return 1;
+        }
 
         // The budget a cast on the 5-argument entry is charged to. Nothing in RayFilterFlags marks a script's cast today,
         // so every such cast goes to the simulator's budget. When the caller can mark a script cast (a flag set by
