@@ -689,6 +689,9 @@ public class LLLoginResponse : OpenSim.Services.Interfaces.LoginResponse
             map["message"] = OSD.FromString(welcomeMessage);
             map["region_x"] = OSD.FromInteger(RegionX);
             map["region_y"] = OSD.FromInteger(RegionY);
+            // Same keys as the XML-RPC reply: without them a viewer assumes a 256 m region until its first teleport or crossing.
+            map["region_size_x"] = OSD.FromInteger(RegionSizeX);
+            map["region_size_y"] = OSD.FromInteger(RegionSizeY);
 
             if (mapTileURL != String.Empty)
                 map["map-server-url"] = OSD.FromString(mapTileURL);
