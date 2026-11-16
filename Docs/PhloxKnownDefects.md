@@ -813,6 +813,15 @@ return `BOT_ERROR` and the other two do nothing. In `botSetNavigationPoints` a n
 for `BOT_TRAVELMODE_WAIT`, in seconds. A persistent bot comes back after a region restart under the key it had, or
 under a new key if an avatar or another bot in the simulator already holds that one.
 
+Bot persistence is off unless the simulator's configuration has `[BotPersistence]` with `Enabled = true`; each region
+keeps its own persistent bots in its own database file. `botSetPersistent`, `botRemovePersistent` and
+`botSetPersistentData` return 0 on success and otherwise one of: -1 the bot is not found or is not the caller's, -2 the
+caller may not rez on the parcel the bot stands on, -3 the parcel is full, -4 the owner has too many persistent bots,
+-5 the region is full, **-6 bot persistence is not available in this region** (`[BotPersistence] Enabled` is false, the
+region's database did not open, or bot support is off), -7 the bot is already persistent. `botIsPersistent` returns 1 or
+0 and `botGetPersistentData` an empty string when it has nothing; neither reports -6. A region that logs
+`[BotPersistence] Initialized for region` at its start has persistence on.
+
 ### Constants
 - `IW_PRIM_ALPHA` and `IW_PRIM_PROJECTOR*` are extra prim-params rules.
 - `IW_OBJECT_SCRIPT_MEMORY_USED` is an extra `llGetObjectDetails` code.

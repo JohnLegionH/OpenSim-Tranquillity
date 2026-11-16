@@ -4545,15 +4545,15 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         byte[] visualParams;
         if (cofVersion >= 0)
             visualParams = AvatarAppearance.WithAppearanceVersion(Appearance.VisualParams, 1);
-        else if (IsNPC)
-            // An NPC's appearance is a clone of its owner's, parameter 11000 included, and an owner on a
-            // server-bake region sends that parameter as 1. Nothing ever bakes an NPC, so its message has no
-            // AppearanceData block - and a parameter of 1 beside no block puts the viewer on the server-bake path
-            // for this avatar (resolve_appearance_version prefers the parameter), which fetches every baked face
-            // from the appearance service under the NPC's UUID. No index lives there, every channel is a 404, and
-            // the NPC never leaves the cloud state. Say 0 - the message every avatar carried before SSB - and the
-            // viewer fetches the stored bake assets the faces name from the region, as it always did. On a copy:
-            // the parameter is a property of the message, not of the appearance.
+        else if (IsNPC && m_scene.RequestModuleInterface<IServerSideBakingRegion>() is not { ServerSideBakingEnabled: true })
+            // On a region with no server-side baking an NPC is never baked, and its appearance is a clone of its
+            // owner's, parameter 11000 included. An owner who came from a server-baking region has that parameter
+            // at 1, and a 1 beside no AppearanceData block puts the viewer on the server-bake path for this avatar,
+            // which fetches every baked face from the appearance service under the NPC's UUID: no index lives
+            // there, every channel is a 404, and the NPC stays a cloud. Say 0 - the message every avatar carried
+            // before server-side baking - and the viewer fetches the stored bake assets the faces name from the
+            // region, as it always did. On a copy: the parameter is a property of the message, not of the
+            // appearance. A server-baking region bakes its NPCs, so there they send what an avatar sends.
             visualParams = AvatarAppearance.WithAppearanceVersion(Appearance.VisualParams, 0);
         else
             visualParams = Appearance.VisualParams;
