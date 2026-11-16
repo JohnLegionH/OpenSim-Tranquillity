@@ -748,10 +748,28 @@ public class CommandConsole : ConsoleBase, ICommandConsole
     /// </summary>
     public void Prompt()
     {
+        if (m_inputClosed)
+            return;
+
         string line = ReadLine(DefaultPrompt + "# ", true, true);
 
         if (line != String.Empty)
             Output("Invalid command");
+    }
+
+    private volatile bool m_inputClosed;
+
+    /// <summary>
+    /// True once the console input has ended (end of file, or the pipe feeding it was closed). The console
+    /// reads nothing more, so a loop that prompts it must stop instead of calling again.
+    /// </summary>
+    public bool InputClosed => m_inputClosed;
+
+    private void NoteInputClosed()
+    {
+        m_inputClosed = true;
+        LoggerProvider.CreateLogger<CommandConsole>().LogInformation(
+            "[CONSOLE]: Console input has ended (end of file or closed); the server carries on without reading the console.");
     }
 
     public void RunCommand(string cmd)
@@ -762,8 +780,18 @@ public class CommandConsole : ConsoleBase, ICommandConsole
 
     public override string ReadLine(string p, bool isCommand, bool e)
     {
+        if (m_inputClosed)
+            return String.Empty;
+
         System.Console.Write("{0}", p);
         string cmdinput = System.Console.ReadLine();
+
+        // null is end of input: nothing further can be read, and the command parser must not be given it
+        if (cmdinput == null)
+        {
+            NoteInputClosed();
+            return String.Empty;
+        }
 
         if (isCommand)
         {

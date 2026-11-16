@@ -27,6 +27,8 @@ public static class OpenSimLoggingBuilderExtensions
     /// Registers the interactive console sink and a daily rolling file sink.
     /// </summary>
     /// <remarks>
+    /// The file sink can also roll over on size and keep a set number of files; see <see cref="LogFileLimits"/>. With
+    /// those settings absent it is built with the file sink library's own size limit and retention, as it always was.
     /// Levels come from the <c>Logging:LogLevel</c> settings (normally appsettings.json) when <c>configuration</c> is given.
     /// The console starts at the <c>Default</c> entry, or at Information when there is none, and
     /// <c>Logging:OpenSimConsole:LogLevel</c> entries replace the general ones for the console only.
@@ -76,13 +78,18 @@ public static class OpenSimLoggingBuilderExtensions
         if (fileLevels.Count > 0)
             loggerConfiguration.Filter.ByExcluding(logEvent => !AllowedByCategory(fileLevels, logEvent));
 
+        LogFileSinkArguments limits = LogFileLimits.FromConfiguration(configuration).ToSinkArguments();
+
         if (string.IsNullOrWhiteSpace(configuredStatsLogFile))
         {
             loggerConfiguration.WriteTo.File(
                 new OpenSimLogFileFormatter(),
                 logFilePath,
                 restrictedToMinimumLevel: LogEventLevel.Debug,
+                fileSizeLimitBytes: limits.FileSizeLimitBytes,
                 rollingInterval: RollingInterval.Day,
+                rollOnFileSizeLimit: limits.RollOnFileSizeLimit,
+                retainedFileCountLimit: limits.RetainedFileCountLimit,
                 shared: true);
         }
         else
@@ -95,7 +102,10 @@ public static class OpenSimLoggingBuilderExtensions
                         new OpenSimLogFileFormatter(),
                         logFilePath,
                         restrictedToMinimumLevel: LogEventLevel.Debug,
+                        fileSizeLimitBytes: limits.FileSizeLimitBytes,
                         rollingInterval: RollingInterval.Day,
+                        rollOnFileSizeLimit: limits.RollOnFileSizeLimit,
+                        retainedFileCountLimit: limits.RetainedFileCountLimit,
                         shared: true))
                 .WriteTo.Logger(configuration => configuration
                     .MinimumLevel.Verbose()
@@ -104,7 +114,10 @@ public static class OpenSimLoggingBuilderExtensions
                         new OpenSimLogFileFormatter(),
                         statsLogFilePath,
                         restrictedToMinimumLevel: LogEventLevel.Debug,
+                        fileSizeLimitBytes: limits.FileSizeLimitBytes,
                         rollingInterval: RollingInterval.Day,
+                        rollOnFileSizeLimit: limits.RollOnFileSizeLimit,
+                        retainedFileCountLimit: limits.RetainedFileCountLimit,
                         shared: true));
         }
 
