@@ -1,0 +1,102 @@
+# The ll functions' bool and index marks, from secondlife/lsl-definitions lsl_definitions.yaml at f1906c95d53d8d950fde97064959ab6c6029f1c2.
+# MIT, Copyright (c) 2025 Linden Research, Inc. Written by tools/slua-bindings/extract-marks.py.
+# name<TAB>mark<TAB>mark ...; marks are return:bool, return:index, arg<N>:bool, arg<N>:index (N from 0).
+llAdjustDamage	arg0:index
+llAgentInExperience	return:bool
+llAllowInventoryDrop	arg0:bool
+llApplyImpulse	arg1:bool
+llApplyRotationalImpulse	arg1:bool
+llCollisionFilter	arg2:bool
+llCreateLink	arg1:bool
+llDeleteSubList	arg1:index	arg2:index
+llDeleteSubString	arg1:index	arg2:index
+llDerezObject	return:bool
+llDetectedDamage	arg0:index
+llDetectedGrab	arg0:index
+llDetectedGroup	return:bool	arg0:index
+llDetectedKey	arg0:index
+llDetectedLinkNumber	arg0:index
+llDetectedName	arg0:index
+llDetectedOwner	arg0:index
+llDetectedPos	arg0:index
+llDetectedRezzer	arg0:index
+llDetectedRot	arg0:index
+llDetectedTouchBinormal	arg0:index
+llDetectedTouchFace	arg0:index
+llDetectedTouchNormal	arg0:index
+llDetectedTouchPos	arg0:index
+llDetectedTouchST	arg0:index
+llDetectedTouchUV	arg0:index
+llDetectedType	arg0:index
+llDetectedVel	arg0:index
+llEdgeOfWorld	return:bool
+llFindNotecardTextSync	return:index	arg2:index
+llForceMouselook	arg0:bool
+llGetEnvironment	return:bool
+llGetInventoryName	arg1:index
+llGetLinkMedia	return:bool
+llGetLinkPrimitiveParams	return:bool
+llGetListEntryType	arg1:index
+llGetNotecardLine	arg1:index
+llGetNotecardLineSync	arg1:index
+llGetObjectDetails	return:bool
+llGetParcelDetails	return:bool
+llGetParcelMaxPrims	arg1:bool
+llGetParcelPrimCount	arg2:bool
+llGetPrimMediaParams	return:bool
+llGetPrimitiveParams	return:bool
+llGetScriptState	return:bool
+llGetStatus	return:bool
+llGetSubString	arg1:index	arg2:index
+llGroundRepel	arg1:bool
+llInsertString	arg1:index
+llIsFriend	return:bool
+llIsLinkGLTFMaterial	return:bool
+llKeysKeyValue	arg0:index
+llLinkSetSoundQueueing	arg1:bool
+llLinksetDataFindKeys	arg1:index
+llLinksetDataListKeys	arg0:index
+llList2Float	arg1:index
+llList2Integer	arg1:index
+llList2Key	arg1:index
+llList2List	arg1:index	arg2:index
+llList2ListSlice	arg1:index	arg2:index	arg4:index
+llList2ListStrided	arg1:index	arg2:index
+llList2Rot	arg1:index
+llList2String	arg1:index
+llList2Vector	arg1:index
+llListFindList	return:index
+llListFindListNext	return:index	arg2:index
+llListFindStrided	return:index	arg2:index	arg3:index
+llListInsertList	arg2:index
+llListReplaceList	arg2:index	arg3:index
+llListSort	arg2:bool
+llListSortStrided	arg2:index	arg3:bool
+llListenControl	arg1:bool
+llManageEstateAccess	return:bool
+llOrd	arg1:index
+llOverMyLand	return:bool
+llParcelMediaQuery	return:bool
+llPushObject	arg3:bool
+llRemoteLoadScriptPin	arg3:bool
+llSameGroup	return:bool
+llScaleByFactor	return:bool
+llScriptDanger	return:bool
+llSetAngularVelocity	arg1:bool
+llSetForce	arg1:bool
+llSetForceAndTorque	arg2:bool
+llSetHoverHeight	arg1:bool
+llSetMemoryLimit	return:bool
+llSetParcelForSale	arg0:bool
+llSetRegionPos	return:bool
+llSetScriptState	arg1:bool
+llSetSoundQueueing	arg0:bool
+llSetStatus	arg1:bool
+llSetTorque	arg1:bool
+llSetVelocity	arg1:bool
+llSound	arg2:bool	arg3:bool
+llSubStringIndex	return:index
+llTakeControls	arg1:bool	arg2:bool
+llUpdateKeyValue	arg2:bool
+llVerifyRSA	return:bool
+llVolumeDetect	arg0:bool
