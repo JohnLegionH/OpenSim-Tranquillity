@@ -3183,6 +3183,7 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
                     m_scene.EventManager.TriggerOnSceneObjectPreSave(backup_group, this);
 
                     datastore.StoreObject(backup_group, m_scene.RegionInfo.RegionID);
+                    m_scene.NoteSavedInBackupPass(this);
 
                     backup_group.ForEachPart(delegate(SceneObjectPart part)
                     {
