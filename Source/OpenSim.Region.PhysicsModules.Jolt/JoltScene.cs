@@ -471,6 +471,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
             PhysicsBackendSettings settings = _joltConfig.ToBackendSettings(sizeX, sizeY, _substeps != null ? stepRate : 0f);
             CollisionSteps = Math.Max(1, settings.CollisionSteps);
+            // A step whose scratch memory does not fit joltc's temp stack takes it from malloc every step, and Jolt uses
+            // that block unchecked: when the machine runs out of memory the region server ends in joltc (JoltTempStack).
+            if (!JoltTempStack.Fits(settings.MaxContactConstraints))
+                m_log.LogWarning($"{LogHeader} region '{RegionName}': MaxContactConstraints {settings.MaxContactConstraints} needs " +
+                                 $"{JoltTempStack.StepBytes(settings.MaxContactConstraints) / (1024 * 1024)} MB of joltc's " +
+                                 $"{JoltTempStack.StackBytes / (1024 * 1024)} MB temp stack each step; the rest comes from malloc every step " +
+                                 "and the process ends in joltc if that fails. [Jolt] FitStepInTempStack = true caps it at " +
+                                 $"{JoltTempStack.MaxContactConstraintsThatFit}.");
+            else if (_joltConfig.FitStepInTempStack)
+                m_log.LogInformation($"{LogHeader} region '{RegionName}': MaxContactConstraints {settings.MaxContactConstraints} " +
+                                     "(FitStepInTempStack: each step fits joltc's temp stack)");
             settings.RegionName = RegionName;   // names this region when another waits for its job pool (metrics)
             settings.RayCastClock = RayCastClock;
             _bodyBufMax = _joltConfig.BodyUpdateBufferMax;
