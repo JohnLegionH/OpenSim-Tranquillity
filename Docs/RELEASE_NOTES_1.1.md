@@ -447,6 +447,17 @@ the executables validate their declared command-line options (#198, #298).
 
 Notable changes: #215, #230, #251, #253, #279, #280, #283, #287-292, #295-297.
 
+**Jolt temp memory (`[Jolt] FitStepInTempStack`, off by default):** joltc keeps
+an 8 MB scratch stack for physics steps and takes anything larger from `malloc`
+on every step without checking the result. At the default
+`MaxContactConstraints` of 16384 the contact buffer alone is about 14 MB, so
+every step allocates it, and if the host runs out of memory the region server
+stops with an access violation in joltc. Setting `FitStepInTempStack = true`
+caps `MaxContactConstraints` at 8305 so each step fits the stack and allocates
+nothing; a region needing more contact constraints in one step drops the rest.
+With the key off, a region whose capacity overflows the stack logs a warning
+at start.
+
 **Physics integration limit:** attachment constant force is carried through
 avatar state and the new actor hook, but the bundled physics engines do not yet
 apply `SetConstantForce`. Do not expect that hook alone to move an avatar; see
