@@ -95,6 +95,8 @@ The summary table always goes to standard output. Nothing is written anywhere el
     {
         try
         {
+            if (args.Length > 0 && args[0] == "--temp-starve")
+                return TempStarve.Run(args[1..], Console.Out);
             if (args.Length > 0 && args[0] == "--stress")
                 return Stress.Run(args[1..], Console.Out);
             if (args.Length > 0 && args[0] is "--check-baseline" or "--record-baseline")
