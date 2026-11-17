@@ -45,6 +45,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public int MaxBodyPairs = 65536;
         public int MaxContactConstraints = 16384;
         public bool ScaleCapsWithArea = false;     // true: scale MaxBodyPairs / MaxContactConstraints by area too
+        public bool FitStepInTempStack = false;    // true: cap MaxContactConstraints so a step's scratch memory fits joltc's temp stack (JoltTempStack)
         public int BodyUpdateBufferMax = 65536;
         public int CharacterUpdateBufferMax = 1024;
         public int ContactBufferMax = 0;           // 0 = the backend's contact ring capacity
@@ -213,6 +214,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.MaxBodyPairs = I(cfg, "MaxBodyPairs", c.MaxBodyPairs, 1, 8_388_607, warnings);
             c.MaxContactConstraints = I(cfg, "MaxContactConstraints", c.MaxContactConstraints, 1, 8_388_607, warnings);
             c.ScaleCapsWithArea = B(cfg, "ScaleCapsWithArea", c.ScaleCapsWithArea, warnings);
+            c.FitStepInTempStack = B(cfg, "FitStepInTempStack", c.FitStepInTempStack, warnings);
             c.AllowUnrecordedNative = B(cfg, "AllowUnrecordedNative", c.AllowUnrecordedNative, warnings);
             c.HonourConvexMesh = B(cfg, "HonourConvexMesh", c.HonourConvexMesh, warnings);
             c.BodyEnhancedEdgeRemoval = B(cfg, "BodyEnhancedEdgeRemoval", c.BodyEnhancedEdgeRemoval, warnings);
@@ -424,6 +426,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             s.MaxBodies = MaxBodies > 0 ? MaxBodies : ScaleByArea(BaseMaxBodies, sizeX, sizeY);
             s.MaxBodyPairs = ScaleCapsWithArea ? ScaleByArea(MaxBodyPairs, sizeX, sizeY) : MaxBodyPairs;
             s.MaxContactConstraints = ScaleCapsWithArea ? ScaleByArea(MaxContactConstraints, sizeX, sizeY) : MaxContactConstraints;
+            // FitStepInTempStack: keep a step's scratch memory inside joltc's preallocated temp stack, so no step takes a
+            // block from malloc that Jolt would use unchecked (JoltTempStack). Applied after the area scaling.
+            if (FitStepInTempStack)
+                s.MaxContactConstraints = Math.Min(s.MaxContactConstraints, JoltTempStack.MaxContactConstraintsThatFit);
             s.ThreadCount = ThreadCount;
             s.PositionIterations = PositionIterations;
             s.VelocityIterations = VelocityIterations;
