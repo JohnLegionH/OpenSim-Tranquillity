@@ -556,7 +556,16 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         IsActive = true;
 
         m_supportViewerCache = m_udpServer.SupportViewerObjectsCache;
+
+        // The login channel travels in the circuit data to every region the viewer connects to.
+        string channel = ((Scene)m_scene).AuthenticateHandler?.GetAgentCircuitData(circuitCode)?.Channel;
+        Only256mRegions = m_udpServer.IsLegacyRegionSizeChannel(channel);
+        if (Only256mRegions && (m_scene.RegionInfo.RegionSizeX > Constants.RegionSize || m_scene.RegionInfo.RegionSizeY > Constants.RegionSize))
+            m_log.LogDebug($"{LogHeader} {m_firstName} {m_lastName} is on channel '{channel}', which only takes 256 m regions: sending it the south-west 256 m of {m_scene.Name}");
     }
+
+    /// <inheritdoc/>
+    public bool Only256mRegions { get; }
 
     #region Client Methods
 
@@ -1678,7 +1687,14 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         try
         {
             // Send LayerData in a spiral pattern. Fun!
-            SendLayerTopRight(0, 0, map.SizeX / Constants.TerrainPatchSize - 1, map.SizeY / Constants.TerrainPatchSize - 1);
+            int lastX = map.SizeX / Constants.TerrainPatchSize - 1;
+            int lastY = map.SizeY / Constants.TerrainPatchSize - 1;
+            if (Only256mRegions)
+            {
+                lastX = Math.Min(lastX, StandardLayerPatchesPerEdge - 1);
+                lastY = Math.Min(lastY, StandardLayerPatchesPerEdge - 1);
+            }
+            SendLayerTopRight(0, 0, lastX, lastY);
         }
         catch (Exception e)
         {
@@ -1744,6 +1760,29 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
     private const int END_OF_PATCHES = 97;
     private const int STRIDE = 264;
 
+    private const int StandardLayerPatchesPerEdge = (int)Constants.RegionSize / Constants.TerrainPatchSize;
+
+    /// <summary>The patch coordinate pairs of the list that lie in the south-west 256 m, in the same order.</summary>
+    private static int[] SouthWestPatchesOnly(int[] map)
+    {
+        List<int> kept = new(map.Length);
+        for (int i = 0; i + 1 < map.Length; i += 2)
+        {
+            if (map[i] >= 0 && map[i] < StandardLayerPatchesPerEdge && map[i + 1] >= 0 && map[i + 1] < StandardLayerPatchesPerEdge)
+            {
+                kept.Add(map[i]);
+                kept.Add(map[i + 1]);
+            }
+        }
+        return kept.ToArray();
+    }
+
+    /// <summary>Queues one finished land layer packet on the land throttle.</summary>
+    protected virtual void SendLandLayerBuffer(UDPPacketBuffer buf)
+    {
+        m_udpServer.SendUDPPacket(m_udpClient, buf, ThrottleOutPacketType.Land);
+    }
+
     public void SendLayerData(int[] map)
     {
         if(map is null)
@@ -1752,7 +1791,19 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         try
         {
             TerrainData terrData = m_scene.Heightmap.GetTerrainData();
-            byte landPacketType = (terrData.SizeX > Constants.RegionSize || terrData.SizeY > Constants.RegionSize) ?
+            bool largeRegion = terrData.SizeX > Constants.RegionSize || terrData.SizeY > Constants.RegionSize;
+
+            // A viewer that only takes 256 m regions has the standard land layer and no other: send it the patches
+            // of the south-west 256 m (0 to 15 on each axis) in that layer, and nothing else.
+            bool standardLayerOnly = Only256mRegions && largeRegion;
+            if (standardLayerOnly)
+            {
+                map = SouthWestPatchesOnly(map);
+                if (map.Length == 0)
+                    return;
+            }
+
+            byte landPacketType = (largeRegion && !standardLayerOnly) ?
                     (byte)TerrainPatch.LayerType.LandExtended : (byte)TerrainPatch.LayerType.Land;
 
             int numberPatchs = map.Length / 2;
@@ -1778,7 +1829,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             for (int i = 0; i < numberPatchs; i++)
             {
                 s = 2 * i;
-                OpenSimTerrainCompressor.CreatePatchFromTerrainData(bitpack, terrData, map[s], map[s + 1]);
+                OpenSimTerrainCompressor.CreatePatchFromTerrainData(bitpack, terrData, map[s], map[s + 1], standardLayerOnly);
                 if (bitpack.BytePos > 900 && i != numberPatchs - 1)
                 {
                     //finish this packet
@@ -1790,7 +1841,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
                     data[9] = (byte)(datasize >> 8);
 
                     buf.DataLength = bitpack.BytePos + 1;
-                    m_udpServer.SendUDPPacket(m_udpClient, buf, ThrottleOutPacketType.Land);
+                    SendLandLayerBuffer(buf);
 
                     // start another
                     buf = OpenSimUDPBase.GetNewUDPBuffer(m_udpClient.RemoteEndPoint);
@@ -1818,7 +1869,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             data[9] = (byte)(datasize >> 8);
 
             buf.DataLength = bitpack.BytePos + 1;
-            m_udpServer.SendUDPPacket(m_udpClient, buf, ThrottleOutPacketType.Land);
+            SendLandLayerBuffer(buf);
 
         }
         catch (Exception e)

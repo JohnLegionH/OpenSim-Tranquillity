@@ -169,23 +169,31 @@ public class AISv3Module : ISharedRegionModule
         // AIS-SEC-1: the backend is bound to the agent this cap belongs to. The cap URL is unguessable, but a cap
         // that leaked (or a client of the agent's own) could otherwise name any resident's object UUID and the
         // inventory service would serve it, because it resolves by id and ignores the principal.
-        var invHandler = new AisHandler("/" + UUID.Random(), agentID, new InventoryServiceBackend(inventory, agentID, TransactionResolverFor(scene), WornAssetObserverFor(scene)));
+        // The library handler is built first because the inventory handler answers for Library ids too: a viewer
+        // that does not recognise this grid's Library owner sends Library folder reads to InventoryAPIv3.
+        AisHandler libHandler = null;
+        if (library is not null)
+        {
+            var libraryOwner = LibraryOwnerOf(library);
+            // COPY reads from the library and writes into the agent's inventory, so the library handler carries both
+            // sides: itself as the source, the agent's inventory as the destination. AIS-SEC-1 binds that destination
+            // to the agent too, so a COPY cannot be steered into another resident's folder by its Destination header.
+            // The source backend is the library's own and stays as it is: it is read-only by construction.
+            libHandler = new AisHandler("/" + UUID.Random(), libraryOwner, new LibraryServiceBackend(library), AisMode.Library,
+                new InventoryServiceBackend(inventory, agentID, TransactionResolverFor(scene), WornAssetObserverFor(scene)), agentID);
+        }
+
+        var invHandler = new AisHandler("/" + UUID.Random(), agentID, new InventoryServiceBackend(inventory, agentID, TransactionResolverFor(scene), WornAssetObserverFor(scene)),
+            AisMode.Inventory, null, default, libHandler);
         caps.RegisterSimpleHandler(CapName, invHandler, varPath: VarPath);
         m_log.LogDebug("[AIS]: registered {Cap} at {Path} for agent {Agent} in {Region}",
             CapName, invHandler.CapPath, agentID, scene.Name);
 
-        if (library is null)
+        if (libHandler is null)
         {
             m_log.LogWarning("[AIS]: region {Region} has no library service; {Cap} not registered", scene.Name, LibraryCapName);
             return;
         }
-        var libraryOwner = LibraryOwnerOf(library);
-        // COPY reads from the library and writes into the agent's inventory, so the library handler carries both
-        // sides: itself as the source, the agent's inventory as the destination. AIS-SEC-1 binds that destination
-        // to the agent too, so a COPY cannot be steered into another resident's folder by its Destination header.
-        // The source backend is the library's own and stays as it is: it is read-only by construction.
-        var libHandler = new AisHandler("/" + UUID.Random(), libraryOwner, new LibraryServiceBackend(library), AisMode.Library,
-            new InventoryServiceBackend(inventory, agentID, TransactionResolverFor(scene), WornAssetObserverFor(scene)), agentID);
         caps.RegisterSimpleHandler(LibraryCapName, libHandler, varPath: VarPath);
         m_log.LogDebug("[AIS]: registered {Cap} at {Path} for agent {Agent} in {Region}",
             LibraryCapName, libHandler.CapPath, agentID, scene.Name);

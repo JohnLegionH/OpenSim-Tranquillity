@@ -147,12 +147,15 @@ public static class OpenSimTerrainCompressor
         dct16x16(block, iout, ref wbits);
     }
 
-    public unsafe static void CreatePatchFromTerrainData(BitPack output, TerrainData terrData, int patchX, int patchY)
+    /// <param name="standardSize">code the patch coordinates as the standard land layer does (5 bits each), whatever
+    /// the region's size; the caller sends it in the standard layer, and only for patches 0 to 15 on each axis</param>
+    public unsafe static void CreatePatchFromTerrainData(BitPack output, TerrainData terrData, int patchX, int patchY,
+        bool standardSize = false)
     {
         TerrainPatch.Header header = PrescanPatch(terrData, patchX, patchY, out float frange);
         header.QuantWBits = 130;
 
-        bool largeRegion = terrData.SizeX > Constants.RegionSize || terrData.SizeY > Constants.RegionSize;
+        bool largeRegion = !standardSize && (terrData.SizeX > Constants.RegionSize || terrData.SizeY > Constants.RegionSize);
 
         if (Math.Round(frange, 2) == 1.0)
         {

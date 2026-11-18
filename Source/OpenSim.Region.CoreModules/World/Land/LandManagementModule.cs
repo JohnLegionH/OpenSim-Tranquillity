@@ -1434,11 +1434,20 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
         int sequenceID = 0;
 
         int sx = m_regionSizeX / Constants.LandUnit;
+        int sy = m_regionSizeY / Constants.LandUnit;
+        if (remote_client.Only256mRegions)
+        {
+            // The viewer keeps the overlay of a 256 m region: 64 x 64 cells in 4 packets, and copies each packet in at
+            // sequence id x 1024 without a range check. Send it the south-west 256 m, laid out as such a region's.
+            int legacyCells = (int)Constants.RegionSize / Constants.LandUnit;
+            sx = Math.Min(sx, legacyCells);
+            sy = Math.Min(sy, legacyCells);
+        }
         byte curByte;
         byte tmpByte;
 
         // Layer data is in LandUnit (4m) chunks
-        for (int y = 0; y < m_regionSizeY / Constants.LandUnit; ++y)
+        for (int y = 0; y < sy; ++y)
         {
             for (int x = 0; x < sx;)
             {
