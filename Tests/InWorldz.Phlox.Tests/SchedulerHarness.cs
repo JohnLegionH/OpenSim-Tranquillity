@@ -59,8 +59,12 @@ public sealed class SchedulerHarness : IDisposable
     /// Leave the region's own scheduler thread running, as in a region, instead of pumping from the test. The pump
     /// methods must not be used then: the thread and the test would both drive the schedulers.
     /// </param>
+    /// <param name="regionSize">
+    /// The region's side in metres; 0 (the default) is the standard 256 m region. A harness for a second region of a
+    /// two-region test also takes its own <paramref name="regionX"/>, so the two do not share a grid position.
+    /// </param>
     public SchedulerHarness(Action<IConfigSource> configure = null, bool withYEngine = false, string bytecodeDir = null,
-        bool keepMasterThread = false)
+        bool keepMasterThread = false, uint regionSize = 0, uint regionX = 1000)
     {
         // YEngine keeps process-wide state (its compiler's statics and OSSL_Api's settings), so only one harness with it is up at a time.
         if (withYEngine)
@@ -78,7 +82,9 @@ public sealed class SchedulerHarness : IDisposable
             configure?.Invoke(config);
             Config = config;
 
-            Scene = new SceneHelpers().SetupScene();
+            Scene = regionSize == 0
+                ? new SceneHelpers().SetupScene()
+                : new SceneHelpers().SetupScene("Unit test region " + regionX, UUID.Random(), regionX, 1000, regionSize, regionSize, new IniConfigSource());
 
             if (withYEngine)
             {

@@ -3,6 +3,12 @@ WORKDIR /app
 RUN mkdir -p /app/config /app/data /app/logdata && chown app:app /app/logdata
 ENV LOGDIR=/app/logdata
 
+# SkiaSharp (MapImageService) needs native fontconfig/freetype; the minimal aspnet
+# image lacks them -> "libfontconfig.so.1: cannot open" -> libSkiaSharp fails to load.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libfontconfig1 libfreetype6 \
+ && rm -rf /var/lib/apt/lists/*
+
 USER app
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 ARG configuration=Release

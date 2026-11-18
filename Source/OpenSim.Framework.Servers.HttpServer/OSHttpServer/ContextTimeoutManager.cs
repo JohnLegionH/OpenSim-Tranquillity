@@ -47,7 +47,7 @@ public static class ContextTimeoutManager
     private static readonly ConcurrentQueue<HttpClientContext> m_midPrio = new();
     private static readonly ConcurrentQueue<HttpClientContext> m_lowPrio = new();
     private static AutoResetEvent m_processWaitEven = new(false);
-    private static bool m_shuttingDown;
+    private static volatile bool m_shuttingDown;
 
     private static int m_ActiveSendingCount;
     private static double m_lastTimeOutCheckTime = 0;
@@ -103,7 +103,22 @@ public static class ContextTimeoutManager
                 return;
 
             m_shuttingDown = true;
+            WakeProcessThread();
+        }
+    }
+
+    /// <summary>
+    /// Wakes the thread that waits on the event. The thread disposes the event as it ends, so a caller can reach
+    /// the event after it has been disposed; the thread is then gone and there is nobody to wake.
+    /// </summary>
+    private static void WakeProcessThread()
+    {
+        try
+        {
             m_processWaitEven?.Set();
+        }
+        catch (ObjectDisposedException)
+        {
         }
     }
 
@@ -154,8 +169,8 @@ public static class ContextTimeoutManager
                         catch { }
                     }
                 }
-                m_processWaitEven.Dispose();
-                m_processWaitEven = null;
+                // take the event out of the field first, so that a caller that comes later finds none
+                Interlocked.Exchange(ref m_processWaitEven, null)?.Dispose();
             }
         }
         catch
@@ -339,12 +354,12 @@ public static class ContextTimeoutManager
             default:
                 return;
         }
-        m_processWaitEven?.Set();
+        WakeProcessThread();
     }
 
     public static void PulseWaitSend()
     {
-         m_processWaitEven?.Set();
+        WakeProcessThread();
     }
 
     public static void ContextEnterActiveSend()

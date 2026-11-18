@@ -105,6 +105,12 @@ public interface ICommandConsole : IConsole
 
     void WriteLine(string s);
 
+    /// <summary>
+    /// True once the console input has ended (end of file or a closed pipe). The console reads nothing more
+    /// and the loops that prompt it stop.
+    /// </summary>
+    bool InputClosed => false;
+
     void ReadConfig(IConfigSource configSource);
     void SetCntrCHandler(OnCntrCCelegate handler);
 }

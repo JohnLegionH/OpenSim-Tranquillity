@@ -3,7 +3,7 @@
      https://mozilla.org/MPL/2.0/. -->
 # Which script engine runs a script
 
-A region can load several script engines (YEngine, Phlox). When a script starts, the region picks
+A region can load several script engines (YEngine, Phlox, SLua). When a script starts, the region picks
 the engine in this order and stops at the first step that gives an answer:
 
 0. **The viewer's compile target.** A script saved from a viewer's script editor with the compiler "Lua" (`luau`)
@@ -11,19 +11,25 @@ the engine in this order and stops at the first step that gives an answer:
    first line, as described under "The viewer's compile target" below. Saved state for the item and asset still
    places a script that already runs on another engine. A script with no such choice skips this step.
 1. **The first line.** `//<engine>:<language>` names an engine loaded in the region: its engine name
-   (`InWorldz.Phlox`, `YEngine`) or a header alias the engine lists (`//Phlox:` for Phlox). Names are
+   (`InWorldz.Phlox`, `YEngine`, `SLua`) or a header alias the engine lists (`//Phlox:` for Phlox). Names are
    compared as written.
 2. **Saved state.** The engine that holds saved state for the script's item and asset keeps it, the
    `DefaultScriptEngine` first. A running script therefore stays on its engine across a restart, whatever the
    settings below say. Editing a script gives it a new asset and so no saved state.
 3. **A claim.** A script with source is offered to each engine that can claim scripts (an engine that implements
-   `IScriptEngineSelection`), in the order the engines are loaded; the first to say yes gets it. Phlox and YEngine
-   do not claim scripts.
+   `IScriptEngineSelection`), in the order the engines
+   are loaded; the first to say yes gets it. Phlox and YEngine do not claim scripts. The SLua engine claims:
+   - a script whose first line is `--!slua`, whenever the engine is enabled and running;
+   - every script that has no engine header, when `ClaimHeaderlessScripts = true` in the `[SLua]` section (default
+     `false`). Such a script runs as LSL, or as SLua when its text begins with `--`.
 4. **The default.** `[Startup] DefaultScriptEngine`. Two files give it a value, and they differ: the shipped
    `Source/OpenSim.Server.RegionServer/AppData/RegionServerDefaults.ini` sets `DefaultScriptEngine = "InWorldz.Phlox"`,
    while the code default, used when no configuration sets the key (`Source/OpenSim.Region.Framework/Scenes/Scene.cs`),
    is `YEngine`. A region started from the shipped defaults file therefore defaults to Phlox; a host that supplies
    its own configuration without the key defaults to YEngine.
+
+With the SLua engine off (`[SLua] Enabled` unset or false) steps 1, 2 and 4 are all that happen, and a
+`--!slua` script runs where it did before.
 
 An engine that is not a script-selection participant is unaffected: it is chosen by name, by saved state or as
 the default.

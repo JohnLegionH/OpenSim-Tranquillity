@@ -491,7 +491,7 @@ public class SceneObjectPartInventory : IEntityInventory , IDisposable
 
         m_part.AddFlag(PrimFlags.Scripted);
 
-        if (m_part.ParentGroup.Scene.RegionInfo.RegionSettings.DisableScripts)
+        if (!m_part.ParentGroup.Scene.ScriptStartsAllowed)
             return false;
 
         UUID itemID = item.ItemID;

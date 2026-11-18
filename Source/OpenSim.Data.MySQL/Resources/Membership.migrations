@@ -1,0 +1,35 @@
+:VERSION 1 # -----------------
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS `membership_tiers` (
+	`tier_name` VARCHAR(64) NOT NULL,
+	`display_title` VARCHAR(64) NOT NULL DEFAULT '',
+	`max_groups` INT NOT NULL DEFAULT 0,
+	`max_attachments` INT NOT NULL DEFAULT 0,
+	`max_animesh` INT NOT NULL DEFAULT 0,
+	`max_picks` INT NOT NULL DEFAULT 0,
+	`upload_cost` INT NOT NULL DEFAULT 0,
+	`group_create_cost` INT NOT NULL DEFAULT 0,
+	`stipend_amount` INT NOT NULL DEFAULT 0,
+	`stipend_period_days` INT NOT NULL DEFAULT 0,
+	`signup_bonus` INT NOT NULL DEFAULT 0,
+	`land_allowance` INT NOT NULL DEFAULT 0,
+	`sort_order` INT NOT NULL DEFAULT 0,
+	PRIMARY KEY (`tier_name`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `user_membership` (
+	`agent_id` VARCHAR(36) NOT NULL,
+	`tier_name` VARCHAR(64) NOT NULL,
+	`started` INT NOT NULL DEFAULT 0,
+	`expires` INT NULL DEFAULT NULL,
+	`auto_renew` TINYINT(1) NOT NULL DEFAULT 0,
+	`stipend_last_paid` INT NULL DEFAULT NULL,
+	`signup_bonus_paid` TINYINT(1) NOT NULL DEFAULT 0,
+	`granted_by` VARCHAR(36) NOT NULL DEFAULT '',
+	`notes` VARCHAR(255) NOT NULL DEFAULT '',
+	PRIMARY KEY (`agent_id`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+COMMIT;
