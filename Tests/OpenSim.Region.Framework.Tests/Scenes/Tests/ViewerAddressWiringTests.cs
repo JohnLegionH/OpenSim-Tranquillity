@@ -597,6 +597,138 @@ public class ViewerAddressWiringTests : OpenSimTestCase
         Assert.Equal(RegionRegistered, rig.LastInform());
     }
 
+    // ---- a crossing into a region the viewer holds no circuit to ends in seconds ----
+
+    private static Scene SceneWithStartup(params (string Key, string Value)[] settings)
+    {
+        IConfigSource config = new IniConfigSource();
+        IConfig startup = config.AddConfig("Startup");
+        foreach ((string key, string value) in settings)
+            startup.Set(key, value);
+        return new SceneHelpers().SetupScene("s", UUID.Random(), 1000, 1000, config);
+    }
+
+    [Fact]
+    public void WithoutTheCrossingKeyACrossingWaitsAsLongAsTheGeneralWait()
+    {
+        TestHelpers.InMethod();
+        Assert.Equal(TimeSpan.FromSeconds(30), new SceneHelpers().SetupScene().EffectiveCrossingChildPresenceWait);
+        Assert.Null(new SceneHelpers().SetupScene().CrossingChildPresenceWait);
+    }
+
+    [Fact]
+    public void WithoutTheCrossingKeyACrossingFollowsAGeneralWaitThatIsNotThirty()
+    {
+        TestHelpers.InMethod();
+        Assert.Equal(TimeSpan.FromSeconds(7),
+            SceneWithStartup(("ChildPresenceWaitSeconds", "7")).EffectiveCrossingChildPresenceWait);
+        Assert.Equal(TimeSpan.FromSeconds(90),
+            SceneWithStartup(("ChildPresenceWaitSeconds", "90")).EffectiveCrossingChildPresenceWait);
+        Assert.Equal(TimeSpan.Zero,
+            SceneWithStartup(("ChildPresenceWaitSeconds", "0")).EffectiveCrossingChildPresenceWait);
+    }
+
+    [Fact]
+    public void TheCrossingKeyShortensACrossing()
+    {
+        TestHelpers.InMethod();
+        Scene scene = SceneWithStartup(("CrossingChildPresenceWaitSeconds", "3"));
+        Assert.Equal(TimeSpan.FromSeconds(3), scene.CrossingChildPresenceWait);
+        Assert.Equal(TimeSpan.FromSeconds(3), scene.EffectiveCrossingChildPresenceWait);
+    }
+
+    [Fact]
+    public void TheCrossingKeyNeverMakesACrossingWaitLongerThanTheGeneralWait()
+    {
+        TestHelpers.InMethod();
+        Assert.Equal(TimeSpan.FromSeconds(30),
+            SceneWithStartup(("CrossingChildPresenceWaitSeconds", "100")).EffectiveCrossingChildPresenceWait);
+        Assert.Equal(TimeSpan.FromSeconds(5),
+            SceneWithStartup(("ChildPresenceWaitSeconds", "5"), ("CrossingChildPresenceWaitSeconds", "20"))
+                .EffectiveCrossingChildPresenceWait);
+        Assert.Equal(TimeSpan.FromSeconds(2),
+            SceneWithStartup(("ChildPresenceWaitSeconds", "5"), ("CrossingChildPresenceWaitSeconds", "2"))
+                .EffectiveCrossingChildPresenceWait);
+    }
+
+    [Fact]
+    public void TheEffectiveCrossingWaitFollowsALaterChangeOfTheGeneralWait()
+    {
+        TestHelpers.InMethod();
+        Scene scene = new SceneHelpers().SetupScene();
+        scene.ChildPresenceWait = TimeSpan.FromSeconds(12);
+        Assert.Equal(TimeSpan.FromSeconds(12), scene.EffectiveCrossingChildPresenceWait);
+        scene.CrossingChildPresenceWait = TimeSpan.FromSeconds(4);
+        Assert.Equal(TimeSpan.FromSeconds(4), scene.EffectiveCrossingChildPresenceWait);
+    }
+
+    [Fact]
+    public void ACrossingWithoutTheCrossingKeyWaitsTheGeneralWaitForTheViewer()
+    {
+        TestHelpers.InMethod();
+        Rig rig = BuildViewerThatNeverReachedB(new CrossingBackOffTests.TestClock());
+        rig.SceneB.ChildPresenceWait = TimeSpan.FromMilliseconds(1200);
+        rig.SceneB.CrossingChildPresenceWait = null;
+
+        TimeSpan took = TimedCrossing(rig);
+
+        Assert.True(took >= TimeSpan.FromMilliseconds(1000), $"took {took}");
+        Assert.Empty(rig.Crossings);
+        Assert.False(rig.Presence.IsInTransit);
+    }
+
+    [Fact]
+    public void ACrossingIntoARegionTheViewerNeverReachedEndsAtTheCrossingWait()
+    {
+        TestHelpers.InMethod();
+        Rig rig = BuildViewerThatNeverReachedB(new CrossingBackOffTests.TestClock());
+        rig.SceneB.ChildPresenceWait = TimeSpan.FromSeconds(8);
+        rig.SceneB.CrossingChildPresenceWait = TimeSpan.FromMilliseconds(500);
+
+        TimeSpan took = TimedCrossing(rig);
+
+        Assert.True(took >= TimeSpan.FromMilliseconds(400), $"took {took}");
+        Assert.True(took < TimeSpan.FromSeconds(4), $"took {took}");
+        Assert.Empty(rig.Crossings);
+        Assert.False(rig.Presence.IsChildAgent);
+        Assert.False(rig.Presence.IsInTransit);
+    }
+
+    [Fact]
+    public void AnUpdateThatWantsToWaitForTheRootKeepsTheLongWait()
+    {
+        TestHelpers.InMethod();
+        Rig rig = BuildViewerThatNeverReachedB(new CrossingBackOffTests.TestClock());
+        rig.SceneB.ChildPresenceWait = TimeSpan.FromMilliseconds(1500);
+        rig.SceneB.CrossingChildPresenceWait = TimeSpan.FromMilliseconds(100);
+
+        AgentData teleportUpdate = new()
+        {
+            AgentID = rig.Presence.UUID,
+            SessionID = rig.Presence.ControllingClient.SessionId,
+            SenderWantsToWaitForRoot = true
+        };
+        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+        bool taken = rig.SceneB.IncomingUpdateChildAgent(teleportUpdate);
+
+        Assert.False(taken);
+        Assert.True(watch.Elapsed >= TimeSpan.FromMilliseconds(1200), $"took {watch.Elapsed}");
+    }
+
+    [Fact]
+    public void ACrossingWaitIsNeverLongerThanTheGeneralWait()
+    {
+        TestHelpers.InMethod();
+        Rig rig = BuildViewerThatNeverReachedB(new CrossingBackOffTests.TestClock());
+        rig.SceneB.ChildPresenceWait = TimeSpan.FromMilliseconds(300);
+        rig.SceneB.CrossingChildPresenceWait = TimeSpan.FromSeconds(60);
+
+        TimeSpan took = TimedCrossing(rig);
+
+        Assert.True(took < TimeSpan.FromSeconds(10), $"took {took}");
+        Assert.False(rig.Presence.IsInTransit);
+    }
+
     /// <summary>Exposes the protected viewer-source lookup.</summary>
     private sealed class ProbeEntityTransferModule : EntityTransferModule
     {

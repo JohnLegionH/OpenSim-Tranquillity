@@ -324,6 +324,9 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
     public LLImageManager ImageManager { get; private set; }
 
     public JobEngine m_asyncPacketProcess;
+
+    /// <summary>Runs this client's map name searches one at a time, off its request queue.</summary>
+    private readonly OneAtATimeRequestLane m_mapNameLane = new("MapNameRequest");
     private readonly LLUDPServer m_udpServer;
     private readonly LLUDPClient m_udpClient;
     internal readonly UUID m_sessionId;
@@ -625,6 +628,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         OnConnectionClosed?.Invoke(this);
 
         m_asyncPacketProcess.Stop();
+        m_mapNameLane.Stop();
 
         // Flush all of the packets out of the UDP server for this client
         m_udpServer?.Flush(m_udpClient);
@@ -2040,6 +2044,17 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             0xff, 0xff, 1, 155 // ID 411 (low frequency bigendian)
             };
 
+    /// <summary>
+    /// The throttle category of the replies to a viewer's map requests: the map layer, the map blocks (also the
+    /// answer to a region name search) and the map items. They are a few small packets that a user is waiting for.
+    /// The Land category holds the region's terrain, which a login queues in bulk at a rate the viewer usually keeps
+    /// low, so a reply queued there leaves only after all the terrain queued before it. Task is the category for
+    /// packets that fit none of the others, it is not filled by terrain, textures or assets, and the entity updates
+    /// queue on it only what its rate can send in 30 ms (see HandleQueueEmpty), so its queue stays short. The viewer's
+    /// throttle still applies. The three replies share one category so that they stay in the order they were queued.
+    /// </summary>
+    private const ThrottleOutPacketType MapReplyCategory = ThrottleOutPacketType.Task;
+
     public void SendMapItemReply(mapItemReply[] replies, uint mapitemtype, uint flags)
     {
         UDPPacketBuffer buf = OpenSimUDPBase.GetNewUDPBuffer(m_udpClient.RemoteEndPoint);
@@ -2095,7 +2110,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
 
                 buf.DataLength = lastpos;
                 // send it
-                m_udpServer.SendUDPPacket(m_udpClient, buf, ThrottleOutPacketType.Land);
+                m_udpServer.SendUDPPacket(m_udpClient, buf, MapReplyCategory);
 
                 buf = newbuf;
                 data = buf.Data;
@@ -2111,7 +2126,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             data[countpos] = (byte)count;
 
             buf.DataLength = pos;
-            m_udpServer.SendUDPPacket(m_udpClient, buf, ThrottleOutPacketType.Land);
+            m_udpServer.SendUDPPacket(m_udpClient, buf, MapReplyCategory);
         }
     }
 
@@ -2212,7 +2227,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
 
                 buf.DataLength = lastpos;
                 // send it
-                m_udpServer.SendUDPPacket(m_udpClient, buf, ThrottleOutPacketType.Land);
+                m_udpServer.SendUDPPacket(m_udpClient, buf, MapReplyCategory);
 
                 buf = newbuf;
                 data = buf.Data;
@@ -2241,7 +2256,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
                 data[pos++] = 0;
 
             buf.DataLength = pos;
-            m_udpServer.SendUDPPacket(m_udpClient, buf, ThrottleOutPacketType.Land);
+            m_udpServer.SendUDPPacket(m_udpClient, buf, MapReplyCategory);
         }
     }
 
@@ -8594,7 +8609,8 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
 
         { PacketType.MapLayerRequest, new(HandleMapLayerRequest, true) },
         { PacketType.MapBlockRequest, new(HandleMapBlockRequest, true) },
-        { PacketType.MapNameRequest, new(HandleMapNameRequest, true) },
+        // Not on the client's queue: see HandleMapNameRequest.
+        { PacketType.MapNameRequest, new(HandleMapNameRequest, false) },
 
         { PacketType.TeleportLandmarkRequest, new(HandleTeleportLandmarkRequest, true) },
         { PacketType.TeleportCancel, new(HandleTeleportCancel, true) },
@@ -10671,7 +10687,15 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         string mapName = map.NameData.Name.Length == 0 ? c.m_scene.RegionInfo.RegionName :
             Util.UTF8.GetString(map.NameData.Name, 0, map.NameData.Name.Length - 1);
 
-        c.OnMapNameRequest?.Invoke(c, mapName, map.AgentData.Flags);
+        uint flags = map.AgentData.Flags;
+
+        // The search asks the grid service, which can take a while, and it does not depend on anything else the client
+        // has asked for. The client's queue runs its requests one after another, so on it a search waits behind
+        // every request of the client's login that is still running (the arrival in the region takes seconds);
+        // it runs on a worker thread of its own instead. A client that asks again before the answer comes (typing
+        // in the search box sends a request per change) must not start a grid search per request, so the client's
+        // searches run one at a time, in order, with at most a few waiting.
+        c.m_mapNameLane.Submit(() => c.OnMapNameRequest?.Invoke(c, mapName, flags));
     }
 
     private static void HandleTeleportLandmarkRequest(LLClientView c, Packet Pack)
@@ -12772,7 +12796,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             ImageID = new UUID("00000000-0000-1111-9999-000000000006")
         };
         mapReply.Header.Zerocoded = true;
-        OutPacket(mapReply, ThrottleOutPacketType.Land);
+        OutPacket(mapReply, MapReplyCategory);
     }
 
     public static void RequestMapBlocksX(int minX, int minY, int maxX, int maxY)
