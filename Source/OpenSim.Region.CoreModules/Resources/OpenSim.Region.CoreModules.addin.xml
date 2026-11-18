@@ -107,6 +107,9 @@
         <RegionModule id="RemoteUserAccountServicesConnector" class="OpenSim.Region.CoreModules.ServiceConnectorsOut.UserAccounts.RemoteUserAccountServicesConnector" />
         <RegionModule id="LocalUserAliasServicesConnector" class="OpenSim.Region.CoreModules.ServiceConnectorsOut.UserAliases.LocalUserAliasServicesConnector" />
         <RegionModule id="RemoteUserAliasServicesConnector" class="OpenSim.Region.CoreModules.ServiceConnectorsOut.UserAliases.RemoteUserAliasServicesConnector" />
+        <RegionModule id="LocalMembershipServicesConnector" class="OpenSim.Region.CoreModules.ServiceConnectorsOut.Membership.LocalMembershipServicesConnector" />
+        <RegionModule id="RemoteMembershipServicesConnector" class="OpenSim.Region.CoreModules.ServiceConnectorsOut.Membership.RemoteMembershipServicesConnector" />
+        <RegionModule id="MembershipFeaturesModule" class="OpenSim.Region.CoreModules.ServiceConnectorsOut.Membership.MembershipFeaturesModule" />
         <RegionModule id="AccessModule" class="OpenSim.Region.CoreModules.World.AccessModule" />
         <RegionModule id="ArchiverModule" class="OpenSim.Region.CoreModules.World.Archiver.ArchiverModule" />
         <RegionModule id="EstateManagementModule" class="OpenSim.Region.CoreModules.World.Estate.EstateManagementModule" />

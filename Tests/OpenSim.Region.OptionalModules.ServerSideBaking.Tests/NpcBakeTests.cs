@@ -380,7 +380,10 @@ public class NpcBakeTests
 
         rig.Owner.Appearance.Wearables = Wear(rig.Scene, rig.Owner.UUID, 20, 90, 200);
         var outcome = await rig.Module.BakeAsync(rig.Owner, BakeReason.CofChanged, CancellationToken.None);
-        Assert.True(outcome.Count(ChannelStatus.Baked) > 0 && outcome.Superseded.Count > 0, "the owner's outfit change superseded nothing");
+        // An avatar's rebake keeps the bakes it held before (StoreAndApply): it deletes nothing, so it cannot
+        // delete a bake an NPC made from its appearance uses either.
+        Assert.True(outcome.Count(ChannelStatus.Baked) > 0, "the owner's outfit change baked nothing");
+        Assert.Empty(outcome.Superseded);
 
         Assert.Equal(npcHead, Face(npc, BakeChannel.Head));
         Assert.True(Exists(rig, npcHead), "the owner's rebake deleted a bake the NPC uses");
