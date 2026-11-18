@@ -43,4 +43,11 @@ public interface IServerSideBakingRegion
     /// form it always has, with no <c>AppearanceData</c> block.
     /// </summary>
     int BakedCofVersion(UUID agentId);
+
+    /// <summary>
+    /// Record the bake another region applied to an agent that has just arrived from it, so that this region's
+    /// first appearance message for the agent already carries the <c>AppearanceData</c> block. Ignored on a region
+    /// where the flag is off, and for a negative version (the agent had no bake).
+    /// </summary>
+    void RecordCarriedBake(UUID agentId, int cofVersion);
 }

@@ -281,6 +281,15 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
             return new BakeOutcome(sp.UUID, reason, Array.Empty<ChannelOutcome>(), 0);
         }
 
+        // A visitor from another grid is not baked here: its viewer fetches its bakes from its home grid's service,
+        // where a bake stored by this grid does not exist, so the visitor would see its own avatar as a cloud.
+        // The others fetch its bake assets by id through the region, as before server-side baking.
+        if (sp.IsVisitorFromOtherGrid)
+        {
+            m_log.LogDebug("[SSB]: bake for {Name} ({Agent}) reason={Reason} not run: the agent is from another grid", sp.Name, sp.UUID, reason);
+            return new BakeOutcome(sp.UUID, reason, Array.Empty<ChannelOutcome>(), 0);
+        }
+
         var scene = sp.Scene;
         var backend = Backend;
         if (sp.IsNPC) m_npcScenes[sp.UUID] = scene;
@@ -317,6 +326,11 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
         if (closed)
             m_log.LogDebug("[SSB]: bake for {Name} ({Agent}) reason={Reason}: the presence closed during the bake; stored, not recorded or sent",
                 sp.Name, sp.UUID, reason);
+
+        // The avatar's visual parameters come from the wearables it wears. The appearance holds the parameters of the
+        // last outfit the region knew, so after a shape change they are out of date and the others would keep seeing the
+        // old shape beside the new bakes. Recomputed before anything is sent, and only while the presence is here.
+        if (!closed) ApplyWornVisualParams(sp, appearance, outcome);
 
         // Record the bake before sending: SendAppearanceToAgentNF asks IServerSideBakingRegion for the version,
         // and an appearance sent before the record would go out without its AppearanceData block. RecordBake
@@ -361,6 +375,37 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
                 foreach (var note in c.Fidelity.Notes) m_log.LogDebug("[SSB]: {Channel} layer {Note}", c.Channel, note);
             }
         return outcome;
+    }
+
+    /// <summary>
+    /// Set the appearance's visual parameters from the wearables the bake read, the way a viewer builds the block
+    /// (<see cref="VisualParamEncoder"/>): a worn wearable's value for each parameter it stores, and for any other
+    /// parameter the value the appearance already holds. A stored block that is not the length of the parameter table
+    /// cannot be read through it, so nothing is carried from it and the block is built whole from the wearables and the
+    /// table's defaults. The appearance serial rises when the block changes, and only then. The appearance-version
+    /// parameter is not stored by any wearable, so it is carried and stays what it was; the message that goes out
+    /// sets it beside the AppearanceData block (<c>ScenePresence.SendAppearanceToAgentNF</c>).
+    /// </summary>
+    private void ApplyWornVisualParams(ScenePresence sp, AvatarAppearance appearance, BakeOutcome outcome)
+    {
+        if (outcome.Worn.Count == 0) return;
+        try
+        {
+            var lad = m_compositor.Lad;
+            var current = appearance.VisualParams;
+            var carried = current is not null && current.Length == VisualParamEncoder.SendList(lad).Count ? current : null;
+            var result = VisualParamEncoder.Encode(lad, outcome.Worn.Select(w => (w.Kind, w.Params)), carried);
+            if (carried is not null && carried.AsSpan().SequenceEqual(result.Bytes)) return;
+
+            appearance.VisualParams = result.Bytes;
+            appearance.Serial++;
+            m_log.LogDebug("[SSB]: visual parameters for {Name} ({Agent}) recomputed from the worn wearables: {FromWearables} from wearables, {Carried} kept, {Defaults} default; serial {Serial}",
+                sp.Name, sp.UUID, result.FromWearables, result.Carried, result.Defaults, appearance.Serial);
+        }
+        catch (Exception ex)
+        {
+            m_log.LogWarning(ex, "[SSB]: visual parameters for {Name} ({Agent}) could not be recomputed; the stored ones are sent", sp.Name, sp.UUID);
+        }
     }
 
     /// <summary>

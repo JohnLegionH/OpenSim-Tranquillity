@@ -365,6 +365,8 @@ public class AgentData : IAgentData
     //public Byte GodLevel;
     public bool AlwaysRun;
     public UUID PreyAgent;
+    /// <summary>The COF version of the server-side bake the sending region applied to this agent, or -1.</summary>
+    public int BakedCofVersion = -1;
     public Byte AgentAccess;
     public UUID ActiveGroupID;
     public string ActiveGroupName;
@@ -478,6 +480,9 @@ public class AgentData : IAgentData
         }
         args["always_run"] = OSD.FromBoolean(AlwaysRun);
         args["prey_agent"] = OSD.FromUUID(PreyAgent);
+        // Optional: written only when the sending region applied a server-side bake to the agent.
+        if (BakedCofVersion >= 0)
+            args["baked_cof_version"] = OSD.FromInteger(BakedCofVersion);
         args["agent_access"] = OSD.FromString(AgentAccess.ToString());
 
         args["agent_cof"] = OSD.FromUUID(agentCOF);
@@ -686,6 +691,9 @@ public class AgentData : IAgentData
 
         if (args.TryGetValue("prey_agent", out tmp) && tmp != null)
             PreyAgent = tmp.AsUUID();
+
+        if (args.TryGetValue("baked_cof_version", out tmp) && tmp != null)
+            BakedCofVersion = tmp.AsInteger();
 
         if (args.TryGetValue("agent_access", out tmp) && tmp != null)
             _ = Byte.TryParse(tmp.AsString(), out AgentAccess);

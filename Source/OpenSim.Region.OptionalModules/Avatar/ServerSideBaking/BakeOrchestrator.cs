@@ -549,6 +549,7 @@ public static class BakeOrchestrator
             IndexWritten = indexWritten,
             Notes = notes,
             Timings = timings,
+            Worn = w.Parsed,
         };
     }
 }
