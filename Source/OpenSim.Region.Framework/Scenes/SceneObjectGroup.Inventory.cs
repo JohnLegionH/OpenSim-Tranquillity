@@ -122,6 +122,22 @@ public partial class SceneObjectGroup : EntityBase
             parts[i].Inventory.RemoveScriptsPermissions(sp, permissions);
     }
 
+    /// <summary>See <see cref="IEntityInventory.RemoveScriptsPermissions(int, int)"/>.</summary>
+    public void RemoveScriptsPermissions(int permissions, int silentOnlyPermissions)
+    {
+        SceneObjectPart[] parts = m_parts.GetArray();
+        for (int i = 0; i < parts.Length; i++)
+            parts[i].Inventory.RemoveScriptsPermissions(permissions, silentOnlyPermissions);
+    }
+
+    /// <summary>See <see cref="IEntityInventory.RemoveScriptsPermissions(ScenePresence, int, int)"/>.</summary>
+    public void RemoveScriptsPermissions(ScenePresence sp, int permissions, int silentOnlyPermissions)
+    {
+        SceneObjectPart[] parts = m_parts.GetArray();
+        for (int i = 0; i < parts.Length; i++)
+            parts[i].Inventory.RemoveScriptsPermissions(sp, permissions, silentOnlyPermissions);
+    }
+
     /// <summary>
     /// Add an inventory item from a user's inventory to a prim in this scene object.
     /// </summary>

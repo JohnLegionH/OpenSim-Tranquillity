@@ -94,6 +94,11 @@ public class SimulatorFeaturesModule : INonSharedRegionModule, ISimulatorFeature
         m_scene.EventManager.OnRegisterCaps += RegisterCaps;
 
         m_scene.RegisterModuleInterface<ISimulatorFeaturesModule>(this);
+
+        // The Linden Lab viewer sends game-controller input only to a region that advertises this.
+        // Added for a region that has game control enabled and for no other.
+        if (s.GameControlEnabled)
+            AddFeature("GameControlEnabled", OSD.FromBoolean(true));
     }
 
     public void RemoveRegion(Scene s)

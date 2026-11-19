@@ -998,6 +998,16 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         get { return m_AngularVelocity; }
     }
 
+    private GameControlFilter m_gameControlFilter;
+
+    /// <summary>
+    /// Per-agent filter for game-controller input (see <see cref="Scene.HandleGameControlData"/>). Created on
+    /// first use. The packet handler for one agent runs on one thread at a time, so no locking is needed.
+    /// </summary>
+    internal GameControlFilter GameControlFilter => m_gameControlFilter ??= new GameControlFilter();
+
+    /// <summary>Forgets the game-controller filter's sequence number and last state (root/child transitions).</summary>
+    private void ResetGameControlFilter() => m_gameControlFilter?.Reset();
     public bool IsChildAgent { get; set; }
 
     /// <summary>
@@ -1472,6 +1482,7 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
             }
 
             IsChildAgent = false;
+            ResetGameControlFilter();
         }
 
         //m_log.LogDebug("[MakeRootAgent] out lock: {0}ms", Util.EnvironmentTickCountSubtract(ts));
@@ -1777,6 +1788,7 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         //Velocity = new Vector3(0, 0, 0);
 
         IsChildAgent = true;
+        ResetGameControlFilter();
         m_scene.SwapRootAgentCount(true, IsNPC);
         RemoveFromPhysicalScene();
         ClearConstantForce();
@@ -3329,9 +3341,13 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
             // SL llSetCameraParams: "The PERMISSION_CONTROL_CAMERA permission is automatically revoked when the
             // avatar stands up from or detaches the object". Every prim of the object, and only grants this avatar
             // made: a script holds permissions "for only one agent at a time" (llRequestPermissions).
+            // PERMISSION_GAME_CONTROL: a script the seat gave it to automatically gets the sitter's input only while
+            // the avatar sits; a grant the avatar answered through the permission dialog stays until the script resets
+            // or asks again.
             part.ParentGroup.RemoveScriptsPermissions(this,
                     2048 | //PERMISSION_CONTROL_CAMERA
-                    4); // PERMISSION_TAKE_CONTROLS
+                    4, // PERMISSION_TAKE_CONTROLS
+                    0x100000); // PERMISSION_GAME_CONTROL, automatic grants only
 
             ControllingClient.SendClearFollowCamProperties(part.ParentUUID);
 

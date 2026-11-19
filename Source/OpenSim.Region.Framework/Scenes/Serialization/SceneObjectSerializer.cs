@@ -565,6 +565,7 @@ public class SceneObjectSerializer
         {"ParentPartID", ProcessTIParentPartID },
         {"PermsGranter", ProcessTIPermsGranter },
         {"PermsMask", ProcessTIPermsMask },
+        {"SilentPermsMask", ProcessTISilentPermsMask },
         {"Type", ProcessTIType },
         {"OwnerChanged", ProcessTIOwnerChanged },
         {"ExperienceID", ProcessTIExperienceID }
@@ -1307,6 +1308,11 @@ public class SceneObjectSerializer
         item.PermsMask = reader.ReadElementContentAsInt("PermsMask", string.Empty);
     }
 
+    private static void ProcessTISilentPermsMask(TaskInventoryItem item, XmlReader reader)
+    {
+        item.SilentPermsMask = reader.ReadElementContentAsInt("SilentPermsMask", string.Empty);
+    }
+
     private static void ProcessTIType(TaskInventoryItem item, XmlReader reader)
     {
         item.Type = reader.ReadElementContentAsInt("Type", string.Empty);
@@ -1937,6 +1943,8 @@ public class SceneObjectSerializer
                 WriteUUID(writer, "ParentPartID", item.ParentPartID, options);
                 WriteUUID(writer, "PermsGranter", item.PermsGranter, options);
                 writer.WriteElementString("PermsMask", item.PermsMask.ToString());
+                if (item.SilentPermsMask != 0)
+                    writer.WriteElementString("SilentPermsMask", item.SilentPermsMask.ToString());
                 writer.WriteElementString("Type", item.Type.ToString());
 
                 bool ownerChanged = !options.ContainsKey("wipe-owners") && item.OwnerChanged;

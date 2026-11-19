@@ -2664,6 +2664,33 @@ public class EventManager
         }
     }
 
+    /// <summary>
+    /// A root agent's game controller reported a new state (the viewer's GameControlData message, validated and
+    /// filtered; see <see cref="Scene.HandleGameControlData"/>).
+    /// </summary>
+    public delegate void GameControlDataDelegate(UUID agentId, GameControlSnapshot snapshot);
+    public event GameControlDataDelegate OnGameControlData;
+
+    internal void TriggerGameControlData(UUID agentId, GameControlSnapshot snapshot)
+    {
+        GameControlDataDelegate handler = OnGameControlData;
+        if (handler is null)
+            return;
+
+        foreach (GameControlDataDelegate d in handler.GetInvocationList())
+        {
+            try
+            {
+                d(agentId, snapshot);
+            }
+            catch (Exception e)
+            {
+                m_log.LogError(
+                    "[EVENT MANAGER]: Delegate for TriggerGameControlData failed - continuing.  {0} {1}",
+                    e.Message, e.StackTrace);
+            }
+        }
+    }
     public void TriggerScriptControlsReleased(UUID agentId, UUID[] scriptItemIds)
     {
         ScriptControlsReleased handlerScriptControlsReleased = OnScriptControlsReleased;
@@ -2702,6 +2729,34 @@ public class EventManager
                         "[EVENT MANAGER]: Delegate for TriggerExperiencePermissionsRevoked failed - continuing.  {0} {1}",
                         e.Message, e.StackTrace);
                 }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Triggered by a script engine when a script item holds permission bits from an avatar that other parts of the
+    /// region may act on, such as PERMISSION_GAME_CONTROL (the game-controller router finds scripts to deliver to
+    /// from it). A hint: receivers check the item's grant again before they act on it.
+    /// </summary>
+    public delegate void ScriptPermissionsGranted(UUID partId, UUID itemId, UUID granterId, int mask);
+    public event ScriptPermissionsGranted OnScriptPermissionsGranted;
+
+    public void TriggerScriptPermissionsGranted(UUID partId, UUID itemId, UUID granterId, int mask)
+    {
+        ScriptPermissionsGranted handler = OnScriptPermissionsGranted;
+        if (handler == null)
+            return;
+        foreach (ScriptPermissionsGranted d in handler.GetInvocationList())
+        {
+            try
+            {
+                d(partId, itemId, granterId, mask);
+            }
+            catch (Exception e)
+            {
+                m_log.LogError(
+                    "[EVENT MANAGER]: Delegate for TriggerScriptPermissionsGranted failed - continuing.  {0} {1}",
+                    e.Message, e.StackTrace);
             }
         }
     }

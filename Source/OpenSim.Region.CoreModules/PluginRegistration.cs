@@ -49,6 +49,7 @@ public class PluginRegistration : IPluginRegistryProvider
         RegisterByName(registry, "/OpenSim/RegionModules", "CallingCardModule", "OpenSim.Region.CoreModules.Avatar.Friends.CallingCardModule", "CallingCardModule");
         RegisterByName(registry, "/OpenSim/RegionModules", "FriendsModule", "OpenSim.Region.CoreModules.Avatar.Friends.FriendsModule", "FriendsModule");
         RegisterByName(registry, "/OpenSim/RegionModules", "HGFriendsModule", "OpenSim.Region.CoreModules.Avatar.Friends.HGFriendsModule", "HGFriendsModule");
+        RegisterByName(registry, "/OpenSim/RegionModules", "GameControlRouterModule", "OpenSim.Region.CoreModules.Avatar.GameControl.GameControlRouterModule", "GameControlRouterModule");
         RegisterByName(registry, "/OpenSim/RegionModules", "GesturesModule", "OpenSim.Region.CoreModules.Avatar.Gestures.GesturesModule", "GesturesModule");
         RegisterByName(registry, "/OpenSim/RegionModules", "GodsModule", "OpenSim.Region.CoreModules.Avatar.Gods.GodsModule", "GodsModule");
         RegisterByName(registry, "/OpenSim/RegionModules", "GroupsModule", "OpenSim.Region.CoreModules.Avatar.Groups.GroupsModule", "GroupsModule");

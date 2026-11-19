@@ -109,6 +109,16 @@ public interface IEntityInventory
     void RemoveScriptsPermissions(ScenePresence sp, int permissions);
 
     /// <summary>
+    /// Like <see cref="RemoveScriptsPermissions(int)"/>, and the bits of <paramref name="silentOnlyPermissions"/> are
+    /// taken only from items that hold them as automatic grants (<see cref="TaskInventoryItem.SilentPermsMask"/>); a
+    /// grant the avatar answered through the permission dialog keeps them.
+    /// </summary>
+    void RemoveScriptsPermissions(int permissions, int silentOnlyPermissions);
+
+    /// <summary>The same for the grants one avatar made.</summary>
+    void RemoveScriptsPermissions(ScenePresence sp, int permissions, int silentOnlyPermissions);
+
+    /// <summary>
     /// Start a script which is in this entity's inventory.
     /// </summary>
     /// <param name="item"></param>
