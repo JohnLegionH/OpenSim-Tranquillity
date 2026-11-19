@@ -75,4 +75,5 @@ public interface IEventHandlers
     void linkset_data(LSL_Integer action, string name, string value);
     void experience_permissions(LSL_Key agent_id);
     void experience_permissions_denied(LSL_Key agent_id, LSL_Integer reason);
+    void game_control(LSL_Key id, LSL_Integer button_levels, LSL_List axes);
 }

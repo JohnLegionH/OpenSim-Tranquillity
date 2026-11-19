@@ -330,6 +330,9 @@ public partial class XMRInstance
         }
     }
 
+    /// <summary>The data that came with the event being run (<see cref="EventParams.EventData"/>), or null.</summary>
+    public object EventData { get; set; }
+
     public DetectParams[] DetectParams
     {
         get

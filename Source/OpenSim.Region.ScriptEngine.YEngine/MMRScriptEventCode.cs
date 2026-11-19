@@ -88,6 +88,16 @@ public enum ScriptEventCode: int
     experience_permissions = 42,
     experience_permissions_denied = 43,
 
+    // Codes 44 to 46 are the scene's on_damage, final_damage and on_death bits. YEngine does not run those events
+    // (no handler prototype is declared for them), but the engine checks at start-up that every code from 0 to
+    // Size - 1 has the same name as the scene's event at that bit, so the names are kept here.
+    on_damage = 44,
+    final_damage = 45,
+    on_death = 46,
+
+    // game_control must be 47: the scene keeps it at bit 47 of a part's event mask (scriptEvents.game_control).
+    game_control = 47,
+
     // marks highest numbered event
-    Size = 44
+    Size = 48
 }

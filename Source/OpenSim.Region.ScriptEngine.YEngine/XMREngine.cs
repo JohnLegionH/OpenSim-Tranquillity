@@ -1019,6 +1019,14 @@ public partial class Yengine: INonSharedRegionModule, IScriptEngine, IScriptModu
         return null;
     }
 
+    /// <summary>The data that came with the event the script is running, or null (<see cref="EventParams.EventData"/>).</summary>
+    public object GetEventData(UUID itemID)
+    {
+        if (TryGetInstance(itemID, out XMRInstance instance))
+            return instance.EventData;
+        return null;
+    }
+
     public void SetMinEventDelay(UUID itemID, double delay)
     {
         if (TryGetInstance(itemID, out XMRInstance instance))
@@ -1240,6 +1248,41 @@ public partial class Yengine: INonSharedRegionModule, IScriptEngine, IScriptModu
         TraceCalls("[YEngine]: YEngine.PostScriptEvent({0},{1})", itemID.ToString(), name);
 
         return PostScriptEvent(itemID, new EventParams(name, p, zeroDetectParams));
+    }
+
+    /// <summary>
+    /// Posts an event that carries data besides its arguments (IScriptModule.PostScriptEvent with event data). A list
+    /// argument arrives from the region as an object array; the script handler takes it as an LSL list.
+    /// </summary>
+    public bool PostScriptEvent(UUID itemID, string name, object[] p, object eventData)
+    {
+        if(!m_Enabled)
+            return false;
+
+        TraceCalls("[YEngine]: YEngine.PostScriptEvent({0},{1}) with data", itemID.ToString(), name);
+
+        object[] args = new object[p.Length];
+        for(int i = 0; i < p.Length; i++)
+            args[i] = p[i] is object[] list ? ToLslList(list) : p[i];
+
+        return PostScriptEvent(itemID, new EventParams(name, args, zeroDetectParams, eventData));
+    }
+
+    private static LSL_List ToLslList(object[] items)
+    {
+        object[] data = new object[items.Length];
+        for(int i = 0; i < items.Length; i++)
+        {
+            data[i] = items[i] switch
+            {
+                int iv => new LSL_Integer(iv),
+                float fv => new LSL_Float(fv),
+                double dv => new LSL_Float(dv),
+                string sv => new LSL_String(sv),
+                _ => items[i]
+            };
+        }
+        return new LSL_List(data);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

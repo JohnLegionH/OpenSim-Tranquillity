@@ -417,6 +417,7 @@ public partial class XMRInstance
                     plist[++i] = ob;
                 }
                 m_DetectParams = evt.DetectParams;
+                EventData = evt.EventData;
                 return new LSL_List(plist);
             }
 
@@ -429,10 +430,12 @@ public partial class XMRInstance
                 goto checktmo;
 
             DetectParams[] saveDetParams = this.m_DetectParams;
+            object saveEventData = EventData;
             object[] saveEHArgs = this.ehArgs;
             ScriptEventCode saveEventCode = this.eventCode;
 
             m_DetectParams = evt.DetectParams;
+            EventData = evt.EventData;
             ehArgs = evt.Params;
             eventCode = evc;
 
@@ -443,6 +446,7 @@ public partial class XMRInstance
             finally
             {
                 m_DetectParams = saveDetParams;
+                EventData = saveEventData;
                 ehArgs = saveEHArgs;
                 eventCode = saveEventCode;
             }

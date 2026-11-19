@@ -390,6 +390,7 @@ public partial class XMRInstance
                 //m_RunOnePhase = "start event handler";
 
                 m_DetectParams = evt.DetectParams;
+                EventData = evt.EventData;
                 m_LastRanAt = now;
                 m_InstEHEvent++;
                 e = StartEventHandler(evc, evt.Params);
@@ -411,7 +412,10 @@ public partial class XMRInstance
         {
             // If event handler completed, get rid of detect params.
             if (eventCode == ScriptEventCode.None)
+            {
                 m_DetectParams = null;
+                EventData = null;
+            }
 
             //m_RunOnePhase += "; checking exit invariants and unlocking";
             Monitor.Exit(m_RunLock);
@@ -505,6 +509,7 @@ public partial class XMRInstance
         eventCode = ScriptEventCode.None;
         stackFrames = null;
         m_DetectParams = null;
+        EventData = null;
 
         if (m_Part is null || m_Part.Inventory is null || m_Part.ParentGroup is null)
         {
@@ -865,6 +870,7 @@ public partial class XMRInstance
         //m_RunOnePhase = "ResetLocked: clearing current event";
         eventCode = ScriptEventCode.None;  // not processing an event
         m_DetectParams = null;                  // not processing an event
+        EventData = null;
         m_SleepUntil = DateTime.MinValue;     // not doing llSleep()
         m_ResetCount++;                        // has been reset once more
 
