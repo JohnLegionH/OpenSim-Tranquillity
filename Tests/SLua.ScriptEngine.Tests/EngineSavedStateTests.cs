@@ -263,6 +263,29 @@ public class EngineSavedStateTests
 
         Assert.True(rig.Store.HasSavedState(item, asset));
     }
+
+    [Fact]
+    public void ACompileFailureNoEditorCollectedIsWrittenToTheLog()
+    {
+        using var rig = new Rig();
+        UUID item = UUID.Random();
+        rig.Rez(item);
+
+        rig.Loader.RaiseFailure(new LoadFailure { LocalID = LocalId, ItemID = item, Errors = new List<string> { "(2,0) Error: bad" } });
+
+        Assert.Contains(rig.Log.Warnings, l => l.Contains(item.ToString()) && l.Contains("(2,0) Error: bad"));
+    }
+
+    [Fact]
+    public void AFailureOfAScriptThatIsNotOursIsNotLogged()
+    {
+        using var rig = new Rig();
+        UUID item = UUID.Random();
+
+        rig.Loader.RaiseFailure(new LoadFailure { LocalID = LocalId, ItemID = item, Errors = new List<string> { "(1,0) Error: x" } });
+
+        Assert.DoesNotContain(rig.Log.Warnings, l => l.Contains(item.ToString()));
+    }
 }
 
 /// <summary>
@@ -378,5 +401,49 @@ public class EngineFoldersTests
         engine.RemoveRegion(scene);
 
         Assert.False(System.IO.Directory.Exists(System.IO.Path.Combine(root, EngineIdentity.EngineName, "cache")));
+    }
+}
+
+/// <summary>
+/// A compile failure is held for the editor that saved the script; one that no editor collects within the grace is announced
+/// once, so the engine can tell someone. The native compiler is replaced by one that always fails.
+/// </summary>
+public class UnclaimedFailureTests
+{
+    private static ScriptLoader Loader() =>
+        new ScriptLoader(new ScriptCompiler(native: (text, lsl) => throw new SLua.ScriptEngine.Bindings.SluaException("slua_compile", -5, "1: bad")), null, new RecordingLog())
+        { UnclaimedGrace = TimeSpan.FromMilliseconds(50) };
+
+    [Fact]
+    public void AFailureNoEditorCollectsIsAnnouncedOnceWithItsErrors()
+    {
+        using ScriptLoader loader = Loader();
+        var announced = new System.Collections.Concurrent.ConcurrentQueue<LoadFailure>();
+        loader.FailureUnclaimed += f => announced.Enqueue(f);
+        UUID item = UUID.Random();
+
+        loader.Post(new LoadRequest { ItemID = item, LocalID = 1, Source = "--!slua\nlocal x = = 1\n" });
+
+        var until = DateTime.UtcNow.AddSeconds(10);
+        while (announced.IsEmpty && DateTime.UtcNow < until)
+            System.Threading.Thread.Sleep(20);
+        LoadFailure failure = Assert.Single(announced);
+        Assert.Equal(item, failure.ItemID);
+        Assert.Equal("(1,0) Error: bad", Assert.Single(failure.Errors));
+    }
+
+    [Fact]
+    public void AFailureAnEditorCollectsIsNotAnnounced()
+    {
+        using ScriptLoader loader = Loader();
+        int announced = 0;
+        loader.FailureUnclaimed += _ => System.Threading.Interlocked.Increment(ref announced);
+        UUID item = UUID.Random();
+
+        loader.Post(new LoadRequest { ItemID = item, LocalID = 1, Source = "--!slua\nlocal x = = 1\n" });
+        Assert.Equal("(1,0) Error: bad", Assert.Single(loader.WaitForCompileErrors(item, TimeSpan.FromSeconds(10))));
+
+        System.Threading.Thread.Sleep(500); // a window ten times the grace, to show nothing is announced
+        Assert.Equal(0, announced);
     }
 }
