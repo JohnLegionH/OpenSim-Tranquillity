@@ -51,6 +51,20 @@ public class EngineSwitchKeepsSharedResourcesTests
         "  remote_data(integer type, key channel, key message, string sender, integer i, string s) { }\n" +
         "}\n";
 
+    // Takes the controls of the avatar that grants TAKE_CONTROLS: "ask <avatar>" asks, "take" takes CONTROL_FWD.
+    private const string ControlsBody =
+        "default {\n" +
+        "  state_entry() { llListen(7, \"\", NULL_KEY, \"\"); llSay(0, \"entry\"); }\n" +
+        "  listen(integer c, string name, key id, string msg) {\n" +
+        "    list w = llParseString2List(msg, [\" \"], []);\n" +
+        "    string cmd = llList2String(w, 0);\n" +
+        "    if (cmd == \"ask\") llRequestPermissions(llList2Key(w, 1), PERMISSION_TAKE_CONTROLS);\n" +
+        "    else if (cmd == \"take\") { llTakeControls(CONTROL_FWD, TRUE, FALSE); llSay(0, \"took\"); }\n" +
+        "  }\n" +
+        "  run_time_permissions(integer p) { llSay(0, \"rtp=\" + (string)p); }\n" +
+        "  control(key id, integer level, integer edge) { }\n" +
+        "}\n";
+
     private const scriptEvents MaskEvents = scriptEvents.touch_start | scriptEvents.collision_start | scriptEvents.at_target;
 
     private sealed class Req : IHttpServiceRequest
@@ -147,12 +161,12 @@ public class EngineSwitchKeepsSharedResourcesTests
             H.YEngine.OnScriptRemoved += UrlModule.ScriptRemoved;
         }
 
-        public void Build(int choice)
+        public void Build(int choice, string source = Body)
         {
             typeof(Scene).GetField("m_defaultScriptEngine", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
                 .SetValue(H.Scene, Phlox);
             Group = SceneHelpers.AddSceneObject(H.Scene, "Example Object", Owner);
-            Item = TaskInventoryHelpers.AddScript(H.Scene.AssetService, Group.RootPart, UUID.Random(), UUID.Random(), "switched", Body);
+            Item = TaskInventoryHelpers.AddScript(H.Scene.AssetService, Group.RootPart, UUID.Random(), UUID.Random(), "switched", source);
             Item.Flags = ScriptEngineChoices.WithChoice(Item.Flags, choice);
             Assert.True(Group.RootPart.Inventory.CreateScriptInstance(Item.ItemID, 0, false, Phlox, 0));
             Group.ResumeScripts();
@@ -216,6 +230,8 @@ public class EngineSwitchKeepsSharedResourcesTests
         Assert.True(rig.H.PumpUntil(() => rig.InPhlox && rig.Entries >= 1 && rig.UrlModule.Of(rig.Item.ItemID) > 0, Cap), rig.Text);
 
         int mark = rig.HttpMark();
+        List<UUID> phloxRequests = rig.HttpSince(0);
+        Assert.NotEmpty(phloxRequests);
         Assert.Equal(ScriptEngineChoiceResult.Changed, rig.Set("YEngine"));
         List<UUID> yRequests = WaitForYEngineSetUp(rig, 2, mark);
         // Phlox still has its instance: its unload is queued and has not run.
@@ -226,6 +242,8 @@ public class EngineSwitchKeepsSharedResourcesTests
 
         Assert.True(rig.InYEngine, rig.Text);
         AssertNothingMissing(rig, yRequests);
+        // What Phlox's instance asked for before the switch is not left behind: its HTTP request was stopped.
+        Assert.DoesNotContain(phloxRequests, r => rig.HttpModule.InFlight.ContainsKey(r));
     }
 
     [Fact]
@@ -243,6 +261,8 @@ public class EngineSwitchKeepsSharedResourcesTests
         int entries = rig.Entries;
         Assert.Equal(ScriptEngineChoiceResult.Changed, rig.Set("YEngine"));
         List<UUID> yRequests = WaitForYEngineSetUp(rig, entries + 1, mark);
+        // Phlox still has its first instance: its unload is queued and has not run.
+        Assert.True(rig.InPhlox, rig.Text);
         AssertNothingMissing(rig, yRequests);
 
         LetPhloxUnload(rig);
@@ -269,5 +289,32 @@ public class EngineSwitchKeepsSharedResourcesTests
         rig.H.PumpFor(TimeSpan.FromSeconds(1));
         Assert.True(rig.InPhlox, rig.Text);
         AssertNothingMissing(rig, pRequests);
+    }
+
+    [Fact]
+    public void ControlsAPhloxScriptTookAreReleasedWhenItMovesToYEngine()
+    {
+        using var rig = new Rig();
+        rig.Build(ScriptEngineChoices.Phlox, ControlsBody);
+        Assert.True(rig.H.PumpUntil(() => rig.InPhlox && rig.Entries >= 1, Cap), rig.Text);
+
+        // An avatar grants TAKE_CONTROLS and the script takes its forward key.
+        var sp = SceneHelpers.AddScenePresence(rig.H.Scene, UUID.Random());
+        var client = (TestClient)sp.ControllingClient;
+        int asked = client.ScriptQuestions.Count;
+        rig.H.Scene.SimChat("ask " + client.AgentId, ChatTypeEnum.Region, 7, rig.Group.AbsolutePosition, "tester", UUID.Random(), false);
+        Assert.True(rig.H.PumpUntil(() => client.ScriptQuestions.Count > asked, Cap), "no permission question: " + rig.Text);
+        client.FireScriptAnswer(rig.Group.RootPart.UUID, rig.Item.ItemID, 4);
+        Assert.True(rig.H.PumpUntil(() => rig.H.Said.Contains("rtp=4"), Cap), rig.Text);
+        rig.H.Scene.SimChat("take", ChatTypeEnum.Region, 7, rig.Group.AbsolutePosition, "tester", UUID.Random(), false);
+        Assert.True(rig.H.PumpUntil(() => sp.HasScriptControls(rig.Item.ItemID), Cap), rig.Text);
+
+        // The script moves to YEngine, whose fresh instance takes no controls: the avatar's key must be let go, also once
+        // Phlox's unload has run.
+        Assert.Equal(ScriptEngineChoiceResult.Changed, rig.Set("YEngine"));
+        Assert.True(System.Threading.SpinWait.SpinUntil(() => rig.InYEngine && rig.Entries >= 2, Cap), rig.Text);
+        LetPhloxUnload(rig);
+        Assert.True(rig.InYEngine, rig.Text);
+        Assert.False(sp.HasScriptControls(rig.Item.ItemID), "the avatar's controls are still taken for the item");
     }
 }
