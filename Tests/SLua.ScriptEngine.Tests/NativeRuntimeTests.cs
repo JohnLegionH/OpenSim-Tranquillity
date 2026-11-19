@@ -136,6 +136,40 @@ public class NativeRuntimeTests
     }
 
     [Fact]
+    public void ALibraryThatFailsToStartIsNotOkAndTheMessageSaysWhy()
+    {
+        var options = Options();
+        options.Identify = () => throw new SLua.ScriptEngine.Bindings.SluaException("slua_init", -2);
+        var r = NativeRuntime.Load(options);
+        Assert.False(r.Ok);
+        Assert.Contains("slua_init failed with code -2", r.Message);
+        Assert.Contains("not registered", r.Message);
+    }
+
+    [Fact]
+    public void ALibraryWithoutTheStartExportsIsNotOk()
+    {
+        var options = Options();
+        options.Identify = () => throw new EntryPointNotFoundException("slua_set_engine_identity");
+        var r = NativeRuntime.Load(options);
+        Assert.False(r.Ok);
+        Assert.Contains("slua_set_engine_identity", r.Message);
+    }
+
+    [Fact]
+    public void AFailedStartKeepsTheEngineOutWithOneErrorLine()
+    {
+        var options = Options();
+        options.Identify = () => throw new SLua.ScriptEngine.Bindings.SluaException("slua_set_engine_identity", -1);
+        var log = new RecordingLog();
+        Scene scene = RegionWithPhloxAndOurEngine(options, log, out _);
+
+        Assert.Equal("InWorldz.Phlox", Assert.Single(scene.RequestModuleInterfaces<IScriptModule>()).ScriptEngineName);
+        Assert.Single(log.Lines);
+        Assert.Single(log.Errors);
+    }
+
+    [Fact]
     public void ALibraryWithoutTheVersionExportIsNotOk()
     {
         var r = NativeRuntime.Load(Options(version: () => throw new EntryPointNotFoundException("slua_api_version")));

@@ -55,7 +55,16 @@ namespace SLua.ScriptEngine
 
         public string Name => EngineIdentity.EngineName;
         public string ScriptEngineName => EngineIdentity.EngineName;
-        public Type ReplaceableInterface => null;
+        /// <summary>
+        /// An interface no module registers or implements. The region server adds a module that names a replaceable interface
+        /// after every module that names none, and skips it only when another module has registered that interface; so the
+        /// engine is always loaded, and always added to the region after the other script engines (which name none). It thus
+        /// registers behind them, and a module that asks the region for its first script engine gets the one it had before.
+        /// </summary>
+        public Type ReplaceableInterface => typeof(IAfterOtherScriptEngines);
+
+        /// <summary>The marker <see cref="ReplaceableInterface"/> names. Nothing implements it.</summary>
+        internal interface IAfterOtherScriptEngines { }
 
         public void Initialise(IConfigSource source)
         {

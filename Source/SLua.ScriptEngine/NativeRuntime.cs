@@ -36,6 +36,12 @@ namespace SLua.ScriptEngine
 
         /// <summary>Asks the loaded library for its API version. Null asks the library; a test replaces it to report another version.</summary>
         public Func<int> ApiVersion { get; set; }
+
+        /// <summary>
+        /// Starts the library and names the engine to it, once the API version is right. Null does that on the real library
+        /// (<see cref="EngineIdentity.Apply"/>) when the real loader loaded it, and nothing otherwise; a test replaces it to fail.
+        /// </summary>
+        public Action Identify { get; set; }
     }
 
     internal sealed class RuntimeLoadResult
@@ -163,8 +169,22 @@ namespace SLua.ScriptEngine
                 };
             }
 
-            if (real)
-                EngineIdentity.Apply();
+            // Starting the library and naming the engine to it are its first calls past the version check; a library that
+            // fails them (a failure code, or an export it lacks) is not used, as one with the wrong version is not.
+            Action identify = options.Identify ?? (real ? EngineIdentity.Apply : null);
+            try
+            {
+                identify?.Invoke();
+            }
+            catch (Exception e) when (e is SluaException || e is EntryPointNotFoundException || e is DllNotFoundException || e is BadImageFormatException)
+            {
+                return new RuntimeLoadResult
+                {
+                    LibraryPath = loadedPath,
+                    ApiVersion = version,
+                    Message = $"The native runtime library {loadedPath} could not be started ({e.GetType().Name}: {e.Message}); the engine is not registered.",
+                };
+            }
 
             return new RuntimeLoadResult
             {

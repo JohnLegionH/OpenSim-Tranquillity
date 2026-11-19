@@ -20,8 +20,9 @@ namespace SLua.ScriptEngine.Tests;
 /// region keeps the script engines it had before. Switched on with a usable library, it registers as one of the region's
 /// script engines and the region lists it to viewers.
 /// </summary>
-// Each test builds its own scene and engine; the runtime loader is replaced, so no test loads the native library and
-// none touches process-wide state. The class runs in parallel with the others.
+// Each test builds its own scene and engine, and the runtime loader is replaced, so no test loads the native library.
+// SceneHelpers.SetupScene sets the process-wide MainConsole.Instance, as every scene test does; nothing here reads it,
+// so the class runs in parallel with the others.
 public class RegistrationTests
 {
     private static IScriptModule[] Engines(Scene scene) => scene.RequestModuleInterfaces<IScriptModule>();
@@ -127,7 +128,46 @@ public class RegistrationTests
         Assert.False(type.IsAbstract);
         Assert.True(typeof(INonSharedRegionModule).IsAssignableFrom(type));
         Assert.NotNull(type.GetConstructor(Type.EmptyTypes));
-        Assert.Null(((INonSharedRegionModule)Activator.CreateInstance(type)).ReplaceableInterface);
+    }
+
+    [Fact]
+    public void TheEngineIsLoadedWithTheRegionsDeferredModulesAndNeverSkipped()
+    {
+        // The region server adds a module that names a replaceable interface after every module that names none, and
+        // skips it only when a module has registered that interface. The engine names one that nothing registers, so it
+        // is always loaded, and always after the region's other script engines (which name none).
+        Type marker = new SLuaEngine(new RecordingLog(), (s, l) => true).ReplaceableInterface;
+        Assert.NotNull(marker);
+        Assert.True(marker.IsInterface);
+        Assert.False(marker.IsAssignableFrom(typeof(SLuaEngine)));
+
+        Scene scene = Region(Config(EngineIdentity.ConfigSection, "true"), out _);
+        object registered = typeof(Scene).GetMethod("RequestModuleInterface").MakeGenericMethod(marker).Invoke(scene, null);
+        Assert.Null(registered);
+    }
+
+    [Fact]
+    public void AddedInTheRegionServersOrderTheEngineComesAfterTheOtherEngines()
+    {
+        // RegionModulesControllerPlugin.AddRegionToModules: Initialise and AddRegion of the modules with no replaceable
+        // interface (Phlox, YEngine), then Initialise and AddRegion of the deferred ones (this engine), then RegionLoaded.
+        Scene scene = new SceneHelpers().SetupScene();
+        var other = new OtherEngine("InWorldz.Phlox");
+        other.Initialise(new IniConfigSource());
+        other.AddRegion(scene);
+        var engine = new SLuaEngine(new RecordingLog(), (s, l) => true);
+        engine.Initialise(Config(EngineIdentity.ConfigSection, "true"));
+        engine.AddRegion(scene);
+
+        // A module that asks for "the" script engine gets the one it had before.
+        Assert.Same(other, scene.RequestModuleInterface<IScriptModule>());
+        Assert.Equal(new[] { "InWorldz.Phlox", "SLua" }, Engines(scene).Select(e => e.ScriptEngineName).ToArray());
+    }
+
+    private sealed class OtherEngine : MockScriptEngine, IScriptModule
+    {
+        public OtherEngine(string name) { ScriptEngineName = name; }
+        public new string ScriptEngineName { get; }
     }
 
     [Fact]
