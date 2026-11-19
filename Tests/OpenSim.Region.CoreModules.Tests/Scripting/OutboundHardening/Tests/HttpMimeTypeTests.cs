@@ -202,6 +202,11 @@ public class HttpMimeTypeTests : OpenSimTestCase
         using var key = RSA.Create(2048);
         var certRequest = new CertificateRequest("CN=localhost", key, HashAlgorithmName.SHA256,
             RSASignaturePadding.Pkcs1);
+        // Name the certificate for both ways the cases below reach the listener (see host below).
+        var names = new SubjectAlternativeNameBuilder();
+        names.AddDnsName("localhost");
+        names.AddIpAddress(IPAddress.Loopback);
+        certRequest.CertificateExtensions.Add(names.Build());
         using var generated = certRequest.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1),
             DateTimeOffset.UtcNow.AddDays(1));
         // Windows SChannel cannot run a server handshake with a certificate whose private key exists only in
@@ -221,7 +226,12 @@ public class HttpMimeTypeTests : OpenSimTestCase
             {
                 ((int)HttpRequestConstants.HTTP_VERIFY_CERT).ToString(), verifyCertificate ? "1" : "0"
             };
-            UUID id = m_module.StartHttpRequest(1, UUID.Random(), $"https://localhost:{port}/tls",
+            // Windows keeps one TLS session per host name for the process and offers it again on the next connection to
+            // that name, whatever the port; a client that first spoke TLS 1.2 to "localhost" then offers only TLS 1.2
+            // to the next listener there, and a TLS 1.3-only listener answers "no common algorithm". The TLS 1.3 cases
+            // therefore use the loopback address, a name of their own, so they do not inherit the TLS 1.2 cases' session.
+            string host = protocol == SslProtocols.Tls13 ? "127.0.0.1" : "localhost";
+            UUID id = m_module.StartHttpRequest(1, UUID.Random(), $"https://{host}:{port}/tls",
                 parameters, new Dictionary<string, string>(), "");
             Assert.NotEqual(UUID.Zero, id);
 
