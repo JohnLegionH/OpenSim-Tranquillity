@@ -219,6 +219,16 @@ public class MockScriptEngine : INonSharedRegionModule, IScriptModule, IScriptEn
         throw new System.NotImplementedException ();
     }
 
+    /// <summary>What <see cref="GetEventData"/> answers for a script: the data of the event it is "running".</summary>
+    public Dictionary<UUID, object> EventData { get; } = new();
+
+    public object GetEventData(UUID item) => EventData.TryGetValue(item, out object data) ? data : null;
+
+    public bool PostScriptEvent(UUID itemID, string name, object[] args, object eventData)
+    {
+        return PostScriptEvent(itemID, new EventParams(name, args, null, eventData));
+    }
+
     public void SetMinEventDelay(UUID itemID, double delay)
     {
         throw new System.NotImplementedException ();

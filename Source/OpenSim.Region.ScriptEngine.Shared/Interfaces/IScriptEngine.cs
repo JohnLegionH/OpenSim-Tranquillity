@@ -62,6 +62,12 @@ public interface IScriptEngine
     bool PostObjectLinksetDataEvent(uint localID, int action, ReadOnlySpan<char> name, ReadOnlySpan<char> value);
 
     DetectParams GetDetectParams(UUID item, int number);
+
+    /// <summary>
+    /// The data that came with the event the script is running (<see cref="EventParams.EventData"/>), or null when it
+    /// is not running an event that carries any. An engine that does not carry event data answers null.
+    /// </summary>
+    object GetEventData(UUID item) => null;
     void SetMinEventDelay(UUID itemID, double delay);
     int GetStartParameter(UUID itemID);
 

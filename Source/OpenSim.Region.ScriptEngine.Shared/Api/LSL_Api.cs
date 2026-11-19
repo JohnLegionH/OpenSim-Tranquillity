@@ -4680,6 +4680,8 @@ public void llDetachFromAvatar()
 
             m_item.PermsGranter = UUID.Zero;
             m_item.PermsMask = 0;
+            m_item.SilentPermsMask = 0;
+            ReportPermissionGrant(UUID.Zero, 0);
 
             m_ScriptEngine.PostScriptEvent(m_item.ItemID, new EventParams(
                     "run_time_permissions", new Object[] {
@@ -4703,7 +4705,8 @@ public void llDetachFromAvatar()
                     ScriptBaseClass.PERMISSION_CONTROL_CAMERA |
                     ScriptBaseClass.PERMISSION_TRACK_CAMERA |
                     ScriptBaseClass.PERMISSION_ATTACH |
-                    ScriptBaseClass.PERMISSION_OVERRIDE_ANIMATIONS;
+                    ScriptBaseClass.PERMISSION_OVERRIDE_ANIMATIONS |
+                    ScriptBaseClass.PERMISSION_GAME_CONTROL;
         }
         else
         {
@@ -4713,7 +4716,8 @@ public void llDetachFromAvatar()
                 implicitPerms = ScriptBaseClass.PERMISSION_TRIGGER_ANIMATION |
                     ScriptBaseClass.PERMISSION_CONTROL_CAMERA |
                     ScriptBaseClass.PERMISSION_TRACK_CAMERA |
-                    ScriptBaseClass.PERMISSION_TAKE_CONTROLS;
+                    ScriptBaseClass.PERMISSION_TAKE_CONTROLS |
+                    ScriptBaseClass.PERMISSION_GAME_CONTROL;
             }
             else
             {
@@ -4731,7 +4735,10 @@ public void llDetachFromAvatar()
             m_host.TaskInventory.LockItemsForWrite(true);
             m_host.TaskInventory[m_item.ItemID].PermsGranter = agentID;
             m_host.TaskInventory[m_item.ItemID].PermsMask = perm;
+            // A game-control grant given without a dialog is noted as such: standing up or detaching ends it.
+            m_host.TaskInventory[m_item.ItemID].SilentPermsMask = perm & ScriptBaseClass.PERMISSION_GAME_CONTROL;
             m_host.TaskInventory.LockItemsForWrite(false);
+            ReportPermissionGrant(agentID, perm);
 
             m_ScriptEngine.PostScriptEvent(m_item.ItemID, new EventParams(
                     "run_time_permissions", new Object[] {
@@ -4756,7 +4763,9 @@ public void llDetachFromAvatar()
                     {
                         m_host.TaskInventory[m_item.ItemID].PermsGranter = agentID;
                         m_host.TaskInventory[m_item.ItemID].PermsMask = perm;
+                        m_host.TaskInventory[m_item.ItemID].SilentPermsMask = 0;
                     }
+                    ReportPermissionGrant(agentID, perm);
 
                     m_ScriptEngine.PostScriptEvent(
                         m_item.ItemID,
@@ -4778,11 +4787,14 @@ public void llDetachFromAvatar()
                 m_host.TaskInventory.LockItemsForWrite(true);
                 m_host.TaskInventory[m_item.ItemID].PermsGranter = agentID;
                 m_host.TaskInventory[m_item.ItemID].PermsMask = 0;
+                m_host.TaskInventory[m_item.ItemID].SilentPermsMask = 0;
                 m_host.TaskInventory.LockItemsForWrite(false);
+                ReportPermissionGrant(agentID, 0);
 
                 presence.ControllingClient.OnScriptAnswer += handleScriptAnswer;
                 m_waitingForScriptAnswer=true;
             }
+            m_requestedPerms = perm;
 
             presence.ControllingClient.SendScriptQuestion(
                 m_host.UUID, m_host.ParentGroup.RootPart.Name, ownerName, m_item.ItemID, perm, UUID.Zero);
@@ -4796,6 +4808,15 @@ public void llDetachFromAvatar()
             new EventParams("run_time_permissions", new Object[] { new LSL_Integer(0) }, Array.Empty<DetectParams>()));
     }
 
+    // The permissions of the last request that is waiting for the viewer's answer.
+    private int m_requestedPerms;
+
+    /// <summary>Tells the region's modules which avatar now holds which permissions of this script.</summary>
+    private void ReportPermissionGrant(UUID granter, int mask)
+    {
+        World.EventManager.TriggerScriptPermissionsGranted(m_host.UUID, m_item.ItemID, granter, mask);
+    }
+
     void handleScriptAnswer(IClientAPI client, UUID taskID, UUID itemID, int answer)
     {
         if (taskID != m_host.UUID)
@@ -4804,12 +4825,18 @@ public void llDetachFromAvatar()
         client.OnScriptAnswer -= handleScriptAnswer;
         m_waitingForScriptAnswer = false;
 
+        // The viewer's answer cannot add game control to a request that did not ask for it.
+        if ((m_requestedPerms & ScriptBaseClass.PERMISSION_GAME_CONTROL) == 0)
+            answer &= ~ScriptBaseClass.PERMISSION_GAME_CONTROL;
+
         if ((answer & ScriptBaseClass.PERMISSION_TAKE_CONTROLS) == 0)
             llReleaseControls();
 
         m_host.TaskInventory.LockItemsForWrite(true);
         m_host.TaskInventory[m_item.ItemID].PermsMask = answer;
+        m_host.TaskInventory[m_item.ItemID].SilentPermsMask = 0;   // the avatar answered a dialog
         m_host.TaskInventory.LockItemsForWrite(false);
+        ReportPermissionGrant(m_item.PermsGranter, answer);
 
         m_ScriptEngine.PostScriptEvent(m_item.ItemID, new EventParams(
                 "run_time_permissions", new Object[] {
@@ -4821,6 +4848,40 @@ public void llDetachFromAvatar()
     {
         bool is_experience = CheckExperiencePermissions();
         return m_item.PermsGranter.ToString();
+    }
+
+    // llGetGameControlMode, llGetGameControlModeButtons and llGetGameControlModeAxes answer from the state that came
+    // with the game_control event the script is running, and only for the avatar that sent it (the avatar that
+    // granted the script PERMISSION_GAME_CONTROL). Outside such an event, or for any other key, the answers are the
+    // ones the Second Life wiki gives for no data: -1, 0 and an empty list.
+    private GameControlSnapshot GameControlStateFor(LSL_Key id)
+    {
+        if (!UUID.TryParse(id, out UUID agentId) || agentId.IsZero() || m_item.PermsGranter != agentId)
+            return null;
+        return m_ScriptEngine.GetEventData(m_item.ItemID) as GameControlSnapshot;
+    }
+
+    public LSL_Integer llGetGameControlMode(LSL_Key id)
+    {
+        return GameControlStateFor(id)?.Mode ?? GameControlSnapshot.ModeUnknown;
+    }
+
+    public LSL_Integer llGetGameControlModeButtons(LSL_Key id)
+    {
+        GameControlSnapshot state = GameControlStateFor(id);
+        return state is null ? 0 : (int)state.SemanticButtons;
+    }
+
+    public LSL_List llGetGameControlModeAxes(LSL_Key id)
+    {
+        GameControlSnapshot state = GameControlStateFor(id);
+        if (state is null || state.SemanticAxes.Length == 0)
+            return new LSL_List();
+
+        object[] axes = new object[state.SemanticAxes.Length];
+        for (int i = 0; i < axes.Length; i++)
+            axes[i] = new LSL_Float(state.SemanticAxes[i]);
+        return new LSL_List(axes);
     }
 
     public LSL_Integer llGetPermissions()

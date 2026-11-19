@@ -872,6 +872,24 @@ public partial class ScriptBaseClass
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public LSL_Integer llGetGameControlMode(LSL_Key id)
+    {
+        return m_LSL_Functions.llGetGameControlMode(id);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public LSL_Integer llGetGameControlModeButtons(LSL_Key id)
+    {
+        return m_LSL_Functions.llGetGameControlModeButtons(id);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public LSL_List llGetGameControlModeAxes(LSL_Key id)
+    {
+        return m_LSL_Functions.llGetGameControlModeAxes(id);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public LSL_Integer llGetPermissions()
     {
         return m_LSL_Functions.llGetPermissions();

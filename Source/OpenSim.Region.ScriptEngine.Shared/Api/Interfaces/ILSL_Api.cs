@@ -194,6 +194,9 @@ public interface ILSL_Api
    LSL_Integer llGetParcelPrimCount(LSL_Vector pos, int category, int sim_wide);
       LSL_List llGetParcelPrimOwners(LSL_Vector pos);
    LSL_Integer llGetPermissions();
+   LSL_Integer llGetGameControlMode(LSL_Key id);
+   LSL_Integer llGetGameControlModeButtons(LSL_Key id);
+   LSL_List llGetGameControlModeAxes(LSL_Key id);
        LSL_Key llGetPermissionsKey();
       LSL_List llGetPrimMediaParams(int face, LSL_List rules);
     LSL_Vector llGetPos();

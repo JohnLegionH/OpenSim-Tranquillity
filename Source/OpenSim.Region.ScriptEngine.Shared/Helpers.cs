@@ -329,9 +329,21 @@ public class EventParams
         DetectParams = detectParams;
     }
 
+    public EventParams(string eventName, object[] eventParams, DetectParams[] detectParams, object eventData)
+        : this(eventName, eventParams, detectParams)
+    {
+        EventData = eventData;
+    }
+
     public string EventName;
     public object[] Params;
     public DetectParams[] DetectParams;
+
+    /// <summary>
+    /// Data that rides with this one event besides its arguments, or null. The game_control event carries the
+    /// <c>OpenSim.Framework.GameControlSnapshot</c> that llGetGameControlMode* answer from while the event runs.
+    /// </summary>
+    public object EventData;
 
     public static EventParams StateEntryParams = new EventParams("state_entry", new object[0], new DetectParams[0]);
 }

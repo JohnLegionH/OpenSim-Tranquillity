@@ -94,5 +94,28 @@ namespace OpenSim.Region.Framework.Scenes.Tests
             Assert.True(GameControlConfig.IsEnabled(Source("true"), null), "control case: no region means grid-wide only");
             Assert.False(GameControlConfig.IsEnabled(null, Region(null)));
         }
+
+        private static string DefaultsFile()
+        {
+            for (DirectoryInfo dir = new(AppContext.BaseDirectory); dir != null; dir = dir.Parent)
+            {
+                string candidate = Path.Combine(dir.FullName, "Source", "OpenSim.Server.RegionServer", "AppData",
+                    "RegionServerDefaults.ini");
+                if (File.Exists(candidate))
+                    return candidate;
+            }
+            throw new FileNotFoundException("RegionServerDefaults.ini was not found above " + AppContext.BaseDirectory);
+        }
+
+        [Fact]
+        public void TheShippedDefaultsHaveAGameControlSectionAndItIsOff()
+        {
+            IniConfigSource source = new(DefaultsFile());
+
+            IConfig section = source.Configs["GameControl"];
+            Assert.NotNull(section);
+            Assert.Equal("false", section.Get("Enabled"));
+            Assert.False(GameControlConfig.IsEnabled(source, Region(null)));
+        }
     }
 }
