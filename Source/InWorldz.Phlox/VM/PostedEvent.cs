@@ -23,6 +23,13 @@ namespace InWorldz.Phlox.VM
         public int TransitionToState = NO_TRANSITION;
 
         /// <summary>
+        /// The game-controller state a game_control event reports, for llGetGameControlMode,
+        /// llGetGameControlModeAxes and llGetGameControlModeButtons to answer from while the event runs. Null for every
+        /// other event. Saved with the event (SerializedPostedEvent tag 5).
+        /// </summary>
+        public OpenSim.Framework.GameControlSnapshot GameControl;
+
+        /// <summary>
         /// Invoked exactly once by the scheduler when this event is DONE with - its handler
         /// finished, or it was dropped (no handler, script disabled, queue full, script not loaded,
         /// terminated). Not serialized. on_damage is the one SL event the region waits on.

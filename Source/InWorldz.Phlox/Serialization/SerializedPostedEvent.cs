@@ -28,6 +28,10 @@ namespace InWorldz.Phlox.Serialization
         [ProtoMember(4)]
         public int TransitionToState;
 
+        /// <summary>The game-controller state a game_control event reports; null for every other event and for rows saved before it existed.</summary>
+        [ProtoMember(5)]
+        public SerializedGameControl GameControl;
+
 
         public SerializedPostedEvent()
         {
@@ -51,6 +55,8 @@ namespace InWorldz.Phlox.Serialization
 
             serEvent.TransitionToState = evt.TransitionToState;
 
+            serEvent.GameControl = SerializedGameControl.From(evt.GameControl);
+
             return serEvent;
         }
 
@@ -65,7 +71,48 @@ namespace InWorldz.Phlox.Serialization
 
             evt.TransitionToState = this.TransitionToState;
 
+            evt.GameControl = this.GameControl?.ToSnapshot();
+
             return evt;
+        }
+    }
+
+    /// <summary>
+    /// A <see cref="OpenSim.Framework.GameControlSnapshot"/> as it is saved with a queued game_control event.
+    /// </summary>
+    [ProtoContract]
+    public class SerializedGameControl
+    {
+        [ProtoMember(1)]
+        public uint RawButtons;
+
+        [ProtoMember(2)]
+        public float[] RawAxes;
+
+        [ProtoMember(3)]
+        public int Mode;
+
+        [ProtoMember(4)]
+        public uint SemanticButtons;
+
+        [ProtoMember(5)]
+        public float[] SemanticAxes;
+
+        public static SerializedGameControl From(OpenSim.Framework.GameControlSnapshot s)
+        {
+            if (s == null) return null;
+            return new SerializedGameControl
+            {
+                RawButtons = s.RawButtons, RawAxes = s.RawAxes, Mode = s.Mode,
+                SemanticButtons = s.SemanticButtons, SemanticAxes = s.SemanticAxes
+            };
+        }
+
+        /// <summary>The state again, checked as a new one is; null if what was saved does not pass.</summary>
+        public OpenSim.Framework.GameControlSnapshot ToSnapshot()
+        {
+            return OpenSim.Framework.GameControlSnapshot.TryCreate(RawButtons, RawAxes ?? Array.Empty<float>(), Mode,
+                SemanticButtons, SemanticAxes ?? Array.Empty<float>(), out var snapshot) ? snapshot : null;
         }
     }
 }

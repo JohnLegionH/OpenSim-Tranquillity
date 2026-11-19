@@ -218,6 +218,12 @@ namespace InWorldz.Phlox.VM
         public int GrantedPermsMask;
 
         /// <summary>
+        /// The bits of <see cref="GrantedPermsMask"/> that were given without a dialog (a seat's or an attachment's
+        /// automatic grants).
+        /// </summary>
+        public int GrantedSilentMask;
+
+        /// <summary>
         /// The object's owner when <see cref="PermsGranter"/> and <see cref="GrantedPermsMask"/> were noted. These three
         /// are the grant saved with the state: the script item's grant at capture, or a grant restored from carried state
         /// that is still waiting for its granter. A restore gives a grant back only while the owner is still this one.
@@ -429,6 +435,7 @@ namespace InWorldz.Phlox.VM
             RunningEvent = null;
             PermsGranter = String.Empty;
             GrantedPermsMask = 0;
+            GrantedSilentMask = 0;
             PermsOwner = null;
             PermsExperience = null;
             PermsUnverified = false;
@@ -478,9 +485,49 @@ namespace InWorldz.Phlox.VM
         {
             lock (EventQueueLock)
             {
-                if (EventQueue.Count < MAX_EVENT_QUEUE_SIZE || AllowOverflow(postedEvent))
+                if (EventQueue.Count < MAX_EVENT_QUEUE_SIZE || AllowOverflow(postedEvent)
+                    || (postedEvent.EventType == Types.SupportedEventList.Events.GAME_CONTROL
+                        && EventQueue.Count < MAX_EVENT_QUEUE_SIZE + GAME_CONTROL_QUEUE_RESERVE))
                     EventQueue.Enqueue(postedEvent);
             }
+        }
+
+        /// <summary>
+        /// Room above <see cref="MAX_EVENT_QUEUE_SIZE"/> that only game_control events may use. Axes-only updates fold
+        /// into the queued event (<see cref="TryFoldGameControl"/>), so a controller cannot fill the queue; this room
+        /// keeps a press or release from being lost behind other events when the queue is full of them.
+        /// </summary>
+        public const int GAME_CONTROL_QUEUE_RESERVE = 64;
+
+        /// <summary>
+        /// A game_control event that changes only the axes replaces the newest game_control event of the same avatar
+        /// that is still queued, which has not run. A change of buttons or mode is never folded: it is an event of its
+        /// own, in order. Returns true when the event was folded (the caller then drops it).
+        /// </summary>
+        public bool TryFoldGameControl(PostedEvent evt)
+        {
+            if (evt?.GameControl == null || evt.EventType != Types.SupportedEventList.Events.GAME_CONTROL)
+                return false;
+            string agent = evt.Args != null && evt.Args.Length > 0 ? evt.Args[0]?.ToString() : null;
+            lock (EventQueueLock)
+            {
+                for (int i = EventQueue.Count - 1; i >= 0; i--)
+                {
+                    PostedEvent queued = EventQueue[i];
+                    if (queued.EventType != Types.SupportedEventList.Events.GAME_CONTROL || queued.GameControl == null
+                        || !string.Equals(queued.Args != null && queued.Args.Length > 0 ? queued.Args[0]?.ToString() : null,
+                                          agent, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    // The newest one of this avatar decides: an older one is behind a change that must stay in order.
+                    OpenSim.Framework.GameControlSnapshot a = queued.GameControl, b = evt.GameControl;
+                    if (a.RawButtons != b.RawButtons || a.SemanticButtons != b.SemanticButtons || a.Mode != b.Mode)
+                        return false;
+                    EventQueue[i] = evt;
+                    queued.SignalCompleted();
+                    return true;
+                }
+            }
+            return false;
         }
 
         private static readonly C5.HashSet<Types.SupportedEventList.Events> OVERFLOWABLE_EVENTS = 

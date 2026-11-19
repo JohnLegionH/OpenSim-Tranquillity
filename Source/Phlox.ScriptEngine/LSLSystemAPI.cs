@@ -955,8 +955,14 @@ namespace Phlox.ScriptEngine
                          && UUID.TryParse(st.PermsGranter, out granter) && UUID.TryParse(st.PermsOwner, out owner)
                          && (string.IsNullOrEmpty(st.PermsExperience) || UUID.TryParse(st.PermsExperience, out experience));
             int mask = st.GrantedPermsMask;
+            int savedSilent = st.GrantedSilentMask;
             bool unverified = st.PermsUnverified;
             ClearSavedGrant(st);
+            // A game-control grant a seat or an attachment gave automatically does not outlive a region restart: the
+            // avatar who sat or wore it is not in the new region, and a script asks again when they are. One the avatar
+            // answered through the dialog does. (A crossing, which is decided as carried state below, re-decides it.)
+            if (!carried && !unverified)
+                mask &= ~(savedSilent & SlConst.PERMISSION_GAME_CONTROL);
             TaskInventoryItem item = GetInventorySelf();
             if (carried && item != null && item.ExperienceID.IsZero()) DropQueuedExperienceGrants(st);
             if (item != null && noted && !experience.IsZero() && experience != item.ExperienceID)
@@ -986,7 +992,7 @@ namespace Phlox.ScriptEngine
                         "experience_permissions_denied", new object[] { granter.ToString(), XP_ERROR_NOT_PERMITTED_LAND }, new DetectParams[0]));
                     return;
                 }
-                SetRestoredGrant(item, granter, mask, experience);
+                SetRestoredGrant(item, granter, mask, experience, savedSilent);
                 return;
             }
             ScenePresence sp = World?.GetScenePresence(granter);
@@ -1035,17 +1041,21 @@ namespace Phlox.ScriptEngine
                     SetRestoredGrant(item, granter, bits, experience);
                 return;
             }
+            // What a silent re-request gives is, by its nature, given without a dialog.
             int silent = mask & GetImplicitPermissions(item, granter);
-            if (silent != 0) SetRestoredGrant(item, granter, silent, UUID.Zero);
+            if (silent != 0) SetRestoredGrant(item, granter, silent, UUID.Zero, silent);
         }
 
-        private void SetRestoredGrant(TaskInventoryItem item, UUID granter, int mask, UUID experience)
+        /// <param name="silent">The bits of <paramref name="mask"/> that were given without a dialog.</param>
+        private void SetRestoredGrant(TaskInventoryItem item, UUID granter, int mask, UUID experience, int silent = 0)
         {
             using (InventoryLock.Write(m_host.TaskInventory))
             {
                 item.PermsGranter = granter;
                 item.PermsMask = mask;
+                item.SilentPermsMask = silent & mask;
             }
+            ReportGameControlGrant(item, granter, mask);
             if (experience.IsZero()) ForgetExperienceGrant();
             else
             {
@@ -1054,7 +1064,7 @@ namespace Phlox.ScriptEngine
                 // shortly, off the scheduler thread, and the grant ends then if it cannot run (ExperienceCannotRun).
                 m_ScriptEngine?.ExperienceGrantRestored();
             }
-            NoteGrant(m_thisScript.ScriptState, granter, mask, m_host.OwnerID, experience);
+            NoteGrant(m_thisScript.ScriptState, granter, mask, m_host.OwnerID, experience, silent: silent);
             GrantChanged();
         }
 
@@ -1226,13 +1236,14 @@ namespace Phlox.ScriptEngine
             if (st.ExperienceGranter is string g && st.ExperienceGrant is string e
                 && UUID.TryParse(g, out UUID expGranter) && expGranter == item.PermsGranter)
                 UUID.TryParse(e, out experience);
-            NoteGrant(st, item.PermsGranter, item.PermsMask, objectOwner, experience);
+            NoteGrant(st, item.PermsGranter, item.PermsMask, objectOwner, experience, silent: item.SilentPermsMask);
         }
 
-        private static void NoteGrant(RuntimeState st, UUID granter, int mask, UUID owner, UUID experience, bool unverified = false)
+        private static void NoteGrant(RuntimeState st, UUID granter, int mask, UUID owner, UUID experience, bool unverified = false, int silent = 0)
         {
             st.PermsGranter = granter.ToString();
             st.GrantedPermsMask = mask;
+            st.GrantedSilentMask = silent & mask;
             st.PermsOwner = owner.ToString();
             st.PermsExperience = experience.IsZero() ? null : experience.ToString();
             st.PermsUnverified = unverified;
@@ -1242,6 +1253,7 @@ namespace Phlox.ScriptEngine
         {
             st.PermsGranter = null;
             st.GrantedPermsMask = 0;
+            st.GrantedSilentMask = 0;
             st.PermsOwner = null;
             st.PermsExperience = null;
             st.PermsUnverified = false;
@@ -3098,7 +3110,9 @@ namespace Phlox.ScriptEngine
             return GetInventorySelf()?.ItemID ?? UUID.Zero;
         }
 
-        private void PermsChange(TaskInventoryItem item, UUID granter, int mask)
+        /// <param name="silent">The bits of <paramref name="mask"/> given without a dialog (a seat's or an attachment's
+        /// automatic grants); the item notes them, so standing up or detaching ends only those.</param>
+        private void PermsChange(TaskInventoryItem item, UUID granter, int mask, int silent = 0)
         {
             int silentEstateManagement = (mask & PERMISSION_SILENT_ESTATE_MANAGEMENT) != 0 ? 1 : 0;
             if (m_thisScript?.ScriptState?.MiscAttributes != null)
@@ -3112,10 +3126,23 @@ namespace Phlox.ScriptEngine
                     ForgetExperienceGrant();
                 item.PermsGranter = granter;
                 item.PermsMask = mask;
+                item.SilentPermsMask = silent & mask;
                 m_host.Inventory.ForceInventoryPersistence();
                 m_host.ParentGroup.HasGroupChanged = true;
                 GrantChanged();
+                ReportGameControlGrant(item, granter, mask);
             }
+        }
+
+        /// <summary>
+        /// Tells the region's game-controller router that this script holds PERMISSION_GAME_CONTROL from the avatar, so
+        /// it finds the script wherever it is (a remote-control script is neither worn nor sat on). The router checks the
+        /// item again before it posts, so a grant that has ended since is not served.
+        /// </summary>
+        private void ReportGameControlGrant(TaskInventoryItem item, UUID granter, int mask)
+        {
+            if ((mask & SlConst.PERMISSION_GAME_CONTROL) != 0 && granter.IsNotZero())
+                World?.EventManager.TriggerScriptPermissionsGranted(m_host.UUID, item.ItemID, granter, mask);
         }
 
         /// <summary>
@@ -3141,10 +3168,12 @@ namespace Phlox.ScriptEngine
             if (m_host.ParentGroup.IsAttachment && agentID == m_host.ParentGroup.AttachedAvatar)
                 return SlConst.PERMISSION_TAKE_CONTROLS | SlConst.PERMISSION_TRIGGER_ANIMATION |
                        SlConst.PERMISSION_ATTACH | SlConst.PERMISSION_TRACK_CAMERA |
-                       SlConst.PERMISSION_CONTROL_CAMERA | SlConst.PERMISSION_OVERRIDE_ANIMATIONS;
+                       SlConst.PERMISSION_CONTROL_CAMERA | SlConst.PERMISSION_OVERRIDE_ANIMATIONS |
+                       SlConst.PERMISSION_GAME_CONTROL;
             if (m_host.ParentGroup.HasSittingAvatar(agentID))
                 return SlConst.PERMISSION_TAKE_CONTROLS | SlConst.PERMISSION_TRIGGER_ANIMATION |
-                       SlConst.PERMISSION_TRACK_CAMERA | SlConst.PERMISSION_CONTROL_CAMERA;
+                       SlConst.PERMISSION_TRACK_CAMERA | SlConst.PERMISSION_CONTROL_CAMERA |
+                       SlConst.PERMISSION_GAME_CONTROL;
             // Halcyon LSLSystemAPI.cs:4446-4460: a bot cannot answer a permission dialog, so one the object's owner
             // owns, or one sitting on an object the owner owns, grants PERMISSION_TRIGGER_ANIMATION.
             ScenePresence bot = World.GetScenePresence(agentID);
@@ -3170,7 +3199,8 @@ namespace Phlox.ScriptEngine
                 item.PermsGranter = agentID;
                 item.PermsMask = perm;
             }
-            PermsChange(item, item.PermsGranter, item.PermsMask);
+            // Every bit of an implicit request was given without a dialog.
+            PermsChange(item, item.PermsGranter, item.PermsMask, silent: perm);
             m_ScriptEngine.PostScriptEvent(m_itemID, new EventParams(
                 "run_time_permissions", new object[] { (int)item.PermsMask },
                 new DetectParams[0]));
@@ -10194,6 +10224,35 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>The handles of the volumes this object made, oldest first. Empty when weather is off or the owner may not use the volumes.</summary>
+        /// <summary>
+        /// The state of the game_control event this script is running for <paramref name="id"/>, or null: the script is
+        /// not in a game_control event, or the event is another avatar's. The SL wiki (llGetGameControlMode): the
+        /// functions answer -1 "when the script has no game-control snapshot for id".
+        /// </summary>
+        private GameControlSnapshot GameControlSnapshotFor(string id)
+        {
+            PostedEvent running = m_thisScript?.ScriptState?.RunningEvent;
+            if (running == null || running.EventType != InWorldz.Phlox.Types.SupportedEventList.Events.GAME_CONTROL
+                || running.GameControl == null || running.Args == null || running.Args.Length == 0)
+                return null;
+            return UUID.TryParse(id, out UUID asked) && UUID.TryParse(running.Args[0]?.ToString(), out UUID eventAgent)
+                   && asked == eventAgent ? running.GameControl : null;
+        }
+
+        /// <summary>A GAME_CONTROL_MODE_* value; -1 with no snapshot or a mode this region does not know.</summary>
+        public int llGetGameControlMode(string id) => GameControlSnapshotFor(id)?.Mode ?? GameControlSnapshot.ModeUnknown;
+
+        /// <summary>The axes of the current mode (GAME_CONTROL_AXIS_* index them); empty with no snapshot.</summary>
+        public LSLList llGetGameControlModeAxes(string id)
+        {
+            GameControlSnapshot s = GameControlSnapshotFor(id);
+            if (s == null) return new LSLList();
+            return new LSLList(Array.ConvertAll(s.SemanticAxes, a => (object)a));
+        }
+
+        /// <summary>The buttons of the current mode (GAME_CONTROL_BUTTON_* are their masks); 0 with no snapshot.</summary>
+        public int llGetGameControlModeButtons(string id) => (int)(GameControlSnapshotFor(id)?.SemanticButtons ?? 0u);
+
         public LSLList iwWindVolumes()
         {
             var handles = new List<object>();
@@ -10409,17 +10468,6 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             ShoutError("llRemoteDataSetRegion: Command deprecated - Use llOpenRemoteDataChannel instead");
         }
-
-        // The game-control functions read what a viewer sends about its game controller. No viewer sends it to this
-        // region, so every call is the case the SL wiki (LlGetGameControlMode) documents as -1: the script has no
-        // game-control data for the avatar. The wiki and lsl-definitions say nothing for the other two in that case; the
-        // same "no data" read is an empty list of axes and no buttons.
-
-        public int llGetGameControlMode(string id) => -1;
-
-        public LSLList llGetGameControlModeAxes(string id) => new LSLList();
-
-        public int llGetGameControlModeButtons(string id) => 0;
 
         /// <summary>
         /// lsl-definitions func-id 516: displays a beacon on the viewer of the avatar touching or wearing the object, only

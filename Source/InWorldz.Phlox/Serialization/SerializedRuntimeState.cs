@@ -142,6 +142,14 @@ namespace InWorldz.Phlox.Serialization
         [ProtoMember(30)]
         public bool PermsUnverified;
 
+        /// <summary>
+        /// Tag 31: the bits of the grant in tags 16 and 17 that were given without a dialog (a seat's or an attachment's
+        /// automatic grants). Absent - 0 - in every row and carried state written before it: no bit is then known to have
+        /// been automatic. An earlier build skips the tag.
+        /// </summary>
+        [ProtoMember(31)]
+        public int GrantedSilentMask;
+
         public SerializedRuntimeState()
         {
         }
@@ -243,6 +251,7 @@ namespace InWorldz.Phlox.Serialization
             serState.PermsOwner = state.PermsOwner;
             serState.PermsExperience = state.PermsExperience;
             serState.PermsUnverified = state.PermsUnverified;
+            serState.GrantedSilentMask = state.GrantedSilentMask;
             serState.ActiveListens = listensSnapshot;
             serState.StartParameter = state.StartParameter;
 
@@ -358,6 +367,7 @@ namespace InWorldz.Phlox.Serialization
             state.PermsOwner = this.PermsOwner;
             state.PermsExperience = this.PermsExperience;
             state.PermsUnverified = this.PermsUnverified;
+            state.GrantedSilentMask = this.GrantedSilentMask;
 
             return state;
         }
