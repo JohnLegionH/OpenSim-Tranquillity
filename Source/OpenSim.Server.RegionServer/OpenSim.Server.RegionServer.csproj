@@ -82,6 +82,9 @@
          C5, protobuf-net, Antlr4, System.Data.SQLite/e_sqlite3) deploys automatically —
          no manual DLL copying, no compile/runtime identity splits. -->
     <ProjectReference Include="../../Source/Phlox.ScriptEngine/Phlox.ScriptEngine.csproj" />
+    <!-- The SLua engine is loaded like the other engines; it stays out of every region unless [SLua] Enabled = true.
+         Its native runtime comes with it from the UtopiaSkye.SLua package (runtimes/<rid>/native). -->
+    <ProjectReference Include="../../Source/SLua.ScriptEngine/SLua.ScriptEngine.csproj" />
     <ProjectReference Include="../../Addons/os-webrtc-janus/WebRtcVoiceRegionModule/WebRtcVoiceRegionModule.csproj" />
     <ProjectReference Include="../../Addons/os-webrtc-janus/WebRtcVoiceServiceModule/WebRtcVoiceServiceModule.csproj" />
     <ProjectReference Include="../../Addons/os-webrtc-janus/Janus/WebRtcJanusService.csproj" />
