@@ -6,25 +6,26 @@
  */
 
 using Nini.Config;
+using OpenSim.Framework;
 using Xunit;
 
 namespace SLua.ScriptEngine.Tests;
 
 /// <summary>
-/// What the engine claims when the region asks (IScriptEngineSelection.ClaimsScript): a script whose first line is
-/// "--!slua", and, only when ClaimHeaderlessScripts is on, every other script without an engine header. The region's
-/// own ordering (header, saved state, claim, default) is covered by SelectionTests.
+/// What the engine claims when the region asks (IScriptEngineSelection): a script whose first line is "--!slua", and a
+/// script the viewer saved with the Lua or LSL-on-Lua compile target. Nothing else, and nothing at all when the engine is
+/// off or its runtime did not load. The region's own ordering (header, saved state, claim, default) is covered by SelectionTests.
 /// </summary>
 public class EngineSelectionTests
 {
-    private static SLuaEngine Engine(bool enabled = true, bool runtimeLoads = true, bool claimHeaderless = false)
+    private static SLuaEngine Engine(bool enabled = true, bool runtimeLoads = true, params (string Key, string Value)[] keys)
     {
         var engine = new SLuaEngine(new RecordingLog(), (settings, log) => runtimeLoads);
         var source = new IniConfigSource();
         IConfig section = source.AddConfig(EngineIdentity.ConfigSection);
         section.Set("Enabled", enabled ? "true" : "false");
-        if (claimHeaderless)
-            section.Set("ClaimHeaderlessScripts", "true");
+        foreach ((string key, string value) in keys)
+            section.Set(key, value);
         engine.Initialise(source);
         return engine;
     }
@@ -49,9 +50,10 @@ public class EngineSelectionTests
     [InlineData("default { state_entry() {} }")]
     [InlineData("// --!slua\ndefault {}")]
     [InlineData("//SLua:slua\nprint(1)")]
+    [InlineData("//Unknown:\ndefault {}")]
     [InlineData("")]
     [InlineData(null)]
-    public void WithTheSettingOffNothingElseIsClaimed(string source)
+    public void NothingElseIsClaimed(string source)
     {
         SLuaEngine engine = Engine();
         Assert.True(engine.ClaimsScript("--!slua\nprint(1)"));   // the engine is up, so the refusals below are its own
@@ -59,11 +61,18 @@ public class EngineSelectionTests
     }
 
     [Fact]
+    public void AnLslScriptWithoutAHeaderIsNotClaimedWhateverTheConfigurationSays()
+    {
+        // The engine runs no script in this part, so it never takes one that another engine would run.
+        SLuaEngine engine = Engine(keys: ("ClaimHeaderlessScripts", "true"));
+        Assert.False(engine.ClaimsScript("default { state_entry() {} }"));
+    }
+
+    [Fact]
     public void AnEngineThatIsNotEnabledClaimsNothing()
     {
         Assert.True(Engine().ClaimsScript("--!slua\nprint(1)"));
         Assert.False(Engine(enabled: false).ClaimsScript("--!slua\nprint(1)"));
-        Assert.False(Engine(enabled: false, claimHeaderless: true).ClaimsScript("default {}"));
     }
 
     [Fact]
@@ -71,29 +80,29 @@ public class EngineSelectionTests
     {
         Assert.True(Engine().ClaimsScript("--!slua\nprint(1)"));
         Assert.False(Engine(runtimeLoads: false).ClaimsScript("--!slua\nprint(1)"));
-        Assert.False(Engine(runtimeLoads: false, claimHeaderless: true).ClaimsScript("default {}"));
     }
 
     [Theory]
-    [InlineData("default { state_entry() {} }")]
-    [InlineData("// an ordinary comment\ndefault {}")]
-    [InlineData("-- plain Lua\nprint(1)")]
-    [InlineData("//Unknown:\ndefault {}")]
-    [InlineData("--!slua\nprint(1)")]
-    public void WithTheSettingOnEveryScriptWithoutAnEngineHeaderIsClaimed(string source)
+    [InlineData(ScriptCompileTarget.Luau)]
+    [InlineData(ScriptCompileTarget.LslOnLuau)]
+    public void AnEnabledEngineAcceptsTheViewersLuaCompileTargets(ScriptCompileTarget target)
     {
-        Assert.True(Engine(claimHeaderless: true).ClaimsScript(source));
+        Assert.True(Engine().AcceptsCompileTarget(target));
+    }
+
+    [Fact]
+    public void AScriptWithNoCompileTargetIsNotAccepted()
+    {
+        Assert.False(Engine().AcceptsCompileTarget(ScriptCompileTarget.Unspecified));
     }
 
     [Theory]
-    [InlineData("")]
-    [InlineData(null)]
-    public void NoSourceIsClaimedEvenWithTheSettingOn(string source)
+    [InlineData(ScriptCompileTarget.Luau)]
+    [InlineData(ScriptCompileTarget.LslOnLuau)]
+    public void AnEngineThatIsOffOrWhoseRuntimeDidNotLoadAcceptsNoCompileTarget(ScriptCompileTarget target)
     {
-        // A crossing carries no source; the region then routes by saved state alone.
-        SLuaEngine engine = Engine(claimHeaderless: true);
-        Assert.True(engine.ClaimsScript("default {}"));
-        Assert.False(engine.ClaimsScript(source));
+        Assert.False(Engine(enabled: false).AcceptsCompileTarget(target));
+        Assert.False(Engine(runtimeLoads: false).AcceptsCompileTarget(target));
     }
 
     [Fact]
@@ -101,20 +110,5 @@ public class EngineSelectionTests
     {
         Assert.NotNull(Engine().HeaderAliases);
         Assert.Empty(Engine().HeaderAliases);
-    }
-
-    [Fact]
-    public void TheHeaderlessSettingIsOffUntilTheKeyIsSet()
-    {
-        var off = new IniConfigSource();
-        off.AddConfig(EngineIdentity.ConfigSection).Set("Enabled", "true");
-        var on = new IniConfigSource();
-        IConfig section = on.AddConfig(EngineIdentity.ConfigSection);
-        section.Set("Enabled", "true");
-        section.Set("ClaimHeaderlessScripts", "true");
-
-        Assert.True(SLuaSettings.Read(on, new RecordingLog()).ClaimHeaderlessScripts);
-        Assert.False(SLuaSettings.Read(off, new RecordingLog()).ClaimHeaderlessScripts);
-        Assert.False(new SLuaSettings().ClaimHeaderlessScripts);
     }
 }

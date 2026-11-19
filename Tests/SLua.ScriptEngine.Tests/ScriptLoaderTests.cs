@@ -215,14 +215,15 @@ public class ScriptLoaderTests
     public void DisownedWhileAnEditorWaitsTheEditorGetsNullAndNothingIsHeld()
     {
         using var gate = new ManualResetEventSlim();
-        using var rig = new Rig(native: (t, l) => { gate.Wait(Wait); return Host.Compile(t, l); });
+        using var compiling = new ManualResetEventSlim();
         UUID item = UUID.Random();
+        using var rig = new Rig(native: (t, l) => { if (t == GoodSlua) { compiling.Set(); gate.Wait(Wait); } return Host.Compile(t, l); });
         rig.Loader.Post(new LoadRequest { ItemID = item, LocalID = 1, AssetID = UUID.Random(), Source = GoodSlua });
+        Assert.True(compiling.Wait(Wait)); // the compile has begun and is held
         List<string> answer = new();
         bool returned = false;
         var waiter = new Thread(() => { answer = rig.Loader.WaitForCompileErrors(item, Wait); returned = true; });
         waiter.Start();
-        Thread.Sleep(100);
 
         rig.Loader.Disown(item);
 
@@ -230,7 +231,8 @@ public class ScriptLoaderTests
         Assert.True(returned);
         Assert.Null(answer);
         gate.Set();
-        Thread.Sleep(100);
+        // The loader works one load at a time: once a later load has its outcome, the held one has finished too.
+        Assert.Empty(rig.Load(UUID.Random(), GoodSlua + "\n"));
         Assert.False(rig.Loader.IsReady(item));
         Assert.Null(rig.Loader.WaitForCompileErrors(item, TimeSpan.FromMilliseconds(100)));
     }

@@ -61,6 +61,7 @@ public class SettingsTests
     {
         Assert.Null(Read(("NativeLibraryPath", "  ")).NativeLibraryPath);
     }
+
     [Fact]
     public void ThePart2SettingsHaveTheirDefaults()
     {
@@ -71,21 +72,19 @@ public class SettingsTests
         Assert.True(s.SaveScriptState);
         Assert.Equal(3, s.StateLoadRetries);
         Assert.Equal(500, s.StateLoadRetryDelayMs);
-        Assert.False(s.ClaimHeaderlessScripts);
     }
 
     [Fact]
     public void ThePart2SettingsAreRead()
     {
         SLuaSettings s = Read(("ScriptEnginesPath", "/var/opensim/engines"), ("CompileCache", "false"), ("SaveScriptState", "false"),
-            ("StateLoadRetries", "7"), ("StateLoadRetryDelayMs", "20"), ("ClaimHeaderlessScripts", "true"));
+            ("StateLoadRetries", "7"), ("StateLoadRetryDelayMs", "20"));
         Assert.Equal("/var/opensim/engines", s.ScriptEnginesPath);
         Assert.Equal(System.IO.Path.Combine("/var/opensim/engines", "SLua"), s.StateRoot);
         Assert.False(s.CompileCache);
         Assert.False(s.SaveScriptState);
         Assert.Equal(7, s.StateLoadRetries);
         Assert.Equal(20, s.StateLoadRetryDelayMs);
-        Assert.True(s.ClaimHeaderlessScripts);
     }
 
     [Fact]

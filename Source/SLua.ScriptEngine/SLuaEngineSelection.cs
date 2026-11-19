@@ -22,15 +22,14 @@ namespace SLua.ScriptEngine
 
         /// <summary>
         /// Asked by the region for a script whose first line names no loaded engine and which no engine holds saved
-        /// state for. Yes for a script whose first line is "--!slua", and, when ClaimHeaderlessScripts is on, for every
-        /// such script (it then runs as LSL unless its text begins with "--", see <see cref="EngineHeader.LanguageFor"/>).
+        /// state for. Yes for a script whose first line is "--!slua"; every other script goes to the engine it went to before.
         /// An engine that is not running claims nothing, so the script goes where it goes without this engine. A script with no source (a crossing) is never claimed: saved state routes it.
         /// </summary>
         public bool ClaimsScript(string scriptSource)
         {
             if (!m_enabled || string.IsNullOrEmpty(scriptSource))
                 return false;
-            return m_settings.ClaimHeaderlessScripts || BeginsWithSluaMarker(scriptSource);
+            return BeginsWithSluaMarker(scriptSource);
         }
 
         /// <summary>

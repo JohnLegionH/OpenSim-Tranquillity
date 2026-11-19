@@ -50,10 +50,10 @@ namespace SLua.ScriptEngine
         private bool m_enabled;
         private Scene m_scene;
 
-        private ISavedStateStore m_store;
+        private volatile ISavedStateStore m_store;
 
         /// <summary>The engine's own database of saved script state, when it keeps one (the store it was given, or the one it made).</summary>
-        private SqliteStateStore m_stateStore;
+        private volatile SqliteStateStore m_stateStore;
 
         /// <summary>The database this engine made itself and so closes when the region goes; null for a store it was given.</summary>
         private SqliteStateStore m_ownedStateStore;
@@ -149,6 +149,8 @@ namespace SLua.ScriptEngine
             m_scene.EventManager.OnObjectBeingRemovedFromScene += OnObjectLeavingScene;
             m_scene.EventManager.OnShutdown += OnShutdown;
             m_log.Info("Added to region " + scene.RegionInfo.RegionName);
+            m_log.Warn("This build of the engine compiles its scripts and keeps their saved state, but does not run them yet: " +
+                "scripts given to it stay stopped");
         }
 
         public void RemoveRegion(Scene scene)
@@ -160,6 +162,7 @@ namespace SLua.ScriptEngine
             m_scene.EventManager.OnShutdown -= OnShutdown;
             lock (m_tracked) m_tracked.Clear();
             lock (m_joined) m_joined.Clear();
+            lock (m_removedWithObject) m_removedWithObject.Clear();
             m_loader?.Dispose();
             m_loader = null;
             CloseStateStore();
@@ -213,13 +216,14 @@ namespace SLua.ScriptEngine
         {
             try { m_stateStore?.Flush(); }
             catch (Exception e) { m_log.Error("The saved script state could not be written out: " + e.Message); }
+            m_stateStore = null;
             if (m_ownedStateStore != null)
             {
+                // The region's questions are answered from the empty store before the database is closed under them.
+                m_store = new EmptyStateStore();
                 m_ownedStateStore.Dispose();
                 m_ownedStateStore = null;
-                m_store = new EmptyStateStore();
             }
-            m_stateStore = null;
         }
 
         /// <summary>The loader the engine runs with: the compile cache in the engine's folder (unless switched off), the region's asset service for text, scripts held as compiled bytes.</summary>
@@ -233,7 +237,7 @@ namespace SLua.ScriptEngine
         }
 
         /// <summary>How long GetScriptErrors waits for a compile; the region's own wait for a save is the same 15 seconds.</summary>
-        internal static TimeSpan ErrorWaitTimeout = TimeSpan.FromSeconds(15);
+        internal static readonly TimeSpan ErrorWaitTimeout = TimeSpan.FromSeconds(15);
 
         // ---- the region's script events ----
 
@@ -256,6 +260,7 @@ namespace SLua.ScriptEngine
 
             lock (m_tracked) m_tracked[itemID] = localID;
             lock (m_joined) m_joined.Remove(itemID);
+            ForgetRemovedWithObject(itemID);
 
             m_loader?.Post(new LoadRequest
             {
@@ -297,8 +302,9 @@ namespace SLua.ScriptEngine
                 return;
 
             StateLoadResult saved = new StateLoadResult { Kind = StateLoadKind.Fresh };
-            if (m_stateStore != null && ready.AssetID != UUID.Zero)
-                saved = StateJoin.Load(m_stateStore, EngineIdentity.EngineName, ready.ItemID, ready.AssetID,
+            SqliteStateStore store = m_stateStore;
+            if (store != null && ready.AssetID != UUID.Zero)
+                saved = StateJoin.Load(store, EngineIdentity.EngineName, ready.ItemID, ready.AssetID,
                     m_settings.StateLoadRetries, m_settings.StateLoadRetryDelayMs, System.Threading.Thread.Sleep, m_log);
 
             lock (m_joined) m_joined[ready.ItemID] = saved;
@@ -333,6 +339,13 @@ namespace SLua.ScriptEngine
         /// <summary>
         /// The row of a script deleted from its prim goes now. A script removed while its item is still in the prim is being taken
         /// out with its object (a take, a delete, a crossing): its row goes when the object leaves the scene.
+        /// <para>
+        /// The item is looked up in the prim's item table directly, without the table's lock, as the region's own
+        /// SceneObjectPartInventory.RemoveScriptInstance does. A script deleted from its prim is removed inside
+        /// SceneObjectPartInventory.RemoveInventoryItem, which raises this event while it holds the table's write lock (the item
+        /// is already out of the table by then); taking the read lock here would make TaskInventoryDictionary give up that write
+        /// lock while the removal goes on.
+        /// </para>
         /// </summary>
         private void DeleteRowOrWaitForObject(uint localID, UUID itemID)
         {
@@ -340,7 +353,7 @@ namespace SLua.ScriptEngine
                 return;
             SceneObjectPart part = m_scene?.GetSceneObjectPart(localID);
             SceneObjectGroup group = part?.ParentGroup;
-            if (group == null || part.Inventory.GetInventoryItem(itemID) == null)
+            if (group == null || !part.TaskInventory.ContainsKey(itemID))
             {
                 m_store?.Delete(itemID);
                 return;
@@ -350,6 +363,32 @@ namespace SLua.ScriptEngine
                 if (!m_removedWithObject.TryGetValue(group.UUID, out HashSet<UUID> items))
                     m_removedWithObject[group.UUID] = items = new HashSet<UUID>();
                 items.Add(itemID);
+            }
+        }
+
+        /// <summary>How many objects have scripts whose rows wait for the object to leave the scene.</summary>
+        internal int ObjectsWaitingToLeave
+        {
+            get
+            {
+                lock (m_removedWithObject)
+                {
+                    int n = 0;
+                    foreach (HashSet<UUID> items in m_removedWithObject.Values)
+                        if (items.Count > 0)
+                            n++;
+                    return n;
+                }
+            }
+        }
+
+        /// <summary>A script that is rezzed again (saved, or reset into its prim) is no longer one whose row waits for its object to leave.</summary>
+        private void ForgetRemovedWithObject(UUID itemID)
+        {
+            lock (m_removedWithObject)
+            {
+                foreach (HashSet<UUID> items in m_removedWithObject.Values)
+                    items.Remove(itemID);
             }
         }
 

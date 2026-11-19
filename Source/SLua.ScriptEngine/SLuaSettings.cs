@@ -42,9 +42,6 @@ namespace SLua.ScriptEngine
         /// <summary>How long the engine waits between those tries, in milliseconds (StateLoadRetryDelayMs).</summary>
         public int StateLoadRetryDelayMs { get; private set; } = 500;
 
-        /// <summary>A script with no engine header and no saved state is taken by this engine as LSL (ClaimHeaderlessScripts). Off by default.</summary>
-        public bool ClaimHeaderlessScripts { get; private set; }
-
         public static SLuaSettings Read(IConfigSource source, IEngineLog log)
         {
             var s = new SLuaSettings();
@@ -64,7 +61,6 @@ namespace SLua.ScriptEngine
             s.SaveScriptState = c.GetBoolean("SaveScriptState", s.SaveScriptState);
             s.StateLoadRetries = Math.Max(0, c.GetInt("StateLoadRetries", s.StateLoadRetries));
             s.StateLoadRetryDelayMs = Math.Max(0, c.GetInt("StateLoadRetryDelayMs", s.StateLoadRetryDelayMs));
-            s.ClaimHeaderlessScripts = c.GetBoolean("ClaimHeaderlessScripts", s.ClaimHeaderlessScripts);
             return s;
         }
     }
