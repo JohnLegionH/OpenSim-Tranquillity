@@ -202,8 +202,13 @@ public class HttpMimeTypeTests : OpenSimTestCase
         using var key = RSA.Create(2048);
         var certRequest = new CertificateRequest("CN=localhost", key, HashAlgorithmName.SHA256,
             RSASignaturePadding.Pkcs1);
-        using var certificate = certRequest.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1),
+        using var generated = certRequest.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1),
             DateTimeOffset.UtcNow.AddDays(1));
+        // Windows SChannel cannot run a server handshake with a certificate whose private key exists only in
+        // memory ("the platform does not support ephemeral keys"). A PFX round trip gives it a key it accepts;
+        // the key is removed when the certificate is disposed. Other platforms are unaffected.
+        using var certificate = new X509Certificate2(generated.Export(X509ContentType.Pfx), (string?)null,
+            X509KeyStorageFlags.Exportable);
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(15));

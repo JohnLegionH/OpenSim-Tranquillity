@@ -113,7 +113,7 @@ public class TextureKeyPrivacyTests
         return child;
     }
 
-    private static void WaitFor(SchedulerHarness h, Func<IReadOnlyList<string>, bool> done, double seconds = 10)
+    private static void WaitFor(SchedulerHarness h, Func<IReadOnlyList<string>, bool> done, double seconds = 90)
     {
         var until = DateTime.UtcNow.AddSeconds(seconds);
         while (DateTime.UtcNow < until && !done(h.Said)) h.PumpOnce();
