@@ -5,9 +5,41 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 using System;
+using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace SLua.ScriptEngine.Bindings;
+
+public enum ValueType { Nil = 0, Bool = 1, Int = 2, Number = 3, String = 4, Vector = 5, Key = 6, Rotation = 7, List = 8 }
+
+/// <summary>A scripting value as it crosses the native boundary.</summary>
+public readonly record struct Value(ValueType Type, long I = 0, double N = 0, string S = null, float X = 0, float Y = 0, float Z = 0, float W = 0, Value[] Items = null)
+{
+    public static Value Nil => default;
+    public static Value Bool(bool b) => new(ValueType.Bool, b ? 1 : 0);
+    public static Value Int(long i) => new(ValueType.Int, i);
+    public static Value Num(double n) => new(ValueType.Number, 0, n);
+    public static Value Str(string s) => new(ValueType.String, 0, 0, s);
+    public static Value Vec(float x, float y, float z) => new(ValueType.Vector, 0, 0, null, x, y, z);
+    public static Value Key(string k) => new(ValueType.Key, 0, 0, k);
+    public static Value Rot(float x, float y, float z, float s) => new(ValueType.Rotation, 0, 0, null, x, y, z, s);
+    public static Value List(params Value[] items) => new(ValueType.List, 0, 0, null, 0, 0, 0, 0, items);
+
+    public override string ToString() => Type switch
+    {
+        ValueType.Nil => "nil",
+        ValueType.Bool => I != 0 ? "true" : "false",
+        ValueType.Int => $"int:{I}",
+        ValueType.Number => $"num:{N.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+        ValueType.String => $"str:{S}",
+        ValueType.Vector => $"vec:<{X},{Y},{Z}>",
+        ValueType.Key => $"key:{S}",
+        ValueType.Rotation => $"rot:<{X},{Y},{Z},{W}>",
+        ValueType.List => "list:[" + string.Join(",", (Items ?? Array.Empty<Value>()).Select(v => v.ToString())) + "]",
+        _ => "?",
+    };
+}
 
 /// <summary>A call into the native library that reported a failure code.</summary>
 public class SluaException : Exception
@@ -72,4 +104,26 @@ public static unsafe class Host
 
     /// <summary>The API version the loaded library reports. A host written for another version must not call it.</summary>
     public static int ApiVersion() => Native.slua_api_version();
+
+    /// <summary>Compiles source to an asset. Throws SluaException (code -5) with the compiler message on failure.</summary>
+    public static byte[] Compile(string source, bool lsl)
+    {
+        Init();
+        byte[] src = Encoding.UTF8.GetBytes(source);
+        byte* outp = null; nuint outLen = 0; byte* err = null;
+        int rc;
+        fixed (byte* sp = src)
+            rc = Native.slua_compile(sp, (nuint)src.Length, lsl ? 1 : 0, &outp, &outLen, &err);
+        try
+        {
+            if (rc != 0)
+                throw new SluaException("slua_compile", rc, err != null ? Marshal.PtrToStringUTF8((IntPtr)err) : null);
+            return new ReadOnlySpan<byte>(outp, (int)outLen).ToArray();
+        }
+        finally
+        {
+            if (outp != null) Native.slua_free(outp);
+            if (err != null) Native.slua_free(err);
+        }
+    }
 }

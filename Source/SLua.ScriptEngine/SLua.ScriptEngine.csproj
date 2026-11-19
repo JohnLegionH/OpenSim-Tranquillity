@@ -19,9 +19,17 @@
     <PackageReference Include="UtopiaSkye.SLua" Version="0.4.0-preview.1" />
   </ItemGroup>
 
+  <!-- The engine's own database of saved script state; the same packages and versions as the other SQLite users in the tree. -->
+  <ItemGroup>
+    <PackageReference Include="SQLite" Version="3.54.1" />
+    <PackageReference Include="System.Data.SQLite" Version="2.0.4" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\OpenSim.Framework\OpenSim.Framework.csproj" />
     <ProjectReference Include="..\OpenSim.Region.Framework\OpenSim.Region.Framework.csproj" />
+    <!-- ActiveListen: a script's listens are saved in the same shape Phlox saves them. -->
+    <ProjectReference Include="..\InWorldz.Phlox\InWorldz.Phlox.csproj" />
   </ItemGroup>
 
 </Project>
