@@ -799,6 +799,7 @@ namespace Phlox.ScriptEngine
             bool chosenByTarget = rezItem is not null && ScriptCompileTargets.CarriesChoice(rezItem.Flags);
             if (chosenByTarget ? engine != Name : !IsPhloxScript(script, engine))
             {
+                m_Scene?.ScriptItemHolders.Leave(itemID, Name);
                 m_ScriptLoader?.Disown(localID, itemID);
                 return;
             }
@@ -812,6 +813,10 @@ namespace Phlox.ScriptEngine
 
             m_log.LogDebug("[PhloxEngine]: OnRezScript {0} in prim {1}", itemID, localID);
 
+            // Phlox holds the item from now on, so another engine's cleanup leaves what this instance sets up. Taken here, on
+            // the region's thread, before the load is queued: any unload of an earlier Phlox instance is queued ahead of
+            // this load and runs first, so it can release only what that earlier instance set up.
+            m_Scene.ScriptItemHolders.Take(itemID, Name);
             m_ScriptLoader.PostLoadRequest(new PhloxLoadRequest
             {
                 LocalID = localID,
@@ -838,6 +843,10 @@ namespace Phlox.ScriptEngine
         private void OnRemoveScript(uint localID, UUID itemID)
         {
             m_log.LogDebug("[PhloxEngine]: OnRemoveScript {0}", itemID);
+            // Phlox lets the item go now, on the region's thread; its loader unloads the instance later. An engine that
+            // takes the item in between holds it, and that unload then releases nothing the core keeps by item id for it
+            // (LSLSystemAPI.WhileHeld).
+            m_Scene?.ScriptItemHolders.Leave(itemID, Name);
             m_ScriptLoader.PostUnloadRequest(localID, itemID);
             OnScriptRemoved?.Invoke(itemID);
         }
