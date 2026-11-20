@@ -61,6 +61,11 @@ public class EstateManagementModule : IEstateModule, INonSharedRegionModule
     private bool m_ignoreEstatePaymentAccessControl;
 
     private EstateTerrainXferHandler TerrainUploader;
+
+    /// <summary>The highest water and the furthest the ground may be raised or lowered from its baked height, in
+    /// metres (the viewer's region terrain panel).</summary>
+    public const float MaxWaterHeight = 100f;
+    public const float MaxTerrainLimit = 100f;
     public TelehubManager m_Telehub;
 
     public event ChangeDelegate OnRegionInfoChange;
@@ -717,6 +722,15 @@ public class EstateManagementModule : IEstateModule, INonSharedRegionModule
             bool UseEstateSun, bool UseFixedSun, float SunHour,
             bool UseGlobal, bool EstateFixedSun, float EstateSunHour)
     {
+        // a value that is not a number turned the limits off (every comparison with it is false); the rest are
+        // kept to the viewer's ranges (LLPanelRegionTerrainInfo): water 0 to 100 m, the ground up to 100 m above
+        // and below its baked height
+        if (!float.IsFinite(WaterHeight) || !float.IsFinite(TerrainRaiseLimit) || !float.IsFinite(TerrainLowerLimit))
+            return;
+        WaterHeight = Math.Clamp(WaterHeight, 0f, MaxWaterHeight);
+        TerrainRaiseLimit = Math.Clamp(TerrainRaiseLimit, 0f, MaxTerrainLimit);
+        TerrainLowerLimit = Math.Clamp(TerrainLowerLimit, -MaxTerrainLimit, 0f);
+
         double lastwaterlevel = Scene.RegionInfo.RegionSettings.WaterHeight;
         // Water Height
         Scene.RegionInfo.RegionSettings.WaterHeight = WaterHeight;
@@ -1710,11 +1724,7 @@ public class EstateManagementModule : IEstateModule, INonSharedRegionModule
         {
             if ((TerrainUploader != null) && (XferID == TerrainUploader.XferID))
             {
-                remoteClient.OnXferReceive -= TerrainUploader.XferReceive;
-                remoteClient.OnAbortXfer -= AbortTerrainXferHandler;
-                TerrainUploader.TerrainUploadDone -= HandleTerrainApplication;
-
-                TerrainUploader = null;
+                DropTerrainUploader();
                 remoteClient.SendAlertMessage("Terrain Upload aborted by the client");
             }
         }
@@ -1724,11 +1734,8 @@ public class EstateManagementModule : IEstateModule, INonSharedRegionModule
     {
         lock (this)
         {
-            remoteClient.OnXferReceive -= TerrainUploader.XferReceive;
-            remoteClient.OnAbortXfer -= AbortTerrainXferHandler;
-            TerrainUploader.TerrainUploadDone -= HandleTerrainApplication;
-
-            TerrainUploader = null;
+            if (TerrainUploader is not null && TerrainUploader.Client == remoteClient)
+                DropTerrainUploader();
         }
 
         m_log.LogDebug("[CLIENT]: Terrain upload from {0} to {1} complete.", remoteClient.Name, Scene.Name);
@@ -1779,20 +1786,66 @@ public class EstateManagementModule : IEstateModule, INonSharedRegionModule
         }
     }
 
+    /// <summary>
+    /// An upload that has received nothing for this long is given up: its viewer left or stopped sending, and it
+    /// would keep every other upload out until the region restarts.
+    /// </summary>
+    public static readonly TimeSpan TerrainUploadIdle = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// The largest terrain file taken: a .raw (13 bytes a point) of this region, or 16 MB for the image formats of a
+    /// small one.
+    /// </summary>
+    private long MaxTerrainFileSize()
+    {
+        long points = (long)Scene.RegionInfo.RegionSizeX * Scene.RegionInfo.RegionSizeY;
+        return Math.Max(13 * points, 16L << 20) + 65536;
+    }
+
+    private void DropTerrainUploader()
+    {
+        IClientAPI client = TerrainUploader.Client;
+        client.OnXferReceive -= TerrainUploader.XferReceive;
+        client.OnAbortXfer -= AbortTerrainXferHandler;
+        TerrainUploader.TerrainUploadDone -= HandleTerrainApplication;
+        TerrainUploader.TerrainUploadFailed -= HandleTerrainUploadFailure;
+        TerrainUploader = null;
+    }
+
+    private void HandleTerrainUploadFailure(string reason, IClientAPI remoteClient)
+    {
+        lock (this)
+        {
+            if (TerrainUploader is not null && TerrainUploader.Client == remoteClient)
+                DropTerrainUploader();
+        }
+        m_log.LogWarning("[TERRAIN]: Terrain upload from {0} to {1} refused: {2}", remoteClient.Name, Scene.Name, reason);
+        remoteClient.SendAlertMessage(reason);
+    }
+
     private void HandleUploadTerrain(IClientAPI remote_client, string clientFileName)
     {
         lock (this)
         {
+            // an upload whose viewer left, or that stopped, no longer holds the place
+            if (TerrainUploader is not null &&
+                (!TerrainUploader.Client.IsActive || DateTime.UtcNow - TerrainUploader.LastActivity > TerrainUploadIdle))
+            {
+                m_log.LogWarning("[TERRAIN]: Gave up the terrain upload from {0} to {1}", TerrainUploader.Client.Name, Scene.Name);
+                DropTerrainUploader();
+            }
+
             if (TerrainUploader == null)
             {
                 m_log.LogDebug(
                     "[TERRAIN]: Started receiving terrain upload for region {0} from {1}",
                     Scene.Name, remote_client.Name);
 
-                TerrainUploader = new EstateTerrainXferHandler(remote_client, clientFileName);
+                TerrainUploader = new EstateTerrainXferHandler(remote_client, clientFileName, MaxTerrainFileSize());
                 remote_client.OnXferReceive += TerrainUploader.XferReceive;
                 remote_client.OnAbortXfer += AbortTerrainXferHandler;
                 TerrainUploader.TerrainUploadDone += HandleTerrainApplication;
+                TerrainUploader.TerrainUploadFailed += HandleTerrainUploadFailure;
                 TerrainUploader.RequestStartXfer(remote_client);
             }
             else
@@ -1809,18 +1862,19 @@ public class EstateManagementModule : IEstateModule, INonSharedRegionModule
 
         if (terr != null)
         {
-//                m_log.LogWarning("[CLIENT]: Got Request to Send Terrain in region " + Scene.RegionInfo.RegionName);
-            if (File.Exists(Util.dataDir() + "/terrain.raw"))
-            {
-                File.Delete(Util.dataDir() + "/terrain.raw");
-            }
-            terr.SaveToFile(Util.dataDir() + "/terrain.raw");
-
+            // in memory: one file shared by every region of the process gave a manager another region's
+            // terrain when two downloads met, or an exception when the save wrote nothing
             byte[] bdata;
-            using(FileStream input = new FileStream(Util.dataDir() + "/terrain.raw",FileMode.Open))
+            try
             {
-                bdata = new byte[input.Length];
-                input.ReadExactly(bdata);
+                using MemoryStream output = new();
+                terr.SaveToStream("terrain.raw", output);
+                bdata = output.ToArray();
+            }
+            catch (Exception e)
+            {
+                m_log.LogError("[TERRAIN]: Could not save the terrain of {0} for {1}: {2}", Scene.Name, remote_client.Name, e.Message);
+                bdata = null;
             }
             if(bdata == null || bdata.Length == 0)
             {

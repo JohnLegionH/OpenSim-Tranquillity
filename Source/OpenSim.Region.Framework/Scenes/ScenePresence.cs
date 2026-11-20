@@ -6064,7 +6064,7 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         if (p != this && sog.HasPrivateAttachmentPoint)
             return;
 
-        SceneObjectPart[] parts = sog.Parts;
+        SceneObjectPart[] parts = sog.PartsInLinkOrder;
         SceneObjectPart rootpart = sog.RootPart;
 
         PrimUpdateFlags update = PrimUpdateFlags.FullUpdate;
@@ -6087,7 +6087,7 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         if (IsChildAgent || IsInTransit || IsDeleted)
             return;
 
-        SceneObjectPart[] origparts = sog.Parts;
+        SceneObjectPart[] origparts = sog.PartsInLinkOrder;
         SceneObjectPart[] parts = new SceneObjectPart[origparts.Length];
         PrimUpdateFlags[] flags = new PrimUpdateFlags[origparts.Length];
 
@@ -6148,7 +6148,7 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         if (IsChildAgent || IsInTransit)
             return;
 
-        SceneObjectPart[] origparts = sog.Parts;
+        SceneObjectPart[] origparts = sog.PartsInLinkOrder;
         SceneObjectPart[] parts = new SceneObjectPart[origparts.Length];
         PrimUpdateFlags[] flags = new PrimUpdateFlags[origparts.Length];
 

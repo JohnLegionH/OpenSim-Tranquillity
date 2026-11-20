@@ -396,6 +396,86 @@ public class LandManagementModuleTests : OpenSimTestCase
         Assert.Equal(new List<int> { 7 }, answered);
     }
 
+    // UpdateLandProperties stored the parcel only when the user could change one of its flags. A group role whose
+    // powers change fields but no flag (the name and description, the landing point) had its save dropped without
+    // a word.
+    [Fact]
+    public void TestAnEditByARoleThatChangesNoFlagIsStored()
+    {
+        TestHelpers.InMethod();
+        ParcelFixture f = new ParcelFixture();
+        f.Scene.Permissions.OnEditParcelProperties += (user, parcel, p, manager) => p == GroupPowers.LandChangeIdentity;
+
+        LandUpdateArgs a = PropertiesSave(f.Current, f.Current.Flags);
+        a.Name = "renamed";
+        a.Desc = "by a role that may change the identity only";
+        a.ParcelFlags = f.Current.Flags ^ (uint)ParcelFlags.AllowFly;
+        f.Parcel.UpdateLandProperties(a, f.Client, out _, out _);
+
+        Assert.Equal("renamed", f.Current.Name);
+        Assert.Equal("by a role that may change the identity only", f.Current.Description);
+        // the flag it may not change is as it was
+        Assert.Equal(0u, (a.ParcelFlags ^ f.Current.Flags) & ~(uint)ParcelFlags.AllowFly);
+        Assert.NotEqual(a.ParcelFlags & (uint)ParcelFlags.AllowFly, f.Current.Flags & (uint)ParcelFlags.AllowFly);
+    }
+
+    // The list of who owns objects on a parcel started a recount of every object of the region before it checked
+    // that the asker may see the list: any visitor asking again and again kept the region busy.
+    [Fact]
+    public void TestOnlyThoseWhoMaySeeTheObjectOwnersStartARecount()
+    {
+        TestHelpers.InMethod();
+        ParcelFixture f = new ParcelFixture();
+        bool allowed = false;
+        f.Scene.Permissions.OnEditParcelProperties += (user, parcel, p, manager) => allowed;
+        int recounts = 0;
+        f.Scene.EventManager.OnParcelPrimCountUpdate += () => recounts++;
+
+        f.Module.ClientOnParcelObjectOwnerRequest(f.Parcel.LandData.LocalID, f.Client);
+        Assert.Equal(0, recounts);
+
+        allowed = true;
+        f.Module.ClientOnParcelObjectOwnerRequest(f.Parcel.LandData.LocalID, f.Client);
+        Assert.Equal(1, recounts);
+    }
+
+    // Join stored its parcels, and so fired their events, holding the land list's lock. A handler takes the prim
+    // count's lock (PrimCountModule), which Recount holds while it asks for every parcel (the land list's lock): the
+    // two threads waited on each other for good. Loading the parcels from storage (startup, an OAR) did the same.
+    [Fact]
+    public void TestLandEventsFireWithTheLandListUnlocked()
+    {
+        TestHelpers.InMethod();
+        ParcelFixture f = new ParcelFixture();
+        object landList = typeof(LandManagementModule)
+            .GetField("m_landList", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            .GetValue(f.Module);
+        List<string> locked = new();
+        int events = 0;
+        void Check(string what)
+        {
+            events++;
+            if (Monitor.IsEntered(landList))
+                locked.Add(what);
+        }
+        f.Scene.EventManager.OnLandObjectAdded += _ => Check("added");
+        f.Scene.EventManager.OnLandObjectRemoved += _ => Check("removed");
+        f.Scene.EventManager.OnParcelPrimCountTainted += () => Check("tainted");
+
+        f.Module.Subdivide(0, 0, 16, 16, f.OwnerId);
+        f.Module.Subdivide(16, 0, 32, 16, f.OwnerId);
+        f.Module.Join(0, 0, 32, 16, f.OwnerId);
+        Assert.Equal(2, f.Module.AllParcels().Count);
+
+        List<LandData> stored = f.Module.AllParcels().ConvertAll(lo => lo.LandData.Copy());
+        f.Module.Clear(false);
+        f.Scene.EventManager.TriggerIncomingLandDataFromStorage(stored);
+        Assert.Equal(2, f.Module.AllParcels().Count);
+
+        Assert.True(events > 0);
+        Assert.Empty(locked);
+    }
+
     /// <summary>
     /// Test parcels on region when no land data exists to be loaded.
     /// </summary>

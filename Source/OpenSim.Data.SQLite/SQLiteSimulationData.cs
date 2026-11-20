@@ -670,8 +670,9 @@ public class SQLiteSimulationData : ISimulationDataStore
                 }
             }
 
-            // Now fill the groups with part data
-            foreach (DataRow primRow in primsForRegion)
+            // Now fill the groups with part data, each group's children in link order
+            List<DataRow> childRows = ChildRowsInLinkOrder(primsForRegion, out HashSet<string> restoreLinkNumbers);
+            foreach (DataRow primRow in childRows)
             {
                 try
                 {
@@ -695,6 +696,10 @@ public class SQLiteSimulationData : ISimulationDataStore
                         }
 
                         createdObjects[new UUID(objID)].AddPart(prim);
+                        // AddPart numbers the part by how many parts the group holds; give it its stored number
+                        // back, as the MySQL and PostgreSQL stores do
+                        if (restoreLinkNumbers.Contains(objID))
+                            prim.LinkNum = Convert.ToInt32(primRow["LinkNumber"]);
                         LoadItems(prim);
                     }
                 }
@@ -710,6 +715,77 @@ public class SQLiteSimulationData : ISimulationDataStore
             }
         }
         return retvals;
+    }
+
+    /// <summary>
+    /// The child rows (a row whose UUID is not its SceneGroupID) of <paramref name="rows"/>, each group's children
+    /// sorted by their stored link number. A group gets its stored numbers back only when its children's numbers are
+    /// exactly 2 to the number of prims in the group, each once; <paramref name="restoreLinkNumbers"/> holds those
+    /// groups' SceneGroupIDs. Any other group (a child with no stored number, rows from before migration step 47 that
+    /// the step did not number, a number repeated or out of that range) keeps the order of its rows, so its children
+    /// are numbered in that order as before the LinkNumber column, with one warning naming the group.
+    /// </summary>
+    private static List<DataRow> ChildRowsInLinkOrder(DataRow[] rows, out HashSet<string> restoreLinkNumbers)
+    {
+        List<DataRow> ordered = new List<DataRow>(rows.Length);
+
+        // children per group, in row order
+        Dictionary<string, List<DataRow>> byGroup = new Dictionary<string, List<DataRow>>();
+        List<string> groupOrder = new List<string>();
+        foreach (DataRow row in rows)
+        {
+            // a row with no UUID or SceneGroupID goes to the loop in LoadObjects as before, which logs it
+            string objID = row["SceneGroupID"] as string;
+            string uuid = row["UUID"] as string;
+            if (objID is null || uuid is null)
+            {
+                ordered.Add(row);
+                continue;
+            }
+            if (uuid == objID)
+                continue;
+            if (!byGroup.TryGetValue(objID, out List<DataRow> children))
+            {
+                children = new List<DataRow>();
+                byGroup.Add(objID, children);
+                groupOrder.Add(objID);
+            }
+            children.Add(row);
+        }
+
+        restoreLinkNumbers = new HashSet<string>();
+        foreach (string objID in groupOrder)
+        {
+            List<DataRow> children = byGroup[objID];
+            int last = children.Count + 1;
+            bool[] seen = new bool[last + 1];
+            bool usable = true;
+            foreach (DataRow row in children)
+            {
+                object stored = row["LinkNumber"];
+                int number = stored is DBNull ? 0 : Convert.ToInt32(stored);
+                if (number < 2 || number > last || seen[number])
+                {
+                    usable = false;
+                    break;
+                }
+                seen[number] = true;
+            }
+
+            if (usable)
+            {
+                restoreLinkNumbers.Add(objID);
+                ordered.AddRange(children.OrderBy(row => Convert.ToInt32(row["LinkNumber"])));
+            }
+            else
+            {
+                m_log.LogWarning(
+                    "[SQLITE REGION DB]: Object {0} has prims whose stored link numbers are missing, repeated or out of range; its prims are numbered in the order they were stored",
+                    objID);
+                ordered.AddRange(children);
+            }
+        }
+        return ordered;
     }
 
     /// <summary>
@@ -1242,6 +1318,7 @@ public class SQLiteSimulationData : ISimulationDataStore
         createCol(prims, "linksetdata", typeof(string));
         createCol(prims, "StartStr", typeof(string));
         createCol(prims, "SitTargetActive", typeof(Int32));
+        createCol(prims, "LinkNumber", typeof(Int32));
 
         // Add in contraints
         prims.PrimaryKey = new DataColumn[] { prims.Columns["UUID"] };
@@ -2058,6 +2135,8 @@ public class SQLiteSimulationData : ISimulationDataStore
         row["RegionUUID"] = regionUUID.ToString();
         row["CreationDate"] = prim.CreationDate;
         row["Name"] = prim.Name;
+        // the link number, given back to the prim on load (LoadObjects)
+        row["LinkNumber"] = prim.LinkNum;
         row["SceneGroupID"] = sceneGroupID.ToString();
         // the UUID of the root part for this SceneObjectGroup
         // various text fields
