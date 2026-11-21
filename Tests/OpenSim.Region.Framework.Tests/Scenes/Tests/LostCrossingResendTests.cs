@@ -154,4 +154,18 @@ public class LostCrossingResendTests : OpenSimTestCase
 
         Assert.Equal(1, rig.Crossings);
     }
+
+    [Fact]
+    public void AnAvatarThatCameBackToTheRegionIsNotSentTheCrossingAgain()
+    {
+        TestHelpers.InMethod();
+        Rig rig = CrossedIntoB(7660);
+        rig.EtmA.CrossedRegionResendAfterMs = 0;
+
+        // the avatar crossed back into A and is a root agent here again: the old crossing is no longer lost
+        rig.A.EventManager.TriggerOnMakeRootAgent(rig.Avatar);
+        ViewerStillSendsToA(rig);
+
+        Assert.Equal(1, rig.Crossings);
+    }
 }
