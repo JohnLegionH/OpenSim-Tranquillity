@@ -70,6 +70,9 @@ public class RebakeVisualParamsTests
 
         var sp = SceneHelpers.AddScenePresence(scene, UUID.Random());
         sp.Appearance.VisualParams = new byte[253];   // the block a viewer uploads
+        // the region bakes only for an agent with an account on this grid (BakesFor), as every agent of a real region has one
+        OpenSim.Tests.Common.UserAccountHelpers.CreateUserWithInventory(scene, sp.UUID);
+        OpenSim.Tests.Common.UserAccountHelpers.CreateUserWithInventory(scene, observer.AgentId);
 
         var config = new IniConfigSource();
         var section = config.AddConfig(ServerSideBakingModule.ConfigSection);

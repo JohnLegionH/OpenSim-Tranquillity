@@ -91,6 +91,9 @@ public class CrossingAppearanceTests
         var observerAcd = SceneHelpers.GenerateAgentData(UUID.Random());
         var observer = new CapturingClient(observerAcd, to);
         SceneHelpers.AddScenePresence(to, observer, observerAcd);
+        // the region bakes only for an agent with an account on this grid (BakesFor), as every agent of a real region has one
+        OpenSim.Tests.Common.UserAccountHelpers.CreateUserWithInventory(from, mover.UUID);
+        OpenSim.Tests.Common.UserAccountHelpers.CreateUserWithInventory(to, observer.AgentId);
 
         if (usersLocal is bool local) UsersOfDestinationAreLocal(to, local);
         var fromRegion = AddModule(from, true);

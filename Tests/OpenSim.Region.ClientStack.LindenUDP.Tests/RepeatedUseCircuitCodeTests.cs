@@ -82,16 +82,17 @@ public class RepeatedUseCircuitCodeTests : OpenSimTestCase
     }
 
     [Fact]
-    public void ARepeatFromANewEndPointKeepsTheExistingClient()
+    public void ARepeatFromANewEndPointKeepsTheAgentsPresenceAndCircuit()
     {
         TestHelpers.InMethod();
-        IClientAPI first = ConnectFirst();
+        // The first connection is a child agent: its connection is replaced by the one from the new end point
+        // (the presence, circuit and caps stay), as UseCircuitCodeFromAnotherEndpointTests pins.
+        ConnectFirst();
 
         SendUseCircuitCode(SecondEndPoint, m_sessionId);
 
         Assert.NotNull(m_scene.GetScenePresence(m_agentId));
         Assert.True(m_scene.TryGetClient(m_agentId, out IClientAPI now));
-        Assert.Same(first, now);
         Assert.True(now.IsActive);
         Assert.NotNull(m_scene.AuthenticateHandler.GetAgentCircuitData(CircuitCode));
     }

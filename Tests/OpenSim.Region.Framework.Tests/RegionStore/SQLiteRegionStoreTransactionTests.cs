@@ -292,7 +292,8 @@ public class SQLiteRegionStoreTransactionTests : OpenSimTestCase
     [Fact]
     public void ARegionSaveStoresTheSameRowsAsBefore()
     {
-        // The expected fingerprint was taken from the store as it was before the transaction change, with the
+        // The expected fingerprint was retaken after the prims table gained its LinkNumber column (region store
+        // migration 47); before that it was taken from the store as it was before the transaction change, with the
         // same objects, so a change in what is stored (not only in how) fails here.
         string conn = NewMemoryDatabase();
         SQLiteSimulationData store = NewStore(conn);
@@ -322,7 +323,7 @@ public class SQLiteRegionStoreTransactionTests : OpenSimTestCase
 
     // SHA-256 of every column of every prims, primshapes and primitems row, taken from the store before it saved in
     // transactions.
-    private const string ExpectedRegionSaveFingerprint = "8A825D954B2A24DFBCF4E329CDF75F7545B1F57443648F82BE15299E1FCB141D";
+    private const string ExpectedRegionSaveFingerprint = "84031BFEB79ADA76E908406AE5B4CD2607FD07B083254666DB422DE3E6558707";
 
     [Fact]
     public void AFailureMidObjectLeavesThePreviousSavedStateAndTheStoreKeepsWorking()

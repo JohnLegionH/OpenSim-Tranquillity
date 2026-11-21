@@ -169,10 +169,12 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
 
         // A Hypergrid visitor is not baked here (IServerSideBakingRegion.BakesFor): the account service, not the
         // user-management cache a foreign grid can write names into, says who is local. An NPC has no account and is
-        // baked under its own id, so it counts as local.
+        // baked under its own id, so it counts as local. With no account service to ask, every agent counts as local (see
+        // ServerSideBakingRegion, hasLocalAccount).
         var region = new ServerSideBakingRegion(enabled, new CofHandshake(), agentId =>
             scene.GetScenePresence(agentId) is { IsNPC: true }
-            || scene.UserAccountService?.GetUserAccount(scene.RegionInfo.ScopeID, agentId) is not null);
+            || scene.UserAccountService is not { } accounts
+            || accounts.GetUserAccount(scene.RegionInfo.ScopeID, agentId) is not null);
         lock (m_scenes)
         {
             m_scenes.Add(scene);
