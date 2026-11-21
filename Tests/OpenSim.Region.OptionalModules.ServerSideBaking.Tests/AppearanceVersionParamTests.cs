@@ -195,10 +195,7 @@ public class AppearanceVersionParamTests
         var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
         var src = File.ReadAllText(Path.Combine(root, "Source", "OpenSim.Region.Framework", "Scenes", "ScenePresence.cs")).Replace("\r\n", "\n");
 
-        Assert.Contains("byte[] visualParams;
-        if (cofVersion >= 0)
-            visualParams = AvatarAppearance.WithAppearanceVersion(Appearance.VisualParams, 1);
-        else if ((IsNPC && ssb is not { ServerSideBakingEnabled: true }) || (ssb is { ServerSideBakingEnabled: true } && !ssb.BakesFor(UUID)))", src);
+        Assert.Contains("byte[] visualParams;\n        if (cofVersion >= 0)\n            visualParams = AvatarAppearance.WithAppearanceVersion(Appearance.VisualParams, 1);\n        else if ((IsNPC && ssb is not { ServerSideBakingEnabled: true }) || (ssb is { ServerSideBakingEnabled: true } && !ssb.BakesFor(UUID)))", src);
         Assert.Contains("            visualParams = AvatarAppearance.WithAppearanceVersion(Appearance.VisualParams, 0);\n        else\n            visualParams = Appearance.VisualParams;", src);
         Assert.Contains("avatar.ControllingClient.SendAppearance(UUID, visualParams, Appearance.Texture.GetBakesBytes(), Appearance.AvatarPreferencesHoverZ, cofVersion);", src);
         // the stored array must never be written through
