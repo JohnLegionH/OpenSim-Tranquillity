@@ -16,11 +16,17 @@ against its record (`JoltNative.Known`) before loading it.
 
 All regions in a process share one job pool on this native, and `[Jolt] JobPools` above 1 is
 reduced to one pool at start with a warning. Joltc gives every physics system the same
-process-wide `TempAllocatorImpl`, a LIFO stack that is not thread-safe: two physics updates at once
+process-wide `TempAllocatorImplWithMallocFallback` (an 8 MB LIFO stack, allocated at `JPH_Init`, that is not
+thread-safe, with malloc for what does not fit): two physics updates at once
 on two pools would interleave their frames on it and Jolt would stop the process with
 `TempAllocator: Freeing in the wrong order`. On one pool that cannot happen, because every use of
 the allocator is inside a physics update, under the pool's gate (`ShapeAndAllocatorRuleTests`
 checks this). More pools need a change in joltc itself.
+
+A step's scratch memory that does not fit the 8 MB stack comes from malloc on every step, and Jolt uses that block
+without checking it, so a failed allocation (the machine out of memory) ends the process with an access violation in
+joltc. At the default `MaxContactConstraints` of 16384 the contact buffer alone is 14 MB. `[Jolt] FitStepInTempStack`
+caps the capacity so a step fits the stack (`JoltTempStack.cs`).
 
 ## Files
 

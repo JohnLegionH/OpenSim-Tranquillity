@@ -45,12 +45,19 @@ public interface IServerSideBakingRegion
     int BakedCofVersion(UUID agentId);
 
     /// <summary>
-    /// Whether this region bakes for the agent: baking is on and the agent has an account on this grid. A
-    /// Hypergrid visitor has none. Its viewer fetches server bakes only from its own grid's appearance service (the
-    /// URL its login gave), which has none of the bakes made here, and a visitor from a grid without server-side
-    /// baking has no such service at all. So for a visitor the region stays a client-bake region: bit 0 of
-    /// <c>RegionProtocols</c> is clear, its viewer bakes it, and every appearance it is sent is the pre-SSB form,
-    /// whose bakes its viewer fetches from this region by id.
+    /// Whether this region bakes for the agent: baking is on and the agent has an account on this grid (or is an NPC,
+    /// which the region bakes under its own id). A Hypergrid visitor has no account. Its viewer fetches server bakes
+    /// only from its own grid's appearance service (the URL its login gave), which has none of the bakes made here,
+    /// and a visitor from a grid without server-side baking has no such service at all. So for a visitor the region
+    /// stays a client-bake region: bit 0 of <c>RegionProtocols</c> is clear, its viewer bakes it, and every
+    /// appearance it is sent is the pre-SSB form, whose bakes its viewer fetches from this region by id.
     /// </summary>
     bool BakesFor(UUID agentId);
+
+    /// <summary>
+    /// Record the bake another region applied to an agent that has just arrived from it, so that this region's
+    /// first appearance message for the agent already carries the <c>AppearanceData</c> block. Ignored on a region
+    /// where the flag is off, and for a negative version (the agent had no bake).
+    /// </summary>
+    void RecordCarriedBake(UUID agentId, int cofVersion);
 }

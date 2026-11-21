@@ -129,6 +129,11 @@ public partial class Scene : SceneBase
         get { return m_scripts_enabled; }
         set
         {
+            // Set first, so that a script added while the switch is off, or while the scripts are being stopped or
+            // started below, is held back or let through to match. This is the console debug switch: the saved
+            // region setting (RegionSettings.DisableScripts) is not touched.
+            m_scriptsSwitchedOff = !value;
+
             if (m_scripts_enabled != value)
             {
                 // the new value is set first, so a script started from the loops below sees it
@@ -174,6 +179,17 @@ public partial class Scene : SceneBase
     /// <summary>The script items that <see cref="ScriptsEnabled"/> suspended, so that only they are resumed.</summary>
     private readonly HashSet<UUID> m_scriptsSuspendedByDisable = new();
 
+
+    /// <summary>
+    /// True once <see cref="ScriptsEnabled"/> has been set to false and not since set to true.
+    /// </summary>
+    private volatile bool m_scriptsSwitchedOff;
+
+    /// <summary>
+    /// Whether a script that is rezzed or added may be started: not while <see cref="ScriptsEnabled"/> has been
+    /// switched off, and not while the saved region setting disables scripts.
+    /// </summary>
+    public bool ScriptStartsAllowed => !m_scriptsSwitchedOff && !RegionInfo.RegionSettings.DisableScripts;
 
     /// <summary>
     /// Used to prevent simultaneous calls to code that adds and removes agents.
@@ -974,6 +990,10 @@ public partial class Scene : SceneBase
 
             ChildPresenceWait = TimeSpan.FromSeconds(Math.Max(0, startupConfig.GetInt("ChildPresenceWaitSeconds", 30)));
             RootAgentWait = TimeSpan.FromSeconds(Math.Max(0, startupConfig.GetInt("RootAgentWaitSeconds", 25)));
+            // Absent key: a crossing waits as long as any other update (ChildPresenceWait).
+            CrossingChildPresenceWait = startupConfig.Contains("CrossingChildPresenceWaitSeconds")
+                ? TimeSpan.FromSeconds(Math.Max(0, startupConfig.GetInt("CrossingChildPresenceWaitSeconds", 0)))
+                : null;
 
             m_defaultDrawDistance = startupConfig.GetFloat("DefaultDrawDistance", m_defaultDrawDistance);
             m_maxDrawDistance = startupConfig.GetFloat("MaxDrawDistance", m_maxDrawDistance);
@@ -2180,7 +2200,34 @@ public partial class Scene : SceneBase
             m_backingup = true;
             try
             {
-                EventManager.TriggerOnBackup(SimulationDataService, forced);
+                // A data service that can save the whole pass in one transaction is told where the pass starts and ends.
+                ISimulationDataBatch batch = SimulationDataService as ISimulationDataBatch;
+                if (batch is not null)
+                {
+                    lock (m_savedInBackupPass)
+                        m_savedInBackupPass.Clear();
+                    m_notingBackupPass = true;
+                }
+                batch?.BeginBackupBatch();
+                try
+                {
+                    EventManager.TriggerOnBackup(SimulationDataService, forced);
+                }
+                finally
+                {
+                    try
+                    {
+                        batch?.EndBackupBatch();
+                        ForgetObjectsSavedInBackupPass();
+                    }
+                    catch (Exception e)
+                    {
+                        // nothing of the pass reached the database: every object it saved is marked as changed
+                        // again, so that the next pass saves it
+                        int again = MarkObjectsSavedInBackupPassAsChanged();
+                        m_log.LogError(e, $"[Scene] Ending the backup batch of {Name} failed, the changes of this backup pass were not saved ({again} objects will be saved again by the next pass): {e.Message}");
+                    }
+                }
 
                 if(m_returns.Count == 0)
                     return;
@@ -2226,6 +2273,49 @@ public partial class Scene : SceneBase
                 m_backingup = false;
             }
         }
+    }
+
+    // The objects saved while a backup batch is open, until its commit is known to have worked.
+    private readonly List<SceneObjectGroup> m_savedInBackupPass = new();
+    private volatile bool m_notingBackupPass;
+
+    /// <summary>
+    /// Called by an object that has just written itself to the data service. While a backup batch is open the object
+    /// is noted, so that a failed commit of the batch can mark it as changed again.
+    /// </summary>
+    internal void NoteSavedInBackupPass(SceneObjectGroup group)
+    {
+        if (!m_notingBackupPass)
+            return;
+        lock (m_savedInBackupPass)
+            m_savedInBackupPass.Add(group);
+    }
+
+    private void ForgetObjectsSavedInBackupPass()
+    {
+        m_notingBackupPass = false;
+        lock (m_savedInBackupPass)
+            m_savedInBackupPass.Clear();
+    }
+
+    private int MarkObjectsSavedInBackupPassAsChanged()
+    {
+        m_notingBackupPass = false;
+        SceneObjectGroup[] saved;
+        lock (m_savedInBackupPass)
+        {
+            saved = m_savedInBackupPass.ToArray();
+            m_savedInBackupPass.Clear();
+        }
+        int count = 0;
+        foreach (SceneObjectGroup group in saved)
+        {
+            if (group.IsDeleted)
+                continue;
+            group.HasGroupChanged = true;
+            count++;
+        }
+        return count;
     }
 
     /// <summary>
@@ -4806,7 +4896,8 @@ Label_GroupsDone:
         // after receiving the EnableSimulator HTTP Event Queue message (for the v1 teleport protocol)
         // or TeleportFinish (for the v2 teleport protocol).  This triggers the viewer to send
         // a UseCircuitCode packet which in turn calls AddNewAgent which finally creates the ScenePresence.
-        ScenePresence sp = WaitGetScenePresence(cAgentData.AgentID);
+        TimeSpan wait = cAgentData.SenderWantsToWaitForRoot ? ChildPresenceWait : EffectiveCrossingChildPresenceWait;
+        ScenePresence sp = WaitGetScenePresence(cAgentData.AgentID, wait);
 
         if (sp is not null)
         {
@@ -4886,6 +4977,24 @@ Label_GroupsDone:
     /// Set from [Startup] ChildPresenceWaitSeconds; the default is 30 seconds.
     /// </summary>
     public TimeSpan ChildPresenceWait { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// A shorter wait for an incoming agent update that is a border crossing, or null when none is set. A
+    /// viewer is told about a neighbour well before it reaches the border and connects then, so a crossing
+    /// needs no more than the time for a connection already on its way, and the source region holds the avatar
+    /// in transit for as long as this wait runs. Set from [Startup] CrossingChildPresenceWaitSeconds. When the
+    /// key is absent a crossing waits <see cref="ChildPresenceWait"/>, as it always did. A teleport (the sender
+    /// waits for the root agent) always uses <see cref="ChildPresenceWait"/>. See
+    /// <see cref="EffectiveCrossingChildPresenceWait"/>.
+    /// </summary>
+    public TimeSpan? CrossingChildPresenceWait { get; set; }
+
+    /// <summary>
+    /// How long a border crossing waits for the viewer to connect: <see cref="CrossingChildPresenceWait"/> when
+    /// it is set, never longer than <see cref="ChildPresenceWait"/>; otherwise <see cref="ChildPresenceWait"/>.
+    /// </summary>
+    public TimeSpan EffectiveCrossingChildPresenceWait =>
+        CrossingChildPresenceWait is { } crossing && crossing < ChildPresenceWait ? crossing : ChildPresenceWait;
 
     /// <summary>
     /// The warning for an agent that was authorised in this region but whose viewer never connected, or null
@@ -5029,6 +5138,14 @@ Label_GroupsDone:
     /// <param name='agentID'></param>
     protected virtual ScenePresence WaitGetScenePresence(UUID agentID)
     {
+        return WaitGetScenePresence(agentID, ChildPresenceWait);
+    }
+
+    /// <summary>
+    /// The same wait for a given time: a crossing waits for its own, possibly shorter, wait.
+    /// </summary>
+    protected virtual ScenePresence WaitGetScenePresence(UUID agentID, TimeSpan wait)
+    {
         ScenePresence sp = GetScenePresence(agentID);
         if (sp is not null)
             return sp;
@@ -5039,7 +5156,7 @@ Label_GroupsDone:
         EventManager.OnNewPresence += Arrived;
         try
         {
-            long deadline = Environment.TickCount64 + (long)ChildPresenceWait.TotalMilliseconds;
+            long deadline = Environment.TickCount64 + (long)wait.TotalMilliseconds;
             // only a circuit that was there and went counts: an update can arrive before the circuit it waits for
             // (a crossing racing the child agent being set up)
             bool hadCircuit = false;

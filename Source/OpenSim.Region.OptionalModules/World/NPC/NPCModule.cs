@@ -136,6 +136,7 @@ public class NPCModule : INPCModule, ISharedRegionModule
         // since it doesn't transfer attachments
         AvatarAppearance npcAppearance = new AvatarAppearance(appearance,
                 true);
+        DropBorrowedBakes(scene, npcAppearance);
         npc.Appearance = npcAppearance;
 
         // Rez needed npc attachments
@@ -145,7 +146,24 @@ public class NPCModule : INPCModule, ISharedRegionModule
         IAvatarFactoryModule module = scene.RequestModuleInterface<IAvatarFactoryModule>();
         module.SendAppearance(npc.UUID);
 
+        // An NPC's appearance is not saved, so the appearance-saved event never fires for it; raise it here so a
+        // region that bakes appearances (server-side baking) bakes the new look.
+        scene.EventManager.TriggerAvatarAppearanceChanged(npc);
+
         return true;
+    }
+
+    /// <summary>
+    /// On a region that bakes appearances itself, an NPC's baked faces must be its own. A copy of another avatar's
+    /// appearance carries that avatar's baked faces; the avatar's next outfit change deletes the assets they name,
+    /// and the appearance service has no bake under the NPC's id to serve for them. They are cleared here, and the
+    /// NPC's own bake (ServerSideBakingModule) fills them in. A region that does not bake keeps the copied faces.
+    /// </summary>
+    private static void DropBorrowedBakes(Scene scene, AvatarAppearance appearance)
+    {
+        if (scene.RequestModuleInterface<IServerSideBakingRegion>() is not { ServerSideBakingEnabled: true }) return;
+        foreach (int face in AvatarAppearance.BAKE_INDICES)
+            appearance.Texture.FaceTextures[face] = null;
     }
 
     public UUID CreateNPC(string firstname, string lastname,
@@ -210,6 +228,7 @@ public class NPCModule : INPCModule, ISharedRegionModule
             ServiceURLs = new Dictionary<string, object>(),
             Appearance = new AvatarAppearance(appearance, true)
         };
+        DropBorrowedBakes(scene, acd.Appearance);
 
         /*
         for (int i = 0;

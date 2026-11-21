@@ -102,6 +102,10 @@ public sealed class MoneyConsoleRunnerService : BackgroundService
                 try
                 {
                     _serverBase.Console.Prompt();
+
+                    // The input has ended: the console has said so once; reading it again would only repeat the failure.
+                    if (_serverBase.Console.InputClosed)
+                        break;
                 }
                 catch (Exception) when (shutdownToken.IsCancellationRequested)
                 {

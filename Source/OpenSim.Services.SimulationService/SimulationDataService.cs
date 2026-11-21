@@ -34,7 +34,7 @@ using OpenSim.Region.Framework.Scenes;
 
 namespace OpenSim.Services.SimulationService;
 
-public class SimulationDataService : ServiceBase, ISimulationDataService
+public class SimulationDataService : ServiceBase, ISimulationDataService, ISimulationDataBatch
 {
     protected ISimulationDataStore m_database;
 
@@ -67,6 +67,17 @@ public class SimulationDataService : ServiceBase, ISimulationDataService
         m_database = LoadPlugin<ISimulationDataStore>(dllName, new Object[] { connString });
         if (m_database == null)
             throw new Exception("Could not find a storage interface in the given module");
+    }
+
+    /// <summary>Passed to the store when it supports batching; a store that does not is left alone.</summary>
+    public void BeginBackupBatch()
+    {
+        (m_database as ISimulationDataBatch)?.BeginBackupBatch();
+    }
+
+    public void EndBackupBatch()
+    {
+        (m_database as ISimulationDataBatch)?.EndBackupBatch();
     }
 
     public void StoreObject(SceneObjectGroup obj, UUID regionUUID)

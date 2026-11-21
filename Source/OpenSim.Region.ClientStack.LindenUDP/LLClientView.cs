@@ -324,6 +324,9 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
     public LLImageManager ImageManager { get; private set; }
 
     public JobEngine m_asyncPacketProcess;
+
+    /// <summary>Runs this client's map name searches one at a time, off its request queue.</summary>
+    private readonly OneAtATimeRequestLane m_mapNameLane = new("MapNameRequest");
     private readonly LLUDPServer m_udpServer;
     private readonly LLUDPClient m_udpClient;
     internal readonly UUID m_sessionId;
@@ -556,7 +559,16 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         IsActive = true;
 
         m_supportViewerCache = m_udpServer.SupportViewerObjectsCache;
+
+        // The login channel travels in the circuit data to every region the viewer connects to.
+        string channel = ((Scene)m_scene).AuthenticateHandler?.GetAgentCircuitData(circuitCode)?.Channel;
+        Only256mRegions = m_udpServer.IsLegacyRegionSizeChannel(channel);
+        if (Only256mRegions && (m_scene.RegionInfo.RegionSizeX > Constants.RegionSize || m_scene.RegionInfo.RegionSizeY > Constants.RegionSize))
+            m_log.LogDebug($"{LogHeader} {m_firstName} {m_lastName} is on channel '{channel}', which only takes 256 m regions: sending it the south-west 256 m of {m_scene.Name}");
     }
+
+    /// <inheritdoc/>
+    public bool Only256mRegions { get; }
 
     #region Client Methods
 
@@ -635,6 +647,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         try
         {
             m_asyncPacketProcess.Stop();
+            m_mapNameLane.Stop();
 
             // Flush all of the packets out of the UDP server for this client
             m_udpServer?.Flush(m_udpClient);
@@ -1723,7 +1736,14 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         try
         {
             // Send LayerData in a spiral pattern. Fun!
-            SendLayerTopRight(0, 0, map.SizeX / Constants.TerrainPatchSize - 1, map.SizeY / Constants.TerrainPatchSize - 1);
+            int lastX = map.SizeX / Constants.TerrainPatchSize - 1;
+            int lastY = map.SizeY / Constants.TerrainPatchSize - 1;
+            if (Only256mRegions)
+            {
+                lastX = Math.Min(lastX, StandardLayerPatchesPerEdge - 1);
+                lastY = Math.Min(lastY, StandardLayerPatchesPerEdge - 1);
+            }
+            SendLayerTopRight(0, 0, lastX, lastY);
         }
         catch (Exception e)
         {
@@ -1789,6 +1809,29 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
     private const int END_OF_PATCHES = 97;
     private const int STRIDE = 264;
 
+    private const int StandardLayerPatchesPerEdge = (int)Constants.RegionSize / Constants.TerrainPatchSize;
+
+    /// <summary>The patch coordinate pairs of the list that lie in the south-west 256 m, in the same order.</summary>
+    private static int[] SouthWestPatchesOnly(int[] map)
+    {
+        List<int> kept = new(map.Length);
+        for (int i = 0; i + 1 < map.Length; i += 2)
+        {
+            if (map[i] >= 0 && map[i] < StandardLayerPatchesPerEdge && map[i + 1] >= 0 && map[i + 1] < StandardLayerPatchesPerEdge)
+            {
+                kept.Add(map[i]);
+                kept.Add(map[i + 1]);
+            }
+        }
+        return kept.ToArray();
+    }
+
+    /// <summary>Queues one finished land layer packet on the land throttle.</summary>
+    protected virtual void SendLandLayerBuffer(UDPPacketBuffer buf)
+    {
+        m_udpServer.SendUDPPacket(m_udpClient, buf, ThrottleOutPacketType.Land);
+    }
+
     public void SendLayerData(int[] map)
     {
         if(map is null)
@@ -1797,7 +1840,19 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         try
         {
             TerrainData terrData = m_scene.Heightmap.GetTerrainData();
-            byte landPacketType = (terrData.SizeX > Constants.RegionSize || terrData.SizeY > Constants.RegionSize) ?
+            bool largeRegion = terrData.SizeX > Constants.RegionSize || terrData.SizeY > Constants.RegionSize;
+
+            // A viewer that only takes 256 m regions has the standard land layer and no other: send it the patches
+            // of the south-west 256 m (0 to 15 on each axis) in that layer, and nothing else.
+            bool standardLayerOnly = Only256mRegions && largeRegion;
+            if (standardLayerOnly)
+            {
+                map = SouthWestPatchesOnly(map);
+                if (map.Length == 0)
+                    return;
+            }
+
+            byte landPacketType = (largeRegion && !standardLayerOnly) ?
                     (byte)TerrainPatch.LayerType.LandExtended : (byte)TerrainPatch.LayerType.Land;
 
             int numberPatchs = map.Length / 2;
@@ -1823,7 +1878,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             for (int i = 0; i < numberPatchs; i++)
             {
                 s = 2 * i;
-                OpenSimTerrainCompressor.CreatePatchFromTerrainData(bitpack, terrData, map[s], map[s + 1]);
+                OpenSimTerrainCompressor.CreatePatchFromTerrainData(bitpack, terrData, map[s], map[s + 1], standardLayerOnly);
                 if (bitpack.BytePos > 900 && i != numberPatchs - 1)
                 {
                     //finish this packet
@@ -1835,7 +1890,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
                     data[9] = (byte)(datasize >> 8);
 
                     buf.DataLength = bitpack.BytePos + 1;
-                    m_udpServer.SendUDPPacket(m_udpClient, buf, ThrottleOutPacketType.Land);
+                    SendLandLayerBuffer(buf);
 
                     // start another
                     buf = OpenSimUDPBase.GetNewUDPBuffer(m_udpClient.RemoteEndPoint);
@@ -1863,7 +1918,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             data[9] = (byte)(datasize >> 8);
 
             buf.DataLength = bitpack.BytePos + 1;
-            m_udpServer.SendUDPPacket(m_udpClient, buf, ThrottleOutPacketType.Land);
+            SendLandLayerBuffer(buf);
 
         }
         catch (Exception e)
@@ -2034,6 +2089,17 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             0xff, 0xff, 1, 155 // ID 411 (low frequency bigendian)
             };
 
+    /// <summary>
+    /// The throttle category of the replies to a viewer's map requests: the map layer, the map blocks (also the
+    /// answer to a region name search) and the map items. They are a few small packets that a user is waiting for.
+    /// The Land category holds the region's terrain, which a login queues in bulk at a rate the viewer usually keeps
+    /// low, so a reply queued there leaves only after all the terrain queued before it. Task is the category for
+    /// packets that fit none of the others, it is not filled by terrain, textures or assets, and the entity updates
+    /// queue on it only what its rate can send in 30 ms (see HandleQueueEmpty), so its queue stays short. The viewer's
+    /// throttle still applies. The three replies share one category so that they stay in the order they were queued.
+    /// </summary>
+    private const ThrottleOutPacketType MapReplyCategory = ThrottleOutPacketType.Task;
+
     public void SendMapItemReply(mapItemReply[] replies, uint mapitemtype, uint flags)
     {
         UDPPacketBuffer buf = OpenSimUDPBase.GetNewUDPBuffer(m_udpClient.RemoteEndPoint);
@@ -2089,7 +2155,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
 
                 buf.DataLength = lastpos;
                 // send it
-                m_udpServer.SendUDPPacket(m_udpClient, buf, ThrottleOutPacketType.Land);
+                m_udpServer.SendUDPPacket(m_udpClient, buf, MapReplyCategory);
 
                 buf = newbuf;
                 data = buf.Data;
@@ -2105,7 +2171,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             data[countpos] = (byte)count;
 
             buf.DataLength = pos;
-            m_udpServer.SendUDPPacket(m_udpClient, buf, ThrottleOutPacketType.Land);
+            m_udpServer.SendUDPPacket(m_udpClient, buf, MapReplyCategory);
         }
     }
 
@@ -2206,7 +2272,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
 
                 buf.DataLength = lastpos;
                 // send it
-                m_udpServer.SendUDPPacket(m_udpClient, buf, ThrottleOutPacketType.Land);
+                m_udpServer.SendUDPPacket(m_udpClient, buf, MapReplyCategory);
 
                 buf = newbuf;
                 data = buf.Data;
@@ -2235,7 +2301,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
                 data[pos++] = 0;
 
             buf.DataLength = pos;
-            m_udpServer.SendUDPPacket(m_udpClient, buf, ThrottleOutPacketType.Land);
+            m_udpServer.SendUDPPacket(m_udpClient, buf, MapReplyCategory);
         }
     }
 
@@ -2625,68 +2691,56 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         // Fudge this value. It's only needed to make the CRC anyway
         const uint FULL_MASK_PERMISSIONS = (uint)0x7fffffff;
 
-        FetchInventoryReplyPacket inventoryReply = (FetchInventoryReplyPacket)PacketPool.Instance.GetPacket(PacketType.FetchInventoryReply);
-        inventoryReply.AgentData.AgentID = m_agentId;
+        // a reply holds at most 10 items; a request for more is answered with as many replies as it takes, each
+        // sized to the items it carries (a packet with an unfilled slot cannot be serialized)
+        const int MAX_ITEMS_PER_PACKET = 10;
 
-        int total = items.Length;
-        int count = 0;
-        for(int i = 0; i < items.Length; ++i)
+        for (int start = 0; start < items.Length; start += MAX_ITEMS_PER_PACKET)
         {
-            if(count == 0)
+            int inPacket = Math.Min(MAX_ITEMS_PER_PACKET, items.Length - start);
+
+            FetchInventoryReplyPacket inventoryReply = (FetchInventoryReplyPacket)PacketPool.Instance.GetPacket(PacketType.FetchInventoryReply);
+            inventoryReply.AgentData.AgentID = m_agentId;
+            inventoryReply.InventoryData = new FetchInventoryReplyPacket.InventoryDataBlock[inPacket];
+
+            for (int count = 0; count < inPacket; ++count)
             {
-                if(total < 10)
-                {
-                    inventoryReply.InventoryData = new FetchInventoryReplyPacket.InventoryDataBlock[total];
-                    total = 0;
-                }
-                else
-                {
-                    inventoryReply.InventoryData = new FetchInventoryReplyPacket.InventoryDataBlock[10];
-                    total -= 10;
-                }
+                InventoryItemBase item = items[start + count];
+                FetchInventoryReplyPacket.InventoryDataBlock data = new();
+                inventoryReply.InventoryData[count] = data;
+
+                data.ItemID = item.ID;
+                data.AssetID = item.AssetID;
+                data.CreatorID = item.CreatorIdAsUuid;
+                data.BaseMask = item.BasePermissions;
+                data.CreationDate = item.CreationDate;
+
+                data.Description = Util.StringToBytes256(item.Description);
+                data.EveryoneMask = item.EveryOnePermissions;
+                data.FolderID = item.Folder;
+                data.InvType = (sbyte)item.InvType;
+                data.Name = Util.StringToBytes256(item.Name);
+                data.NextOwnerMask = item.NextPermissions;
+                data.OwnerID = item.Owner;
+                data.OwnerMask = item.CurrentPermissions;
+                data.Type = (sbyte)item.AssetType;
+
+                data.GroupID = item.GroupID;
+                data.GroupOwned = item.GroupOwned;
+                data.GroupMask = item.GroupPermissions;
+                data.Flags = ScriptCompileTargets.ForViewer(item.Flags);
+                data.SalePrice = item.SalePrice;
+                data.SaleType = item.SaleType;
+
+                data.CRC = Helpers.InventoryCRC(
+                        1000, 0, data.InvType, data.Type, data.AssetID,
+                        data.GroupID, 100, data.OwnerID, data.CreatorID,
+                        data.ItemID, data.FolderID, FULL_MASK_PERMISSIONS, 1, FULL_MASK_PERMISSIONS, FULL_MASK_PERMISSIONS,
+                        FULL_MASK_PERMISSIONS);
             }
 
-            inventoryReply.InventoryData[count] = new FetchInventoryReplyPacket.InventoryDataBlock();
-            FetchInventoryReplyPacket.InventoryDataBlock data = inventoryReply.InventoryData[count];
-
-            data.ItemID = items[i].ID;
-            data.AssetID = items[i].AssetID;
-            data.CreatorID = items[i].CreatorIdAsUuid;
-            data.BaseMask = items[i].BasePermissions;
-            data.CreationDate = items[i].CreationDate;
-
-            data.Description = Util.StringToBytes256(items[i].Description);
-            data.EveryoneMask = items[i].EveryOnePermissions;
-            data.FolderID = items[i].Folder;
-            data.InvType = (sbyte)items[i].InvType;
-            data.Name = Util.StringToBytes256(items[i].Name);
-            data.NextOwnerMask = items[i].NextPermissions;
-            data.OwnerID = items[i].Owner;
-            data.OwnerMask = items[i].CurrentPermissions;
-            data.Type = (sbyte)items[i].AssetType;
-
-            data.GroupID = items[i].GroupID;
-            data.GroupOwned = items[i].GroupOwned;
-            data.GroupMask = items[i].GroupPermissions;
-            data.Flags = ScriptCompileTargets.ForViewer(items[i].Flags);
-            data.SalePrice = items[i].SalePrice;
-            data.SaleType = items[i].SaleType;
-
-            data.CRC = Helpers.InventoryCRC(
-                    1000, 0, data.InvType, data.Type, data.AssetID,
-                    data.GroupID, 100, data.OwnerID, data.CreatorID,
-                    data.ItemID, data.FolderID, FULL_MASK_PERMISSIONS, 1, FULL_MASK_PERMISSIONS, FULL_MASK_PERMISSIONS,
-                    FULL_MASK_PERMISSIONS);
-
-            ++count;
-            if(count == 10 || total == 0)
-            {
-                inventoryReply.Header.Zerocoded = true;
-                OutPacket(inventoryReply, ThrottleOutPacketType.Asset);
-                if(total == 0)
-                    break;
-                count = 0;
-            }
+            inventoryReply.Header.Zerocoded = true;
+            OutPacket(inventoryReply, ThrottleOutPacketType.Asset);
         }
     }
 
@@ -8617,7 +8671,8 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
 
         { PacketType.MapLayerRequest, new(HandleMapLayerRequest, true) },
         { PacketType.MapBlockRequest, new(HandleMapBlockRequest, true) },
-        { PacketType.MapNameRequest, new(HandleMapNameRequest, true) },
+        // Not on the client's queue: see HandleMapNameRequest.
+        { PacketType.MapNameRequest, new(HandleMapNameRequest, false) },
 
         { PacketType.TeleportLandmarkRequest, new(HandleTeleportLandmarkRequest, true) },
         { PacketType.TeleportCancel, new(HandleTeleportCancel, true) },
@@ -10704,7 +10759,15 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         string mapName = map.NameData.Name.Length == 0 ? c.m_scene.RegionInfo.RegionName :
             Util.UTF8.GetString(map.NameData.Name, 0, map.NameData.Name.Length - 1);
 
-        c.OnMapNameRequest?.Invoke(c, mapName, map.AgentData.Flags);
+        uint flags = map.AgentData.Flags;
+
+        // The search asks the grid service, which can take a while, and it does not depend on anything else the client
+        // has asked for. The client's queue runs its requests one after another, so on it a search waits behind
+        // every request of the client's login that is still running (the arrival in the region takes seconds);
+        // it runs on a worker thread of its own instead. A client that asks again before the answer comes (typing
+        // in the search box sends a request per change) must not start a grid search per request, so the client's
+        // searches run one at a time, in order, with at most a few waiting.
+        c.m_mapNameLane.Submit(() => c.OnMapNameRequest?.Invoke(c, mapName, flags));
     }
 
     private static void HandleTeleportLandmarkRequest(LLClientView c, Packet Pack)
@@ -12807,7 +12870,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             ImageID = new UUID("00000000-0000-1111-9999-000000000006")
         };
         mapReply.Header.Zerocoded = true;
-        OutPacket(mapReply, ThrottleOutPacketType.Land);
+        OutPacket(mapReply, MapReplyCategory);
     }
 
     public static void RequestMapBlocksX(int minX, int minY, int maxX, int maxY)

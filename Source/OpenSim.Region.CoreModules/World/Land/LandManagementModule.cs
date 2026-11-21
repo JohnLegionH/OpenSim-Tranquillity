@@ -687,10 +687,20 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
         // Todo: update the actual AccessList enum!
 
         if ((flags & (uint)0x1Bu) == 0)
+        {
+            m_log.LogDebug(
+                "[LAND MANAGEMENT MODULE]: ParcelAccessListUpdate from {AgentId} for local land {LandLocalId} ignored: flags 0x{AccessFlags:X} are neither access nor ban",
+                agentID, landLocalID, flags);
             return; // we only have access and ban
+        }
 
         if(m_scene.RegionInfo.EstateSettings.TaxFree)
+        {
+            m_log.LogDebug(
+                "[LAND MANAGEMENT MODULE]: ParcelAccessListUpdate from {AgentId} for local land {LandLocalId} ignored: estate is TaxFree",
+                agentID, landLocalID);
             return;
+        }
 
         ILandObject land;
         lock (m_landList)
@@ -711,16 +721,37 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
                 requiredPowers |= GroupPowers.LandManageBanned;
 
             if (requiredPowers == GroupPowers.None)
+            {
+                m_log.LogDebug(
+                    "[LAND MANAGEMENT MODULE]: ParcelAccessListUpdate from {AgentId} for local land {LandLocalId} ignored: flags 0x{AccessFlags:X} map to no access/ban manage power",
+                    agentID, landLocalID, flags);
+                remote_client.SendAgentAlertMessage(
+                    "Parcel access update ignored: no access or ban change was specified.", false);
                 return;
+            }
 
             if (m_scene.Permissions.CanEditParcelProperties(agentID,
                     land, requiredPowers, false))
             {
                 land.UpdateAccessList(flags, transactionID, entries);
+                m_log.LogDebug(
+                    "[LAND MANAGEMENT MODULE]: ParcelAccessListUpdate from {AgentId} applied to local land {LandLocalId} (\"{LandName}\"): flags 0x{AccessFlags:X}, {EntryCount} entries",
+                    agentID, landLocalID, land.LandData.Name, flags, entries.Count);
 
-                // UpdateAccessList changes the parcel's lists and flags in memory only; store it, or the
-                // change is lost on restart.
+                // Persist immediately. UpdateAccessList mutates the in-memory access/ban list
+                // and its UseAccessList/UseBanList flags but does not itself store; without
+                // this the change is lost on restart, or on any crash before an unrelated
+                // parcel write happens to flush it. UpdateLandObject fires
+                // TriggerLandObjectUpdated -> TriggerLandObjectAdded -> StoreLandObject.
                 UpdateLandObject(land.LandData.LocalID, land.LandData);
+            }
+            else
+            {
+                m_log.LogDebug(
+                    "[LAND MANAGEMENT MODULE]: ParcelAccessListUpdate from {AgentId} for local land {LandLocalId} denied: lacks required powers {RequiredPowers}",
+                    agentID, landLocalID, requiredPowers);
+                remote_client.SendAgentAlertMessage(
+                    "You do not have permission to change the access or ban list for this parcel.", false);
             }
         }
         else
@@ -1441,11 +1472,20 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
         int sequenceID = 0;
 
         int sx = m_regionSizeX / Constants.LandUnit;
+        int sy = m_regionSizeY / Constants.LandUnit;
+        if (remote_client.Only256mRegions)
+        {
+            // The viewer keeps the overlay of a 256 m region: 64 x 64 cells in 4 packets, and copies each packet in at
+            // sequence id x 1024 without a range check. Send it the south-west 256 m, laid out as such a region's.
+            int legacyCells = (int)Constants.RegionSize / Constants.LandUnit;
+            sx = Math.Min(sx, legacyCells);
+            sy = Math.Min(sy, legacyCells);
+        }
         byte curByte;
         byte tmpByte;
 
         // Layer data is in LandUnit (4m) chunks
-        for (int y = 0; y < m_regionSizeY / Constants.LandUnit; ++y)
+        for (int y = 0; y < sy; ++y)
         {
             for (int x = 0; x < sx;)
             {

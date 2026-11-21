@@ -472,6 +472,12 @@ public class LocalConsole : CommandConsole
 
     public override string ReadLine(string p, bool isCommand, bool e)
     {
+        // With the input redirected (a server started detached, or fed from a file or a pipe) there are no keys to
+        // read and the cursor calls below fail. Read whole lines as the basic console does, which also notes the
+        // end of the input once and reads nothing more.
+        if (System.Console.IsInputRedirected)
+            return base.ReadLine(p, isCommand, e);
+
         m_cursorXPosition = 0;
         prompt = p;
         m_echo = e;

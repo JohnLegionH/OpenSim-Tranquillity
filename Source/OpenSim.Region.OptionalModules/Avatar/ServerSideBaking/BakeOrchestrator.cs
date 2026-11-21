@@ -287,7 +287,33 @@ public static class BakeOrchestrator
         return exists;
     }
 
-    // ------------------------------------------------------------------ step 6: store + faces
+    /// <summary>
+    /// For an NPC: a channel with no usable bake of its own is reused when another NPC's bake for the same channel and
+    /// input hash is stored and still resolves. The NPCs of one outfit then share their bakes instead of compositing
+    /// and storing the same pixels again.
+    /// </summary>
+    private static ReuseDecision AddSharedBakes(ReuseDecision reuse, NpcBakeShare share, IAssetService assets)
+    {
+        var found = new Dictionary<BakeChannel, UUID>();
+        foreach (var ch in reuse.ToBake)
+            if (share.TryFind(ch, reuse.Hashes[ch], out var id)) found[ch] = id;
+        if (found.Count == 0) return reuse;
+
+        var channels = found.Keys.ToList();
+        var exists = Exists(assets, channels.Select(ch => found[ch].ToString()).ToArray());
+        var reused = new Dictionary<BakeChannel, StoredBake>(reuse.Reused);
+        var notes = new List<string>(reuse.Notes);
+        for (var i = 0; i < channels.Count; i++)
+        {
+            if (!exists[i]) { notes.Add($"{channels[i]}: shared bake {found[channels[i]]} has vanished from the asset service"); continue; }
+            reused[channels[i]] = new StoredBake(found[channels[i]], reuse.Hashes[channels[i]]);
+            notes.Add($"{channels[i]}: reused the bake another NPC stored for the same inputs");
+        }
+        var toBake = reuse.ToBake.Where(ch => !reused.ContainsKey(ch)).ToList();
+        return new ReuseDecision(reused, toBake, reuse.Hashes, notes);
+    }
+
+    // ------------------------------------------------------------------ step 6: store + faces + supersede
 
     /// <summary>
     /// Store each bake as a texture asset (ADR-004 marker: name <c>bake:&lt;agent&gt;:&lt;channel&gt;</c>, description = input
@@ -311,14 +337,17 @@ public static class BakeOrchestrator
     /// be named outside this avatar's TextureEntry: the OSSL save-appearance functions write every baked face into a
     /// notecard (<c>AvatarAppearance.PackForNotecard</c>) and an NPC created from it uses those ids. Stock OpenSim
     /// never deletes bakes either. The bake index moves to the new bake, so the appearance service serves only the
-    /// current one; removing old bake assets is left to a separate tool. <paramref name="superseded"/> is kept for
-    /// callers and stays empty.
+    /// current one; removing old bake assets is left to a separate tool. <paramref name="superseded"/> stays empty
+    /// for an avatar. The exception is an NPC run (<paramref name="npcShare"/> set): NPCs of one outfit share their
+    /// bakes, and a bake this module marked as an NPC bake is deleted once no NPC holds it; those ids are listed in
+    /// <paramref name="superseded"/>.
     /// </para>
     /// </summary>
     public static IReadOnlyList<ChannelOutcome> StoreAndApply(IReadOnlyList<BakeResult> results, ResolvedInputs inputs, UUID agentId,
         IAssetService assets, AvatarAppearance appearance,
         IReadOnlyDictionary<BakeChannel, StoredBake> reused = null, IReadOnlyDictionary<BakeChannel, StoredBake> previous = null,
-        List<UUID> superseded = null, BakeTimings timings = null, IReadOnlyCollection<BakeChannel> needed = null)
+        List<UUID> superseded = null, BakeTimings timings = null, IReadOnlyCollection<BakeChannel> needed = null,
+        NpcBakeShare npcShare = null)
     {
         ArgumentNullException.ThrowIfNull(results);
         ArgumentNullException.ThrowIfNull(assets);
@@ -334,6 +363,8 @@ public static class BakeOrchestrator
             {
                 appearance.Texture.CreateFace((uint)FaceOf(ch)).TextureID = keep.AssetId;
                 outcomes.Add(new ChannelOutcome(ch, ChannelStatus.Reused, keep.AssetId, keep.Hash, "inputs unchanged", empty));
+                if (npcShare is not null)
+                    DeleteSuperseded(assets, appearance, npcShare.Hold(agentId, ch, keep.Hash, keep.AssetId), keep.AssetId, superseded, timings, npcBakesOnly: true);
                 continue;
             }
             byChannel.TryGetValue(ch, out var result);
@@ -378,7 +409,9 @@ public static class BakeOrchestrator
             var asset = new AssetBase(UUID.Random(), AssetNameFor(agentId, ch), (sbyte)AssetType.Texture, agentId.ToString())
             {
                 Data = result.J2kBytes,
-                Description = result.InputHash,
+                // An NPC bake carries a mark after its hash, so the cleanup can tell it from an avatar's bake and
+                // from a texture a person made (NpcBakeMark).
+                Description = npcShare is not null ? NpcBakeMark.Describe(result.InputHash) : result.InputHash,
                 Temporary = false,
                 Local = false,
             };
@@ -393,8 +426,40 @@ public static class BakeOrchestrator
             }
             appearance.Texture.CreateFace((uint)FaceOf(ch)).TextureID = id;
             outcomes.Add(new ChannelOutcome(ch, ChannelStatus.Baked, id, result.InputHash, "", result.Fidelity));
+            if (npcShare is not null)
+            {
+                // An NPC's bakes may be shared with other NPCs: the old asset goes only when nobody holds it.
+                npcShare.NoteStored(ch, result.InputHash, id);
+                DeleteSuperseded(assets, appearance, npcShare.Hold(agentId, ch, result.InputHash, id), id, superseded, timings, npcBakesOnly: true);
+            }
         }
         return outcomes;
+    }
+
+    /// <summary>
+    /// Delete an NPC bake that no NPC holds any more. Only an asset this module marked as an NPC bake is deleted,
+    /// and never one that a baked face of this appearance still points at. An avatar's own previous bakes are kept
+    /// (see <see cref="StoreAndApply"/>).
+    /// </summary>
+    private static void DeleteSuperseded(IAssetService assets, AvatarAppearance appearance, UUID oldId, UUID newId,
+        List<UUID> superseded, BakeTimings timings, bool npcBakesOnly = false)
+    {
+        if (oldId.IsZero() || oldId == newId) return;
+        foreach (var other in AllChannels)
+        {
+            var face = appearance.Texture.FaceTextures[FaceOf(other)];
+            if (face is not null && face.TextureID == oldId) return;
+        }
+        try
+        {
+            // An NPC's old bake is deleted only if it is one this module marked as an NPC bake.
+            if (npcBakesOnly && !NpcBakeMark.IsMarked(assets.GetMetadata(oldId.ToString()))) return;
+            var t0 = BakeTimings.Now;
+            var gone = assets.Delete(oldId.ToString());
+            timings?.AddAssetStore(t0, deleted: true);
+            if (gone) superseded?.Add(oldId);
+        }
+        catch (Exception) { }
     }
 
     // ------------------------------------------------------------------ the whole scene-free run
@@ -412,7 +477,7 @@ public static class BakeOrchestrator
     /// <param name="cofVersion">The Current Outfit folder's version at bake time; stored, not compared (the hash is the stronger test).</param>
     public static BakeOutcome Run(UUID agentId, BakeReason reason, AvatarWearable[] wearables, byte[] visualParams, AvatarAppearance appearance,
         IAssetService assets, IAvatarService avatars, IBakeBackend backend, AvatarBakeCompositor compositor, int bakeSize, int cofVersion,
-        CancellationToken ct)
+        CancellationToken ct, NpcBakeShare npcShare = null)
     {
         var sw = Stopwatch.StartNew();
         var timings = new BakeTimings();
@@ -425,6 +490,7 @@ public static class BakeOrchestrator
         var hashRequest = new BakeRequest(w.Wearables, w.VisualParams, NoTextures, bakeSize);
         var index = BakeIndex.Read(avatars, agentId);
         var reuse = DecideReuse(needed, hashRequest, index, assets, compositor, bakeSize);
+        if (npcShare is not null) reuse = AddSharedBakes(reuse, npcShare, assets);
         ct.ThrowIfCancellationRequested();
 
         var (textures, texFailures) = ResolveTextures(w.Parsed, reuse.ToBake, assets, compositor, timings);
@@ -459,7 +525,7 @@ public static class BakeOrchestrator
         // channels it paints is unknown without it (an extra channel is switched on by any wearable that carries
         // its texture slot). So a run with such a failure clears nothing; the next clean bake does.
         var outcomes = StoreAndApply(results, inputs, agentId, assets, appearance, reuse.Reused, index.Bakes, superseded, timings,
-            w.Failures.Count == 0 ? needed : null);
+            w.Failures.Count == 0 ? needed : null, npcShare);
 
         // Channels the outfit stopped using: drop their index entries so the appearance service stops serving the
         // old bake. If the removal fails the entry stays, and the next bake finds it and tries again. The old bake
@@ -483,6 +549,7 @@ public static class BakeOrchestrator
             IndexWritten = indexWritten,
             Notes = notes,
             Timings = timings,
+            Worn = w.Parsed,
         };
     }
 }

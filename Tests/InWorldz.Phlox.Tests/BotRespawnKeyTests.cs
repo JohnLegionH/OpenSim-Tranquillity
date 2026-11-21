@@ -71,6 +71,7 @@ public class BotRespawnKeyTests
         bots.Initialise(h.Config);
         bots.AddRegion(h.Scene);
         bots.RegionLoaded(h.Scene);
+        h.Scene.EventManager.TriggerPrimsLoaded(h.Scene);       // the simulator loads the objects after the modules
         return bots;
     }
 

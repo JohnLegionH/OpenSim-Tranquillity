@@ -1,0 +1,14 @@
+builtins.txt in this folder is a copy of the SLua runtime's builtins.txt: byte for byte as a Windows checkout of the runtime writes it (CRLF line endings); the file stored in the runtime's repository has LF line endings and is otherwise identical.
+The runtime is pinned by the host project (ngc-host/LL-RUNTIME-PIN); the file's content is identical at the pinned commit, at the earlier pin below and at the head of the runtime's ngc branch (checked with the line endings normalised).
+
+pinned runtime commit: 9dae3285f6
+earlier pin, same builtins.txt content: 4116d7f6a3
+runtime branch head checked: fef0cc6a77c34622eea9cd27b882d7dac1796e69
+
+To refresh after the pin moves: copy the runtime's builtins.txt over this file, run tools/slua-events/generate-event-signatures.py on it
+to rewrite Source/SLua.ScriptEngine/EventSignatures.cs, and update the commit above. With SLUA_BUILTINS_PATH set,
+BuiltinsCopyTests checks the copy against the runtime's file.
+
+lsl-definition-marks.txt in this folder is written by tools/slua-bindings/extract-marks.py from secondlife/lsl-definitions
+lsl_definitions.yaml at commit f1906c95d53d8d950fde97064959ab6c6029f1c2 (MIT, Copyright (c) 2025 Linden Research, Inc.): the
+functions whose arguments or results the definitions mark as positions (index-semantics) or truth values (bool-semantics).

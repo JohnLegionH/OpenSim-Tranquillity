@@ -161,6 +161,8 @@ In the simulator, `[Appearance]` (defaults in `RegionServerDefaults.ini`):
 | `ServerSideBaking` | `false` | Turns SSB on for every region of this simulator. |
 | `BakeSize` | `1024` | Edge size of each bake in pixels: 512, 1024 or 2048. Any other value logs a warning and uses 1024. Changing it invalidates every stored bake, because the size is part of the hash. |
 | `BakeQuality` | `0.85` | JPEG 2000 quality, clamped to 0.1–1.0. |
+| `NpcBakeCleanup` | `true` | When an NPC is removed, or its region shuts down, delete the bakes stored for it that no other NPC uses. Only assets stored as NPC bakes are deleted. `false` keeps them. |
+| `NpcBakeCleanupDryRun` | `false` | Log the bakes the cleanup would delete, and delete nothing. |
 
 A single region opts out of a simulator-wide `true` in its own section:
 

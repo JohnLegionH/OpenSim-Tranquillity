@@ -686,6 +686,12 @@ public interface IClientAPI
 
     ViewerFlags ViewerFlags { get;}
 
+    /// <summary>
+    /// True when this viewer only takes 256 m regions (see <see cref="LegacyRegionSizeViewers"/>), so a larger region
+    /// must be presented to it as its south-west 256 m.
+    /// </summary>
+    bool Only256mRegions => false;
+
     Dictionary<UUID, ulong> GetGroupPowers();
 
     void SetGroupPowers(Dictionary<UUID, ulong> powers);

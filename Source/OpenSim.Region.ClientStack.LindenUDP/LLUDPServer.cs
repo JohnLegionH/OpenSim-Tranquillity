@@ -359,6 +359,30 @@ public class LLUDPServer : OpenSimUDPBase
     public int IncomingOrphanedPacketCount { get; protected set; }
 
     public bool SupportViewerObjectsCache = true;
+
+    /// <summary>
+    /// Channel prefixes of the viewers that only take 256 m regions (see <see cref="LegacyRegionSizeViewers"/>).
+    /// Set from [ClientStack.LindenUDP] LegacyRegionSizeViewers; a region's own setting of that name replaces it.
+    /// </summary>
+    private string[] m_regionLegacyChannels;
+    private string[] m_legacyRegionSizeChannels = LegacyRegionSizeViewers.ParseChannels(LegacyRegionSizeViewers.DefaultChannels);
+
+    /// <summary>
+    /// True when a viewer that logged in on this channel only takes 256 m regions, so a larger region must be
+    /// presented to it as its south-west 256 m.
+    /// </summary>
+    public bool IsLegacyRegionSizeChannel(string channel)
+    {
+        if (m_regionLegacyChannels is null)
+        {
+            // read once: RegionInfo.GetSetting logs every miss
+            string regionSetting = Scene?.RegionInfo?.GetSetting("LegacyRegionSizeViewers");
+            m_regionLegacyChannels = regionSetting is null
+                ? m_legacyRegionSizeChannels
+                : LegacyRegionSizeViewers.ParseChannels(regionSetting);
+        }
+        return LegacyRegionSizeViewers.IsLegacyChannel(m_regionLegacyChannels, channel);
+    }
     /// <summary>
     /// Run queue empty processing within a single persistent thread.
     /// </summary>
@@ -422,6 +446,8 @@ public class LLUDPServer : OpenSimUDPBase
             m_ackTimeout = 1000 * config.GetInt("AckTimeout", 60);
             m_pausedAckTimeout = 1000 * config.GetInt("PausedAckTimeout", 300);
             SupportViewerObjectsCache = config.GetBoolean("SupportViewerObjectsCache", SupportViewerObjectsCache);
+            m_legacyRegionSizeChannels = LegacyRegionSizeViewers.ParseChannels(
+                config.GetString("LegacyRegionSizeViewers", LegacyRegionSizeViewers.DefaultChannels));
         }
         else
         {
@@ -1776,10 +1802,29 @@ public class LLUDPServer : OpenSimUDPBase
                         client.SceneAgent.ControllingClient.SecureSessionId.Equals(sessionInfo.LoginInfo.SecureSession))
                     return client;
 
-                // the viewer opened the region again from another endpoint: a child agent keeps its circuit and caps
-                // for the new connection; anything else is closed as before
+                // The viewer opened the region again from another endpoint: a child agent keeps its circuit and caps
+                // for the new connection.
                 if (client.CircuitCode != circuitCode || !Scene.ReplaceChildConnection(agentID, circuitCode))
+                {
+                    // A repeated UseCircuitCode for the circuit and session this client already serves, sent from
+                    // another end point (the viewer resent it from a new socket). Closing the client here would also
+                    // remove the circuit data that adding the replacement needs, and adding it would then fail, so the
+                    // agent would be left without a presence in this region. Keep the client we have, as OpenSim does
+                    // ("Ignoring a repeated UseCircuitCode").
+                    if (client.CircuitCode == circuitCode && client.SessionId == sessionID)
+                    {
+                        m_log.LogDebug(
+                            $"[LLUDPSERVER]: Ignoring a repeated UseCircuitCode ({circuitCode}) for {client.Name} in {Scene.Name} from {remoteEndPoint}, the client is at {client.RemoteEndPoint}");
+                        return null;
+                    }
+
+                    // Another session for the same agent replaces the client. Closing the agent also removes the
+                    // circuit data the new session was authorised with, which the replacement needs, so put it back.
+                    AgentCircuitData circuit = m_circuitManager.GetAgentCircuitData(circuitCode);
                     Scene.CloseAgent(agentID, true);
+                    if (circuit is not null && m_circuitManager.GetAgentCircuitData(circuitCode) is null)
+                        m_circuitManager.AddNewCircuit(circuitCode, circuit);
+                }
             }
 
             LLUDPClient udpClient = new(this, ThrottleRates, Throttle, circuitCode, agentID, remoteEndPoint, m_defaultRTO, m_maxRTO);

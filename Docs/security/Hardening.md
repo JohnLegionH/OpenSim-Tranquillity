@@ -14,7 +14,7 @@ For the active region control-plane checks, configure trusted peer addresses in 
 
 ```ini
 [Network]
-ControlPlaneTrustedHosts = 10.20.0.10, 10.20.0.21, 10.20.0.22
+ControlPlaneTrustedHosts = 192.0.2.10, 192.0.2.21, 192.0.2.22
 ```
 
 The region control-plane endpoints read trusted hosts from both `[Network]` and `[Security]`. An entry may be an address (`10.20.0.10`, `fd00::1`), an address with a port (`10.20.0.10:8003`, `[fd00::1]:8003`), a hostname with or without a port (`robust`, `robust:8003`), or a URL (`http://robust:8003`); the local `[Network] hostname` is read the same way. Address ranges are not supported. A hostname is looked up when the service starts, and again when a call from an untrusted address arrives, at most once a minute: a host that was not up yet at startup, or that moved, is trusted without a restart, and a lookup that fails keeps the addresses last found. An entry that names no host, or whose name cannot be looked up, is logged as a warning and trusts nothing until it is found; the startup line `Trusted control-plane addresses:` lists every address in use. The service checks the actual TCP peer address and does not use `X-Forwarded-For`. `/assets` and `/xinventory` are currently excluded from control-plane checks.

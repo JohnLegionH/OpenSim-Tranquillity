@@ -70,9 +70,16 @@ public interface IEstateModule
     /// Returns whether the transfer ID is being used for a terrain transfer.
     /// </summary>
     bool IsTerrainXfer(ulong xferID);
+    /// <summary>
+    /// Apply an EstateChangeInfo CAP save. The booleans are NULLABLE and must stay so:
+    /// the viewer does not carry every field in every save, and the server owns these
+    /// values — absent (null) means "leave unchanged", which must remain distinguishable
+    /// from a carried false. Making these plain bools reintroduces the silent-clear
+    /// defect family recorded in Docs/KnownDefects.md (the TaxFree flip / UseBanList clear).
+    /// </summary>
     bool handleEstateChangeInfoCap(string estateName, UUID invoice,
-        bool externallyVisible, bool allowDirectTeleport, bool denyAnonymous, bool denyAgeUnverified,
-        bool alloVoiceChat, bool overridePublicAccess, bool allowEnvironmentOverride);
+        bool? externallyVisible, bool? allowDirectTeleport, bool? denyAnonymous, bool? denyAgeUnverified,
+        bool? alloVoiceChat, bool? overridePublicAccess, bool? allowEnvironmentOverride);
     void HandleRegionInfoRequest(IClientAPI remote_client);
     bool SetRegionInfobyCap(OSDMap map);
 }

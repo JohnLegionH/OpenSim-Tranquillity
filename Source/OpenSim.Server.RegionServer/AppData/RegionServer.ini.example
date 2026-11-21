@@ -98,6 +98,14 @@
     ;; 0 keeps such a login until the region restarts, and the user online until their next login. (default is 120)
     ; LoginConnectWaitSeconds = 120
 
+    ;# {CrossingChildPresenceWaitSeconds} {} {Seconds a region waits for the viewer of an avatar crossing into it} {}
+    ;; A shorter wait for an avatar crossing into this region, whose source region holds the avatar until the
+    ;; wait ends. A viewer is told about a neighbouring region before it reaches the border and connects then,
+    ;; so a crossing needs only the time for a connection already on its way. When this is not set, a crossing
+    ;; waits as long as ChildPresenceWaitSeconds. A crossing never waits longer than ChildPresenceWaitSeconds,
+    ;; and a teleport always uses ChildPresenceWaitSeconds.
+    ; CrossingChildPresenceWaitSeconds = 3
+
     ;# {ConsolePrompt} {} {ConsolePrompt} {} "Region (\R) "
     ;; Console prompt
     ;; Certain special characters can be used to customize the prompt
