@@ -38,6 +38,12 @@ public static class WindVolumeRules
     /// <summary>A float, seconds. Required.</summary>
     public const int WV_LIFETIME = 6;
 
+    /// <summary>
+    /// A vector, metres per second: how fast the volume itself moves. Without it, zero (the volume stays where it was
+    /// made). Not the wind: that is <see cref="WV_VELOCITY"/>.
+    /// </summary>
+    public const int WV_DRIFT = 7;
+
     public const int WV_SPHERE = (int)WindVolumeShape.Sphere;
     public const int WV_CYLINDER = (int)WindVolumeShape.Cylinder;
 
@@ -55,6 +61,7 @@ public static class WindVolumeRules
 
         int shape = WV_SPHERE;
         Vector3? center = null, velocity = null;
+        Vector3 drift = Vector3.Zero;
         float? radius = null, height = null, lifetime = null;
         float falloff = DefaultFalloffStart;
 
@@ -91,6 +98,10 @@ public static class WindVolumeRules
                     if (!TryFloat(value, out float t)) return WindVolumeError.InvalidParameter;
                     lifetime = t;
                     break;
+                case WV_DRIFT:
+                    if (value is not Vector3 d) return WindVolumeError.InvalidParameter;
+                    drift = d;
+                    break;
                 default:
                     return WindVolumeError.InvalidParameter;
             }
@@ -108,6 +119,7 @@ public static class WindVolumeRules
             FalloffStart = falloff,
             Velocity = velocity.Value,
             LifetimeSeconds = lifetime.Value,
+            Drift = drift,
         };
         return WindVolumeError.Ok;
     }

@@ -5,7 +5,9 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+using Microsoft.Extensions.Logging;
 using OpenMetaverse;
+using OpenSim.Framework;
 using OpenSim.Region.Framework.Interfaces;
 
 namespace OpenSim.Region.CoreModules.World.Wind;
@@ -16,19 +18,47 @@ namespace OpenSim.Region.CoreModules.World.Wind;
 /// Writers (create, remove, prune) take a lock and publish a new immutable array of volumes. Readers (sample, list,
 /// count) read the current array with a single volatile read and never take the lock, so a sampler never waits for a
 /// writer, and never sees a half-made volume. Expiry is decided when a volume is read, so a volume whose lifetime
-/// has passed stops counting at once, before anything frees it.
+/// has passed stops counting at once, before anything frees it. A drifting volume's centre is worked out from the
+/// time of each read (WindVolume.CenterAt), so motion needs no writer either.
+///
+/// Each creating object may make only so many create and remove calls in any 60 seconds
+/// (WindVolumeLimits.CreateThrottlePerMinute); the record of its recent calls is kept under the write lock.
 /// </summary>
 public sealed class WindVolumeStore : IWindVolumeStore
 {
+    private static readonly ILogger m_log = LoggerProvider.CreateLogger(typeof(WindVolumeStore));
     private static readonly WindVolume[] None = Array.Empty<WindVolume>();
+
+    /// <summary>The window of the create and remove throttle, in milliseconds.</summary>
+    public const long ThrottleWindowMs = 60_000;
 
     private readonly Func<long> m_clockMs;
     private readonly object m_writeLock = new();
     private WindVolume[] m_snapshot = None;
     private int m_lastId;
 
+    // The times of each creating object's counted calls in the last window, oldest first; under m_writeLock.
+    private readonly Dictionary<UUID, CallWindow> m_calls = new();
+
+    private sealed class CallWindow
+    {
+        public readonly Queue<long> Times = new();
+        public bool Logged;
+    }
+
+    private enum CallResult { Allowed, Throttled, ThrottledFirst }
+
     public bool Enabled { get; }
     public WindVolumeLimits Limits { get; }
+
+    /// <summary>
+    /// The region's size in metres (X and Y), which bounds where a drifting volume may go. The wind module sets it when
+    /// it is added to a region, before any script can create a volume; 256 by 256 until then.
+    /// </summary>
+    public Vector2 RegionSize { get; set; } = new Vector2(256f, 256f);
+
+    /// <summary>The region's name, for the log. The wind module sets it with <see cref="RegionSize"/>.</summary>
+    public string RegionName { get; set; } = "";
 
     /// <param name="enabled">False makes a store that accepts nothing.</param>
     /// <param name="limits">The caps; defaults when null.</param>
@@ -56,49 +86,85 @@ public sealed class WindVolumeStore : IWindVolumeStore
     {
         if (!Enabled) return WindVolumeError.Disabled;
 
-        int bad = Validate(spec);
-        if (bad != WindVolumeError.Ok) return bad;
-
+        WindVolume made = null;
+        CallResult call = CallResult.Allowed;
+        int result;
         lock (m_writeLock)
         {
             long now = m_clockMs();
-            WindVolume[] live = Live(m_snapshot, now);
-
-            if (live.Length >= Limits.MaxVolumesRegion) return WindVolumeError.RegionFull;
-            if (!creatorObject.IsZero() && CountBy(live, creatorObject) >= Limits.MaxVolumesObject)
-                return WindVolumeError.ObjectFull;
-
-            int id = NextId(live);
-            var volume = new WindVolume(id, creatorObject, owner, spec, now, now + (long)(spec.LifetimeSeconds * 1000f));
-
-            var next = new WindVolume[live.Length + 1];
-            live.CopyTo(next, 0);
-            next[live.Length] = volume;
-            Volatile.Write(ref m_snapshot, next);
-            return id;
+            if (!creatorObject.IsZero())
+                call = TakeCall(creatorObject, now);
+            result = call == CallResult.Allowed ? CreateLocked(creatorObject, owner, spec, now, out made) : WindVolumeError.Throttled;
         }
+
+        // Logged outside the lock. The throttle bounds how often one object can add a line.
+        if (call == CallResult.ThrottledFirst)
+            LogThrottled(creatorObject);
+        if (made != null)
+            m_log.LogInformation(
+                "[WEATHER] {0}: object {1} (owner {2}) made wind volume {3}: {4} centre {5} radius {6} height {7} wind {8} drift {9}, {10} s.",
+                RegionName, creatorObject, owner, made.Id, made.Shape.ToString().ToLowerInvariant(), made.Center, made.Radius,
+                made.Height, made.Velocity, made.Drift, spec.LifetimeSeconds);
+        return result;
+    }
+
+    private int CreateLocked(UUID creatorObject, UUID owner, in WindVolumeSpec spec, long now, out WindVolume made)
+    {
+        made = null;
+        int bad = Validate(spec);
+        if (bad != WindVolumeError.Ok) return bad;
+
+        WindVolume[] live = Live(m_snapshot, now);
+
+        if (live.Length >= Limits.MaxVolumesRegion) return WindVolumeError.RegionFull;
+        if (!creatorObject.IsZero() && CountBy(live, creatorObject) >= Limits.MaxVolumesObject)
+            return WindVolumeError.ObjectFull;
+
+        int id = NextId(live);
+        made = new WindVolume(id, creatorObject, owner, spec, now, now + (long)(spec.LifetimeSeconds * 1000f), RegionSize);
+
+        var next = new WindVolume[live.Length + 1];
+        live.CopyTo(next, 0);
+        next[live.Length] = made;
+        Volatile.Write(ref m_snapshot, next);
+        return id;
     }
 
     public int Remove(int handle, UUID creatorObject)
     {
+        CallResult call = CallResult.Allowed;
+        int result;
         lock (m_writeLock)
         {
             long now = m_clockMs();
-            WindVolume[] live = Live(m_snapshot, now);
-            int at = Array.FindIndex(live, v => v.Id == handle);
-            if (at < 0)
-            {
-                Publish(live);
-                return WindVolumeError.NotFound;
-            }
-            if (!creatorObject.IsZero() && live[at].CreatorObject != creatorObject)
-            {
-                Publish(live);
-                return WindVolumeError.NotAllowed;
-            }
-            Volatile.Write(ref m_snapshot, live.Where((_, i) => i != at).ToArray());
-            return WindVolumeError.Ok;
+            if (!creatorObject.IsZero())
+                call = TakeCall(creatorObject, now);
+            result = call == CallResult.Allowed ? RemoveLocked(handle, creatorObject, now) : WindVolumeError.Throttled;
         }
+
+        if (call == CallResult.ThrottledFirst)
+            LogThrottled(creatorObject);
+        if (result == WindVolumeError.Ok && !creatorObject.IsZero())
+            m_log.LogInformation("[WEATHER] {0}: object {1} removed wind volume {2}.", RegionName, creatorObject, handle);
+        return result;
+    }
+
+    private int RemoveLocked(int handle, UUID creatorObject, long now)
+    {
+        WindVolume[] live = Live(m_snapshot, now);
+        int at = Array.FindIndex(live, v => v.Id == handle);
+        if (at < 0)
+        {
+            Publish(live);
+            return WindVolumeError.NotFound;
+        }
+        if (!creatorObject.IsZero() && live[at].CreatorObject != creatorObject)
+        {
+            Publish(live);
+            return WindVolumeError.NotAllowed;
+        }
+        Volatile.Write(ref m_snapshot, live.Where((_, i) => i != at).ToArray());
+        return WindVolumeError.Ok;
     }
 
     public int RemoveByCreator(UUID creatorObject)
@@ -142,7 +208,7 @@ public sealed class WindVolumeStore : IWindVolumeStore
         foreach (WindVolume v in volumes)
         {
             if (nowMs >= v.ExpiresAtMs) continue;
-            float w = v.Weight(point);
+            float w = v.Weight(point, nowMs);
             if (w <= 0f) continue;
             x += v.Velocity.X * w;
             y += v.Velocity.Y * w;
@@ -160,8 +226,66 @@ public sealed class WindVolumeStore : IWindVolumeStore
     public void PruneExpired()
     {
         lock (m_writeLock)
-            Publish(Live(m_snapshot, m_clockMs()));
+        {
+            long now = m_clockMs();
+            Publish(Live(m_snapshot, now));
+
+            // An object that has made no counted call for a whole window no longer needs a record.
+            if (m_calls.Count > 0)
+            {
+                List<UUID> idle = null;
+                foreach (KeyValuePair<UUID, CallWindow> entry in m_calls)
+                {
+                    Queue<long> times = entry.Value.Times;
+                    if (times.Count == 0 || now - LastOf(times) >= ThrottleWindowMs)
+                        (idle ??= new List<UUID>()).Add(entry.Key);
+                }
+                if (idle != null)
+                    foreach (UUID id in idle)
+                        m_calls.Remove(id);
+            }
+        }
     }
+
+    private static long LastOf(Queue<long> times)
+    {
+        long last = long.MinValue;
+        foreach (long t in times) last = t;
+        return last;
+    }
+
+    // Counts one create or remove call of an object against its allowance for the last window, unless the allowance is
+    // used up: then the call is refused and not counted, so an object that keeps trying gets its next call as soon as
+    // its oldest counted call is a window old. Called under m_writeLock.
+    private CallResult TakeCall(UUID creatorObject, long now)
+    {
+        int limit = Limits.CreateThrottlePerMinute;
+        if (limit <= 0) return CallResult.Allowed;
+
+        if (!m_calls.TryGetValue(creatorObject, out CallWindow window))
+            m_calls[creatorObject] = window = new CallWindow();
+
+        Queue<long> times = window.Times;
+        while (times.Count > 0 && now - times.Peek() >= ThrottleWindowMs)
+            times.Dequeue();
+
+        if (times.Count >= limit)
+        {
+            if (window.Logged) return CallResult.Throttled;
+            window.Logged = true;
+            return CallResult.ThrottledFirst;
+        }
+
+        window.Logged = false;
+        times.Enqueue(now);
+        return CallResult.Allowed;
+    }
+
+    // Each placeholder appears once: the structured logger matches placeholders to values by position, not by number.
+    private void LogThrottled(UUID creatorObject)
+        => m_log.LogInformation(
+            "[WEATHER] {0}: object {1} has made {2} wind volume create or remove calls in the last {3} s; further calls are refused until the oldest is {4} s old.",
+            RegionName, creatorObject, Limits.CreateThrottlePerMinute, ThrottleWindowMs / 1000, ThrottleWindowMs / 1000);
 
     // Publishes the live array if it dropped any volume.
     private void Publish(WindVolume[] live)
@@ -174,7 +298,7 @@ public sealed class WindVolumeStore : IWindVolumeStore
     {
         if (s.Shape != WindVolumeShape.Sphere && s.Shape != WindVolumeShape.Cylinder)
             return WindVolumeError.InvalidParameter;
-        if (!Finite(s.Center) || !Finite(s.Velocity)) return WindVolumeError.InvalidParameter;
+        if (!Finite(s.Center) || !Finite(s.Velocity) || !Finite(s.Drift)) return WindVolumeError.InvalidParameter;
         if (!float.IsFinite(s.Radius) || s.Radius <= 0f) return WindVolumeError.InvalidParameter;
         if (s.Shape == WindVolumeShape.Cylinder && (!float.IsFinite(s.Height) || s.Height <= 0f))
             return WindVolumeError.InvalidParameter;
@@ -186,6 +310,17 @@ public sealed class WindVolumeStore : IWindVolumeStore
         if (s.Shape == WindVolumeShape.Cylinder && s.Height > Limits.MaxHeight) return WindVolumeError.TooLarge;
         if (s.LifetimeSeconds > Limits.MaxLifetimeSeconds) return WindVolumeError.LifetimeTooLong;
         if (s.Velocity.Length() > Limits.MaxSpeed) return WindVolumeError.TooFast;
+        if (s.Drift.Length() > Limits.MaxMoveSpeed) return WindVolumeError.DriftTooFast;
+
+        // A volume may start outside the region (a storm that drifts in), but not wholly outside it: no further than
+        // one radius past an edge, or half its height above the region's height or below 0. This is the same bound a
+        // drifting volume stops at (WindVolume.CenterAt).
+        float across = s.Radius;
+        float up = s.Shape == WindVolumeShape.Sphere ? s.Radius : s.Height * 0.5f;
+        Vector2 size = RegionSize;
+        if (s.Center.X < -across || s.Center.X > size.X + across || s.Center.Y < -across || s.Center.Y > size.Y + across
+            || s.Center.Z < -up || s.Center.Z > Constants.RegionHeight + up)
+            return WindVolumeError.InvalidParameter;
         return WindVolumeError.Ok;
     }
 

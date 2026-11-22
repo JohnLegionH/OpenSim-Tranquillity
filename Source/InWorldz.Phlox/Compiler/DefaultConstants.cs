@@ -748,6 +748,7 @@ namespace InWorldz.Phlox.Compiler
             {"WV_FALLOFF", new ConstantSymbol("WV_FALLOFF", SymbolTable.INT, "4")},
             {"WV_VELOCITY", new ConstantSymbol("WV_VELOCITY", SymbolTable.INT, "5")},
             {"WV_LIFETIME", new ConstantSymbol("WV_LIFETIME", SymbolTable.INT, "6")},
+            {"WV_DRIFT", new ConstantSymbol("WV_DRIFT", SymbolTable.INT, "7")},
             {"WV_SPHERE", new ConstantSymbol("WV_SPHERE", SymbolTable.INT, "0")},
             {"WV_CYLINDER", new ConstantSymbol("WV_CYLINDER", SymbolTable.INT, "1")},
             // The negative results of the wind-volume functions (WindVolumeError).
@@ -760,6 +761,8 @@ namespace InWorldz.Phlox.Compiler
             {"WV_ERR_REGION_FULL", new ConstantSymbol("WV_ERR_REGION_FULL", SymbolTable.INT, "-7")},
             {"WV_ERR_OBJECT_FULL", new ConstantSymbol("WV_ERR_OBJECT_FULL", SymbolTable.INT, "-8")},
             {"WV_ERR_NOT_FOUND", new ConstantSymbol("WV_ERR_NOT_FOUND", SymbolTable.INT, "-9")},
+            {"WV_ERR_DRIFT_TOO_FAST", new ConstantSymbol("WV_ERR_DRIFT_TOO_FAST", SymbolTable.INT, "-10")},
+            {"WV_ERR_THROTTLED", new ConstantSymbol("WV_ERR_THROTTLED", SymbolTable.INT, "-11")},
 
             // IW_POWER_*: OpenMetaverse GroupPowers bits, for iwHasParcelPowers. An LSL integer is 32 bits: bits 31-48
             // are written as minus their bit number and decoded by iwHasParcelPowers. Their 64-bit values

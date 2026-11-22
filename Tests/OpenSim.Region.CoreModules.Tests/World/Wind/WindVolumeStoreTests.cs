@@ -484,7 +484,8 @@ public class WindVolumeStoreTests
     {
         // Every volume's velocity has three equal components, and every volume covers the sampled point at full
         // strength, so any sample must have X == Y == Z, and a whole number of volumes' worth.
-        var limits = new WindVolumeLimits { MaxVolumesRegion = 64, MaxVolumesObject = 64, MaxSpeed = 5000f };
+        // No create and remove throttle: each writer is one object that keeps churning for the whole run.
+        var limits = new WindVolumeLimits { MaxVolumesRegion = 64, MaxVolumesObject = 64, MaxSpeed = 5000f, CreateThrottlePerMinute = 0 };
         var s = Store(limits: limits);
         var point = new Vector3(100, 100, 50);
         var stop = new CancellationTokenSource();

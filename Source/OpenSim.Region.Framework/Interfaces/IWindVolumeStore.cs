@@ -6,6 +6,7 @@
  */
 
 using OpenMetaverse;
+using OpenSim.Framework;
 
 namespace OpenSim.Region.Framework.Interfaces;
 
@@ -53,6 +54,12 @@ public static class WindVolumeError
 
     /// <summary>No volume has that handle (or it has expired).</summary>
     public const int NotFound = -9;
+
+    /// <summary>The drift speed of the volume is above the configured maximum.</summary>
+    public const int DriftTooFast = -10;
+
+    /// <summary>The creating object has already made or removed as many volumes as the region allows in a minute.</summary>
+    public const int Throttled = -11;
 }
 
 /// <summary>What a script asks for when it creates a volume.</summary>
@@ -80,9 +87,18 @@ public readonly struct WindVolumeSpec
 
     /// <summary>The wind inside the volume at full strength, in metres per second. All three components count.</summary>
     public Vector3 Velocity { get; init; }
+
+    /// <summary>
+    /// How fast the volume itself moves, in metres per second, from <see cref="Center"/> at creation. Zero keeps it
+    /// where it was made.
+    /// </summary>
+    public Vector3 Drift { get; init; }
 }
 
-/// <summary>A volume as it is stored. Immutable: a reader that holds one never sees it change.</summary>
+/// <summary>
+/// A volume as it is stored. Immutable: a reader that holds one never sees it change. A drifting volume's centre is
+/// worked out from the time it is asked for (<see cref="CenterAt"/>), so it moves without any update step.
+/// </summary>
 public sealed class WindVolume
 {
     /// <summary>The fraction of a cylinder's height, at its top and at its bottom, over which the wind falls to nothing.</summary>
@@ -98,13 +114,25 @@ public sealed class WindVolume
     public float FalloffStart { get; }
     public Vector3 Velocity { get; }
 
+    /// <summary>Metres per second: how fast the centre moves from <see cref="Center"/>, where it was at creation.</summary>
+    public Vector3 Drift { get; }
+
     /// <summary>When the volume was created, in the store's clock (milliseconds).</summary>
     public long CreatedMs { get; }
 
     /// <summary>The volume is gone at this time and after it (the store's clock, milliseconds).</summary>
     public long ExpiresAtMs { get; }
 
-    public WindVolume(int id, UUID creatorObject, UUID owner, in WindVolumeSpec spec, long createdMs, long expiresAtMs)
+    // Where the centre stops on each axis, in the direction it drifts (see the constructor).
+    private readonly Vector3 m_stop;
+
+    /// <param name="regionSize">
+    /// The region's size in metres (X and Y). A drifting centre stops once the volume is wholly outside the region: one
+    /// radius past the edge it drifts toward, or half its height above <see cref="Constants.RegionHeight"/> or below 0.
+    /// From there it adds no wind inside the region, and it lives on until its lifetime ends or it is removed. A volume
+    /// made already beyond that point stays where it was made.
+    /// </param>
+    public WindVolume(int id, UUID creatorObject, UUID owner, in WindVolumeSpec spec, long createdMs, long expiresAtMs, Vector2 regionSize)
     {
         Id = id;
         CreatorObject = creatorObject;
@@ -115,19 +143,63 @@ public sealed class WindVolume
         Height = spec.Shape == WindVolumeShape.Sphere ? spec.Radius * 2f : spec.Height;
         FalloffStart = spec.FalloffStart;
         Velocity = spec.Velocity;
+        Drift = spec.Drift;
         CreatedMs = createdMs;
         ExpiresAtMs = expiresAtMs;
+
+        float across = Radius;
+        float up = Height * 0.5f;
+        m_stop = new Vector3(
+            Stop(Center.X, Drift.X, 0f, regionSize.X, across),
+            Stop(Center.Y, Drift.Y, 0f, regionSize.Y, across),
+            Stop(Center.Z, Drift.Z, 0f, Constants.RegionHeight, up));
+    }
+
+    // The coordinate where motion along one axis ends: the far side of the region plus the margin, in the direction of
+    // the drift, but never behind where the volume started.
+    private static float Stop(float start, float drift, float low, float high, float margin)
+    {
+        if (drift > 0f) return MathF.Max(start, high + margin);
+        if (drift < 0f) return MathF.Min(start, low - margin);
+        return start;
     }
 
     /// <summary>
-    /// How much of the volume's wind reaches a point: 1 at full strength, 0 outside, a smooth fall between.
-    /// A point exactly on the radius, or on the top or bottom of a cylinder, gets 0.
+    /// The centre at a time of the store's clock (milliseconds): where it was made, plus the drift times its age, each
+    /// axis held where it stops (see the constructor). Takes no lock and allocates nothing.
     /// </summary>
-    public float Weight(Vector3 point)
+    public Vector3 CenterAt(long nowMs)
     {
-        float dx = point.X - Center.X;
-        float dy = point.Y - Center.Y;
-        float dz = point.Z - Center.Z;
+        long ageMs = nowMs - CreatedMs;
+        if (ageMs <= 0 || Drift == Vector3.Zero) return Center;
+        float age = ageMs * 0.001f;
+        return new Vector3(
+            Along(Center.X, Drift.X, m_stop.X, age),
+            Along(Center.Y, Drift.Y, m_stop.Y, age),
+            Along(Center.Z, Drift.Z, m_stop.Z, age));
+    }
+
+    private static float Along(float start, float drift, float stop, float age)
+    {
+        if (drift == 0f) return start;
+        float at = start + drift * age;
+        return drift > 0f ? MathF.Min(at, stop) : MathF.Max(at, stop);
+    }
+
+    /// <summary>As <see cref="Weight(Vector3)"/>, with the centre where it is at a time of the store's clock.</summary>
+    public float Weight(Vector3 point, long nowMs) => WeightAround(CenterAt(nowMs), point);
+
+    /// <summary>
+    /// How much of the volume's wind reaches a point, with the centre where the volume was made: 1 at full strength,
+    /// 0 outside, a smooth fall between. A point exactly on the radius, or on the top or bottom of a cylinder, gets 0.
+    /// </summary>
+    public float Weight(Vector3 point) => WeightAround(Center, point);
+
+    private float WeightAround(Vector3 center, Vector3 point)
+    {
+        float dx = point.X - center.X;
+        float dy = point.Y - center.Y;
+        float dz = point.Z - center.Z;
 
         if (Shape == WindVolumeShape.Sphere)
             return Falloff(MathF.Sqrt(dx * dx + dy * dy + dz * dz), Radius, FalloffStart);
@@ -173,6 +245,16 @@ public sealed class WindVolumeLimits
 
     /// <summary>Seconds.</summary>
     public float MaxLifetimeSeconds { get; init; } = 3600f;
+
+    /// <summary>Metres per second: the fastest a volume may drift.</summary>
+    public float MaxMoveSpeed { get; init; } = 40f;
+
+    /// <summary>
+    /// Create and remove calls one creating object may make in any 60 seconds, whatever their result; a call refused
+    /// because of this limit does not count. Removals by the console and by an object leaving the region are not
+    /// counted or limited. 0 sets no limit.
+    /// </summary>
+    public int CreateThrottlePerMinute { get; init; } = 10;
 }
 
 /// <summary>
@@ -194,7 +276,8 @@ public interface IWindVolumeStore
 
     /// <summary>
     /// Adds a volume. Returns its handle (1 or more) or a negative <see cref="WindVolumeError"/> code, and stores
-    /// nothing on an error.
+    /// nothing on an error. A creating object past <see cref="WindVolumeLimits.CreateThrottlePerMinute"/> gets
+    /// <see cref="WindVolumeError.Throttled"/>.
     /// </summary>
     /// <param name="creatorObject">The object whose script made the call; its volumes are counted and listed together.</param>
     /// <param name="owner">The owner of that object.</param>
@@ -202,7 +285,9 @@ public interface IWindVolumeStore
 
     /// <summary>
     /// Removes a volume. With a creator object, only a volume that object made can be removed
-    /// (<see cref="WindVolumeError.NotAllowed"/> otherwise); <see cref="UUID.Zero"/> removes any volume.
+    /// (<see cref="WindVolumeError.NotAllowed"/> otherwise), and the call counts against that object's
+    /// <see cref="WindVolumeLimits.CreateThrottlePerMinute"/>; <see cref="UUID.Zero"/> removes any volume and is never
+    /// limited.
     /// </summary>
     int Remove(int handle, UUID creatorObject);
 
@@ -217,7 +302,8 @@ public interface IWindVolumeStore
 
     /// <summary>
     /// The wind that all volumes together add at a point, region coordinates, now: each volume's velocity times its
-    /// weight there, summed, and the sum clamped to <see cref="WindVolumeLimits.MaxSpeed"/>. Never waits for a writer.
+    /// weight there (with a drifting volume's centre where it is now), summed, and the sum clamped to
+    /// <see cref="WindVolumeLimits.MaxSpeed"/>. Never waits for a writer.
     /// </summary>
     Vector3 Sample(Vector3 point);
 

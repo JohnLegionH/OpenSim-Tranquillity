@@ -25,6 +25,7 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+using System.Globalization;
 using System.Reflection;
 using Nini.Config;
 using OpenMetaverse;
@@ -109,6 +110,13 @@ public class WindModule : IWindModule
 
         m_scene = scene;
         m_frame = 0;
+
+        // A drifting volume stops once it is wholly outside the region, so the store needs the region's size.
+        if (m_windVolumes is WindVolumeStore store)
+        {
+            store.RegionSize = new Vector2(scene.RegionInfo.RegionSizeX, scene.RegionInfo.RegionSizeY);
+            store.RegionName = scene.Name;
+        }
 
         if (m_pluginDiscovery == null)
             m_pluginDiscovery = PluginDiscoveryFactory.Create(m_log);
@@ -425,13 +433,57 @@ public class WindModule : IWindModule
             MaxHeight = Math.Max(0f, weather.GetFloat("max_height", defaults.MaxHeight)),
             MaxSpeed = Math.Max(0f, weather.GetFloat("max_speed", defaults.MaxSpeed)),
             MaxLifetimeSeconds = Math.Max(0f, weather.GetFloat("max_lifetime", defaults.MaxLifetimeSeconds)),
+            MaxMoveSpeed = Math.Max(0f, ReadNumber(weather, "max_move_speed", defaults.MaxMoveSpeed)),
+            CreateThrottlePerMinute = ReadThrottle(weather, "create_throttle", defaults.CreateThrottlePerMinute),
         };
         bool enabled = weather.GetBoolean("enabled", false);
         if (enabled)
             m_log.LogInformation(
-                "[WEATHER] Enabled: at most {0} wind volumes per region and {1} per object, radius {2} m, height {3} m, speed {4} m/s, lifetime {5} s.",
-                limits.MaxVolumesRegion, limits.MaxVolumesObject, limits.MaxRadius, limits.MaxHeight, limits.MaxSpeed, limits.MaxLifetimeSeconds);
+                "[WEATHER] Enabled: at most {0} wind volumes per region and {1} per object, radius {2} m, height {3} m, speed {4} m/s, lifetime {5} s, drift {6} m/s, {7} create or remove calls per object per minute (0: no limit).",
+                limits.MaxVolumesRegion, limits.MaxVolumesObject, limits.MaxRadius, limits.MaxHeight, limits.MaxSpeed, limits.MaxLifetimeSeconds,
+                limits.MaxMoveSpeed, limits.CreateThrottlePerMinute);
         return new WindVolumeStore(enabled, limits, clockMs);
+    }
+
+    // Nini's GetInt and GetFloat throw on text that is not a number, which would leave the region without a wind module.
+    // A value that is not a whole number takes the key's default instead, with a warning.
+    private static int ReadCount(IConfig weather, string key, int fallback)
+    {
+        string text = weather.GetString(key, null);
+        if (text == null)
+            return fallback;
+
+        if (int.TryParse(text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))
+            return value;
+
+        m_log.LogWarning("[WEATHER] [Weather] {0} = {1} is not a whole number; using {2}.", key, text, fallback);
+        return fallback;
+    }
+
+    // As ReadCount, for a number of metres, metres per second or seconds. NaN and infinity are refused too: a cap that
+    // is not a finite number would make every comparison with it false, so it would cap nothing.
+    private static float ReadNumber(IConfig weather, string key, float fallback)
+    {
+        string text = weather.GetString(key, null);
+        if (text == null)
+            return fallback;
+
+        if (float.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float value) && float.IsFinite(value))
+            return value;
+
+        m_log.LogWarning("[WEATHER] [Weather] {0} = {1} is not a finite number; using {2}.", key, text, fallback);
+        return fallback;
+    }
+
+    // The create and remove throttle: 0 sets no limit, so a value below 0 is not read as "no limit" but takes the default.
+    private static int ReadThrottle(IConfig weather, string key, int fallback)
+    {
+        int value = ReadCount(weather, key, fallback);
+        if (value >= 0)
+            return value;
+
+        m_log.LogWarning("[WEATHER] [Weather] {0} = {1} is below 0; using {2}.", key, value, fallback);
+        return fallback;
     }
 
     #region Weather volumes

@@ -40,10 +40,12 @@ public static class WindVolumeConsole
                 ? $"radius {F(v.Radius)}"
                 : $"radius {F(v.Radius)} height {F(v.Height)}";
             long left = Math.Max(0L, v.ExpiresAtMs - nowMs);
+            // A drifting volume shows where its centre is now, and its drift.
+            string drift = v.Drift == Vector3.Zero ? "" : " drift " + V(v.Drift);
             output(string.Format(CultureInfo.InvariantCulture,
-                "  handle {0} object {1} owner {2} {3} centre {4} {5} wind {6} {7} s left",
+                "  handle {0} object {1} owner {2} {3} centre {4} {5} wind {6}{7} {8} s left",
                 v.Id, v.CreatorObject, v.Owner, v.Shape.ToString().ToLowerInvariant(),
-                V(v.Center), size, V(v.Velocity), (left / 1000L)));
+                V(v.CenterAt(nowMs)), size, V(v.Velocity), drift, (left / 1000L)));
         }
     }
 

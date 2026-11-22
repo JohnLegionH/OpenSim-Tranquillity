@@ -908,6 +908,7 @@ public partial class ScriptBaseClass
     public const int WV_FALLOFF = 4;
     public const int WV_VELOCITY = 5;
     public const int WV_LIFETIME = 6;
+    public const int WV_DRIFT = 7;
     public const int WV_SPHERE = 0;
     public const int WV_CYLINDER = 1;
     public const int WV_ERR_DISABLED = -1;
@@ -919,6 +920,8 @@ public partial class ScriptBaseClass
     public const int WV_ERR_REGION_FULL = -7;
     public const int WV_ERR_OBJECT_FULL = -8;
     public const int WV_ERR_NOT_FOUND = -9;
+    public const int WV_ERR_DRIFT_TOO_FAST = -10;
+    public const int WV_ERR_THROTTLED = -11;
 
     public const int OS_NPC_FLY = 0;
     public const int OS_NPC_NO_FLY = 1;
