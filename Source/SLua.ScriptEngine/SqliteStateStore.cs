@@ -113,7 +113,7 @@ namespace SLua.ScriptEngine
         public bool HasSavedState(UUID itemID, UUID assetID)
         {
             if (m_pending.TryGetValue(itemID, out var pending))
-                return pending.Asset == assetID;
+                return pending.State is { Length: > 0 } && pending.Asset == assetID; // an empty entry marks a queued removal
             try
             {
                 if (FailReadFor?.Invoke(itemID) == true)
@@ -139,7 +139,7 @@ namespace SLua.ScriptEngine
         public byte[] Load(UUID itemId, UUID assetId)
         {
             if (m_pending.TryGetValue(itemId, out var pending))
-                return pending.Asset == assetId ? pending.State : null;
+                return pending.State is { Length: > 0 } && pending.Asset == assetId ? pending.State : null;
             try
             {
                 if (FailReadFor?.Invoke(itemId) == true)
@@ -163,16 +163,53 @@ namespace SLua.ScriptEngine
         /// <summary>Queues the state for writing; the caller does not wait for the database.</summary>
         public void Save(UUID itemId, UUID assetId, byte[] state)
         {
-            m_pending[itemId] = (assetId, state);
-            Enqueue(new Write { Kind = WriteKind.Save, ItemId = itemId, AssetId = assetId, State = state });
+            lock (m_discarded)
+            {
+                if (m_discarded.Contains(itemId))
+                    return; // state of the copy from before an engine change (Discard), captured before that copy stopped
+                m_pending[itemId] = (assetId, state);
+                Enqueue(new Write { Kind = WriteKind.Save, ItemId = itemId, AssetId = assetId, State = state });
+            }
+        }
+
+        // Items whose engine changed (Discard) and that have not loaded here since (Loading). As Phlox's StateManager.Discard.
+        private readonly HashSet<UUID> m_discarded = new HashSet<UUID>();
+
+        /// <summary>
+        /// Queues the removal of this engine's row for the item (the script was deleted). Until the removal is written the item
+        /// reports no state: its pending entry is an empty marker, which no read takes for state, so a check right after the
+        /// call does not read the old row from the database. A later save replaces the marker.
+        /// </summary>
+        public void Delete(UUID itemID)
+        {
+            lock (m_discarded)
+            {
+                m_discarded.Remove(itemID); // the item left its prim: no later load of it here would clear the mark
+                QueueRemoval(itemID);
+            }
         }
 
         /// <summary>
-        /// Queues the removal of this engine's row for the item (the script was deleted, or its engine changed). Until the
-        /// removal is written the item reports no state: its pending entry is a marker for no asset, which no read matches,
-        /// so a check right after the call does not read the old row from the database. A later save replaces the marker.
+        /// The region changed the item's engine: the row goes as <see cref="Delete"/> removes it, and every save of the item is
+        /// dropped until it loads here again (<see cref="Loading"/>). A worker may still capture the copy from before the change
+        /// (the scheduler removes it on its own thread); without this, that save would bring the old state back.
         /// </summary>
-        public void Delete(UUID itemID)
+        public void Discard(UUID itemID)
+        {
+            lock (m_discarded)
+            {
+                m_discarded.Add(itemID);
+                QueueRemoval(itemID);
+            }
+        }
+
+        /// <summary>The engine takes the item again: its saves are kept from now on.</summary>
+        public void Loading(UUID itemID)
+        {
+            lock (m_discarded) m_discarded.Remove(itemID);
+        }
+
+        private void QueueRemoval(UUID itemID)
         {
             byte[] removed = Array.Empty<byte>().Clone() as byte[]; // its own instance: the writer drops the marker only if it is still this one
             m_pending[itemID] = (UUID.Zero, removed);

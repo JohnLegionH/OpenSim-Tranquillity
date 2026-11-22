@@ -5,6 +5,8 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using System.Threading;
 using Nini.Config;
@@ -41,11 +43,12 @@ public class EngineChoiceHookTests
         public readonly RecordingLog Log = new();
         public readonly SLuaEngine Engine;
         public readonly SceneObjectPart Part;
+        public readonly RecordingLoader Loader = new();
 
         public Rig(ISavedStateStore store = null, bool enabled = true)
         {
             Scene.StackModuleInterface<IScriptModule>(new OtherEngine(Phlox));
-            Engine = new SLuaEngine(Log, (settings, log) => true, store, (settings, log, scene) => new RecordingLoader());
+            Engine = new SLuaEngine(Log, (settings, log) => true, store, (settings, log, scene) => Loader);
             var source = new IniConfigSource();
             IConfig slua = source.AddConfig(EngineIdentity.ConfigSection);
             slua.Set("Enabled", enabled ? "true" : "false");
@@ -73,6 +76,16 @@ public class EngineChoiceHookTests
 
         public void Rez(UUID item, string script, string selectedEngine) =>
             Scene.EventManager.TriggerRezScript(Part.LocalId, item, script, 0, false, selectedEngine, 0);
+    }
+
+    /// <summary>A store with no rows that notes what the engine asks of it.</summary>
+    private sealed class RecordingStore : ISavedStateStore
+    {
+        public readonly List<string> Calls = new();
+        public bool HasSavedState(UUID itemID, UUID assetID) => false;
+        public void Delete(UUID itemID) { lock (Calls) Calls.Add("delete " + itemID); }
+        public void Discard(UUID itemID) { lock (Calls) Calls.Add("discard " + itemID); }
+        public void Loading(UUID itemID) { lock (Calls) Calls.Add("loading " + itemID); }
     }
 
     private static uint Chose(int engine) => ScriptEngineChoices.WithChoice(0, engine);
@@ -148,6 +161,50 @@ public class EngineChoiceHookTests
     }
 
     [Fact]
+    public void ASwitchAwayAsksTheStoreToDiscardTheItemNotOnlyToDeleteItsRow()
+    {
+        var store = new RecordingStore();
+        var rig = new Rig(store);
+        UUID item = UUID.Random();
+        ((IScriptStateProvider)rig.Engine).DiscardSavedScriptState(item);
+        Assert.Equal(new[] { "discard " + item }, store.Calls);
+    }
+
+    [Fact]
+    public void TheStoreIsToldWhenTheEngineTakesAnItemAgainAndNotWhenAnotherEngineDoes()
+    {
+        var store = new RecordingStore();
+        var rig = new Rig(store);
+        UUID ours = rig.Add(0), theirs = rig.Add(Chose(ScriptEngineChoices.Phlox));
+        rig.Rez(ours, "//SLua:LSL\ndefault { state_entry() {} }", Phlox);
+        rig.Rez(theirs, "//SLua:LSL\ndefault { state_entry() {} }", Phlox);
+        Assert.Contains("loading " + ours, store.Calls);
+        Assert.DoesNotContain("loading " + theirs, store.Calls);
+    }
+
+    [Fact]
+    public void ASaveOfADiscardedItemIsDroppedUntilTheItemLoadsHereAgain()
+    {
+        using var dir = new TempFolder();
+        UUID item = UUID.Random(), asset = UUID.Random();
+        using var store = new SqliteStateStore(System.IO.Path.Combine(dir.Path, "state.db"), "SLua");
+        store.Save(item, asset, new byte[] { 1 });
+        Assert.True(store.Flush());
+
+        store.Discard(item);
+        store.Save(item, asset, new byte[] { 2 });   // a timed save of the copy from before the switch, made after the discard
+        Assert.False(store.HasSavedState(item, asset));
+        Assert.True(store.Flush());
+        Assert.False(store.HasSavedState(item, asset));
+        Assert.Null(store.Load(item, asset));
+
+        store.Loading(item);
+        store.Save(item, asset, new byte[] { 3 });
+        Assert.True(store.Flush());
+        Assert.Equal(new byte[] { 3 }, store.Load(item, asset));
+    }
+
+    [Fact]
     public void AfterADiscardTheStoreReportsNoStateWhileTheRemovalIsStillBeingWritten()
     {
         using var dir = new TempFolder();
@@ -164,7 +221,9 @@ public class EngineChoiceHookTests
         {
             store.Delete(item);
             Assert.False(store.HasSavedState(item, asset));
+            Assert.False(store.HasSavedState(item, UUID.Zero));
             Assert.Null(store.Load(item, asset));
+            Assert.Null(store.Load(item, UUID.Zero));
         }
         Assert.True(store.Flush());
         Assert.False(store.HasSavedState(item, asset));
@@ -202,6 +261,20 @@ public class EngineChoiceHookTests
     {
         var rig = new Rig(enabled: false);
         Assert.False(((IScriptEngineSelection)rig.Engine).AcceptsCompileTarget(ScriptCompileTarget.Luau));
+    }
+
+    [Theory]
+    [InlineData(ScriptCompileTarget.Luau)]
+    [InlineData(ScriptCompileTarget.LslOnLuau)]
+    [InlineData(ScriptCompileTarget.Unspecified)]
+    public void TheItemsCompileTargetReachesTheLoader(ScriptCompileTarget target)
+    {
+        var rig = new Rig();
+        UUID item = rig.Add(Target(target));
+        rig.Rez(item, "default { state_entry() {} }", Ours);
+        LoadRequest posted;
+        lock (rig.Loader.Posted) posted = rig.Loader.Posted.Last(r => r.ItemID == item);
+        Assert.Equal(target, posted.Target);
     }
 
     [Theory]

@@ -512,6 +512,7 @@ namespace SLua.ScriptEngine
             if (m_disabled)
                 return;
 
+            m_store?.Loading(itemID); // saves of the item count again (a change of engine stopped them: DiscardSavedScriptState)
             lock (m_tracked) m_tracked[itemID] = localID;
             lock (m_starts) m_starts[itemID] = new StartInfo { StartParam = startParam, PostOnRez = postOnRez, StateSource = stateSource };
 
@@ -1476,12 +1477,12 @@ namespace SLua.ScriptEngine
         /// state saved here for it goes (the row, and any state an object carried in for it), so the script starts fresh
         /// wherever it runs next and an old copy cannot come back, also when it later returns to this engine. Phlox drops
         /// its own the same way (PhloxEngine.DiscardSavedScriptState). The store reports no state for the item from now on,
-        /// while the removal is still being written.
+        /// while the removal is still being written, and drops any save of it until this engine takes the item again.
         /// </summary>
         public void DiscardSavedScriptState(UUID itemID)
         {
             ForgetCarried(itemID);
-            m_store?.Delete(itemID);
+            m_store?.Discard(itemID);
         }
 
         /// <summary>The version of the carried-state envelope this build writes and reads.</summary>

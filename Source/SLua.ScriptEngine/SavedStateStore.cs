@@ -21,6 +21,15 @@ namespace SLua.ScriptEngine
 
         /// <summary>Deletes the item's rows. Called when the script is deleted from inventory, never when it is disowned.</summary>
         void Delete(UUID itemID);
+
+        /// <summary>
+        /// The region changed the item's engine: its rows go, and a save of it made from now until it loads here again
+        /// (<see cref="Loading"/>) is dropped, because such a save holds state from before the change.
+        /// </summary>
+        void Discard(UUID itemID) => Delete(itemID);
+
+        /// <summary>The engine takes the item again: its saves are kept from now on.</summary>
+        void Loading(UUID itemID) { }
     }
 
     /// <summary>The store until saved state is built: it holds nothing.</summary>
