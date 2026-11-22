@@ -35,21 +35,54 @@ public class OsBindingTests
             .Select(o => $"{o.ReturnType} {o.ApiName}({string.Join(", ", o.ParamTypes)})")
             .OrderBy(x => x, StringComparer.Ordinal).ToArray();
 
+    /// <summary>
+    /// Functions of Phlox's compiler table that SLua deliberately does not bind, each with its reason. Empty today: every
+    /// function is bound. An entry must be a function the table has and the bindings lack (a stale entry fails below).
+    /// </summary>
+    private static readonly Dictionary<string, string> NotBoundOnPurpose = new(StringComparer.Ordinal);
+
+    private static string[] TableNames() =>
+        Defaults.AllMethods.Where(s => IsHostFunction(s.FunctionName)).Select(s => s.FunctionName)
+            .Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToArray();
+
     [Fact]
-    public void EverySignatureOfPhloxsCompilerTableIsBound()
+    public void EveryFunctionOfPhloxsCompilerTableHasAnSLuaBindingOrIsExcludedWithAReason()
     {
-        string[] table = CompilerTable();
-        Assert.Equal(433, table.Length);
+        HashSet<string> bound = OsBindings.All.Select(f => f.ApiName).ToHashSet(StringComparer.Ordinal);
+        string[] missing = TableNames().Where(n => !bound.Contains(n) && !NotBoundOnPurpose.ContainsKey(n)).ToArray();
+        Assert.True(missing.Length == 0,
+            "Phlox's compiler table has functions the SLua bindings lack (regenerate the bindings with the generator, or list the "
+            + "function in NotBoundOnPurpose with its reason): " + string.Join(", ", missing));
+    }
+
+    [Fact]
+    public void TheExclusionListHoldsOnlyFunctionsTheTableHasAndTheBindingsLack()
+    {
+        HashSet<string> table = TableNames().ToHashSet(StringComparer.Ordinal);
+        HashSet<string> bound = OsBindings.All.Select(f => f.ApiName).ToHashSet(StringComparer.Ordinal);
+        foreach (var entry in NotBoundOnPurpose)
+        {
+            Assert.True(table.Contains(entry.Key), $"{entry.Key} is on the exclusion list but Phlox's compiler table no longer has it");
+            Assert.False(bound.Contains(entry.Key), $"{entry.Key} is on the exclusion list but is bound now");
+            Assert.False(string.IsNullOrWhiteSpace(entry.Value), $"{entry.Key} is on the exclusion list without a reason");
+        }
+    }
+
+    [Fact]
+    public void EverySignatureOfABoundFunctionIsBoundAsPhloxHasIt()
+    {
+        string[] table = CompilerTable().Where(sig => !NotBoundOnPurpose.Keys.Any(n => sig.Contains(" " + n + "("))).ToArray();
         Assert.Equal(table, BoundSignatures());
     }
 
     [Fact]
     public void ThereIsOneFunctionPerNameInOneOfThreeTables()
     {
-        Assert.Equal(402, OsBindings.All.Length);
-        Assert.Equal(259, OsBindings.All.Count(f => f.Table == "ossl"));
-        Assert.Equal(85, OsBindings.All.Count(f => f.Table == "iw"));
-        Assert.Equal(58, OsBindings.All.Count(f => f.Table == "bot"));
+        string[] names = TableNames().Where(n => !NotBoundOnPurpose.ContainsKey(n)).ToArray();
+        Assert.Equal(names.Length, OsBindings.All.Length);
+        Assert.Equal(names.Count(n => n.StartsWith("os")), OsBindings.All.Count(f => f.Table == "ossl"));
+        Assert.Equal(names.Count(n => n.StartsWith("iw")), OsBindings.All.Count(f => f.Table == "iw"));
+        Assert.Equal(names.Count(n => n.StartsWith("bot")), OsBindings.All.Count(f => f.Table == "bot"));
         OsFunction sha = Assert.Single(OsBindings.All, f => f.ApiName == "osSHA256");
         Assert.Equal("SHA256", sha.Name);
         Assert.Equal("ossl", sha.Table);
@@ -63,7 +96,7 @@ public class OsBindingTests
     public void TheHostListHasOneLinePerSignatureInTheScriptsTypesWithTheParameterNames()
     {
         string[] lines = OsBindings.HostList.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        Assert.Equal(433, lines.Length);
+        Assert.Equal(BoundSignatures().Length, lines.Length);
         Assert.Contains("string osSHA256( string input )", lines);
         Assert.Contains("string osGetGridName()", lines);
         // key stays key (the C# interface cannot tell it from string) and the names are Phlox's
