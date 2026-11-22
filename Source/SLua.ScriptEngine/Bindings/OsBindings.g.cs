@@ -2939,6 +2939,18 @@ namespace SLua.ScriptEngine
             return new[] { LslMarshal.Of(c.Api.iwWindVolumes()) };
         }
 
+        private static Value[] SetScriptEngine_984(ScriptContext c, ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 2, "osSetScriptEngine");
+            return new[] { LslMarshal.Of(c.Api.osSetScriptEngine(LslMarshal.String(a, 0, "osSetScriptEngine"), LslMarshal.String(a, 1, "osSetScriptEngine"))) };
+        }
+
+        private static object[] SetScriptEngine_984Args(ReadOnlySpan<Value> a)
+        {
+            LslMarshal.Arity(a, 2, "osSetScriptEngine");
+            return new object[] { LslMarshal.String(a, 0, "osSetScriptEngine"), LslMarshal.String(a, 1, "osSetScriptEngine") };
+        }
+
         /// <summary>One function per name, in the table of its prefix; the signatures of a name in the order of Phlox's compiler table.</summary>
         internal static readonly OsFunction[] All = new OsFunction[]
         {
@@ -4429,6 +4441,10 @@ namespace SLua.ScriptEngine
             {
                 new BoundFunction("SetRot", "osSetRot", FunctionClass.NonBlocking, "void", new[] { "key", "rotation" }, SetRot_761),
             }),
+            new OsFunction("ossl", "SetScriptEngine", "osSetScriptEngine", new BoundFunction[]
+            {
+                new BoundFunction("SetScriptEngine", "osSetScriptEngine", FunctionClass.Service, "integer", new[] { "string", "string" }, SetScriptEngine_984, 0, SetScriptEngine_984Args),
+            }),
             new OsFunction("ossl", "SetSitActiveRange", "osSetSitActiveRange", new BoundFunction[]
             {
                 new BoundFunction("SetSitActiveRange", "osSetSitActiveRange", FunctionClass.NonBlocking, "void", new[] { "float" }, SetSitActiveRange_781),
@@ -5019,6 +5035,7 @@ namespace SLua.ScriptEngine
             "integer iwWindVolumeCreate( list rules )",
             "integer iwWindVolumeRemove( integer handle )",
             "list iwWindVolumes()",
+            "integer osSetScriptEngine( string scriptName, string target )",
         };
 
         /// <summary>Signatures whose delay the generator could not read, with the reason; they were given the class Unplaced.</summary>
