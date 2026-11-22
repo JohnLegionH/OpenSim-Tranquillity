@@ -3,7 +3,7 @@
      https://mozilla.org/MPL/2.0/. -->
 # Which script engine runs a script
 
-A region can load several script engines (YEngine, Phlox). When a script starts, the region picks
+A region can load several script engines (YEngine, Phlox, SLua). When a script starts, the region picks
 the engine in this order and stops at the first step that gives an answer:
 
 0. **The viewer's compile target.** A script saved from a viewer's script editor with the compiler "Lua" (`luau`)
@@ -11,7 +11,7 @@ the engine in this order and stops at the first step that gives an answer:
    first line, as described under "The viewer's compile target" below. Saved state for the item and asset still
    places a script that already runs on another engine. A script with no such choice skips this step.
 1. **The first line.** `//<engine>:<language>` names an engine loaded in the region: its engine name
-   (`InWorldz.Phlox`, `YEngine`) or a header alias the engine lists (`//Phlox:` for Phlox). Names are
+   (`InWorldz.Phlox`, `YEngine`, `SLua`) or a header alias the engine lists (`//Phlox:` for Phlox). Names are
    compared as written.
 2. **Saved state.** The engine that holds saved state for the script's item and asset keeps it, the
    `DefaultScriptEngine` first. A running script therefore stays on its engine across a restart, whatever the
