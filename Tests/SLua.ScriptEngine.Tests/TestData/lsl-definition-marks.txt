@@ -1,4 +1,9 @@
 # The ll functions' bool and index marks, from secondlife/lsl-definitions lsl_definitions.yaml at f1906c95d53d8d950fde97064959ab6c6029f1c2.
+#
+# MIT License
+#
+# Copyright (c) 2025 Linden Research, Inc.
+#
 # MIT, Copyright (c) 2025 Linden Research, Inc. Written by tools/slua-bindings/extract-marks.py.
 # name<TAB>mark<TAB>mark ...; marks are return:bool, return:index, arg<N>:bool, arg<N>:index (N from 0).
 llAdjustDamage	arg0:index
