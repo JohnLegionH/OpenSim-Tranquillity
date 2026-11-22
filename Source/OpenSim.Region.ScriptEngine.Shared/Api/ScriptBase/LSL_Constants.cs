@@ -919,6 +919,13 @@ public partial class ScriptBaseClass
     public const int WV_ERR_REGION_FULL = -7;
     public const int WV_ERR_OBJECT_FULL = -8;
     public const int WV_ERR_NOT_FOUND = -9;
+    // The results of osSetWeather (OpenSim.Region.Framework.Interfaces.WeatherResult).
+    public const int WEATHER_SET = 1;
+    public const int WEATHER_UNCHANGED = 0;
+    public const int WEATHER_ERR_DISABLED = -1;
+    public const int WEATHER_ERR_NOT_ALLOWED = -2;
+    public const int WEATHER_ERR_INVALID = -3;
+    public const int WEATHER_ERR_THROTTLED = -4;
 
     public const int OS_NPC_FLY = 0;
     public const int OS_NPC_NO_FLY = 1;

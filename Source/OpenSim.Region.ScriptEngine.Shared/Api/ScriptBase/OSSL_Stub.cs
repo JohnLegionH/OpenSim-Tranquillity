@@ -122,6 +122,18 @@ public partial class ScriptBaseClass
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public LSL_Integer osSetWeather(string state, LSL_Float intensity, LSL_Float transition)
+    {
+        return m_OSSL_Functions.osSetWeather(state, intensity, transition);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public LSL_List osGetWeather()
+    {
+        return m_OSSL_Functions.osGetWeather();
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public string osWindActiveModelPluginName()
     {
         return m_OSSL_Functions.osWindActiveModelPluginName();

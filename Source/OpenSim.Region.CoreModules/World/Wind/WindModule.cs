@@ -25,6 +25,7 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+using System.Globalization;
 using System.Reflection;
 using Nini.Config;
 using OpenMetaverse;
@@ -59,6 +60,9 @@ public class WindModule : IWindModule
     // Script-made wind volumes, from the [Weather] section. Off unless [Weather] enabled = true.
     private IWindVolumeStore m_windVolumes = new WindVolumeStore(false);
 
+    // The region's weather state, from the same section. Off unless [Weather] enabled = true.
+    private IWeatherState m_weather = new WeatherState(false);
+
     // Simplified windSpeeds based on the fact that the client protocal tracks at a resolution of 16m
     private Vector2[] windSpeeds = new Vector2[16 * 16];
 
@@ -68,6 +72,7 @@ public class WindModule : IWindModule
     {
         m_windConfig = config.Configs["Wind"];
         m_windVolumes = CreateWindVolumes(config.Configs["Weather"]);
+        m_weather = CreateWeather(config.Configs["Weather"]);
 
 //            string desiredWindPlugin = m_dWindPluginName;
 
@@ -199,6 +204,15 @@ public class WindModule : IWindModule
             "Remove wind volumes in the selected region: all of them, one by handle, or those made by one object.",
             "",
             HandleConsoleWeatherClear);
+
+        m_scene.AddCommand(
+            "Regions",
+            this,
+            "weather state",
+            "weather state",
+            "Show the region's weather state: name, intensity, when it was set, its serial and the object that set it.",
+            "",
+            HandleConsoleWeatherState);
 
         // Register event handlers for when Avatars enter the region, and frame ticks
         m_scene.EventManager.OnFrame += WindUpdate;
@@ -434,6 +448,45 @@ public class WindModule : IWindModule
         return new WindVolumeStore(enabled, limits, clockMs);
     }
 
+    /// <summary>
+    /// Reads the weather state's keys from the [Weather] section: min_change_interval and max_transition, in seconds.
+    /// A key that is absent, not a number or below 0 takes its default. The section absent, or enabled left false, gives a
+    /// state that accepts nothing.
+    /// </summary>
+    public static IWeatherState CreateWeather(IConfig weather, Func<long> clockMs = null, Func<long> unixNow = null)
+    {
+        if (weather == null) return new WeatherState(false, null, clockMs, unixNow);
+
+        var defaults = new WeatherLimits();
+        var limits = new WeatherLimits
+        {
+            MinChangeIntervalSeconds = ReadSeconds(weather, "min_change_interval", defaults.MinChangeIntervalSeconds),
+            MaxTransitionSeconds = ReadSeconds(weather, "max_transition", defaults.MaxTransitionSeconds),
+        };
+        bool enabled = weather.GetBoolean("enabled", false);
+        if (enabled)
+            m_log.LogInformation(
+                "[WEATHER] Weather state enabled: at most one change every {0} s, transitions up to {1} s.",
+                limits.MinChangeIntervalSeconds, limits.MaxTransitionSeconds);
+        return new WeatherState(enabled, limits, clockMs, unixNow);
+    }
+
+    // A number of seconds from the section. The text is parsed here rather than with IConfig.GetFloat, which throws on a
+    // value that is not a number and would stop the module from loading.
+    private static float ReadSeconds(IConfig weather, string key, float fallback)
+    {
+        string text = weather.GetString(key, null);
+        if (text == null)
+            return fallback;
+
+        if (float.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float value)
+            && float.IsFinite(value) && value >= 0f)
+            return value;
+
+        m_log.LogWarning("[WEATHER] [Weather] {0} = {1} is not a number of seconds from 0 up; using {2}.", key, text, fallback);
+        return fallback;
+    }
+
     #region Weather volumes
 
     /// <summary>
@@ -492,6 +545,14 @@ public class WindModule : IWindModule
         int removed = WindVolumeConsole.Clear(m_windVolumes, m_scene.Name, words, ConsoleLine);
         if (removed > 0)
             m_log.LogInformation("[WEATHER] Console clear in {0}: removed {1} wind volume(s).", m_scene.Name, removed);
+    }
+
+    private void HandleConsoleWeatherState(string module, string[] cmdparams)
+    {
+        if (!ConsoleRegionIsMine())
+            return;
+
+        WindVolumeConsole.State(m_weather, m_scene.Name, ConsoleLine);
     }
 
     private static void ConsoleLine(string line) => MainConsole.Instance.Output("{0}", line);
@@ -585,6 +646,8 @@ public class WindModule : IWindModule
     }
 
     public IWindVolumeStore WindVolumes => m_windVolumes;
+
+    public IWeatherState Weather => m_weather;
 
     /// <summary>Frames between wind updates; always at least 1.</summary>
     public int WindUpdateRate => m_frameUpdateRate;

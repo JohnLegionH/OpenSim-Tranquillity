@@ -1163,6 +1163,17 @@
     ;; clears it with the console commands "weather volumes" and "weather clear". Resetting or
     ;; removing the script that made it does not end it, like a particle system.
     ;;
+    ;; When on, the region also has a weather state: a name (up to 32 bytes, such as "storm") and an
+    ;; intensity from 0 to 1, which a script whose owner is the estate owner, an estate manager or a
+    ;; god sets, and every script can read, so objects can react to the weather. Phlox scripts use
+    ;; iwSetWeather and iwGetWeather; YEngine scripts use osSetWeather (threat level High; the
+    ;; shipped osslDefaultEnable.ini allows it for estate owners, estate managers and gods) and
+    ;; osGetWeather. Setting the weather already in force (the same name and an intensity less
+    ;; than 0.05 from its target) changes nothing. Values out of range are refused, not clamped.
+    ;; The state is kept in memory only: a region starts, and restarts, with an empty state and
+    ;; intensity 0, so a script that needs the weather reads it in state_entry or on
+    ;; changed(CHANGED_REGION_START). The console command "weather state" shows it.
+    ;;
     ;; With weather on, osSetWindParam also needs an owner who is the estate owner, an estate
     ;; manager or a god. With weather off, osSetWindParam keeps the permission it always had.
     ; enabled = false
@@ -1191,6 +1202,15 @@
     ;# {max_lifetime} {enabled:true} {Longest lifetime in seconds?} {} 3600
     ;; The longest lifetime in seconds a volume may be given. Every volume needs a lifetime above zero.
     ; max_lifetime = 3600
+
+    ;# {min_change_interval} {enabled:true} {Seconds between weather state changes?} {} 5
+    ;; Seconds that must pass after a change of the weather state before the next change is taken;
+    ;; a change asked for sooner is refused (WEATHER_ERR_THROTTLED). 0 turns the limit off.
+    ; min_change_interval = 5
+
+    ;# {max_transition} {enabled:true} {Longest weather transition in seconds?} {} 3600
+    ;; The longest transition, in seconds, over which a new weather intensity may ramp in.
+    ; max_transition = 3600
 
 
 [Materials]

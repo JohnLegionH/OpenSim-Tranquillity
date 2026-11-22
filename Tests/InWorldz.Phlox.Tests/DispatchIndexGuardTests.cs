@@ -97,7 +97,8 @@ public class DispatchIndexGuardTests
         // Second Life's forms of twelve ll functions add seven names (llFindNotecardTextCount, llSetParcelForSale, llRemoteLoadScript,
         // llRemoteDataSetRegion and the three llGetGameControlMode functions); the other five are overloads of names already here.
         // osSetScriptEngine adds one name.
-        Assert.Equal(944, baseline.Count);
+        // The weather state adds two names (iwSetWeather, iwGetWeather).
+        Assert.Equal(946, baseline.Count);
     }
 
     /// <summary>

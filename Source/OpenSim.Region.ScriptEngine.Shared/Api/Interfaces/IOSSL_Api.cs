@@ -343,6 +343,10 @@ public interface IOSSL_Api
    LSL_Integer osWindVolumeRemove(LSL_Integer handle);
     //ApiDesc Returns the handles of the wind volumes this object made.
       LSL_List osWindVolumes();
+    //ApiDesc Sets the region's weather state: a name of up to 32 bytes and an intensity from 0 to 1, reached over a transition in seconds. Returns WEATHER_SET, WEATHER_UNCHANGED or a negative WEATHER_ERR_ code. Estate owner, estate manager or god only, and only when [Weather] is enabled.
+   LSL_Integer osSetWeather(string state, LSL_Float intensity, LSL_Float transition);
+    //ApiDesc Returns the region's weather state as [state, intensity, since, serial], or an empty list when [Weather] is not enabled.
+      LSL_List osGetWeather();
 
     // Parcel commands
     //ApiDesc Returns the number of visitors to the region since start.

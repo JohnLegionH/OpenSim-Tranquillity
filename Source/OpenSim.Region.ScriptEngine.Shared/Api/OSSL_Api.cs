@@ -1752,6 +1752,45 @@ public class OSSL_Api : IOSSL_Api, IScriptApi
         return result;
     }
 
+    /// <summary>
+    /// Sets the region's weather state: a name (up to 32 bytes), an intensity from 0 to 1, and a transition in seconds over
+    /// which the intensity ramps to it. Threat level High. Returns WEATHER_SET, WEATHER_UNCHANGED for the weather already in force, or a negative WEATHER_ERR_ code with
+    /// nothing changed: DISABLED when [Weather] is not enabled, NOT_ALLOWED unless the object's owner is the estate owner,
+    /// an estate manager or a god, INVALID for a value outside its limits (never clamped), THROTTLED when the last change
+    /// was too recent. The owner is checked before the values.
+    /// </summary>
+    public LSL_Integer osSetWeather(string state, LSL_Float intensity, LSL_Float transition)
+    {
+        CheckThreatLevel(ThreatLevel.High, "osSetWeather");
+
+        IWeatherState weather = World.RequestModuleInterface<IWindModule>()?.Weather;
+        if (weather is null || !weather.Enabled) return WeatherResult.Disabled;
+        if (!WindVolumeAccess.MayChangeWind(World, m_host.OwnerID)) return WeatherResult.NotAllowed;
+
+        // A double too large for a float becomes infinity here, which the range check refuses like any other bad value.
+        float i = (float)intensity.value, t = (float)transition.value;
+        return weather.Set(state, i, t, m_host.ParentGroup.UUID, m_host.OwnerID);
+    }
+
+    /// <summary>
+    /// The region's weather state as [state, intensity, since, serial]: the name, the intensity now (part way up a ramp,
+    /// if one is running), when it was set (seconds since 1970, UTC; 0 before any set) and the number of changes since the
+    /// region started. Threat level None: any script may read it. Empty when [Weather] is not enabled.
+    /// </summary>
+    public LSL_List osGetWeather()
+    {
+        CheckThreatLevel(ThreatLevel.None, "osGetWeather");
+
+        IWeatherState weather = World.RequestModuleInterface<IWindModule>()?.Weather;
+        if (weather is null || !weather.Enabled) return new LSL_List();
+        WeatherSnapshot now = weather.Current;
+        return new LSL_List(
+            new LSL_String(now.State),
+            new LSL_Float(now.IntensityAt(weather.NowMs)),
+            new LSL_Integer((int)now.SinceUnix),
+            new LSL_Integer(now.Serial));
+    }
+
     // The script list as plain objects (int, float, Vector3) for WindVolumeRules.
     private static List<object> ToPlainRules(LSL_List rules)
     {

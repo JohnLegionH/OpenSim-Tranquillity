@@ -13,7 +13,7 @@ using OpenSim.Region.Framework.Interfaces;
 namespace OpenSim.Region.CoreModules.World.Wind;
 
 /// <summary>
-/// The text and the effect of the operator console commands "weather volumes" and "weather clear". They take the store
+/// The text and the effect of the operator console commands "weather volumes", "weather clear" and "weather state". They take the store
 /// and a place to write to, so the wind module's console handlers stay thin and the commands can be tested without a
 /// console.
 /// </summary>
@@ -91,6 +91,27 @@ public static class WindVolumeConsole
 
         output(ClearUsage);
         return 0;
+    }
+
+    /// <summary>Writes the region's weather state: name, intensity now and its target, when it was set, serial, setter.</summary>
+    public static void State(IWeatherState weather, string regionName, Action<string> output)
+    {
+        if (weather == null || !weather.Enabled)
+        {
+            output($"Weather is off in {regionName}.");
+            return;
+        }
+
+        WeatherSnapshot now = weather.Current;
+        if (now.Serial == 0)
+        {
+            output($"The weather in {regionName} has not been set since the region started.");
+            return;
+        }
+
+        string since = DateTimeOffset.FromUnixTimeSeconds(now.SinceUnix).UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+        output($"Weather in {regionName}: \"{now.State}\", intensity {F(now.IntensityAt(weather.NowMs))} (target {F(now.TargetIntensity)}), "
+            + $"set {since} UTC, serial {now.Serial}, by object {now.SetByObject} owned by {now.SetByOwner}.");
     }
 
     private static string F(float value) => value.ToString("0.##", CultureInfo.InvariantCulture);

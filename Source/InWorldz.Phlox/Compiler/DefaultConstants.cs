@@ -760,6 +760,13 @@ namespace InWorldz.Phlox.Compiler
             {"WV_ERR_REGION_FULL", new ConstantSymbol("WV_ERR_REGION_FULL", SymbolTable.INT, "-7")},
             {"WV_ERR_OBJECT_FULL", new ConstantSymbol("WV_ERR_OBJECT_FULL", SymbolTable.INT, "-8")},
             {"WV_ERR_NOT_FOUND", new ConstantSymbol("WV_ERR_NOT_FOUND", SymbolTable.INT, "-9")},
+            // The results of iwSetWeather (WeatherResult).
+            {"WEATHER_SET", new ConstantSymbol("WEATHER_SET", SymbolTable.INT, "1")},
+            {"WEATHER_UNCHANGED", new ConstantSymbol("WEATHER_UNCHANGED", SymbolTable.INT, "0")},
+            {"WEATHER_ERR_DISABLED", new ConstantSymbol("WEATHER_ERR_DISABLED", SymbolTable.INT, "-1")},
+            {"WEATHER_ERR_NOT_ALLOWED", new ConstantSymbol("WEATHER_ERR_NOT_ALLOWED", SymbolTable.INT, "-2")},
+            {"WEATHER_ERR_INVALID", new ConstantSymbol("WEATHER_ERR_INVALID", SymbolTable.INT, "-3")},
+            {"WEATHER_ERR_THROTTLED", new ConstantSymbol("WEATHER_ERR_THROTTLED", SymbolTable.INT, "-4")},
 
             // IW_POWER_*: OpenMetaverse GroupPowers bits, for iwHasParcelPowers. An LSL integer is 32 bits: bits 31-48
             // are written as minus their bit number and decoded by iwHasParcelPowers. Their 64-bit values

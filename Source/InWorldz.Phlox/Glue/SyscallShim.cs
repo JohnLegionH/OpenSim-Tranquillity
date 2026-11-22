@@ -1075,6 +1075,8 @@ private static string ConvToString(object o)
 								Shim_llGiveAgentInventoryList,         //982
 								Shim_llTransferOwnershipFlags,         //983
 								Shim_osSetScriptEngine,                //984
+								Shim_iwSetWeather,                     //985
+								Shim_iwGetWeather,                     //986
         };
 
         /// <summary>
@@ -7451,6 +7453,22 @@ private static string ConvToString(object o)
             int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
 
             int ret = self._systemAPI.iwWindVolumeRemove(p0);
+
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_iwSetWeather(SyscallShim self)
+        {
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+
+            int ret = self._systemAPI.iwSetWeather(p0, p1, p2);
+
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_iwGetWeather(SyscallShim self)
+        {
+            LSLList ret = self._systemAPI.iwGetWeather();
 
             self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
         }

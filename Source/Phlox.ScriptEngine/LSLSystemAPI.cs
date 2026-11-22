@@ -10624,6 +10624,41 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return TRANSFER_OK;
         }
 
+        /// <summary>
+        /// Sets the region's weather state: a name (up to 32 bytes), an intensity from 0 to 1, and a transition in seconds
+        /// over which the intensity ramps to it. Returns WEATHER_SET, WEATHER_UNCHANGED for the weather already in force, or a negative WEATHER_ERR_ code with
+        /// nothing changed: DISABLED when [Weather] is not enabled, NOT_ALLOWED unless the object's owner is the estate
+        /// owner, an estate manager or a god (the iwSetWind rule), INVALID for a value outside its limits (never clamped),
+        /// THROTTLED when the last change was too recent. The owner is checked before the values.
+        /// </summary>
+        public int iwSetWeather(string state, float intensity, float transition)
+        {
+            IWeatherState weather = WeatherFor();
+            if (weather == null) return WeatherResult.Disabled;
+            if (!WindVolumeAccess.MayChangeWind(World, m_host.OwnerID)) return WeatherResult.NotAllowed;
+            return weather.Set(state, intensity, transition, m_host.ParentGroup.UUID, m_host.OwnerID);
+        }
+
+        /// <summary>
+        /// The region's weather state as [state, intensity, since, serial]: the name, the intensity now (part way up a
+        /// ramp, if one is running), when it was set (seconds since 1970, UTC; 0 before any set) and the number of changes
+        /// since the region started. Any script may read it. Empty when [Weather] is not enabled.
+        /// </summary>
+        public LSLList iwGetWeather()
+        {
+            IWeatherState weather = WeatherFor();
+            if (weather == null) return new LSLList(new List<object>());
+            WeatherSnapshot now = weather.Current;
+            return new LSLList(new List<object> { now.State, now.IntensityAt(weather.NowMs), (int)now.SinceUnix, now.Serial });
+        }
+
+        // The region's weather state when weather is switched on; otherwise null.
+        private IWeatherState WeatherFor()
+        {
+            IWeatherState weather = m_host == null || World == null ? null : World.RequestModuleInterface<IWindModule>()?.Weather;
+            return weather != null && weather.Enabled ? weather : null;
+        }
+
         // The region's store when weather is switched on; otherwise null and the error to return.
         private IWindVolumeStore WindVolumesFor(out int error)
         {

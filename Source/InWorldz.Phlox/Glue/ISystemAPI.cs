@@ -800,6 +800,10 @@ namespace InWorldz.Phlox.Glue
         int iwWindVolumeRemove(int handle);
         /// <summary>The handles of the volumes this object made, as integers.</summary>
         LSLList iwWindVolumes();
+        /// <summary>Sets the region's weather state; WEATHER_SET, WEATHER_UNCHANGED or a negative WEATHER_ERR_ code. Estate owner, estate manager or god only.</summary>
+        int iwSetWeather(string state, float intensity, float transition);
+        /// <summary>The region's weather: [state, intensity, since, serial], or an empty list when weather is off.</summary>
+        LSLList iwGetWeather();
         // Functions with Second Life's signatures (the five whose names an older entry already holds are overloads),
         // and functions OpenSim's own LSL does not have.
         LSLList llGetAttachedListFiltered(string avatar, LSLList options);

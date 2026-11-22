@@ -99,4 +99,10 @@ public interface IWindModule : INonSharedRegionModule
     /// A module that has a store adds it to what <see cref="WindSpeed(int,int,int)"/> and <see cref="WindSpeedAt"/> return.
     /// </summary>
     IWindVolumeStore WindVolumes => null;
+
+    /// <summary>
+    /// The region's weather state (the [Weather] section): a name and an intensity that estate scripts set and every
+    /// script reads. Null for a module that has none. When <see cref="IWeatherState.Enabled"/> is false it accepts nothing.
+    /// </summary>
+    IWeatherState Weather => null;
 }

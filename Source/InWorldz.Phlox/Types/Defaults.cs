@@ -6904,6 +6904,21 @@ namespace InWorldz.Phlox.Types
                 ParamNames = new string[] { },
                 TableIndex = 971
             }},
+            // The region's weather state: set by the estate, read by any script; see IWeatherState.
+            {"iwSetWeather", new FunctionSig {
+                FunctionName = "iwSetWeather",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.String, VarType.Float, VarType.Float },
+                ParamNames = new string[] { "state", "intensity", "transition" },
+                TableIndex = 985
+            }},
+            {"iwGetWeather", new FunctionSig {
+                FunctionName = "iwGetWeather",
+                ReturnType = VarType.List,
+                ParamTypes = new VarType[] { },
+                ParamNames = new string[] { },
+                TableIndex = 986
+            }},
             // Second Life's forms of functions an older entry holds under another shape (the __2 entries), and functions
             // OpenSim's own LSL lacks. Appended above the existing indices; none of those moved.
             {"llGetAttachedListFiltered__2", new FunctionSig {

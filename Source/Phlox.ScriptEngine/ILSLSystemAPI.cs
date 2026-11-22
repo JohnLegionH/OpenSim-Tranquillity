@@ -415,6 +415,8 @@ namespace Phlox.ScriptEngine
         int iwWindVolumeCreate(LSLList rules);
         int iwWindVolumeRemove(int handle);
         LSLList iwWindVolumes();
+        int iwSetWeather(string state, float intensity, float transition);
+        LSLList iwGetWeather();
         Vector3 iwGroundSurfaceNormal(Vector3 offset);
         string llGetLandOwnerAt(Vector3 pos);
         int llOverMyLand(string id);

@@ -947,3 +947,5 @@ llGetGameControlMode 978
 llGetGameControlModeAxes 979
 llGetGameControlModeButtons 980
 osSetScriptEngine 984
+iwSetWeather 985
+iwGetWeather 986
