@@ -280,4 +280,66 @@ public class ChatAndListenTests
         comm.Raise(new OSChatMessage { Type = ChatTypeEnum.Region, Channel = 9, From = "Other Engine", SenderUUID = Bob, Message = "from yengine" });
         Assert.True(Heard(rig, listener, "s=9|Other Engine|" + Bob + "|from yengine"));
     }
+
+    /// <summary>
+    /// The host of another engine that runs its scripts on the same LSLSystemAPI (Phlox): everything goes to this engine's host
+    /// except the offer to the region's world communication, which that engine makes itself, marking only its own sends, and its
+    /// listens, which are not this engine's.
+    /// </summary>
+    internal class AnotherEnginesChatHost : System.Reflection.DispatchProxy
+    {
+        private Phlox.ScriptEngine.IScriptHostServices m_real;
+        private IWorldComm m_comm;
+
+        public static Phlox.ScriptEngine.IScriptHostServices Create(Phlox.ScriptEngine.IScriptHostServices real, IWorldComm comm)
+        {
+            var host = Create<Phlox.ScriptEngine.IScriptHostServices, AnotherEnginesChatHost>();
+            var proxy = (AnotherEnginesChatHost)(object)host;
+            proxy.m_real = real;
+            proxy.m_comm = comm;
+            return host;
+        }
+
+        protected override object Invoke(System.Reflection.MethodInfo method, object[] args)
+        {
+            switch (method.Name)
+            {
+                case "SendToWorldComm": ((Action<IWorldComm>)args[0])(m_comm); return null;
+                case "get_ListenManager": return null;
+                default:
+                    try { return method.Invoke(m_real, args); }
+                    catch (System.Reflection.TargetInvocationException e) { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(e.InnerException).Throw(); throw; }
+            }
+        }
+    }
+
+    [RequiresNativeTheory]
+    [InlineData("region")]
+    [InlineData("say")]
+    [InlineData("to")]
+    public void WhatAScriptOfAnotherEngineSaysIsHeardOnceByAnSLuaListen(string how)
+    {
+        using var rig = new EngineRig(productionFunctions: true);
+        var comm = new StandInWorldComm();
+        rig.Scene.RegisterModuleInterface<IWorldComm>(comm);
+        rig.Engine.RegionLoaded(rig.Scene);
+        UUID listener = rig.Rez(Listener("s", 9));
+        Assert.True(Ready(rig, listener, "s"));
+        SceneObjectGroup talker = rig.AddObject("Talker", rig.Object.AbsolutePosition + new Vector3(2, 0, 0), Owner);
+        var api = new Phlox.ScriptEngine.LSLSystemAPI(AnotherEnginesChatHost.Create(rig.Engine.HostServices, comm), talker.RootPart, talker.RootPart.LocalId, UUID.Random());
+
+        // llRegionSayTo reaches another engine's listen only through the world communication, which the stand-in records but
+        // does not raise; the copy it would raise is raised here, as the core WorldComm module does.
+        if (how == "region") api.llRegionSay(9, "hello");
+        else if (how == "say") api.llSay(9, "hello");
+        else
+        {
+            api.llRegionSayTo(rig.Object.RootPart.UUID.ToString(), 9, "hello");
+            comm.Raise(new OSChatMessage { Type = ChatTypeEnum.Direct, Channel = 9, From = "Talker", SenderUUID = talker.RootPart.UUID, Message = "hello", Destination = rig.Object.RootPart.UUID });
+        }
+
+        Assert.True(Heard(rig, listener, "s=9|Talker|" + talker.RootPart.UUID + "|hello"));
+        Thread.Sleep(600); // a real wait: a second copy would come at once
+        Assert.True(rig.MarksOf(listener).Count(m => m.StartsWith("s=")) == 1, how + ": " + Diag(rig, listener));
+    }
 }
