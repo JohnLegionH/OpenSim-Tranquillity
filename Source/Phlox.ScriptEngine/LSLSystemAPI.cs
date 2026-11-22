@@ -1628,22 +1628,11 @@ namespace Phlox.ScriptEngine
 			string name = m_host.Name;
 			UUID id = m_host.UUID;
 			Vector3 pos = m_host.AbsolutePosition;
-			t_OfferingSpokenChat = true;
-			try { m_ScriptEngine?.SendToWorldComm(w => w.DeliverMessage(type, channel, name, id, msg, pos)); }
-			finally { t_OfferingSpokenChat = false; }
+			// Already spoken as scene chat, which every engine's listens hear: the copy IWorldComm raises is marked so that no
+			// engine delivers it again, whichever engine hosts this script (WorldCommSpokenChat). llRegionSayTo is not scene
+			// chat and is not marked: another engine's listens hear it only through IWorldComm.
+			WorldCommSpokenChat.Offer(() => m_ScriptEngine?.SendToWorldComm(w => w.DeliverMessage(type, channel, name, id, msg, pos)));
 		}
-
-		[ThreadStatic] private static bool t_OfferingSpokenChat;
-
-		/// <summary>
-		/// True on this thread while a script's llWhisper, llSay, llShout or llRegionSay, already spoken as scene chat
-		/// (Scene.SimChat), is offered to IWorldComm. Every script engine's listens hear scene chat (OnChatFromWorld), so
-		/// the copy IWorldComm raises for it (OnMessageDelivered) is not delivered again, whichever engine hosts the
-		/// speaking script. An engine's own flag covers only the scripts it hosts; on a region where two engines host
-		/// this API, the other engine's region chat would otherwise reach its listens twice. llRegionSayTo is not scene
-		/// chat and is not marked: another engine's listens hear it only through IWorldComm.
-		/// </summary>
-		public static bool OfferingSpokenChat => t_OfferingSpokenChat;
 
 		/// <summary>
 		/// Halcyon's llRegionSayTo (LSLSystemAPI.cs:1087-1100): NULL_KEY reaches no one. The listens that hear

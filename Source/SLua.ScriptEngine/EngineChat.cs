@@ -121,8 +121,8 @@ namespace SLua.ScriptEngine
         private void OnWorldCommMessage(OSChatMessage chat)
         {
             // This engine's own chat, and any engine's whisper, say, shout or region say spoken through Phlox's API: both
-            // went out as scene chat, which the handlers above have delivered (LSLSystemAPI.OfferingSpokenChat).
-            if (t_sendingToWorldComm || Phlox.ScriptEngine.LSLSystemAPI.OfferingSpokenChat)
+            // went out as scene chat, which the handlers above have delivered (WorldCommSpokenChat).
+            if (t_sendingToWorldComm || WorldCommSpokenChat.Offering)
                 return;
             if (chat.Type != ChatTypeEnum.Region && chat.Type != ChatTypeEnum.Direct)
                 return;

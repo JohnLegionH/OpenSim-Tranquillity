@@ -1099,7 +1099,7 @@ namespace Phlox.ScriptEngine
         /// </summary>
         private void OnWorldCommMessage(OSChatMessage chat)
         {
-            if (t_SendingToWorldComm || LSLSystemAPI.OfferingSpokenChat) return;   // scene chat, already delivered
+            if (t_SendingToWorldComm || WorldCommSpokenChat.Offering) return;   // scene chat, already delivered
             if (chat.Type != ChatTypeEnum.Region && chat.Type != ChatTypeEnum.Direct) return;
             ListenManager?.DeliverChat(chat.Type, chat.Channel, chat.From, chat.SenderUUID, chat.Message,
                 chat.Position, chat.Destination);
