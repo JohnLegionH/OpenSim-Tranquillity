@@ -492,11 +492,18 @@ namespace SLua.ScriptEngine
 
         /// <summary>
         /// Every engine receives every rez with the engine name the region selected. The first-line header still takes
-        /// priority, so a script is ours exactly when <see cref="EngineHeader.Owner"/> gives it to this engine.
+        /// priority, so a script is ours exactly when <see cref="EngineHeader.Owner"/> gives it to this engine, unless the
+        /// item carries a choice: a script saved with a viewer's Luau target or with an engine
+        /// (<see cref="ScriptCompileTargets.CarriesChoice"/>) belongs to the engine the region chose for it, whatever its
+        /// first line says, because the region puts that choice ahead of the first line (Scene.ResolveScriptEngine).
+        /// Phlox decides the same way (PhloxEngine.OnRezScript), so after a change of engine only the chosen engine runs it.
         /// </summary>
         private void OnRezScript(uint localID, UUID itemID, string script, int startParam, bool postOnRez, string engine, int stateSource)
         {
-            if (EngineHeader.Owner(script, engine, LoadedEngineNames()) != ScriptEngineName)
+            TaskInventoryItem rezItem = m_scene?.GetSceneObjectPart(localID)?.Inventory?.GetInventoryItem(itemID);
+            bool chosenByRegion = rezItem is not null && ScriptCompileTargets.CarriesChoice(rezItem.Flags);
+            string owner = chosenByRegion ? engine : EngineHeader.Owner(script, engine, LoadedEngineNames());
+            if (owner != ScriptEngineName)
             {
                 Disown(itemID);
                 return;
@@ -514,6 +521,7 @@ namespace SLua.ScriptEngine
                 LocalID = localID,
                 ItemID = itemID,
                 AssetID = part?.Inventory?.GetInventoryItem(itemID)?.AssetID ?? UUID.Zero,
+                Target = rezItem is null ? ScriptCompileTarget.Unspecified : ScriptCompileTargets.FromFlags(rezItem.Flags),
                 Source = script,
             });
         }
@@ -1462,6 +1470,19 @@ namespace SLua.ScriptEngine
         // ---- the module's interface ----
 
         public bool HasSavedScriptState(UUID itemID, UUID assetID) => HasCarried(itemID, assetID) || m_store.HasSavedState(itemID, assetID);
+
+        /// <summary>
+        /// The region changed the item's engine (Scene.SetScriptEngine), after asking this engine to let the script go: the
+        /// state saved here for it goes (the row, and any state an object carried in for it), so the script starts fresh
+        /// wherever it runs next and an old copy cannot come back, also when it later returns to this engine. Phlox drops
+        /// its own the same way (PhloxEngine.DiscardSavedScriptState). The store reports no state for the item from now on,
+        /// while the removal is still being written.
+        /// </summary>
+        public void DiscardSavedScriptState(UUID itemID)
+        {
+            ForgetCarried(itemID);
+            m_store?.Delete(itemID);
+        }
 
         /// <summary>The version of the carried-state envelope this build writes and reads.</summary>
         internal const string CarriedStateVersion = "1";

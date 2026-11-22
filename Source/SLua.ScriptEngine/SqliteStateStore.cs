@@ -167,11 +167,16 @@ namespace SLua.ScriptEngine
             Enqueue(new Write { Kind = WriteKind.Save, ItemId = itemId, AssetId = assetId, State = state });
         }
 
-        /// <summary>Queues the removal of this engine's row for the item (the script was deleted).</summary>
+        /// <summary>
+        /// Queues the removal of this engine's row for the item (the script was deleted, or its engine changed). Until the
+        /// removal is written the item reports no state: its pending entry is a marker for no asset, which no read matches,
+        /// so a check right after the call does not read the old row from the database. A later save replaces the marker.
+        /// </summary>
         public void Delete(UUID itemID)
         {
-            m_pending.TryRemove(itemID, out _);
-            Enqueue(new Write { Kind = WriteKind.Delete, ItemId = itemID });
+            byte[] removed = Array.Empty<byte>().Clone() as byte[]; // its own instance: the writer drops the marker only if it is still this one
+            m_pending[itemID] = (UUID.Zero, removed);
+            Enqueue(new Write { Kind = WriteKind.Delete, ItemId = itemID, State = removed });
         }
 
         /// <summary>Queues moving this engine's row for the item to the rejected table with the reason; the script starts fresh and the old state stays on record.</summary>
@@ -254,7 +259,8 @@ namespace SLua.ScriptEngine
                 }
                 finally
                 {
-                    if (write.Kind == WriteKind.Save && m_pending.TryGetValue(write.ItemId, out var p) && ReferenceEquals(p.State, write.State))
+                    if ((write.Kind == WriteKind.Save || write.Kind == WriteKind.Delete)
+                        && m_pending.TryGetValue(write.ItemId, out var p) && ReferenceEquals(p.State, write.State))
                         m_pending.TryRemove(new KeyValuePair<UUID, (UUID, byte[])>(write.ItemId, p));
                     write.Done?.Set();
                 }

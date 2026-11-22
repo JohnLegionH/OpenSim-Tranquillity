@@ -12,6 +12,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using SLua.ScriptEngine.Bindings;
+using OpenSim.Framework;
 
 namespace SLua.ScriptEngine
 {
@@ -70,10 +71,22 @@ namespace SLua.ScriptEngine
         }
 
         /// <summary>Compile source text as the language its first line (or, without one, its content) selects. Never throws for bad input.</summary>
-        public CompileResult Compile(string source)
+        public CompileResult Compile(string source) => Compile(source, ScriptCompileTarget.Unspecified);
+
+        /// <summary>
+        /// As above, but a compile target the viewer's editor saved the script with decides the language: SLua for
+        /// <see cref="ScriptCompileTarget.Luau"/>, LSL for <see cref="ScriptCompileTarget.LslOnLuau"/>, whatever the first
+        /// line says. For SLua a first line that names an engine ("//Name:") is blanked, as this engine's own header is.
+        /// </summary>
+        public CompileResult Compile(string source, ScriptCompileTarget target)
         {
             source ??= string.Empty;
-            ScriptLanguage language = EngineHeader.LanguageFor(source);
+            ScriptLanguage language = target switch
+            {
+                ScriptCompileTarget.Luau => ScriptLanguage.Slua,
+                ScriptCompileTarget.LslOnLuau => ScriptLanguage.Lsl,
+                _ => EngineHeader.LanguageFor(source),
+            };
             if (language == ScriptLanguage.Unsupported)
                 return Failed(language, new CompileError(1, UnsupportedLanguageMessage(source)));
 
@@ -82,7 +95,10 @@ namespace SLua.ScriptEngine
                 return Failed(language, refused);
 
             // A header line is blanked for SLua, its newline kept, so the compiler's line numbers match the source.
-            string text = language == ScriptLanguage.Slua && string.Equals(EngineHeader.NamedEngine(source), EngineIdentity.EngineName, System.StringComparison.OrdinalIgnoreCase)
+            bool headerToBlank = target == ScriptCompileTarget.Luau
+                ? EngineHeader.NamedEngine(source) is not null
+                : string.Equals(EngineHeader.NamedEngine(source), EngineIdentity.EngineName, System.StringComparison.OrdinalIgnoreCase);
+            string text = language == ScriptLanguage.Slua && headerToBlank
                 ? source[source.IndexOf('\n')..]
                 : source;
             if (text.Length == 0)
