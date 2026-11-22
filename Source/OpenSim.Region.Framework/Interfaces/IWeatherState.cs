@@ -16,12 +16,12 @@ namespace OpenSim.Region.Framework.Interfaces;
 /// </summary>
 public static class WeatherResult
 {
-    /// <summary>The region's weather is now the one asked for.</summary>
+    /// <summary>The region's weather is now the one asked for, and scripts are told with changed(CHANGED_WEATHER).</summary>
     public const int Changed = 1;
 
     /// <summary>
     /// The weather asked for is the one in force: the same state name and an intensity less than
-    /// <see cref="WeatherLimits.MinIntensityStep"/> from the current target. Nothing changes.
+    /// <see cref="WeatherLimits.MinIntensityStep"/> from the current target. Nothing changes and no script is told.
     /// </summary>
     public const int Unchanged = 0;
 

@@ -274,6 +274,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Tests
         [Fact]
         public void TheConstantsMatchTheCoreAndPhlox()
         {
+            Assert.Equal((int)(uint)Changed.WEATHER, ScriptBaseClass.CHANGED_WEATHER);
             Assert.Equal(WeatherResult.Changed, ScriptBaseClass.WEATHER_SET);
             Assert.Equal(WeatherResult.Unchanged, ScriptBaseClass.WEATHER_UNCHANGED);
             Assert.Equal(WeatherResult.Disabled, ScriptBaseClass.WEATHER_ERR_DISABLED);

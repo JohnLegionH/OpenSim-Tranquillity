@@ -61,7 +61,10 @@ public enum Changed : uint
     MEDIA = 2048,
     MATERIAL = 4096,
     ANIMATION = 16384,
-    POSITION = 32768
+    POSITION = 32768,
+    // The region's weather state changed (IWeatherState). Not a Second Life flag: it sits above every changed() bit
+    // that Second Life (up to 0x1000), OpenSimulator (0x4000, 0x8000) and Halcyon define.
+    WEATHER = 65536
 }
 
 [Flags]

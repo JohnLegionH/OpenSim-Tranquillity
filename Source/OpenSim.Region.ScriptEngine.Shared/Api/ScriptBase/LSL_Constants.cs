@@ -387,6 +387,8 @@ public partial class ScriptBaseClass
     public const int CHANGED_ANIMATION = 16384;
     //ApiDesc opensim specific
     public const int CHANGED_POSITION = 32768;
+    //ApiDesc The region's weather state changed (osGetWeather). Not a Second Life flag; Phlox's CHANGED_WEATHER has the same value.
+    public const int CHANGED_WEATHER = 65536;
 
     public const int TYPE_INVALID = 0;
     public const int TYPE_INTEGER = 1;

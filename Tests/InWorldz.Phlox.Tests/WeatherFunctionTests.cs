@@ -11,6 +11,7 @@ using InWorldz.Phlox.Types;
 using OpenMetaverse;
 using OpenSim.Region.CoreModules.World.Wind;
 using OpenSim.Region.Framework.Interfaces;
+using OpenSim.Region.Framework.Scenes;
 using Phlox.ScriptEngine;
 using Xunit;
 
@@ -226,6 +227,7 @@ public class WeatherFunctionTests
     public void TheConstantsMatchTheCore()
     {
         var c = DefaultConstants.Constants;
+        Assert.Equal(((uint)Changed.WEATHER).ToString(), c["CHANGED_WEATHER"].ConstValue);
         Assert.Equal(WeatherResult.Changed.ToString(), c["WEATHER_SET"].ConstValue);
         Assert.Equal(WeatherResult.Unchanged.ToString(), c["WEATHER_UNCHANGED"].ConstValue);
         Assert.Equal(WeatherResult.Disabled.ToString(), c["WEATHER_ERR_DISABLED"].ConstValue);

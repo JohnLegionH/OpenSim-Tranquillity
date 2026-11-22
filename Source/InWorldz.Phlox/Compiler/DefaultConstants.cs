@@ -376,6 +376,9 @@ namespace InWorldz.Phlox.Compiler
             {"CHANGED_MEDIA", new ConstantSymbol("CHANGED_MEDIA", SymbolTable.INT, "2048")},
             {"CHANGED_ANIMATION", new ConstantSymbol("CHANGED_ANIMATION", SymbolTable.INT, "16384")},   // see https://jira.secondlife.com/browse/SVC-408 and comments
             {"CHANGED_POSITION", new ConstantSymbol("CHANGED_POSITION", SymbolTable.INT, "32768")},
+            // The region's weather state changed (iwGetWeather). Not a Second Life flag; above every SL, OpenSimulator and
+            // Halcyon changed() bit. YEngine's CHANGED_WEATHER has the same value.
+            {"CHANGED_WEATHER", new ConstantSymbol("CHANGED_WEATHER", SymbolTable.INT, "65536")},
             {"TYPE_INVALID", new ConstantSymbol("TYPE_INVALID", SymbolTable.INT, "0")},
             {"TYPE_INTEGER", new ConstantSymbol("TYPE_INTEGER", SymbolTable.INT, "1")},
             {"TYPE_FLOAT", new ConstantSymbol("TYPE_FLOAT", SymbolTable.INT, "2")},

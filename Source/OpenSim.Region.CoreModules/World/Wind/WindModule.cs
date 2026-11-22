@@ -221,6 +221,10 @@ public class WindModule : IWindModule
         if (m_windVolumes.Enabled)
             m_scene.EventManager.OnObjectBeingRemovedFromScene += OnObjectBeingRemovedFromScene;
 
+        // Scripts hear of each weather change through changed(CHANGED_WEATHER). A state that is off never changes.
+        if (m_weather.Enabled)
+            m_weather.WeatherChanged += OnWeatherChanged;
+
         // Register the wind module
         m_scene.RegisterModuleInterface<IWindModule>(this);
 
@@ -254,6 +258,7 @@ public class WindModule : IWindModule
         //  Remove our hooks
         m_scene.EventManager.OnFrame -= WindUpdate;
         m_scene.EventManager.OnObjectBeingRemovedFromScene -= OnObjectBeingRemovedFromScene;
+        m_weather.WeatherChanged -= OnWeatherChanged;
 //            m_scene.EventManager.OnMakeRootAgent -= OnAgentEnteredRegion;
 
     }
@@ -553,6 +558,56 @@ public class WindModule : IWindModule
             return;
 
         WindVolumeConsole.State(m_weather, m_scene.Name, ConsoleLine);
+    }
+
+    // A change of the weather state: one log line, then every script in the region that handles changed() is told.
+    private void OnWeatherChanged(WeatherSnapshot now)
+    {
+        Scene scene = m_scene;
+        if (scene == null)
+            return;
+
+        try
+        {
+            int told = TellScriptsWeatherChanged(scene);
+            m_log.LogInformation(
+                "[WEATHER] {0}: state {1}, intensity {2} over {3} s, serial {4}, set by object {5} owned by {6}; {7} prim(s) told.",
+                scene.Name, now.State, now.TargetIntensity, now.RampMs / 1000f, now.Serial, now.SetByObject, now.SetByOwner, told);
+        }
+        catch (Exception e)
+        {
+            // The state has changed whatever happens here; a failed delivery must not reach the setting script.
+            m_log.LogError(e, "[WEATHER] {0}: telling scripts of weather change {1} failed.", scene.Name, now.Serial);
+        }
+    }
+
+    /// <summary>
+    /// Raises changed(CHANGED_WEATHER) once in every prim of the region whose scripts handle changed(), and returns how
+    /// many prims that was. Each engine posts it to the prim's scripts, as it does the core's other changed() bits
+    /// (EventManager.OnScriptChangedEvent); SceneObjectPart.TriggerScriptChangedEvent skips a prim whose scripts, in
+    /// their current state, have no changed() handler. Worn objects are scene objects too, so their scripts hear it.
+    /// </summary>
+    public static int TellScriptsWeatherChanged(Scene scene)
+    {
+        if (scene == null)
+            return 0;
+
+        int told = 0;
+        foreach (SceneObjectGroup group in scene.GetSceneObjectGroups())
+        {
+            if (group.IsDeleted)
+                continue;
+
+            foreach (SceneObjectPart part in group.Parts)
+            {
+                if ((part.ScriptEvents & scriptEvents.changed) == 0)
+                    continue;
+
+                part.TriggerScriptChangedEvent(Changed.WEATHER);
+                told++;
+            }
+        }
+        return told;
     }
 
     private static void ConsoleLine(string line) => MainConsole.Instance.Output("{0}", line);

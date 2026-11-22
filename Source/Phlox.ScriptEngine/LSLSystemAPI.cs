@@ -10626,7 +10626,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
         /// <summary>
         /// Sets the region's weather state: a name (up to 32 bytes), an intensity from 0 to 1, and a transition in seconds
-        /// over which the intensity ramps to it. Returns WEATHER_SET, WEATHER_UNCHANGED for the weather already in force, or a negative WEATHER_ERR_ code with
+        /// over which the intensity ramps to it. Returns WEATHER_SET (and every script that handles changed() hears
+        /// CHANGED_WEATHER), WEATHER_UNCHANGED for the weather already in force, or a negative WEATHER_ERR_ code with
         /// nothing changed: DISABLED when [Weather] is not enabled, NOT_ALLOWED unless the object's owner is the estate
         /// owner, an estate manager or a god (the iwSetWind rule), INVALID for a value outside its limits (never clamped),
         /// THROTTLED when the last change was too recent. The owner is checked before the values.
