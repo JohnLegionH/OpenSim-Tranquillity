@@ -169,7 +169,7 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
         m_scene.EventManager.OnAvatarEnteringNewParcel += EventManagerOnAvatarEnteringNewParcel;
         m_scene.EventManager.OnClientMovement += EventManagerOnClientMovement;
         m_scene.EventManager.OnValidateLandBuy += EventManagerOnValidateLandBuy;
-        m_scene.EventManager.OnLandBuy += EventManagerOnLandBuy;
+        m_scene.EventManager.OnLandBuyTransfer += EventManagerOnLandBuy;
         m_scene.EventManager.OnNewClient += EventManagerOnNewClient;
         m_scene.EventManager.OnMakeChildAgent += EventMakeChildAgent;
         m_scene.EventManager.OnSignificantClientMovement += EventManagerOnSignificantClientMovement;
@@ -738,6 +738,13 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
     /// </param>
     public ILandObject AddLandObject(ILandObject new_land)
     {
+        return AddLandObject(new_land, true);
+    }
+
+    /// <param name="fireAdded">False when the caller holds the land list's lock: it fires LandObjectAdded once it has
+    /// let go (see <see cref="EventManagerOnIncomingLandDataFromStorage"/>).</param>
+    private ILandObject AddLandObject(ILandObject new_land, bool fireAdded)
+    {
         // Only now can we add the prim counts to the land object - we rely on the global ID which is generated
         // as a random UUID inside LandData initialization
         if (m_primCountModule is not null)
@@ -814,7 +821,8 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
             m_landFakeIDs[new_land.LandData.FakeID] = new_land.LandData.LocalID;
         }
 
-        m_scene.EventManager.TriggerLandObjectAdded(new_land);
+        if (fireAdded)
+            m_scene.EventManager.TriggerLandObjectAdded(new_land);
 
         return new_land;
     }
@@ -1220,6 +1228,9 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
     /// <returns>Returns true if successful</returns>
     public void Subdivide(int start_x, int start_y, int end_x, int end_y, UUID attempting_user_id)
     {
+        if (!JoinDivideAllowed(attempting_user_id))
+            return;
+
         //First, lets loop through the points and make sure they are all in the same peice of land
         //Get the land object at start
 
@@ -1272,6 +1283,11 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
 
         newLand.SetLandBitmap(newLand.GetSquareLandBitmap(start_x, start_y, end_x, end_y));
 
+        // a selection that holds no whole 4 m cell (a point, east of west, off the grid) gives
+        // no land: no parcel, or one of no land would be kept and stored for good
+        if (newLandData.Area <= 0 || newLandData.Area >= startLandData.Area)
+            return;
+
         //lets set the subdivision area of the original to false
         int startLandObjectIndex = startLandObject.LandData.LocalID;
         lock (m_landList)
@@ -1280,11 +1296,8 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
             //m_landList[startLandObjectIndex].ForceUpdateLandInfo();
         }
 
-        UpdateLandObject(startLandObject.LandData.LocalID, startLandObject.LandData);
-
-        //add the new land object
-        ILandObject result = AddLandObject(newLand);
-
+        // a landing point now on the new parcel is the parent's no more; reset before the parent is stored, or
+        // the reset was lost on restart and visitors to the parent landed on the new parcel
         if (startLandObject.LandData.LandingType == (byte)LandingType.LandingPoint)
         {
             int x = (int)startLandObject.LandData.UserLocation.X;
@@ -1295,7 +1308,12 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
                 startLandObject.LandData.UserLocation = Vector3.Zero;
                 startLandObject.LandData.UserLookAt = Vector3.Zero;
             }
-         }
+        }
+
+        UpdateLandObject(startLandObject.LandData.LocalID, startLandObject.LandData);
+
+        //add the new land object
+        ILandObject result = AddLandObject(newLand);
 
         m_scene.EventManager.TriggerParcelPrimCountTainted();
 
@@ -1303,6 +1321,18 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
         startLandObject.SendLandUpdateToAvatarsOverMe();
         m_scene.ForEachClient(SendParcelOverlay);
 
+    }
+
+    /// <summary>
+    /// The region's Allow Land Join/Divide (RegionSettings.AllowLandJoinDivide): when it is off only
+    /// the estate's managers may join or divide parcels, as on Second Life. The viewer only greys
+    /// its buttons out; scripts (osParcelJoin, osParcelSubdivide) and other clients do not.
+    /// </summary>
+    private bool JoinDivideAllowed(UUID user)
+    {
+        if (m_scene.RegionInfo.RegionSettings.AllowLandJoinDivide)
+            return true;
+        return m_scene.Permissions.IsEstateManager(user) || m_scene.Permissions.IsAdministrator(user);
     }
 
     /// <summary>
@@ -1316,6 +1346,9 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
     /// <returns>Returns true if successful</returns>
     public void Join(int start_x, int start_y, int end_x, int end_y, UUID attempting_user_id)
     {
+        if (!JoinDivideAllowed(attempting_user_id))
+            return;
+
         int index = 0;
         int maxindex = -1;
         int maxArea = 0;
@@ -1366,9 +1399,14 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
             {
                 m_landList[masterLandObject.LandData.LocalID].SetLandBitmap(
                     slaveLandObject.MergeLandBitmaps(masterLandObject.GetLandBitmap(), slaveLandObject.GetLandBitmap()));
-                performFinalLandJoin(masterLandObject, slaveLandObject);
             }
         }
+
+        // the stores, and the events they fire, outside the land list's lock: a handler takes the prim count's lock,
+        // which PrimCountModule.Recount holds while it asks for every parcel (this lock), and the two threads waited
+        // on each other for good
+        foreach (ILandObject slaveLandObject in selectedLandObjects)
+            performFinalLandJoin(masterLandObject, slaveLandObject);
 
         m_scene.EventManager.TriggerParcelPrimCountTainted();
         masterLandObject.SendLandUpdateToAvatarsOverMe();
@@ -1412,16 +1450,25 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
             for (int x = 0; x < sx;)
             {
                 curID = GetLandObjectIDinLandUnits(x,y);
-                if(curID < 0)
-                    continue;
-
-                ILandObject currentParcel = GetLandObject(curID);
-                if (currentParcel is null)
-                    continue;
-
-                LandData currentParcelLandData = currentParcel.LandData;
+                ILandObject currentParcel = curID < 0 ? null : GetLandObject(curID);
+                LandData currentParcelLandData = currentParcel?.LandData;
                 if (currentParcelLandData is null)
+                {
+                    // a cell no parcel holds (between the land being cleared and loaded again, as an OAR
+                    // load does): public land with no lines, and on to the next cell. Skipping it without
+                    // moving on kept this thread spinning for good.
+                    byteArray[byteArrayCount] = 0;
+                    byteArrayCount++;
+                    if (byteArrayCount >= LAND_BLOCKS_PER_PACKET)
+                    {
+                        remote_client.SendLandParcelOverlay(byteArray, sequenceID);
+                        byteArrayCount = 0;
+                        sequenceID++;
+                        byteArray = new byte[LAND_BLOCKS_PER_PACKET];
+                    }
+                    ++x;
                     continue;
+                }
 
                 // types
                 if (currentParcelLandData.OwnerID.Equals(remote_client.AgentId))
@@ -1552,7 +1599,7 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
 
         if (start_x < 0 || start_y < 0 || end_x < 0 || end_y < 0)
             return;
-        if (start_x >= m_regionSizeX || start_y >= m_regionSizeX || end_x > m_regionSizeX || end_y > m_regionSizeY)
+        if (start_x >= m_regionSizeX || start_y >= m_regionSizeY || end_x > m_regionSizeX || end_y > m_regionSizeY)
             return;
 
         if (end_x - start_x <= Constants.LandUnit &&
@@ -1670,9 +1717,14 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
                 return;
         }
 
-            m_scene.EventManager.TriggerParcelPrimCountUpdate();
-            land.SendLandObjectOwners(remote_client);
-        }
+        // the recount scans every object of the region: only for someone who may see the answer, or any visitor
+        // asking again and again kept the region busy
+        if (!m_scene.Permissions.CanEditParcelProperties(remote_client.AgentId, land, GroupPowers.LandOptions, true))
+            return;
+
+        m_scene.EventManager.TriggerParcelPrimCountUpdate();
+        land.SendLandObjectOwners(remote_client);
+    }
 
     public void ClientOnParcelGodForceOwner(int local_id, UUID ownerID, IClientAPI remote_client)
     {
@@ -1709,6 +1761,8 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
                 land.LandData.OwnerID = m_scene.RegionInfo.EstateSettings.EstateOwner;
                 land.LandData.GroupID = UUID.Zero;
                 land.LandData.IsGroupOwned = false;
+                land.LandData.SalePrice = 0;
+                land.LandData.AuthBuyerID = UUID.Zero;
                 land.LandData.Flags &= ~(uint) (ParcelFlags.ForSale | ParcelFlags.ForSaleObjects | ParcelFlags.SellParcelObjects | ParcelFlags.ShowDirectory);
 
                 UpdateLandObject(land.LandData.LocalID, land.LandData);
@@ -1745,13 +1799,13 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
         }
     #endregion
 
-    // If the economy has been validated by the economy module,
-    // and land has been validated as well, this method transfers
-    // the land ownership
+    // If the economy has been validated by the economy module, the land has been validated as well, and the money
+    // module reports the price as paid, this method transfers the land ownership. It runs on OnLandBuyTransfer, after
+    // every OnLandBuy handler, so a money module that charges in OnLandBuy has set amountDebited by then.
 
     public void EventManagerOnLandBuy(Object o, EventManager.LandBuyArgs e)
     {
-        if (e.economyValidated && e.landValidated)
+        if (e.economyValidated && e.landValidated && (e.parcelPrice <= 0 || e.amountDebited >= e.parcelPrice))
         {
             ILandObject land;
             lock (m_landList)
@@ -1785,8 +1839,18 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
             int saleprice = land.LandData.SalePrice;
             UUID pOwnerID = land.LandData.OwnerID;
 
-            bool landforsale = ((land.LandData.Flags &
-                                     (uint)(ParcelFlags.ForSale | ParcelFlags.ForSaleObjects | ParcelFlags.SellParcelObjects)) != 0);
+            // Only ForSale puts a parcel up for sale. "Sell objects with land" (SellParcelObjects) says what goes with a
+            // sale, and the viewer's "Cancel land sale" leaves it set: taken alone it would let anyone buy the parcel,
+            // and the owner's objects on it, for nothing.
+            bool landforsale = (land.LandData.Flags & (uint)ParcelFlags.ForSale) != 0;
+
+            if (landforsale && !CanResell(pOwnerID))
+                landforsale = false;
+
+            // A purchase for a group needs the buyer's "Deed land and buy land for group" ability in that group.
+            if (e.groupOwned && (e.groupId.IsZero() || !HasGroupPowers(e.groupId, e.agentId, (ulong)GroupPowers.LandDeed)))
+                landforsale = false;
+
                 if ((AuthorizedID.IsZero() || AuthorizedID.Equals(e.agentId)) && e.parcelPrice >= saleprice && landforsale)
                 {
                     // TODO I don't think we have to lock it here, no?
@@ -1799,7 +1863,25 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
             }
         }
 
-    void ClientOnParcelDeedToGroup(int parcelLocalID, UUID groupID, IClientAPI remote_client)
+    /// <summary>
+    /// Whether land owned by <paramref name="owner"/> may be sold. Without the estate's "allow land resell" only the
+    /// estate owner, its managers and administrators sell land.
+    /// </summary>
+    public bool CanResell(UUID owner)
+    {
+        return m_scene.RegionInfo.RegionSettings.AllowLandResell
+            || m_scene.RegionInfo.EstateSettings.IsEstateManagerOrOwner(owner)
+            || m_scene.Permissions.IsAdministrator(owner);
+    }
+
+    /// <summary>Whether <paramref name="user"/> belongs to <paramref name="group"/> with every one of <paramref name="powers"/>.</summary>
+    private bool HasGroupPowers(UUID group, UUID user, ulong powers)
+    {
+        GroupMembershipData membership = m_scene.RequestModuleInterface<IGroupsModule>()?.GetMembershipData(group, user);
+        return membership is not null && (membership.GroupPowers & powers) == powers;
+    }
+
+    public void ClientOnParcelDeedToGroup(int parcelLocalID, UUID groupID, IClientAPI remote_client)
     {
         ILandObject land;
         lock (m_landList)
@@ -1808,6 +1890,9 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
                 return;
         }
 
+            // CanDeedParcel checks the deed power in the parcel's group: the deed may only go to that group.
+            if (groupID.IsZero() || groupID.NotEqual(land.LandData.GroupID))
+                return;
             if (!m_scene.Permissions.CanDeedParcel(remote_client.AgentId, land))
                 return;
             land.DeedToGroup(groupID);
@@ -1819,10 +1904,14 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
 
     private void EventManagerOnIncomingLandDataFromStorage(List<LandData> data)
     {
+        // the parcels are added under the land list's lock, and their events fired, their prim counts finalised and
+        // the avatars over them told once it is let go: those take the prim count's lock, which
+        // PrimCountModule.Recount holds while it asks for every parcel (this lock)
+        List<ILandObject> added = new();
         lock (m_landList)
         {
             for (int i = 0; i < data.Count; i++)
-                IncomingLandObjectFromStorage(data[i]);
+                added.Add(IncomingLandObjectFromStorage(data[i]));
 
             // Layer data is in LandUnit (4m) chunks
             for (int y = 0; y < m_regionSizeY / Constants.TerrainPatchSize * (Constants.TerrainPatchSize / Constants.LandUnit); y++)
@@ -1866,7 +1955,9 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
                             newLand.SetLandBitmap(CreateBitmapForID(0));
                             newLand.LandData.OwnerID = m_scene.RegionInfo.EstateSettings.EstateOwner;
                             newLand.LandData.ClaimDate = Util.UnixTimeSinceEpoch();
-                            newLand = AddLandObject(newLand);
+                            newLand = AddLandObject(newLand, false);
+                            if (newLand is not null)
+                                added.Add(newLand);
                         }
                         else
                         {
@@ -1878,22 +1969,26 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
                 }
             }
 
-            FinalizeLandPrimCountUpdate(); // update simarea information
-
-            lock (m_landList)
-            {
-                foreach(LandObject lo in m_landList.Values)
-                    lo.SendLandUpdateToAvatarsOverMe();
-            }
         }
+
+        foreach (ILandObject lo in added)
+        {
+            if (lo is not null)
+                m_scene.EventManager.TriggerLandObjectAdded(lo);
+        }
+
+        FinalizeLandPrimCountUpdate(); // update simarea information
+
+        foreach (ILandObject lo in AllParcels())
+            lo.SendLandUpdateToAvatarsOverMe();
     }
 
-    private void IncomingLandObjectFromStorage(LandData data)
+    private ILandObject IncomingLandObjectFromStorage(LandData data)
     {
         ILandObject new_land = new LandObject(data.OwnerID, data.IsGroupOwned, m_scene, data);
 
         new_land.SetLandBitmapFromByteArray();
-        AddLandObject(new_land);
+        return AddLandObject(new_land, false);
     }
 
     public void ReturnObjectsInParcel(int localID, uint returnType, UUID[] agentIDs, UUID[] taskIDs, IClientAPI remoteClient)

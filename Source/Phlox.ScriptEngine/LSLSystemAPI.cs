@@ -7,6 +7,9 @@
  */
 
 /*
+ * Copyright (c) 2015, InWorldz Halcyon Developers
+ * All rights reserved.
+ * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  * 
@@ -563,7 +566,56 @@ namespace Phlox.ScriptEngine
                 foreach (int evt in m_thisScript.EventTypesHandledIn(m_thisScript.ScriptState.LSLState))
                     flags |= MapEventFlag((SupportedEventList.Events)evt);
             }
-            m_host.SetScriptEvents(m_itemID, flags);
+            WhileOurs(() => m_host.SetScriptEvents(m_itemID, flags));
+        }
+
+        /// <summary>
+        /// Runs a set-up the core keeps under this script's item id (a URL, an HTTP request, an XML-RPC channel or remote
+        /// data request, taken controls, the item's permissions, the event mask, a target, a bot's path events) only while
+        /// this instance is the script's live one, and returns whether it ran. It does not run once the region has let this
+        /// instance go (IScriptHostServices.HasLetGo), nor while another engine holds the item (Scene.ScriptItemHolders):
+        /// that engine's instance owns what is kept under the item's id, and Phlox's unload leaves it alone. The check and
+        /// the set-up run under the lock that the region's removal takes (PhloxEngine.OnRemoveScript), so a set-up is made
+        /// either before the instance is let go, as any set-up of a live instance, or not at all. Never waits for another
+        /// engine.
+        /// <para>The region fires that removal while it holds the prim's inventory lock
+        /// (SceneObjectPartInventory.RemoveInventoryItem), so a set-up here must not take an inventory lock, nor anything
+        /// that can (a sensor sweep reads other prims): such a caller takes the inventory lock first, as the region does,
+        /// or checks <see cref="IsOurs"/> before it acts.</para>
+        /// </summary>
+        private bool WhileOurs(Action setUp)
+        {
+            Scene world = m_ScriptEngine?.World;
+            if (world == null) { setUp(); return true; }
+            bool ran = false;
+            world.ScriptItemHolders.ReleaseWhileHeld(m_itemID, PhloxEngineHeader.PhloxName, () =>
+            {
+                if (m_ScriptEngine.HasLetGo(m_itemID)) return;
+                setUp();
+                ran = true;
+            });
+            return ran;
+        }
+
+        /// <summary>
+        /// Whether this instance may set things up under its item id now (<see cref="WhileOurs"/>). Enough on its own for
+        /// what only Phlox keeps (listens, sensors): those reach only Phlox's own instance, which is let go, and its unload
+        /// drops them.
+        /// </summary>
+        private bool IsOurs() => WhileOurs(static () => { });
+
+        /// <summary>
+        /// Runs a change to what the core keeps by this script's item id (the prim's event mask, URLs, HTTP requests, XML-RPC
+        /// channels, taken controls) only while Phlox holds the item or no engine does (Scene.ScriptItemHolders). When the
+        /// region moves the script to another engine, Phlox lets this instance go later, on its loader thread, and the other
+        /// engine's instance may by then have set up its own under the same item id: an unload, reset or state change of
+        /// this instance that comes after that leaves them alone. Never waits for another engine.
+        /// </summary>
+        private void WhileHeld(Action change)
+        {
+            Scene world = m_ScriptEngine?.World;
+            if (world == null) { change(); return; }
+            world.ScriptItemHolders.ReleaseWhileHeld(m_itemID, PhloxEngineHeader.PhloxName, change);
         }
 
         /// <summary>
@@ -652,7 +704,7 @@ namespace Phlox.ScriptEngine
         public void OnStateChange() => ReleaseScriptResources(ScriptEnd.StateChange);
         public void OnScriptUnloaded(ScriptUnloadReason reason, RuntimeState.LocalDisableFlag localFlag)
         {
-            m_host?.RemoveScriptEvents(m_itemID);
+            WhileHeld(() => m_host?.RemoveScriptEvents(m_itemID));
             ReleaseScriptResources(ScriptEnd.Unload);
             // Halcyon OnScriptUnloaded "silently release controls". The permissions and the Control record stay
             // with the item and its saved state (a crossing object takes them with it); only an avatar still here is let go.
@@ -686,9 +738,17 @@ namespace Phlox.ScriptEngine
             PauseSensorForParcel();
             m_PendingDataserver.Clear();
             var async = m_ScriptEngine?.AsyncCommands;
-            async?.HttpRequestPlugin.RemoveEvents(m_localID, m_itemID);
-            async?.XmlRequestPlugin.RemoveEvents(m_localID, m_itemID);
+            async?.HttpRequestPlugin.RemoveEvents(m_localID, m_itemID, stopInCore: false);
+            WhileHeld(() =>
+            {
+                StopHttpRequestsInCore();
+                async?.XmlRequestPlugin.RemoveEvents(m_localID, m_itemID);
+            });
         }
+
+        /// <summary>The core's HTTP module stops this item's requests still in flight (called under <see cref="WhileHeld"/>).</summary>
+        private void StopHttpRequestsInCore()
+            => m_ScriptEngine?.World?.RequestModuleInterface<IHttpRequestModule>()?.StopHttpRequest(m_localID, m_itemID);
 
         /// <summary>
         /// The unload's release of taken controls, from what the script and the region hold, never from the part's
@@ -704,8 +764,11 @@ namespace Phlox.ScriptEngine
             if (misc == null || !misc.ContainsKey((int)RuntimeState.MiscAttr.Control)) return;
             ScenePresence holder = ControlsHolder(UUID.Zero, hadRecord: true);
             if (holder != null)
-                using (PhloxEngine.OwnControlChange())
-                    holder.UnRegisterControlEventsToScript(m_host.LocalId, m_itemID);
+                WhileHeld(() =>
+                {
+                    using (PhloxEngine.OwnControlChange())
+                        holder.UnRegisterControlEventsToScript(m_host.LocalId, m_itemID);
+                });
             m_ScriptEngine?.RequestParcelCheck(m_itemID);
         }
         // ── What ends with the script ──────────────────────────────────────────
@@ -738,6 +801,8 @@ namespace Phlox.ScriptEngine
         /// <item>XML-RPC channels and llSendRemoteData: unload only (Halcyon RemoveScript; its reset did nothing and SL says nothing).</item>
         /// <item>permission requests still waiting for an answer, both kinds: reset and unload (<see cref="CancelPermissionRequests"/>).</item>
         /// </list>
+        /// What the core modules keep by item id (HTTP requests, URLs, XML-RPC channels) is released only while Phlox holds the
+        /// item (<see cref="WhileHeld"/>); Phlox's own records go on every end as listed.
         /// </summary>
         internal void ReleaseScriptResources(ScriptEnd end)
         {
@@ -752,18 +817,23 @@ namespace Phlox.ScriptEngine
             {
                 // Halcyon ScriptLoader: AsyncCommandManager.RemoveScript(engine, localId, itemId) - sensor, HTTP, XML-RPC
                 if (m_ScriptEngine != null && async != null)
-                    Phlox.ScriptEngine.AsyncCommand.AsyncCommandManager.RemoveScript(m_ScriptEngine.ScriptEngine, m_localID, m_itemID);
+                    Phlox.ScriptEngine.AsyncCommand.AsyncCommandManager.RemoveScript(m_ScriptEngine.ScriptEngine, m_localID, m_itemID, releaseInCore: false);
             }
             else
             {
                 async?.SensorRepeatPlugin.RemoveScript(m_itemID);
                 m_thisScript?.ScriptState?.MiscAttributes?.Remove((int)RuntimeState.MiscAttr.SensorRepeat);
-                if (end == ScriptEnd.Reset) async?.HttpRequestPlugin.RemoveEvents(m_localID, m_itemID);
+                if (end == ScriptEnd.Reset) async?.HttpRequestPlugin.RemoveEvents(m_localID, m_itemID, stopInCore: false);
             }
 
             if (end != ScriptEnd.StateChange)
             {
-                m_ScriptEngine?.World?.RequestModuleInterface<IUrlModule>()?.ScriptRemoved(m_itemID);
+                WhileHeld(() =>
+                {
+                    StopHttpRequestsInCore();
+                    if (end == ScriptEnd.Unload) async?.XmlRequestPlugin.RemoveEvents(m_localID, m_itemID);
+                    m_ScriptEngine?.World?.RequestModuleInterface<IUrlModule>()?.ScriptRemoved(m_itemID);
+                });
                 CancelPermissionRequests();
             }
         }
@@ -1258,8 +1328,11 @@ namespace Phlox.ScriptEngine
             if ((item.PermsMask & PERMISSION_TAKE_CONTROLS) == 0) return;
             ScenePresence sp = World?.GetScenePresence(item.PermsGranter);
             if (sp == null || sp.IsChildAgent) return;
-            using (PhloxEngine.OwnControlChange())
-                sp.RegisterControlEventsToScript(controls, accept, pass_on, m_host.LocalId, m_itemID);
+            if (!WhileOurs(() =>
+            {
+                using (PhloxEngine.OwnControlChange())
+                    sp.RegisterControlEventsToScript(controls, accept, pass_on, m_host.LocalId, m_itemID);
+            })) return;
             m_ScriptEngine?.RequestParcelCheck(m_itemID);   // Holding controls exempts it from a No Scripts parcel
         }
 
@@ -2743,6 +2816,12 @@ namespace Phlox.ScriptEngine
                 ScriptShoutError("llResetOtherScript: script '" + name + "' not found");
                 return;
             }
+            // SL wiki, llResetOtherScript, Caveats: "If the script is not running, this call has no effect, even after the
+            // script is set running again." Running is what llGetScriptState answers for the same script. A script stopped
+            // by a runtime error is still reset: llResetOtherScript is how SL restarts one (the crash monitor example on the
+            // llGetScriptState page), as llSetScriptState "Cannot be used to restart a script that has encountered a
+            // run-time error" (llSetScriptState, Caveats).
+            if (llGetScriptState(name) == 0 && !m_ScriptEngine.IsScriptTerminated(item.ItemID)) return;
             ResetScriptOfAnyEngine(item.ItemID, api: true);
         }
 
@@ -2841,6 +2920,9 @@ namespace Phlox.ScriptEngine
                 ScriptShoutError("llSetScriptState: script '" + name + "' not found");
                 return;
             }
+            // SL wiki, llSetScriptState, Caveats: it "Cannot be used to restart a script that has encountered a run-time
+            // error". Such a script stays stopped; llResetOtherScript restarts it. The viewer's Running box is not this call.
+            if (run != 0 && m_ScriptEngine != null && m_ScriptEngine.IsScriptTerminated(item.ItemID)) return;
             // Use EventManager directly — SetScriptRunning requires IClientAPI
             if (run != 0)
                 World.EventManager.TriggerStartScript(m_host.LocalId, item.ItemID);
@@ -3099,10 +3181,13 @@ namespace Phlox.ScriptEngine
             {
                 // A grant that came from an Experience stays one while bits of it end (a reset of the controls, a stand);
                 // any other grant, from another granter or with a bit it did not hold, is not that Experience's.
-                if (mask == 0 || granter != item.PermsGranter || (mask & ~item.PermsMask) != 0)
-                    ForgetExperienceGrant();
-                item.PermsGranter = granter;
-                item.PermsMask = mask;
+                bool notThatExperiences = mask == 0 || granter != item.PermsGranter || (mask & ~item.PermsMask) != 0;
+                if (!WhileOurs(() =>
+                {
+                    item.PermsGranter = granter;
+                    item.PermsMask = mask;
+                })) return;
+                if (notThatExperiences) ForgetExperienceGrant();
                 m_host.Inventory.ForceInventoryPersistence();
                 m_host.ParentGroup.HasGroupChanged = true;
                 GrantChanged();
@@ -3156,11 +3241,15 @@ namespace Phlox.ScriptEngine
             int implicitPerms = GetImplicitPermissions(item, agentID);
             if (implicitPerms == 0) return false;
             if ((perm & (~implicitPerms)) != 0) return false;
+            // The inventory lock first, then the guard's: the region's order when it removes a script.
+            bool granted;
             using (InventoryLock.Write(m_host.TaskInventory))
-            {
-                item.PermsGranter = agentID;
-                item.PermsMask = perm;
-            }
+                granted = WhileOurs(() =>
+                {
+                    item.PermsGranter = agentID;
+                    item.PermsMask = perm;
+                });
+            if (!granted) return true;   // Nothing granted and nothing asked: the instance was let go
             PermsChange(item, item.PermsGranter, item.PermsMask);
             m_ScriptEngine.PostScriptEvent(m_itemID, new EventParams(
                 "run_time_permissions", new object[] { (int)item.PermsMask },
@@ -3208,6 +3297,7 @@ namespace Phlox.ScriptEngine
         public void llRequestPermissions(string agent, int perm)
         {
             if (!UUID.TryParse(agent, out UUID agentID)) return;
+            if (!IsOurs()) return;   // No question for an instance the region let go: no answer to it could be kept
             UUID invItemID = InventorySelf();
             if (invItemID == UUID.Zero) return;
             TaskInventoryItem item;
@@ -3314,8 +3404,11 @@ namespace Phlox.ScriptEngine
             if (sp == null || sp.IsChildAgent) return;
             // The script's own call; a release the core raises for it (a re-take, or pass_on without accept) is
             // not a stand-up (PhloxEngine.OnScriptControlsReleased)
-            using (PhloxEngine.OwnControlChange())
-                sp.RegisterControlEventsToScript(controls, accept, pass_on, m_host.LocalId, m_itemID);
+            if (!WhileOurs(() =>
+            {
+                using (PhloxEngine.OwnControlChange())
+                    sp.RegisterControlEventsToScript(controls, accept, pass_on, m_host.LocalId, m_itemID);
+            })) return;
             m_thisScript.ScriptState.MiscAttributes[(int)RuntimeState.MiscAttr.Control] =
                 new object[] { controls, accept, pass_on };
             m_ScriptEngine?.RequestParcelCheck(m_itemID);   // Holding controls exempts it from a No Scripts parcel
@@ -3365,8 +3458,11 @@ namespace Phlox.ScriptEngine
                 }
                 ScenePresence holder = ControlsHolder(item?.PermsGranter ?? UUID.Zero, hadRecord);
                 if (holder != null)
-                    using (PhloxEngine.OwnControlChange())
-                        holder.UnRegisterControlEventsToScript(m_host.LocalId, m_itemID);
+                    WhileHeld(() =>
+                    {
+                        using (PhloxEngine.OwnControlChange())
+                            holder.UnRegisterControlEventsToScript(m_host.LocalId, m_itemID);
+                    });
                 if (hadRecord || holder != null)
                     m_ScriptEngine?.RequestParcelCheck(m_itemID);   // Without controls a No Scripts parcel pauses it
             }
@@ -5156,6 +5252,7 @@ namespace Phlox.ScriptEngine
        public void llSensor(string name, string id, int type, float range, float arc)
         {
             if (!UUID.TryParse(id, out UUID keyID)) keyID = UUID.Zero;
+            if (!IsOurs()) return;
             m_ScriptEngine.AsyncCommands?.SensorRepeatPlugin.SenseOnce(
                 m_localID, m_itemID, name, keyID, type, range, arc, m_host);
         }
@@ -5163,6 +5260,7 @@ namespace Phlox.ScriptEngine
         public void llSensorRepeat(string name, string id, int type, float range, float arc, float rate)
         {
             if (!UUID.TryParse(id, out UUID keyID)) keyID = UUID.Zero;
+            if (!IsOurs()) return;
             m_ScriptEngine.AsyncCommands?.SensorRepeatPlugin.SetSenseRepeatEvent(
                 m_localID, m_itemID, name, keyID, type, range, arc, rate, m_host);
             m_thisScript.ScriptState.MiscAttributes[(int)RuntimeState.MiscAttr.SensorRepeat] =
@@ -5216,6 +5314,7 @@ namespace Phlox.ScriptEngine
             {
                 Channel = channel, Name = name, Key = id, Message = msg, RegexBitfield = regexBitfield, HostKey = botKey
             };
+            if (!IsOurs()) return 0;
             int handle = m_ScriptEngine.ListenManager.Add(m_localID, m_itemID, hostID, channel, name, filterKey, msg,
                 regexBitfield, saved);
             if (handle > 0)
@@ -6738,8 +6837,10 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
             if (group1 == group2) return null; // already in same linkset
 
-            // Link group2 into group1 — group2 ceases to exist as a separate object
-            group1.LinkToGroup(group2);
+            // Link group2 into group1 — group2 ceases to exist as a separate object. Its prims are inserted from link 2
+            // and group1's own children move up after them, as SL documents ("are inserted into the parent object's
+            // link set starting at link number 2", https://wiki.secondlife.com/wiki/LlCreateLink) and YEngine does.
+            group1.LinkToGroup(group2, true);
 
             group1.TriggerScriptChangedEvent(Changed.LINK);
             group1.HasGroupChanged = true;
@@ -7780,7 +7881,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     }
                     if (face == ALL_SIDES) { for (int i = 0; i < 8; i++) ApplyTex(texEntry.CreateFace((uint)i)); }
                     else { try { ApplyTex(texEntry.CreateFace((uint)face)); } catch { } }
-                    part.UpdateTextureEntry(texEntry.GetBytes());
+                    part.UpdateTextureEntry(texEntry);
                     break;
                 }
 
@@ -7802,7 +7903,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     }
                     else if (face >= 0 && face < sides) te.CreateFace((uint)face).Glow = glow;
                     else break;
-                    part.UpdateTextureEntry(te.GetBytes());
+                    part.UpdateTextureEntry(te);
                     break;
                 }
 
@@ -7813,9 +7914,10 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     try { face  = Convert.ToInt32(data[idx++]); } catch { idx++; break; }
                     try { bright = Convert.ToInt32(data[idx++]) != 0; } catch { break; }
                     Primitive.TextureEntry te = part.Shape.Textures ?? new Primitive.TextureEntry(UUID.Zero);
-                    if (face == ALL_SIDES) { for (int i = 0; i < 8; i++) te.CreateFace((uint)i).Fullbright = bright; }
-                    else { try { te.CreateFace((uint)face).Fullbright = bright; } catch { } }
-                    part.UpdateTextureEntry(te.GetBytes());
+                    // SL: a face the prim does not have is ignored; ALL_SIDES is the default face and the prim's own
+                    // faces (Halcyon SetFullBright).
+                    if (!WriteFaces(te, part.GetNumberOfSides(), face, f => SetFaceFullbright(f, bright))) break;
+                    part.UpdateTextureEntry(te);
                     break;
                 }
 
@@ -7831,13 +7933,9 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     // Shininess Low = 0x40 .. High = 0xC0); anything else is none (Halcyon and YEngine SetShiny). The bump
                     // keeps to its five bits (BUMP_MASK 0x1F) so it cannot write the fullbright or shiny bits.
                     Shininess shinyBits = shiny >= 0 && shiny <= 3 ? (Shininess)(shiny << 6) : Shininess.None;
-                    void ApplyBS(Primitive.TextureEntryFace f) {
-                        f.Shiny = shinyBits;
-                        f.Bump  = (Bumpiness)(bump & 0x1F);
-                    }
-                    if (face == ALL_SIDES) { for (int i = 0; i < 8; i++) ApplyBS(te.CreateFace((uint)i)); }
-                    else { try { ApplyBS(te.CreateFace((uint)face)); } catch { } }
-                    part.UpdateTextureEntry(te.GetBytes());
+                    Bumpiness bumpBits = (Bumpiness)(bump & 0x1F);
+                    if (!WriteFaces(te, part.GetNumberOfSides(), face, f => SetFaceBumpShiny(f, shinyBits, bumpBits))) break;
+                    part.UpdateTextureEntry(te);
                     break;
                 }
 
@@ -8104,7 +8202,13 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     // faces planar, any other mode default. SL: it "silently fails if its face value indicates a
                     // face that does not exist." The scene's own helper, which OpenSim's LSL_Api uses too.
                     if (data[idx] is not int face || data[idx + 1] is not int mode) break;
-                    OpenSim.Region.ScriptEngine.Shared.Api.LSL_Api.SetTexGen(part, face, mode);
+                    // Written here and not through LSL_Api.SetTexGen: that helper (YEngine's) compares against the
+                    // face's own stored value, which leaves a face that inherits the planar mapping from the default
+                    // unchanged when it is set back to default (see SetFaceTexGen).
+                    Primitive.TextureEntry texgenEntry = part.Shape.Textures ?? new Primitive.TextureEntry(UUID.Zero);
+                    MappingType mapping = mode == PRIM_TEXGEN_PLANAR ? MappingType.Planar : MappingType.Default;
+                    if (!WriteFaces(texgenEntry, part.GetNumberOfSides(), face, f => SetFaceTexGen(f, mapping))) break;
+                    part.UpdateTextureEntry(texgenEntry);
                     break;
                 }
 
@@ -8371,142 +8475,19 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 }
 
                 // ── PBR / glTF Material params ──────────────────────────────
+                // Stored through GltfMaterialOverride, in the compact form viewers read, as YEngine's LSL_Api does.
 
                 case PRIM_RENDER_MATERIAL:
-                {
                     // [ PRIM_RENDER_MATERIAL, integer face, string render_material ]
-                    if (idx + 1 >= data.Length) { idx = data.Length; break; }
-                    int face; try { face = Convert.ToInt32(data[idx++]); } catch { idx++; break; }
-                    string matStr = data[idx++].ToString();
-                    UUID matUUID = UUID.Zero;
-                    UUID.TryParse(matStr, out matUUID);
-
-                    var shape_rm = part.Shape;
-                    shape_rm.RenderMaterials ??= new OpenMetaverse.Primitive.RenderMaterials();
-                    int numFaces_rm = part.GetNumberOfSides();
-
-                    if (face == ALL_SIDES)
-                    {
-                        var entries = new OpenMetaverse.Primitive.RenderMaterials.RenderMaterialEntry[numFaces_rm];
-                        for (int i = 0; i < numFaces_rm; i++)
-                        {
-                            entries[i].te_index = (byte)i;
-                            entries[i].id = matUUID;
-                        }
-                        shape_rm.RenderMaterials.entries = entries;
-                        // Clear non-transform overrides per SL spec
-                    }
-                    else if (face >= 0 && face < numFaces_rm)
-                    {
-                        SetRenderMaterialEntry(ref shape_rm.RenderMaterials.entries, matUUID, face);
-                    }
-
-                    if (part.ParentGroup != null)
-                        part.ParentGroup.HasGroupChanged = true;
-                    part.ScheduleFullUpdate();
+                    PrimSetRenderMaterial(part, data[idx], data[idx + 1]);
                     break;
-                }
 
                 case PRIM_GLTF_BASE_COLOR:
-                {
-                    // [ PRIM_GLTF_BASE_COLOR, face, texture, repeats, offsets, rotation,
-                    //   color, alpha, alpha_mode, alpha_cutoff, double_sided ]
-                    if (idx + 9 >= data.Length) { idx = data.Length; break; }
-                    int face; try { face = Convert.ToInt32(data[idx++]); } catch { idx += 9; break; }
-                    string texture = data[idx++].ToString();
-                    Vector3 repeats = (Vector3)data[idx++];
-                    Vector3 offsets = (Vector3)data[idx++];
-                    float rotation = (float)Convert.ToDouble(data[idx++]);
-                    Vector3 color = (Vector3)data[idx++];
-                    float alpha = (float)Convert.ToDouble(data[idx++]);
-                    int alphaMode = Convert.ToInt32(data[idx++]);
-                    float alphaCutoff = (float)Convert.ToDouble(data[idx++]);
-                    int doubleSided = Convert.ToInt32(data[idx++]);
-
-                    var osd = new OpenMetaverse.StructuredData.OSDMap();
-                    if (!string.IsNullOrEmpty(texture) && texture != UUID.Zero.ToString())
-                        osd["tex"] = texture;
-                    osd["rep"] = new OpenMetaverse.StructuredData.OSDArray { (double)repeats.X, (double)repeats.Y };
-                    osd["off"] = new OpenMetaverse.StructuredData.OSDArray { (double)offsets.X, (double)offsets.Y };
-                    osd["rot"] = (double)rotation;
-                    osd["bc"] = new OpenMetaverse.StructuredData.OSDArray { (double)color.X, (double)color.Y, (double)color.Z, (double)alpha };
-                    osd["am"] = alphaMode;
-                    osd["ac"] = (double)alphaCutoff;
-                    osd["ds"] = (doubleSided != 0);
-
-                    ApplyGLTFOverrideToPart(part, face, osd);
-                    break;
-                }
-
                 case PRIM_GLTF_NORMAL:
-                {
-                    // [ PRIM_GLTF_NORMAL, face, texture, repeats, offsets, rotation ]
-                    if (idx + 4 >= data.Length) { idx = data.Length; break; }
-                    int face; try { face = Convert.ToInt32(data[idx++]); } catch { idx += 4; break; }
-                    string texture = data[idx++].ToString();
-                    Vector3 repeats = (Vector3)data[idx++];
-                    Vector3 offsets = (Vector3)data[idx++];
-                    float rotation = (float)Convert.ToDouble(data[idx++]);
-
-                    var osd = new OpenMetaverse.StructuredData.OSDMap();
-                    if (!string.IsNullOrEmpty(texture) && texture != UUID.Zero.ToString())
-                        osd["ntex"] = texture;
-                    osd["nrep"] = new OpenMetaverse.StructuredData.OSDArray { (double)repeats.X, (double)repeats.Y };
-                    osd["noff"] = new OpenMetaverse.StructuredData.OSDArray { (double)offsets.X, (double)offsets.Y };
-                    osd["nrot"] = (double)rotation;
-
-                    ApplyGLTFOverrideToPart(part, face, osd);
-                    break;
-                }
-
                 case PRIM_GLTF_METALLIC_ROUGHNESS:
-                {
-                    // [ PRIM_GLTF_METALLIC_ROUGHNESS, face, texture, repeats, offsets, rotation,
-                    //   metallic_factor, roughness_factor ]
-                    if (idx + 6 >= data.Length) { idx = data.Length; break; }
-                    int face; try { face = Convert.ToInt32(data[idx++]); } catch { idx += 6; break; }
-                    string texture = data[idx++].ToString();
-                    Vector3 repeats = (Vector3)data[idx++];
-                    Vector3 offsets = (Vector3)data[idx++];
-                    float rotation = (float)Convert.ToDouble(data[idx++]);
-                    float metallic = (float)Convert.ToDouble(data[idx++]);
-                    float roughness = (float)Convert.ToDouble(data[idx++]);
-
-                    var osd = new OpenMetaverse.StructuredData.OSDMap();
-                    if (!string.IsNullOrEmpty(texture) && texture != UUID.Zero.ToString())
-                        osd["mrtex"] = texture;
-                    osd["mrrep"] = new OpenMetaverse.StructuredData.OSDArray { (double)repeats.X, (double)repeats.Y };
-                    osd["mroff"] = new OpenMetaverse.StructuredData.OSDArray { (double)offsets.X, (double)offsets.Y };
-                    osd["mrrot"] = (double)rotation;
-                    osd["mf"] = (double)Math.Clamp(metallic, 0f, 1f);
-                    osd["rf"] = (double)Math.Clamp(roughness, 0f, 1f);
-
-                    ApplyGLTFOverrideToPart(part, face, osd);
-                    break;
-                }
-
                 case PRIM_GLTF_EMISSIVE:
-                {
-                    // [ PRIM_GLTF_EMISSIVE, face, texture, repeats, offsets, rotation, emissive_tint ]
-                    if (idx + 5 >= data.Length) { idx = data.Length; break; }
-                    int face; try { face = Convert.ToInt32(data[idx++]); } catch { idx += 5; break; }
-                    string texture = data[idx++].ToString();
-                    Vector3 repeats = (Vector3)data[idx++];
-                    Vector3 offsets = (Vector3)data[idx++];
-                    float rotation = (float)Convert.ToDouble(data[idx++]);
-                    Vector3 emissive = (Vector3)data[idx++];
-
-                    var osd = new OpenMetaverse.StructuredData.OSDMap();
-                    if (!string.IsNullOrEmpty(texture) && texture != UUID.Zero.ToString())
-                        osd["etex"] = texture;
-                    osd["erep"] = new OpenMetaverse.StructuredData.OSDArray { (double)repeats.X, (double)repeats.Y };
-                    osd["eoff"] = new OpenMetaverse.StructuredData.OSDArray { (double)offsets.X, (double)offsets.Y };
-                    osd["erot"] = (double)rotation;
-                    osd["ec"] = new OpenMetaverse.StructuredData.OSDArray { (double)emissive.X, (double)emissive.Y, (double)emissive.Z };
-
-                    ApplyGLTFOverrideToPart(part, face, osd);
+                    PrimSetGltf(part, code, data, idx);
                     break;
-                }
 
                 default:
                     return false;
@@ -8953,6 +8934,55 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             part.UpdateShape(shapeBlock);
         }
 
+        // ---- per-face material writes ----
+        //
+        // OpenMetaverse's TextureEntryFace setters for the material byte (bump, shiny, fullbright) and the media byte
+        // (texture mapping) compare the new value with the byte the face stores itself, which is zero while the face
+        // has no value of its own, instead of the value it inherits from the default face. Writing a value whose byte
+        // is zero (fullbright off, bump none, mapping default) to a face that inherits a non-zero byte is therefore
+        // dropped and the face keeps the default's value (libopenmetaverse TextureEntry.cs, the Bump, Shiny,
+        // Fullbright, MediaFlags and TexMapType setters). The helpers below skip a face that already shows the value
+        // and otherwise write a non-zero value first, which gives the face a value of its own, so the real write
+        // that follows is compared with what the face holds.
+
+        // Applies write to the face (or, for ALL_SIDES, to the default face and to each of the prim's own faces that has
+        // an entry). A face number the prim lacks is ignored, as in SL; false means nothing was written.
+        private static bool WriteFaces(Primitive.TextureEntry te, int sides, int face, Action<Primitive.TextureEntryFace> write)
+        {
+            if (face == ALL_SIDES)
+            {
+                write(te.DefaultTexture);
+                for (int i = 0; i < sides && i < te.FaceTextures.Length; i++)
+                    if (te.FaceTextures[i] != null) write(te.FaceTextures[i]);
+                return true;
+            }
+            if (face < 0 || face >= sides) return false;
+            write(te.CreateFace((uint)face));
+            return true;
+        }
+
+        private static void SetFaceFullbright(Primitive.TextureEntryFace f, bool bright)
+        {
+            if (f.Fullbright == bright) return;
+            if (!bright) f.Fullbright = true;
+            f.Fullbright = bright;
+        }
+
+        private static void SetFaceBumpShiny(Primitive.TextureEntryFace f, Shininess shiny, Bumpiness bump)
+        {
+            if (f.Shiny == shiny && f.Bump == bump) return;
+            f.Bump = Bumpiness.Brightness;
+            f.Shiny = shiny;
+            f.Bump = bump;
+        }
+
+        private static void SetFaceTexGen(Primitive.TextureEntryFace f, MappingType mapping)
+        {
+            if (f.TexMapType == mapping) return;
+            f.TexMapType = MappingType.Planar;
+            f.TexMapType = mapping;
+        }
+
         /// <summary>
         /// One prim's getter rules. A rule Phlox does not implement yet returns nothing and takes its face, if it
         /// has one, so the walk goes on with the next rule. PRIM_LINK_TARGET takes its link and changes nothing
@@ -9329,58 +9359,14 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     // ── PBR / glTF Material get params ──────────────────────────
 
                     case PRIM_RENDER_MATERIAL:
-                    {
-                        // Returns: [ string render_material ]
-                        if (idx >= data.Length) break;
-                        int face; try { face = Convert.ToInt32(data[idx++]); } catch { break; }
-                        var shape_rm = part.Shape;
-                        string matId = string.Empty;
-                        if (shape_rm?.RenderMaterials?.entries != null && face >= 0)
-                        {
-                            foreach (var entry in shape_rm.RenderMaterials.entries)
-                            {
-                                if (entry.te_index == (byte)face)
-                                { matId = ConditionalMaterialNameOrUUID(part, entry.id.ToString()); break; }
-                            }
-                        }
-                        result.Add(matId);
-                        break;
-                    }
-
                     case PRIM_GLTF_BASE_COLOR:
-                    {
-                        // Returns: [ texture, repeats, offsets, rotation, color, alpha,
-                        //            alpha_mode, alpha_cutoff, double_sided ]
-                        if (idx >= data.Length) break;
-                        int face; try { face = Convert.ToInt32(data[idx++]); } catch { break; }
-                        GetGLTFBaseColorParams(part, face, result);
-                        break;
-                    }
-
                     case PRIM_GLTF_NORMAL:
-                    {
-                        // Returns: [ texture, repeats, offsets, rotation ]
-                        if (idx >= data.Length) break;
-                        int face; try { face = Convert.ToInt32(data[idx++]); } catch { break; }
-                        GetGLTFTransformParams(part, face, "ntex", "nrep", "noff", "nrot", result);
-                        break;
-                    }
-
                     case PRIM_GLTF_METALLIC_ROUGHNESS:
-                    {
-                        // Returns: [ texture, repeats, offsets, rotation, metallic_factor, roughness_factor ]
-                        if (idx >= data.Length) break;
-                        int face; try { face = Convert.ToInt32(data[idx++]); } catch { break; }
-                        GetGLTFMetallicRoughnessParams(part, face, result);
-                        break;
-                    }
-
                     case PRIM_GLTF_EMISSIVE:
                     {
-                        // Returns: [ texture, repeats, offsets, rotation, emissive_tint ]
                         if (idx >= data.Length) break;
-                        int face; try { face = Convert.ToInt32(data[idx++]); } catch { break; }
-                        GetGLTFEmissiveParams(part, face, result);
+                        if (data[idx++] is not int face) break;
+                        PrimGetGltf(part, code, face, result);
                         break;
                     }
 
@@ -10626,7 +10612,14 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 return TRANSFER_NO_PERMS;
             }
             bool take = (flags & TRANSFER_FLAG_TAKE) != 0;
-            access.CopyToInventory(take ? DeRezAction.Take : DeRezAction.TakeCopy, UUID.Zero, new List<SceneObjectGroup> { grp }, sp.ControllingClient, false);
+            List<InventoryItemBase> items = access.CopyToInventory(take ? DeRezAction.Take : DeRezAction.TakeCopy, UUID.Zero, new List<SceneObjectGroup> { grp }, sp.ControllingClient, false);
+            // The module answers one item per object, null where the copy failed. The object leaves the region only once
+            // the agent has it, so a failed copy keeps it and is not TRANSFER_OK.
+            if (items == null || items.Count == 0 || items.Contains(null))
+            {
+                ShoutError("llTransferOwnership: the object could not be put in the agent's inventory");
+                return TRANSFER_NO_PERMS;
+            }
             if (take) World.DeleteSceneObject(grp, false);
             return TRANSFER_OK;
         }
@@ -11156,7 +11149,9 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public int llTarget(Vector3 position, float range)
         {
             if (m_host?.ParentGroup == null) return -1;
-            return m_host.ParentGroup.RegisterTargetWaypoint(m_itemID, position, range);
+            int handle = -1;
+            WhileOurs(() => handle = m_host.ParentGroup.RegisterTargetWaypoint(m_itemID, position, range));
+            return handle;
         }
 
         public void llTargetRemove(int number)
@@ -11168,7 +11163,9 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public int llRotTarget(Quaternion rot, float error)
         {
             if (m_host?.ParentGroup == null) return -1;
-            return m_host.ParentGroup.RegisterRotTargetWaypoint(m_itemID, rot, error);
+            int handle = -1;
+            WhileOurs(() => handle = m_host.ParentGroup.RegisterRotTargetWaypoint(m_itemID, rot, error));
+            return handle;
         }
 
         public void llRotTargetRemove(int number)
@@ -12961,6 +12958,25 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             OsslForceAttachFromInventory(m_host.OwnerID, itemName, attachmentPoint);
         }
 
+        /// <summary>OSSL_Api.osSetScriptEngine: the engine of another script in this prim, for the prim's owner (Scene.SetScriptEngine).</summary>
+        public int osSetScriptEngine(string scriptName, string target)
+        {
+            OsslCheck(TlHigh, "osSetScriptEngine");
+
+            TaskInventoryItem item = m_host.Inventory.GetInventoryItem(scriptName);
+            if (item == null || item.InvType != (int)InventoryType.LSL)
+            {
+                ScriptShoutError($"osSetScriptEngine: no script '{scriptName}' in this prim");
+                return 0;
+            }
+
+            ScriptEngineChoiceResult result = World.SetScriptEngine(m_host.OwnerID, m_host.UUID, item.ItemID, target, m_itemID);
+            if (result == ScriptEngineChoiceResult.Changed || result == ScriptEngineChoiceResult.Unchanged)
+                return 1;
+            ScriptShoutError($"osSetScriptEngine: {result} for '{scriptName}'");
+            return 0;
+        }
+
         /// <summary>OSSL_Api.cs:4208-4214 - VeryHigh.</summary>
         public void osForceAttachToOtherAvatarFromInventory(string rawAvatarId, string itemName, int attachmentPoint)
         {
@@ -13046,7 +13062,9 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             OsslCheck(TlModerate, "osRequestURL");
             IUrlModule urlMod = World?.RequestModuleInterface<IUrlModule>();
             if (urlMod == null) return UUID.Zero.ToString();
-            return urlMod.RequestURL(m_ScriptEngine.ScriptModule, m_host, m_itemID, OsslUrlOptions(options)).ToString();
+            UUID reqID = UUID.Zero;
+            WhileOurs(() => reqID = urlMod.RequestURL(m_ScriptEngine.ScriptModule, m_host, m_itemID, OsslUrlOptions(options)));
+            return reqID.ToString();
         }
 
         /// <summary>OSSL_Api.cs:4633-4647 - Moderate.</summary>
@@ -13055,7 +13073,9 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             OsslCheck(TlModerate, "osRequestSecureURL");
             IUrlModule urlMod = World?.RequestModuleInterface<IUrlModule>();
             if (urlMod == null) return UUID.Zero.ToString();
-            return urlMod.RequestSecureURL(m_ScriptEngine.ScriptModule, m_host, m_itemID, OsslUrlOptions(options)).ToString();
+            UUID reqID = UUID.Zero;
+            WhileOurs(() => reqID = urlMod.RequestSecureURL(m_ScriptEngine.ScriptModule, m_host, m_itemID, OsslUrlOptions(options)));
+            return reqID.ToString();
         }
 
         /// <summary>OSSL_Api.cs:2697-2710 - VeryLow. Regex replace of at most count matches from start (negative start counts from the end).</summary>
@@ -15122,9 +15142,10 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             var httpPlugin = m_ScriptEngine.AsyncCommands?.HttpRequestPlugin;
             UUID objectID = m_host.ParentGroup?.UUID ?? m_host.UUID;
             bool capped = false;
-            UUID reqID = httpPlugin != null
+            UUID reqID = UUID.Zero;
+            WhileOurs(() => reqID = httpPlugin != null
                 ? httpPlugin.Start(m_itemID, objectID, () => httpMod.StartHttpRequest(m_localID, m_itemID, url, paramList, headers, body), out capped)
-                : httpMod.StartHttpRequest(m_localID, m_itemID, url, paramList, headers, body);
+                : httpMod.StartHttpRequest(m_localID, m_itemID, url, paramList, headers, body));
             // Halcyon's in-flight caps refuse with NULL_KEY and no error; its llHTTPRequest sleeps ERROR_DELAY, 80 ms,
             // after any request that returns NULL_KEY (LSLSystemAPI.cs:13762, 13855-13856). HttpInFlightThrottle = false:
             // never capped, no sleep.
@@ -15346,7 +15367,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             IUrlModule urlMod = World.RequestModuleInterface<IUrlModule>();
             if (urlMod == null) return UUID.Zero.ToString();
-            UUID reqID = urlMod.RequestURL(m_ScriptEngine.ScriptModule, m_host, m_itemID, null);
+            UUID reqID = UUID.Zero;
+            WhileOurs(() => reqID = urlMod.RequestURL(m_ScriptEngine.ScriptModule, m_host, m_itemID, null));
             return reqID.ToString();
         }
 
@@ -15354,7 +15376,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             IUrlModule urlMod = World.RequestModuleInterface<IUrlModule>();
             if (urlMod == null) return UUID.Zero.ToString();
-            UUID reqID = urlMod.RequestSecureURL(m_ScriptEngine.ScriptModule, m_host, m_itemID, null);
+            UUID reqID = UUID.Zero;
+            WhileOurs(() => reqID = urlMod.RequestSecureURL(m_ScriptEngine.ScriptModule, m_host, m_itemID, null));
             return reqID.ToString();
         }
 
@@ -15439,11 +15462,15 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 IXMLRPC xmlrpcMod = World?.RequestModuleInterface<IXMLRPC>();
                 if (xmlrpcMod == null || !xmlrpcMod.IsEnabled()) return;
 
-                UUID channelID = xmlrpcMod.OpenXMLRPCChannel(m_localID, m_itemID, UUID.Zero);
-                IXmlRpcRouter xmlRpcRouter = World?.RequestModuleInterface<IXmlRpcRouter>();
-                if (xmlRpcRouter != null)
-                    xmlRpcRouter.RegisterNewReceiver(m_ScriptEngine.ScriptModule, channelID, m_host.UUID, m_itemID,
-                        "http://" + System.Environment.MachineName + ":" + xmlrpcMod.Port.ToString() + "/");
+                UUID channelID = UUID.Zero;
+                if (!WhileOurs(() =>
+                {
+                    channelID = xmlrpcMod.OpenXMLRPCChannel(m_localID, m_itemID, UUID.Zero);
+                    IXmlRpcRouter xmlRpcRouter = World?.RequestModuleInterface<IXmlRpcRouter>();
+                    if (xmlRpcRouter != null)
+                        xmlRpcRouter.RegisterNewReceiver(m_ScriptEngine.ScriptModule, channelID, m_host.UUID, m_itemID,
+                            "http://" + System.Environment.MachineName + ":" + xmlrpcMod.Port.ToString() + "/");
+                })) return;
 
                 object[] resobj = new object[] { 1, channelID.ToString(), UUID.Zero.ToString(), string.Empty, 0, string.Empty };
                 m_ScriptEngine.PostScriptEvent(m_itemID, new EventParams("remote_data", resobj, new DetectParams[0]));
@@ -15467,7 +15494,9 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 if (!OutboundAllowed(World.RequestModuleInterface<IHttpRequestModule>(), "llSendRemoteData", dest))
                     return string.Empty;
                 ScriptSleep(3000);
-                return xmlrpcMod.SendRemoteData(m_localID, m_itemID, channel, dest, idata, sdata).ToString();
+                UUID reqID = UUID.Zero;
+                WhileOurs(() => reqID = xmlrpcMod.SendRemoteData(m_localID, m_itemID, channel, dest, idata, sdata));
+                return reqID.ToString();
             }
             catch (Exception e)
             {
@@ -18812,7 +18841,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
             IBotManager manager = GetBotManager();
             if (manager != null)
-                manager.BotRegisterForPathUpdateEvents(id, m_itemID, m_host.OwnerID);
+                WhileOurs(() => manager.BotRegisterForPathUpdateEvents(id, m_itemID, m_host.OwnerID));
         }
 
         public void botDeregisterFromNavigationEvents(string botID)
@@ -19264,7 +19293,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (manager == null || !manager.CheckPermission(botUUID, m_host.OwnerID)) return;
 
             ScenePresence botSP = World.GetScenePresence(botUUID);
-            if (botSP == null) return;
+            if (botSP == null || !IsOurs()) return;
 
             m_ScriptEngine.AsyncCommands?.SensorRepeatPlugin.SenseOnce(
                 m_localID, m_itemID, name, keyID, type, range, arc, botSP);
@@ -19282,7 +19311,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (manager == null || !manager.CheckPermission(botUUID, m_host.OwnerID)) return;
 
             ScenePresence botSP = World.GetScenePresence(botUUID);
-            if (botSP == null) return;
+            if (botSP == null || !IsOurs()) return;
 
             m_ScriptEngine.AsyncCommands?.SensorRepeatPlugin.SetSenseRepeatEvent(
                 m_localID, m_itemID, name, keyID, type, range, arc, rate, botSP);
@@ -19701,457 +19730,362 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
         // ── Tier 2: PBR / GLTF Material Functions (598–602) ──
 
+        // The faces' glTF render materials and overrides are stored through GltfMaterialOverride (OpenSim.Region.Framework),
+        // in the compact form viewers read and MaterialsModule writes, so YEngine and Phlox scripts and viewer edits see
+        // the same data. SL: https://wiki.secondlife.com/wiki/GLTF_Overrides
+
         public string llGetRenderMaterial(int face)
         {
-            var shape = m_host.Shape;
-            if (shape?.RenderMaterials?.entries == null)
-                return string.Empty;
-            if (face < 0)
-                return string.Empty;
-            foreach (var entry in shape.RenderMaterials.entries)
-            {
-                if (entry.te_index == (byte)face)
-                    return ConditionalMaterialNameOrUUID(m_host, entry.id.ToString());
-            }
-            return string.Empty;
+            // SL (https://wiki.secondlife.com/wiki/LlGetRenderMaterial): ALL_SIDES reads face zero; a face that does not
+            // exist reads NULL_KEY.
+            if (face == ALL_SIDES) face = 0;
+            if (face < 0 || face >= m_host.GetNumberOfSides()) return UUID.Zero.ToString();
+            return RenderMaterialAsSeen(m_host, face);
         }
 
         public void llSetRenderMaterial(string materialId, int face)
         {
-            if (!UUID.TryParse(materialId, out UUID matUUID))
-                return;
-            if (!World.Permissions.CanEditObject(m_host.ParentGroup.UUID, m_host.OwnerID))
-                return;
-
-            var shape = m_host.Shape;
-            shape.RenderMaterials ??= new OpenMetaverse.Primitive.RenderMaterials();
-
-            int numFaces = m_host.GetNumberOfSides();
-
-            if (face == ALL_SIDES)
-            {
-                var entries = new OpenMetaverse.Primitive.RenderMaterials.RenderMaterialEntry[numFaces];
-                for (int i = 0; i < numFaces; i++)
-                {
-                    entries[i].te_index = (byte)i;
-                    entries[i].id = matUUID;
-                }
-                shape.RenderMaterials.entries = entries;
-            }
-            else if (face >= 0 && face < numFaces)
-            {
-                if (shape.RenderMaterials.entries == null)
-                {
-                    shape.RenderMaterials.entries = new OpenMetaverse.Primitive.RenderMaterials.RenderMaterialEntry[1];
-                    shape.RenderMaterials.entries[0].te_index = (byte)face;
-                    shape.RenderMaterials.entries[0].id = matUUID;
-                }
-                else
-                {
-                    int idx = -1;
-                    for (int i = 0; i < shape.RenderMaterials.entries.Length; i++)
-                    {
-                        if (shape.RenderMaterials.entries[i].te_index == (byte)face)
-                        { idx = i; break; }
-                    }
-                    if (idx >= 0)
-                    {
-                        shape.RenderMaterials.entries[idx].id = matUUID;
-                    }
-                    else
-                    {
-                        int len = shape.RenderMaterials.entries.Length;
-                        Array.Resize(ref shape.RenderMaterials.entries, len + 1);
-                        shape.RenderMaterials.entries[len].te_index = (byte)face;
-                        shape.RenderMaterials.entries[len].id = matUUID;
-                    }
-                }
-            }
-            else
-            {
-                return;
-            }
-
-            m_host.ParentGroup.HasGroupChanged = true;
-            m_host.ScheduleUpdate(PrimUpdateFlags.FullUpdate);
+            // SL (https://wiki.secondlife.com/wiki/LlSetRenderMaterial): a material in the prim's inventory or a
+            // material key, NULL_KEY removing it; clears the face's overrides but its texture transforms; 0.2s delay.
+            if (RenderMaterialKeyOrName(materialId, "llSetRenderMaterial", out UUID material))
+                SetPartRenderMaterial(m_host, material, face);
+            ScriptSleep(200);
         }
 
         public int llIsLinkGLTFMaterial(int link, int face)
         {
-            foreach (SceneObjectPart part in GetLinkParts(link))
-            {
-                var shape = part.Shape;
-                if (shape?.RenderMaterials?.overrides == null)
-                    return 0;
-                if (face == ALL_SIDES)
-                {
-                    return shape.RenderMaterials.overrides.Length > 0 ? 1 : 0;
-                }
-                foreach (var ovr in shape.RenderMaterials.overrides)
-                {
-                    if (ovr.te_index == (byte)face && !string.IsNullOrEmpty(ovr.data))
-                        return 1;
-                }
-                return 0; // only check first matching link part
-            }
-            return 0;
-        }
-
-public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
-        {
-            // overrides is a strided list of [key, value, key, value, ...]
-            // Builds LLSD Notation data matching the format used by MaterialsModule
-            if (overrides.Length < 2 || overrides.Length % 2 != 0)
-                return 0;
-
-            // Build an OSDMap in the compact format the viewer expects
-            var outosd = new OpenMetaverse.StructuredData.OSDMap();
-
-            for (int i = 0; i < overrides.Length; i += 2)
-            {
-                string key = overrides.Data[i].ToString();
-                string val = overrides.Data[i + 1].ToString();
-                var ci = System.Globalization.CultureInfo.InvariantCulture;
-
-                switch (key)
-                {
-                    case "base_color":
-                    {
-                        if (TryParseColor4(val, out float r, out float g, out float b, out float a))
-                        {
-                            outosd["bc"] = new OpenMetaverse.StructuredData.OSDArray()
-                            {
-                                Math.Round((double)r, 4),
-                                Math.Round((double)g, 4),
-                                Math.Round((double)b, 4),
-                                Math.Round((double)a, 4)
-                            };
-                        }
-                        break;
-                    }
-                    case "metallic_factor":
-                    {
-                        if (float.TryParse(val, System.Globalization.NumberStyles.Float, ci, out float mf))
-                            outosd["mf"] = Math.Round((double)Math.Clamp(mf, 0f, 1f), 3);
-                        break;
-                    }
-                    case "roughness_factor":
-                    {
-                        if (float.TryParse(val, System.Globalization.NumberStyles.Float, ci, out float rf))
-                            outosd["rf"] = Math.Round((double)Math.Clamp(rf, 0f, 1f), 3);
-                        break;
-                    }
-                    case "emissive_factor":
-                    {
-                        if (TryParseVector3(val, out float er, out float eg, out float eb))
-                        {
-                            outosd["ec"] = new OpenMetaverse.StructuredData.OSDArray()
-                            {
-                                Math.Round((double)er, 4),
-                                Math.Round((double)eg, 4),
-                                Math.Round((double)eb, 4)
-                            };
-                        }
-                        break;
-                    }
-                    case "alpha_mode":
-                    {
-                        outosd["am"] = val.ToUpper() switch
-                        {
-                            "BLEND" => 1,
-                            "MASK" => 2,
-                            _ => 0
-                        };
-                        break;
-                    }
-                    case "alpha_cutoff":
-                    {
-                        if (float.TryParse(val, System.Globalization.NumberStyles.Float, ci, out float ac))
-                            outosd["ac"] = Math.Round((double)Math.Clamp(ac, 0f, 1f), 3);
-                        break;
-                    }
-                    case "double_sided":
-                    {
-                        outosd["ds"] = (val == "1" || val.ToLower() == "true");
-                        break;
-                    }
-                }
-            }
-
-            if (outosd.Count == 0)
-                return 0;
-
-            string llsdData = OpenMetaverse.StructuredData.OSDParser.SerializeLLSDNotation(outosd);
-            int changed = 0;
-
-            foreach (SceneObjectPart part in GetLinkParts(link))
-            {
-                if (!World.Permissions.CanEditObject(part.ParentGroup.UUID, m_host.OwnerID))
-                    continue;
-
-                var shape = part.Shape;
-                shape.RenderMaterials ??= new OpenMetaverse.Primitive.RenderMaterials();
-
-                int numFaces = part.GetNumberOfSides();
-               if (face == ALL_SIDES)
-                {
-                    for (int f = 0; f < numFaces; f++)
-                        ApplyGLTFOverride(ref shape.RenderMaterials.overrides, llsdData, f);
-                }
-                else if (face >= 0 && face < numFaces)
-                {
-                    ApplyGLTFOverride(ref shape.RenderMaterials.overrides, llsdData, face);
-                }
-                else
-                {
-                    continue;
-                }
-
-                part.ParentGroup.HasGroupChanged = true;
-                part.ScheduleUpdate(PrimUpdateFlags.MaterialOvr | PrimUpdateFlags.FullUpdate);
-                changed++;
-            }
-            return changed > 0 ? 1 : 0;
-        }
-
-        private static void ApplyGLTFOverride(
-            ref OpenMetaverse.Primitive.RenderMaterials.RenderMaterialOverrideEntry[] overrides,
-            string data, int face)
-        {
-            if (overrides == null)
-            {
-                overrides = new OpenMetaverse.Primitive.RenderMaterials.RenderMaterialOverrideEntry[1];
-                overrides[0].te_index = (byte)face;
-                overrides[0].data = data;
-                return;
-            }
-
-            for (int i = 0; i < overrides.Length; i++)
-            {
-                if (overrides[i].te_index == (byte)face)
-                {
-                    overrides[i].data = data;
-                    return;
-                }
-            }
-
-            int len = overrides.Length;
-            Array.Resize(ref overrides, len + 1);
-            overrides[len].te_index = (byte)face;
-            overrides[len].data = data;
-        }
-
-        // ── PBR helpers for PRIM_RENDER_MATERIAL / PRIM_GLTF_* in SetPrimParams/GetPrimParams ──
-
-        private static void SetRenderMaterialEntry(
-            ref OpenMetaverse.Primitive.RenderMaterials.RenderMaterialEntry[] entries,
-            UUID matId, int face)
-        {
-            if (entries == null)
-            {
-                entries = new OpenMetaverse.Primitive.RenderMaterials.RenderMaterialEntry[1];
-                entries[0].te_index = (byte)face;
-                entries[0].id = matId;
-                return;
-            }
-
-            for (int i = 0; i < entries.Length; i++)
-            {
-                if (entries[i].te_index == (byte)face)
-                {
-                    entries[i].id = matId;
-                    return;
-                }
-            }
-
-            int len = entries.Length;
-            Array.Resize(ref entries, len + 1);
-            entries[len].te_index = (byte)face;
-            entries[len].id = matId;
-        }
-
-        private void ApplyGLTFOverrideToPart(SceneObjectPart part, int face,
-            OpenMetaverse.StructuredData.OSDMap osd)
-        {
-            if (osd.Count == 0) return;
-
-            var shape = part.Shape;
-            shape.RenderMaterials ??= new OpenMetaverse.Primitive.RenderMaterials();
-
-            string llsdData = OpenMetaverse.StructuredData.OSDParser.SerializeLLSDNotation(osd);
-            int numFaces = part.GetNumberOfSides();
-
+            // SL (https://wiki.secondlife.com/wiki/LlIsLinkGLTFMaterial): TRUE when the face has a glTF material;
+            // ALL_SIDES only when every face has one. FALSE for a face or link that does not exist, and for a link
+            // that names several prims (LINK_SET, ...).
+            if (link == LINK_SET || link == LINK_ALL_OTHERS || link == LINK_ALL_CHILDREN) return 0;
+            SceneObjectPart part = GetLinkParts(link).FirstOrDefault();
+            if (part == null) return 0;
+            int sides = part.GetNumberOfSides();
             if (face == ALL_SIDES)
             {
-                for (int f = 0; f < numFaces; f++)
-                    ApplyGLTFOverride(ref shape.RenderMaterials.overrides, llsdData, f);
+                if (sides == 0) return 0;
+                for (int f = 0; f < sides; f++)
+                {
+                    if (GltfMaterialOverride.GetRenderMaterial(part.Shape, f).IsZero()) return 0;
+                }
+                return 1;
             }
-            else if (face >= 0 && face < numFaces)
+            if (face < 0 || face >= sides) return 0;
+            return GltfMaterialOverride.GetRenderMaterial(part.Shape, face).IsZero() ? 0 : 1;
+        }
+
+        /// <summary>
+        /// SL llSetLinkGLTFOverrides (https://wiki.secondlife.com/wiki/LlSetLinkGLTFOverrides): a list of
+        /// OVERRIDE_GLTF_* constants each followed by its value, "" clearing that override. A face that does not exist
+        /// changes nothing. SL's function returns nothing; Phlox's signature returns TRUE when a face changed.
+        /// </summary>
+        public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
+        {
+            object[] data = overrides?.Data ?? Array.Empty<object>();
+            var edits = new List<Action<GltfMaterialOverride>>();
+            for (int i = 0; i + 1 < data.Length; i += 2)
             {
-                ApplyGLTFOverride(ref shape.RenderMaterials.overrides, llsdData, face);
+                object v = data[i + 1];
+                if (data[i] is not int param)
+                {
+                    ShoutError($"llSetLinkGLTFOverrides: parameter {i} must be an OVERRIDE_GLTF_* constant.");
+                    return 0;
+                }
+                switch (param)
+                {
+                    case OVERRIDE_GLTF_BASE_COLOR_FACTOR when GltfColor(v, out Vector3? c):
+                        edits.Add(o => o.BaseColor = c);
+                        break;
+                    case OVERRIDE_GLTF_BASE_ALPHA when GltfUnit(v, out float? a):
+                        edits.Add(o => o.BaseAlpha = a);
+                        break;
+                    case OVERRIDE_GLTF_BASE_ALPHA_MODE when GltfAlphaMode(v, out int? m):
+                        edits.Add(o => o.AlphaMode = m);
+                        break;
+                    case OVERRIDE_GLTF_BASE_ALPHA_MASK when GltfUnit(v, out float? ac):
+                        edits.Add(o => o.AlphaCutoff = ac);
+                        break;
+                    case OVERRIDE_GLTF_BASE_DOUBLE_SIDED when GltfInt(v, out int? ds):
+                        edits.Add(o => o.DoubleSided = ds.HasValue ? ds.Value != 0 : null);
+                        break;
+                    case OVERRIDE_GLTF_METALLIC_FACTOR when GltfUnit(v, out float? mf):
+                        edits.Add(o => o.MetallicFactor = mf);
+                        break;
+                    case OVERRIDE_GLTF_ROUGHNESS_FACTOR when GltfUnit(v, out float? rf):
+                        edits.Add(o => o.RoughnessFactor = rf);
+                        break;
+                    case OVERRIDE_GLTF_EMISSIVE_FACTOR when GltfColor(v, out Vector3? ec):
+                        edits.Add(o => o.EmissiveColor = ec);
+                        break;
+                    default:
+                        ShoutError($"llSetLinkGLTFOverrides: invalid value for parameter {param}.");
+                        return 0;
+                }
             }
-            else
+            if (edits.Count == 0 || (face < 0 && face != ALL_SIDES)) return 0;
+
+            bool changed = false;
+            foreach (SceneObjectPart part in GetLinkParts(link))
+                changed |= GltfMaterialOverride.Edit(part, face, o => { foreach (var edit in edits) edit(o); });
+            return changed ? 1 : 0;
+        }
+
+        // ── PBR helpers for llSetRenderMaterial, PRIM_RENDER_MATERIAL and PRIM_GLTF_* ──
+
+        /// <summary>
+        /// A render material as llSetRenderMaterial and PRIM_RENDER_MATERIAL name it: a material item in the script's
+        /// prim, else a key (NULL_KEY: none). SL shouts an error on DEBUG_CHANNEL for anything else.
+        /// </summary>
+        private bool RenderMaterialKeyOrName(string name, string func, out UUID material)
+        {
+            material = UUID.Zero;
+            if (!string.IsNullOrEmpty(name))
             {
+                material = OpenSim.Region.Framework.Scenes.Scripting.ScriptUtils.GetAssetIdFromItemName(m_host, name, (int)AssetType.Material);
+                if (material != UUID.Zero || UUID.TryParse(name, out material))
+                    return true;
+            }
+            ShoutError($"{func}: material \"{name}\" not found");
+            return false;
+        }
+
+        /// <summary>
+        /// Set a part's render material on a face, or every face for ALL_SIDES; a face that does not exist changes
+        /// nothing. A change raises CHANGED_RENDER_MATERIAL, as OpenSim's LSL_Api does.
+        /// </summary>
+        private void SetPartRenderMaterial(SceneObjectPart part, UUID material, int face)
+        {
+            if (face < 0 && face != ALL_SIDES) return;
+            if (GltfMaterialOverride.SetRenderMaterial(part, face, material))
+                part.TriggerScriptChangedEvent(Changed.MATERIAL);
+        }
+
+        /// <summary>A face's render material as a script reads it: its name, its key, or NULL_KEY.</summary>
+        private string RenderMaterialAsSeen(SceneObjectPart part, int face)
+        {
+            UUID material = GltfMaterialOverride.GetRenderMaterial(part.Shape, face);
+            return material.IsZero() ? UUID.Zero.ToString() : ConditionalMaterialNameOrUUID(part, material.ToString());
+        }
+
+        private void PrimSetRenderMaterial(SceneObjectPart part, object faceArg, object materialArg)
+        {
+            if (faceArg is not int face) return;
+            if (RenderMaterialKeyOrName(materialArg?.ToString(), "llSetPrimitiveParams: PRIM_RENDER_MATERIAL", out UUID material))
+                SetPartRenderMaterial(part, material, face);
+        }
+
+        /// <summary>
+        /// PRIM_GLTF_BASE_COLOR, _NORMAL, _METALLIC_ROUGHNESS and _EMISSIVE (SL wiki pages of those names):
+        /// [ face, texture, repeats, offsets, rotation_in_radians, ...the rule's own values ]. Any value given as ""
+        /// clears that override. A value of the wrong type skips the rule, as PRIM_NORMAL does; a texture that is
+        /// neither an item in the prim nor a key shouts an error and skips it, as SL does.
+        /// </summary>
+        private void PrimSetGltf(SceneObjectPart part, int code, object[] data, int idx)
+        {
+            if (data[idx] is not int face || (face < 0 && face != ALL_SIDES)) return;
+            int slot = GltfSlot(code);
+
+            if (!GltfTexture(data[idx + 1], out UUID? texture, out bool found)) return;
+            if (!found)
+            {
+                ShoutError($"llSetPrimitiveParams: {GltfRuleName(code)}: texture \"{data[idx + 1]}\" not found");
+                return;
+            }
+            if (!GltfVector(data[idx + 2], out Vector3? repeats) || !GltfVector(data[idx + 3], out Vector3? offsets)
+                || !GltfFloat(data[idx + 4], out float? rotation))
+                return;
+
+            Action<GltfMaterialOverride> extra = null;
+            switch (code)
+            {
+                case PRIM_GLTF_BASE_COLOR:
+                    // [ ..., vector color, float alpha, integer alpha_mode, float alpha_mask_cutoff, integer double_sided ]
+                    if (!GltfColor(data[idx + 5], out Vector3? color) || !GltfUnit(data[idx + 6], out float? alpha)
+                        || !GltfAlphaMode(data[idx + 7], out int? mode) || !GltfUnit(data[idx + 8], out float? cutoff)
+                        || !GltfInt(data[idx + 9], out int? doubleSided))
+                        return;
+                    extra = o =>
+                    {
+                        o.BaseColor = color;
+                        o.BaseAlpha = alpha;
+                        o.AlphaMode = mode;
+                        o.AlphaCutoff = cutoff;
+                        o.DoubleSided = doubleSided.HasValue ? doubleSided.Value != 0 : null;
+                    };
+                    break;
+                case PRIM_GLTF_METALLIC_ROUGHNESS:
+                    // [ ..., float metallic_factor, float roughness_factor ]
+                    if (!GltfUnit(data[idx + 5], out float? metallic) || !GltfUnit(data[idx + 6], out float? roughness))
+                        return;
+                    extra = o => { o.MetallicFactor = metallic; o.RoughnessFactor = roughness; };
+                    break;
+                case PRIM_GLTF_EMISSIVE:
+                    // [ ..., vector emissive_tint ]
+                    if (!GltfColor(data[idx + 5], out Vector3? emissive)) return;
+                    extra = o => o.EmissiveColor = emissive;
+                    break;
+            }
+
+            GltfMaterialOverride.Edit(part, face, o =>
+            {
+                o.SetTexture(slot, texture);
+                o.SetScale(slot, repeats.HasValue
+                    ? new Vector2(Math.Clamp(repeats.Value.X, -10000f, 10000f), Math.Clamp(repeats.Value.Y, -10000f, 10000f))
+                    : null);
+                o.SetOffset(slot, offsets.HasValue
+                    ? new Vector2(Math.Clamp(offsets.Value.X, -1f, 1f), Math.Clamp(offsets.Value.Y, -1f, 1f))
+                    : null);
+                o.SetRotation(slot, rotation);
+                extra?.Invoke(o);
+            });
+        }
+
+        /// <summary>
+        /// The PRIM_RENDER_MATERIAL and PRIM_GLTF_* reads of one face, or of every face for ALL_SIDES; nothing for a
+        /// face that does not exist. A value that is not overridden reads as "", as SL documents.
+        /// </summary>
+        private void PrimGetGltf(SceneObjectPart part, int code, int face, List<object> result)
+        {
+            int sides = part.GetNumberOfSides();
+            if (face == ALL_SIDES)
+            {
+                for (int f = 0; f < sides; f++)
+                    PrimGetGltfFace(part, code, f, result);
+            }
+            else if (face >= 0 && face < sides)
+                PrimGetGltfFace(part, code, face, result);
+        }
+
+        private void PrimGetGltfFace(SceneObjectPart part, int code, int face, List<object> result)
+        {
+            if (code == PRIM_RENDER_MATERIAL)
+            {
+                result.Add(RenderMaterialAsSeen(part, face));
                 return;
             }
 
-            if (part.ParentGroup != null)
-                part.ParentGroup.HasGroupChanged = true;
-            part.ScheduleUpdate(PrimUpdateFlags.MaterialOvr | PrimUpdateFlags.FullUpdate);
-        }
+            GltfMaterialOverride o = GltfMaterialOverride.Get(part.Shape, face);
+            int slot = GltfSlot(code);
 
-        private string GetGLTFOverrideField(SceneObjectPart part, int face, string fieldName)
-        {
-            var shape = part.Shape;
-            if (shape?.RenderMaterials?.overrides == null) return null;
+            UUID? texture = o.GetTexture(slot);
+            if (!texture.HasValue)
+                result.Add(string.Empty);
+            else if (texture.Value == GltfMaterialOverride.NullTextureOverride)
+                result.Add(UUID.Zero.ToString());
+            else
+                result.Add(ConditionalMaterialNameOrUUID(part, texture.Value.ToString()));
+            Vector2? scale = o.GetScale(slot);
+            result.Add(scale.HasValue ? new Vector3(scale.Value.X, scale.Value.Y, 0f) : string.Empty);
+            Vector2? offset = o.GetOffset(slot);
+            result.Add(offset.HasValue ? new Vector3(offset.Value.X, offset.Value.Y, 0f) : string.Empty);
+            result.Add(GltfOut(o.GetRotation(slot)));
 
-            foreach (var ovr in shape.RenderMaterials.overrides)
+            switch (code)
             {
-                if (ovr.te_index == (byte)face && !string.IsNullOrEmpty(ovr.data))
-                {
-                    try
-                    {
-                        var parsed = OpenMetaverse.StructuredData.OSDParser.DeserializeLLSDNotation(ovr.data)
-                            as OpenMetaverse.StructuredData.OSDMap;
-                        if (parsed != null && parsed.ContainsKey(fieldName))
-                            return parsed[fieldName].ToString();
-                    }
-                    catch { }
-                }
+                case PRIM_GLTF_BASE_COLOR:
+                    result.Add(o.BaseColor.HasValue ? o.BaseColor.Value : string.Empty);
+                    result.Add(GltfOut(o.BaseAlpha));
+                    result.Add(o.AlphaMode.HasValue ? o.AlphaMode.Value : string.Empty);
+                    result.Add(GltfOut(o.AlphaCutoff));
+                    result.Add(o.DoubleSided.HasValue ? (o.DoubleSided.Value ? 1 : 0) : string.Empty);
+                    break;
+                case PRIM_GLTF_METALLIC_ROUGHNESS:
+                    result.Add(GltfOut(o.MetallicFactor));
+                    result.Add(GltfOut(o.RoughnessFactor));
+                    break;
+                case PRIM_GLTF_EMISSIVE:
+                    result.Add(o.EmissiveColor.HasValue ? o.EmissiveColor.Value : string.Empty);
+                    break;
             }
-            return null;
         }
 
-        private OpenMetaverse.StructuredData.OSDMap GetGLTFOverrideMap(SceneObjectPart part, int face)
-        {
-            var shape = part.Shape;
-            if (shape?.RenderMaterials?.overrides == null) return null;
+        private static object GltfOut(float? v) => v.HasValue ? v.Value : string.Empty;
 
-            foreach (var ovr in shape.RenderMaterials.overrides)
+        private static int GltfSlot(int code) => code switch
+        {
+            PRIM_GLTF_NORMAL => GltfMaterialOverride.SLOT_NORMAL,
+            PRIM_GLTF_METALLIC_ROUGHNESS => GltfMaterialOverride.SLOT_METALLIC_ROUGHNESS,
+            PRIM_GLTF_EMISSIVE => GltfMaterialOverride.SLOT_EMISSIVE,
+            _ => GltfMaterialOverride.SLOT_BASE_COLOR,
+        };
+
+        private static string GltfRuleName(int code) => code switch
+        {
+            PRIM_GLTF_NORMAL => "PRIM_GLTF_NORMAL",
+            PRIM_GLTF_METALLIC_ROUGHNESS => "PRIM_GLTF_METALLIC_ROUGHNESS",
+            PRIM_GLTF_EMISSIVE => "PRIM_GLTF_EMISSIVE",
+            _ => "PRIM_GLTF_BASE_COLOR",
+        };
+
+        // The value readers for PRIM_GLTF_* and llSetLinkGLTFOverrides: "" is null (clear the override); false for a
+        // value of the wrong type.
+
+        private static bool GltfUnset(object v) => v is string s && s.Length == 0;
+
+        private bool GltfTexture(object v, out UUID? texture, out bool found)
+        {
+            texture = null;
+            found = true;
+            if (GltfUnset(v)) return true;
+            if (v is not string name) return false;
+            UUID id = OpenSim.Region.Framework.Scenes.Scripting.ScriptUtils.GetAssetIdFromItemName(m_host, name, (int)AssetType.Texture);
+            if (id == UUID.Zero && !UUID.TryParse(name, out id))
             {
-                if (ovr.te_index == (byte)face && !string.IsNullOrEmpty(ovr.data))
-                {
-                    try
-                    {
-                        return OpenMetaverse.StructuredData.OSDParser.DeserializeLLSDNotation(ovr.data)
-                            as OpenMetaverse.StructuredData.OSDMap;
-                    }
-                    catch { }
-                }
+                found = false;
+                return true;
             }
-            return null;
-        }
-
-        private void GetGLTFBaseColorParams(SceneObjectPart part, int face, List<object> result)
-        {
-            var osd = GetGLTFOverrideMap(part, face);
-
-            // texture
-            result.Add(ConditionalMaterialNameOrUUID(part, osd != null && osd.ContainsKey("tex") ? osd["tex"].AsString() : string.Empty));
-            // repeats
-            if (osd != null && osd.ContainsKey("rep") && osd["rep"] is OpenMetaverse.StructuredData.OSDArray repArr && repArr.Count >= 2)
-                result.Add(new Vector3((float)repArr[0].AsReal(), (float)repArr[1].AsReal(), 0f));
-            else
-                result.Add(new Vector3(1f, 1f, 0f));
-            // offsets
-            if (osd != null && osd.ContainsKey("off") && osd["off"] is OpenMetaverse.StructuredData.OSDArray offArr && offArr.Count >= 2)
-                result.Add(new Vector3((float)offArr[0].AsReal(), (float)offArr[1].AsReal(), 0f));
-            else
-                result.Add(Vector3.Zero);
-            // rotation
-            result.Add(osd != null && osd.ContainsKey("rot") ? (float)osd["rot"].AsReal() : 0f);
-            // color (RGB from bc array)
-            if (osd != null && osd.ContainsKey("bc") && osd["bc"] is OpenMetaverse.StructuredData.OSDArray bcArr && bcArr.Count >= 3)
-                result.Add(new Vector3((float)bcArr[0].AsReal(), (float)bcArr[1].AsReal(), (float)bcArr[2].AsReal()));
-            else
-                result.Add(Vector3.One);
-            // alpha (4th element of bc)
-            if (osd != null && osd.ContainsKey("bc") && osd["bc"] is OpenMetaverse.StructuredData.OSDArray bcArr2 && bcArr2.Count >= 4)
-                result.Add((float)bcArr2[3].AsReal());
-            else
-                result.Add(1f);
-            // alpha_mode
-            result.Add(osd != null && osd.ContainsKey("am") ? osd["am"].AsInteger() : 0);
-            // alpha_cutoff
-            result.Add(osd != null && osd.ContainsKey("ac") ? (float)osd["ac"].AsReal() : 0.5f);
-            // double_sided
-            result.Add(osd != null && osd.ContainsKey("ds") && osd["ds"].AsBoolean() ? 1 : 0);
-        }
-
-        private void GetGLTFTransformParams(SceneObjectPart part, int face,
-            string texKey, string repKey, string offKey, string rotKey, List<object> result)
-        {
-            var osd = GetGLTFOverrideMap(part, face);
-
-            // texture
-            result.Add(ConditionalMaterialNameOrUUID(part, osd != null && osd.ContainsKey(texKey) ? osd[texKey].AsString() : string.Empty));
-            // repeats
-            if (osd != null && osd.ContainsKey(repKey) && osd[repKey] is OpenMetaverse.StructuredData.OSDArray repArr && repArr.Count >= 2)
-                result.Add(new Vector3((float)repArr[0].AsReal(), (float)repArr[1].AsReal(), 0f));
-            else
-                result.Add(new Vector3(1f, 1f, 0f));
-            // offsets
-            if (osd != null && osd.ContainsKey(offKey) && osd[offKey] is OpenMetaverse.StructuredData.OSDArray offArr && offArr.Count >= 2)
-                result.Add(new Vector3((float)offArr[0].AsReal(), (float)offArr[1].AsReal(), 0f));
-            else
-                result.Add(Vector3.Zero);
-            // rotation
-            result.Add(osd != null && osd.ContainsKey(rotKey) ? (float)osd[rotKey].AsReal() : 0f);
-        }
-
-        private void GetGLTFMetallicRoughnessParams(SceneObjectPart part, int face, List<object> result)
-        {
-            var osd = GetGLTFOverrideMap(part, face);
-
-            // texture, repeats, offsets, rotation
-            GetGLTFTransformParams(part, face, "mrtex", "mrrep", "mroff", "mrrot", result);
-            // metallic_factor
-            result.Add(osd != null && osd.ContainsKey("mf") ? (float)osd["mf"].AsReal() : 0f);
-            // roughness_factor
-            result.Add(osd != null && osd.ContainsKey("rf") ? (float)osd["rf"].AsReal() : 0.5f);
-        }
-
-        private void GetGLTFEmissiveParams(SceneObjectPart part, int face, List<object> result)
-        {
-            var osd = GetGLTFOverrideMap(part, face);
-
-            // texture, repeats, offsets, rotation
-            GetGLTFTransformParams(part, face, "etex", "erep", "eoff", "erot", result);
-            // emissive_tint
-            if (osd != null && osd.ContainsKey("ec") && osd["ec"] is OpenMetaverse.StructuredData.OSDArray ecArr && ecArr.Count >= 3)
-                result.Add(new Vector3((float)ecArr[0].AsReal(), (float)ecArr[1].AsReal(), (float)ecArr[2].AsReal()));
-            else
-                result.Add(Vector3.Zero);
-        }
-
-        private static bool TryParseColor4(string s, out float r, out float g, out float b, out float a)
-        {
-            r = g = b = 0f; a = 1f;
-            s = s.Trim().Trim('<', '>');
-            var parts = s.Split(',');
-            if (parts.Length < 3) return false;
-            var ci = System.Globalization.CultureInfo.InvariantCulture;
-            if (!float.TryParse(parts[0].Trim(), System.Globalization.NumberStyles.Float, ci, out r)) return false;
-            if (!float.TryParse(parts[1].Trim(), System.Globalization.NumberStyles.Float, ci, out g)) return false;
-            if (!float.TryParse(parts[2].Trim(), System.Globalization.NumberStyles.Float, ci, out b)) return false;
-            if (parts.Length >= 4)
-                float.TryParse(parts[3].Trim(), System.Globalization.NumberStyles.Float, ci, out a);
+            // NULL_KEY overrides the slot to no texture, the viewer's GLTF_OVERRIDE_NULL_UUID
+            texture = id == UUID.Zero ? GltfMaterialOverride.NullTextureOverride : id;
             return true;
         }
 
-        private static bool TryParseVector3(string s, out float x, out float y, out float z)
+        private static bool GltfVector(object v, out Vector3? vec)
         {
-            x = y = z = 0f;
-            s = s.Trim().Trim('<', '>');
-            var parts = s.Split(',');
-            if (parts.Length < 3) return false;
-            var ci = System.Globalization.CultureInfo.InvariantCulture;
-            if (!float.TryParse(parts[0].Trim(), System.Globalization.NumberStyles.Float, ci, out x)) return false;
-            if (!float.TryParse(parts[1].Trim(), System.Globalization.NumberStyles.Float, ci, out y)) return false;
-            if (!float.TryParse(parts[2].Trim(), System.Globalization.NumberStyles.Float, ci, out z)) return false;
+            vec = null;
+            if (GltfUnset(v)) return true;
+            if (v is not Vector3 x) return false;
+            vec = x;
             return true;
         }
 
+        private static bool GltfColor(object v, out Vector3? color)
+        {
+            if (!GltfVector(v, out color)) return false;
+            if (color.HasValue)
+                color = new Vector3(Math.Clamp(color.Value.X, 0f, 1f), Math.Clamp(color.Value.Y, 0f, 1f), Math.Clamp(color.Value.Z, 0f, 1f));
+            return true;
+        }
+
+        private static bool GltfFloat(object v, out float? f)
+        {
+            f = null;
+            if (GltfUnset(v)) return true;
+            if (!PrimFloat(v, out float x)) return false;
+            f = x;
+            return true;
+        }
+
+        private static bool GltfUnit(object v, out float? f)
+        {
+            if (!GltfFloat(v, out f)) return false;
+            if (f.HasValue) f = Math.Clamp(f.Value, 0f, 1f);
+            return true;
+        }
+
+        private static bool GltfInt(object v, out int? i)
+        {
+            i = null;
+            if (GltfUnset(v)) return true;
+            if (v is not int x) return false;
+            i = x;
+            return true;
+        }
+
+        private static bool GltfAlphaMode(object v, out int? mode)
+        {
+            if (!GltfInt(v, out mode)) return false;
+            return !mode.HasValue || (mode.Value >= GltfMaterialOverride.ALPHA_MODE_OPAQUE && mode.Value <= GltfMaterialOverride.ALPHA_MODE_MASK);
+        }
 
         public void llRenderMaterial(string materialId)
         {
@@ -21095,46 +21029,57 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
 
         public int llSetAgentEnvironment(string agentID, float transition, LSLList paramList)
         {
-            // Experience-gated: set per-agent environment (EEP)
-            if (m_host == null || World == null) return -1;
-
-            UUID targetAgent;
-            if (!UUID.TryParse(agentID, out targetAgent)) return -1;
-
-            // Check experience permission
-            if (!HasExperiencePermission(targetAgent))
-                return -3; // XP_ERROR_NOT_EXPERIENCE
-
-            ScenePresence sp = World.GetScenePresence(targetAgent);
-            if (sp == null || sp.IsChildAgent) return -1;
-
-            // Per-agent EEP requires viewer/region support for GenericMessage or
-            // EnvironmentUpdate per-agent caps. Most OpenSim builds don't support this yet.
-            // Log the attempt and return success so scripts don't break.
-            m_log.LogDebug("[PhloxAPI]: llSetAgentEnvironment called for agent {0} with {1} params (transition={2}s). Per-agent EEP not yet implemented in viewer protocol.",
-                targetAgent, paramList.Length, transition);
-            return 0; // Report success so scripts proceed
+            // SL (https://wiki.secondlife.com/wiki/LlSetAgentEnvironment): an agent's own environment settings, as part
+            // of an experience. Phlox cannot apply the settings list yet (YEngine's parser, LSL_Api.ParamsToEnvUpdate,
+            // is bound to its own script instance), so after SL's checks it refuses the call with an error instead of
+            // reporting a success that changed nothing.
+            int check = CheckAgentEnvironmentCall(agentID, out _);
+            if (check != ENV_OK) return check;
+            ShoutError("llSetAgentEnvironment is not supported by Phlox yet; a //YEngine: script can use it.");
+            return ENV_INVALID_RULE;
         }
 
         public int llReplaceAgentEnvironment(string agentID, float transition, string environment)
         {
-            // Experience-gated: replace per-agent environment with named EEP preset
-            if (m_host == null || World == null) return -1;
+            // SL (https://wiki.secondlife.com/wiki/LlReplaceAgentEnvironment): the environment one agent sees, as part
+            // of an experience; NULL_KEY or "" restores the region's and parcel's. Sent as YEngine's LSL_Api does.
+            int check = CheckAgentEnvironmentCall(agentID, out UUID agent);
+            if (check != ENV_OK) return check;
 
-            UUID targetAgent;
-            if (!UUID.TryParse(agentID, out targetAgent)) return -1;
+            IEventQueue eq = World.RequestModuleInterface<IEventQueue>();
+            if (eq == null) return ENV_NO_ENVIRONMENT;
 
-            // Check experience permission
-            if (!HasExperiencePermission(targetAgent))
-                return -3; // XP_ERROR_NOT_EXPERIENCE
+            if (string.IsNullOrEmpty(environment) || environment == UUID.Zero.ToString())
+            {
+                eq.SendEnvironmentUpdate(GetScriptExperienceId(), agent, new ClearEnvironmentUpdate { TransitionTime = transition });
+                return ENV_OK;
+            }
 
-            ScenePresence sp = World.GetScenePresence(targetAgent);
-            if (sp == null || sp.IsChildAgent) return -1;
+            UUID envID = OpenSim.Region.Framework.Scenes.Scripting.ScriptUtils.GetAssetIdFromKeyOrItemName(m_host, environment);
+            if (envID == UUID.Zero) return ENV_NO_ENVIRONMENT;
+            AssetBase asset = World.AssetService.Get(envID.ToString());
+            if (asset == null || asset.Type != (sbyte)AssetType.Settings) return ENV_NO_ENVIRONMENT;
 
-            // Per-agent EEP replace requires viewer protocol support.
-            m_log.LogDebug("[PhloxAPI]: llReplaceAgentEnvironment called for agent {0} environment='{1}' (transition={2}s). Per-agent EEP not yet implemented in viewer protocol.",
-                targetAgent, environment, transition);
-            return 0; // Report success so scripts proceed
+            eq.SendEnvironmentUpdate(GetScriptExperienceId(), agent,
+                new FullEnvironmentUpdate { AssetID = asset.FullID, TransitionTime = transition });
+            return ENV_OK;
+        }
+
+        /// <summary>
+        /// The checks llSetAgentEnvironment and llReplaceAgentEnvironment share, with SL's codes: ENV_NOT_EXPERIENCE
+        /// for a script outside an experience, ENV_INVALID_AGENT for a key that is not an agent in the region, and
+        /// ENV_NO_EXPERIENCE_PERMISSION when the agent has not granted the experience. ENV_OK otherwise.
+        /// </summary>
+        private int CheckAgentEnvironmentCall(string agentID, out UUID agent)
+        {
+            agent = UUID.Zero;
+            if (m_host == null || World == null) return ENV_INVALID_AGENT;
+            if (GetScriptExperienceId() == UUID.Zero) return ENV_NOT_EXPERIENCE;
+            if (!UUID.TryParse(agentID, out agent) || agent == UUID.Zero) return ENV_INVALID_AGENT;
+            ScenePresence sp = World.GetScenePresence(agent);
+            if (sp == null || sp.IsChildAgent) return ENV_INVALID_AGENT;
+            if (!HasExperiencePermission(agent)) return ENV_NO_EXPERIENCE_PERMISSION;
+            return ENV_OK;
         }
 
         // ── Tier 8: Remaining SL Function Gaps (636–643) ──
@@ -21315,74 +21260,67 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             bool atRoot = false;
             bool posRelative = false;
 
-            for (int i = 0; i < paramList.Length; i++)
+            // SL's rules, each a REZ_* code and its values (https://wiki.secondlife.com/wiki/LlRezObjectWithParams).
+            // Every rule is read by its value count, so a rule Phlox does not act on never shifts the rules after it.
+            // An unknown rule, a rule short of values or a value of the wrong type is an error and rezzes nothing,
+            // as YEngine does.
+            object[] data = paramList.Data;
+            int i = 0;
+            while (i < data.Length)
             {
-                int rule;
-                try { rule = Convert.ToInt32(paramList.Data[i]); }
-                catch { continue; }
+                if (data[i] is not int rule)
+                {
+                    ShoutError($"llRezObjectWithParams: parameter {i} must be a REZ_* constant");
+                    return String.Empty;
+                }
+                int count = RezRuleValueCount(rule);
+                if (count < 0)
+                {
+                    ShoutError($"llRezObjectWithParams: Unknown parameter {rule} at {i}");
+                    return String.Empty;
+                }
+                if (i + count >= data.Length)
+                {
+                    ShoutError($"llRezObjectWithParams: parameter {rule} at {i} needs {count} value(s)");
+                    return String.Empty;
+                }
+                int v = i + 1;
+                i += 1 + count;
 
                 switch (rule)
                 {
                     case REZ_POS:
-                        if (i + 3 < paramList.Length)
-                        {
-                            try
-                            {
-                                pos = (Vector3)paramList.Data[i + 1];
-                                atRoot = Convert.ToInt32(paramList.Data[i + 2]) != 0;
-                                posRelative = Convert.ToInt32(paramList.Data[i + 3]) != 0;
-                                i += 3;
-                            }
-                            catch { }
-                        }
+                        // [ REZ_POS, vector position, integer relative, integer at_root ]
+                        if (data[v] is not Vector3 p || data[v + 1] is not int rel || data[v + 2] is not int root)
+                            return RezRuleTypeError(rule, v);
+                        pos = p;
+                        posRelative = rel != 0;
+                        atRoot = root != 0;
                         break;
                     case REZ_ROT:
-                        if (i + 2 < paramList.Length)
-                        {
-                            try
-                            {
-                                rot = (Quaternion)paramList.Data[i + 1];
-                                bool rotRelative = Convert.ToInt32(paramList.Data[i + 2]) != 0;
-                                if (rotRelative) rot = m_host.GetWorldRotation() * rot;
-                                i += 2;
-                            }
-                            catch { }
-                        }
+                        // [ REZ_ROT, rotation rot, integer relative ]
+                        if (data[v] is not Quaternion r || data[v + 1] is not int rotRelative)
+                            return RezRuleTypeError(rule, v);
+                        rot = rotRelative != 0 ? m_host.GetWorldRotation() * r : r;
                         break;
                     case REZ_VEL:
-                        if (i + 3 < paramList.Length)
-                        {
-                            try
-                            {
-                                vel = (Vector3)paramList.Data[i + 1];
-                                bool velRelative = Convert.ToInt32(paramList.Data[i + 2]) != 0;
-                                if (velRelative) vel = vel * m_host.GetWorldRotation();
-                                i += 3;
-                            }
-                            catch { }
-                        }
+                        // [ REZ_VEL, vector velocity, integer local, integer inherit ]; inherit is not acted on
+                        if (data[v] is not Vector3 velocity || data[v + 1] is not int local || data[v + 2] is not int)
+                            return RezRuleTypeError(rule, v);
+                        vel = local != 0 ? velocity * m_host.GetWorldRotation() : velocity;
                         break;
                     case REZ_PARAM_STRING:
                         // upstream LSL_Api.cs:3796-3803
-                        if (i + 1 < paramList.Length)
-                        {
-                            startString = paramList.Data[i + 1]?.ToString() ?? string.Empty;
-                            i += 1;
-                        }
+                        startString = data[v]?.ToString() ?? string.Empty;
                         break;
                     case REZ_PARAM:
-                        if (i + 1 < paramList.Length)
-                        {
-                            try { param = Convert.ToInt32(paramList.Data[i + 1]); i += 1; }
-                            catch { }
-                        }
-                        break;
-                    case REZ_FLAGS:
-                    case REZ_DAMAGE:
-                        // Skip — advanced Combat2 flags, consume the value
-                        if (i + 1 < paramList.Length) i += 1;
+                        if (data[v] is not int startParam)
+                            return RezRuleTypeError(rule, v);
+                        param = startParam;
                         break;
                     default:
+                        // REZ_FLAGS, REZ_ACCEL, REZ_OMEGA, REZ_DAMAGE, REZ_SOUND, REZ_SOUND_COLLIDE, REZ_LOCK_AXES and
+                        // REZ_DAMAGE_TYPE: read and not acted on (Docs/PhloxKnownDefects.md)
                         break;
                 }
             }
@@ -21394,6 +21332,25 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             // Delegate to existing rez infrastructure; its NULL_KEY failure is SL's "" here.
             string key = RezObjectInternal(inventory, pos, vel, rot, param, atRoot, startString);
             return key == UUID.Zero.ToString() ? String.Empty : key;
+        }
+
+        /// <summary>
+        /// The values each llRezObjectWithParams rule takes after its code (SL wiki LlRezObjectWithParams), or -1 for
+        /// a rule SL does not document (REZ_TORQUE has no published argument list).
+        /// </summary>
+        private static int RezRuleValueCount(int rule) => rule switch
+        {
+            REZ_PARAM or REZ_FLAGS or REZ_DAMAGE or REZ_LOCK_AXES or REZ_DAMAGE_TYPE or REZ_PARAM_STRING => 1,
+            REZ_ROT or REZ_ACCEL or REZ_SOUND_COLLIDE => 2,
+            REZ_POS or REZ_VEL or REZ_SOUND => 3,
+            REZ_OMEGA => 4,
+            _ => -1,
+        };
+
+        private string RezRuleTypeError(int rule, int at)
+        {
+            ShoutError($"llRezObjectWithParams: a value of parameter {rule} at {at} has the wrong type");
+            return String.Empty;
         }
 
         public string llGetMaterialOverride(int face, LSLList paramList)
@@ -21768,46 +21725,14 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
         // ── 657: llSetLinkRenderMaterial ──
         public void llSetLinkRenderMaterial(int link, string materialId, int face)
         {
-            // Set PBR render material on a specific link's face
-            // Extends llSetRenderMaterial to target specific links
-            var parts = GetLinkParts(link);
-            foreach (var part in parts)
+            // SL (https://wiki.secondlife.com/wiki/LlSetLinkRenderMaterial): llSetRenderMaterial on the link's prims,
+            // with the same 0.2s delay.
+            if (RenderMaterialKeyOrName(materialId, "llSetLinkRenderMaterial", out UUID material))
             {
-                try
-                {
-                    UUID matId = UUID.Zero;
-                    UUID.TryParse(materialId, out matId);
-
-                    if (face == ALL_SIDES)
-                    {
-                        for (int f = 0; f < part.GetNumberOfSides(); f++)
-                            SetPartRenderMaterial(part, matId, f);
-                    }
-                    else
-                    {
-                        SetPartRenderMaterial(part, matId, face);
-                    }
-                    part.ScheduleFullUpdate();
-                }
-                catch (Exception e)
-                {
-                    m_log.LogWarning("[PhloxAPI]: llSetLinkRenderMaterial error: {0}", e.Message);
-                }
+                foreach (SceneObjectPart part in GetLinkParts(link))
+                    SetPartRenderMaterial(part, material, face);
             }
-        }
-
-        private void SetPartRenderMaterial(SceneObjectPart part, UUID matId, int face)
-        {
-            // Helper: set render material UUID on a specific face of a part
-            var te = part.Shape.Textures;
-            if (te == null) return;
-            if (face < 0 || face >= part.GetNumberOfSides()) return;
-            var faceEntry = te.GetFace((uint)face);
-            if (faceEntry != null)
-            {
-                faceEntry.MaterialID = matId;
-                part.UpdateTextureEntry(te);
-            }
+            ScriptSleep(200);
         }
 
         // ── 658: llXorBase64 ──
@@ -22393,13 +22318,11 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
         // ── 665: llGetVehicleFlags ──
         public int llGetVehicleFlags()
         {
+            // The VEHICLE_FLAG_* word llSetVehicleType, llSetVehicleFlags and llRemoveVehicleFlags keep on the root
+            // part (SceneObjectPart.VehicleParams), physical or not; 0 when the object is no vehicle.
             if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return 0;
-            PhysicsActor pa = m_host.ParentGroup.RootPart.PhysActor;
-            if (pa == null) return 0;
-
-            // PhysicsActor doesn't expose a flags getter — return VehicleType for now.
-            // Full flags support requires adding a getter to the physics engine.
-            return pa.VehicleType;
+            SOPVehicle vehicle = m_host.ParentGroup.RootPart.VehicleParams;
+            return vehicle == null ? 0 : (int)vehicle.vd.m_flags;
         }
 
         // ── 666: llGetLinkGLTFOverrides ──

@@ -428,7 +428,7 @@ public class InventoryItemBase : InventoryNodeBase, ICloneable
         return MemberwiseClone();
     }
 
-    public void ToLLSDxml(osUTF8 lsl, uint flagsMask = 0xffffffff)
+    public void ToLLSDxml(osUTF8 lsl, uint flagsMask = ~ScriptCompileTargets.LslOnLuauFlag)
     {
         LLSDxmlEncode2.AddMap(lsl);
             LLSDxmlEncode2.AddElem_parent_id(Folder, lsl);
@@ -449,13 +449,22 @@ public class InventoryItemBase : InventoryNodeBase, ICloneable
 
             LLSDxmlEncode2.AddElem("type", AssetType, lsl);
             LLSDxmlEncode2.AddElem("inv_type", InvType, lsl);
-            LLSDxmlEncode2.AddElem("flags", (int)(Flags & flagsMask), lsl);
+            LLSDxmlEncode2.AddElem("flags", (int)ScriptCompileTargets.ForViewer(Flags & flagsMask), lsl);
 
             LLSDxmlEncode2.AddElem_sale_info(SalePrice, SaleType, lsl);
 
             LLSDxmlEncode2.AddElem_name(Name, lsl);
             LLSDxmlEncode2.AddElem("desc", Description, lsl);
             LLSDxmlEncode2.AddElem("created_at", CreationDate, lsl);
+
+            // A script's runtime as Second Life's viewer reads it ("script": {"runtime": ...}, LLInventoryItem::fromLLSD)
+            string runtime = InvType == (int)InventoryType.LSL ? ScriptCompileTargets.ViewerRuntime(Flags) : null;
+            if (runtime is not null)
+            {
+                LLSDxmlEncode2.AddMap("script", lsl);
+                    LLSDxmlEncode2.AddElem("runtime", runtime, lsl);
+                LLSDxmlEncode2.AddEndMap(lsl);
+            }
 
         LLSDxmlEncode2.AddEndMap(lsl);
     }

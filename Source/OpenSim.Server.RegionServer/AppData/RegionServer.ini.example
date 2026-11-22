@@ -85,6 +85,19 @@
     ;; same avatar again for 60 seconds. (default is 30)
     ; ChildPresenceWaitSeconds = 30
 
+    ;# {RootAgentWaitSeconds} {} {Seconds a region waits for a teleporting avatar's viewer to finish arriving} {} 25
+    ;; When an avatar teleports into this region, the viewer connects (see ChildPresenceWaitSeconds) and then
+    ;; finishes arriving. The region waits this long for that before the teleport fails and the avatar stays
+    ;; where it was. A wait ends at once if the avatar is closed here or its viewer logs out. (default is 25)
+    ; RootAgentWaitSeconds = 25
+
+    ;# {LoginConnectWaitSeconds} {} {Seconds a region keeps a login for a viewer that has not connected} {} 120
+    ;; A login marks the user online once the region has taken it. If the viewer does not connect within this
+    ;; time (a cancelled login, a crash, UDP blocked), the region closes the login and marks the user offline
+    ;; again; a viewer that connects but leaves before it finishes arriving is marked offline when it goes.
+    ;; 0 keeps such a login until the region restarts, and the user online until their next login. (default is 120)
+    ; LoginConnectWaitSeconds = 120
+
     ;# {ConsolePrompt} {} {ConsolePrompt} {} "Region (\R) "
     ;; Console prompt
     ;; Certain special characters can be used to customize the prompt
@@ -268,14 +281,17 @@
     ; meshing = ZeroMesher
     ;; With ubODE physics engine you must select ubODEMeshmerizer
     ; meshing = ubODEMeshmerizer
+    ;; With Jolt you must select Meshmerizer: the region server stops at startup otherwise
 
     ;; Choose one of the physics engines below
-    ;# {physics} {} {Select physics engine} {OpenDynamicsEngine BulletSim basicphysics POS} ubODE
+    ;# {physics} {} {Select physics engine} {OpenDynamicsEngine BulletSim basicphysics POS Jolt} ubODE
     ;; Default is ubODE
     ; physics = BulletSim
     ; physics = basicphysics
     ; physics = POS
     ; physics = ubODE
+    ;; Jolt needs meshing = Meshmerizer (see above); its settings are in the [Jolt] section of RegionServerDefaults.ini
+    ; physics = Jolt
 
     ; ubODE does allocate a lot of memory on stack. On linux you may need to increase its limit
     ; script opensim-ode-sh starts opensim setting that limit. You may need to increase it even more on large regions
@@ -649,6 +665,12 @@
     ;; entire simulator listens on. This port uses the TCP protocol, while
     ;; the region ports use UDP.
     ; http_listener_port = 9000
+
+    ;# {bind_ip_address} {} {IP address the HTTP and HTTPS listeners bind to? (empty for every interface)} {}
+    ;; 127.0.0.1 accepts connections from this machine only. Covers every HTTP and HTTPS
+    ;; port of the simulator, including ones modules open. The UDP port follows
+    ;; InternalAddress in Regions.ini.
+    ; bind_ip_address = ""
 
     ;; Region control-plane endpoints such as /agent, /object, /region and /friends
     ;; accept POST requests only from loopback and the hosts listed here.

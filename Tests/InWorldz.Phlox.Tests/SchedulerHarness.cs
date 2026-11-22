@@ -47,6 +47,7 @@ public sealed class SchedulerHarness : IDisposable
     /// <summary>The core WorldComm module that carries YEngine's listens, when YEngine is on the scene.</summary>
     public OpenSim.Region.CoreModules.Scripting.WorldComm.WorldCommModule WorldComm { get; }
     private readonly string m_yengineDir;
+    private bool m_holdsYEngineGate;
 
     /// <param name="configure">A hook to add config sections (e.g. [OSSL]) before the engine reads them.</param>
     /// <param name="withYEngine">Register YEngine alongside Phlox, first, as a region running both does.</param>
@@ -61,78 +62,92 @@ public sealed class SchedulerHarness : IDisposable
     public SchedulerHarness(Action<IConfigSource> configure = null, bool withYEngine = false, string bytecodeDir = null,
         bool keepMasterThread = false)
     {
-        var config = new IniConfigSource();
-        var phlox = config.AddConfig("InWorldz.Phlox");
-        phlox.Set("Enabled", "true");
-        var startup = config.AddConfig("Startup");
-        startup.Set("DefaultScriptEngine", "InWorldz.Phlox");
-        configure?.Invoke(config);
-        Config = config;
-
-        Scene = new SceneHelpers().SetupScene();
-
+        // YEngine keeps process-wide state (its compiler's statics and OSSL_Api's settings), so only one harness with it is up at a time.
         if (withYEngine)
         {
-            // A region running YEngine has the core WorldComm module, which carries YEngine's listens; without
-            // it YEngine's llListen and chat reach nothing, and chat between the engines cannot be tested.
-            WorldComm = new OpenSim.Region.CoreModules.Scripting.WorldComm.WorldCommModule();
-            WorldComm.Initialise(config);
-            WorldComm.AddRegion(Scene);
-
-            m_yengineDir = Path.Combine(Path.GetTempPath(), "phlox-harness-yengine-" + Guid.NewGuid().ToString("N"));
-            var y = config.AddConfig("YEngine");
-            y.Set("Enabled", "true");
-            y.Set("ScriptEnginesPath", m_yengineDir);
-            YEngine = new OpenSim.Region.ScriptEngine.Yengine.Yengine();
-            YEngine.Initialise(config);
-            YEngine.AddRegion(Scene);
+            YEngineProcessState.Enter();
+            m_holdsYEngineGate = true;
         }
-
-        Engine = new PhloxEngine();
-        BytecodeDir = bytecodeDir ?? BytecodeDirForCaller();
-        // A relative folder is the production one, resolved as the loader resolves it; the seam is left unset for it.
-        if (Path.IsPathRooted(BytecodeDir)) Engine.BytecodeCacheDir = BytecodeDir;
-        Engine.Initialise(config);
-        Engine.AddRegion(Scene);
-        // RegionLoaded needs an IWorldComm; the test scene has none, so one is registered first.
-        if (Scene.RequestModuleInterface<IWorldComm>() is null)
-            Scene.RegisterModuleInterface<IWorldComm>(NullWorldComm.Create());
-        Engine.RegionLoaded(Scene);
-        if (YEngine != null)
+        try
         {
-            // As the region does after every module's AddRegion: YEngine hooks its script events (listen among
-            // them) in RegionLoaded, and its worker threads run scripts only after StartProcessing.
-            YEngine.RegionLoaded(Scene);
-            YEngine.StartProcessing();
-        }
+            var config = new IniConfigSource();
+            var phlox = config.AddConfig("InWorldz.Phlox");
+            phlox.Set("Enabled", "true");
+            var startup = config.AddConfig("Startup");
+            startup.Set("DefaultScriptEngine", "InWorldz.Phlox");
+            configure?.Invoke(config);
+            Config = config;
 
-        var sog = SceneHelpers.AddSceneObject(Scene, "Phlox test prim", UUID.Random());
-        Prim = sog.RootPart;
+            Scene = new SceneHelpers().SetupScene();
 
-        // llSay goes Scene.SimChat -> EventManager.OnChatFromWorld (Scene.PacketHandlers.cs:51-85),
-        // so the real path is observed rather than a stub API injected into the engine - the engine
-        // builds its own LSLSystemAPI inside FinishedLoading and takes no seam for one.
-        // NPC chat arrives as CLIENT chat (NPCAvatar is a client), with the NPC as sender.
-        Scene.EventManager.OnChatFromClient += (sender, chat) =>
-        {
-            lock (m_said) m_clientChat.Add((chat.Channel, chat.Message ?? string.Empty, chat.Sender?.AgentId ?? chat.SenderUUID));
-        };
-        Scene.EventManager.OnChatFromWorld += (sender, chat) =>
-        {
-            lock (m_said)
+            if (withYEngine)
             {
-                m_said.Add(chat.Message ?? string.Empty);
-                m_saidOn.Add((chat.Channel, chat.Message ?? string.Empty));
+                // A region running YEngine has the core WorldComm module, which carries YEngine's listens; without
+                // it YEngine's llListen and chat reach nothing, and chat between the engines cannot be tested.
+                WorldComm = new OpenSim.Region.CoreModules.Scripting.WorldComm.WorldCommModule();
+                WorldComm.Initialise(config);
+                WorldComm.AddRegion(Scene);
+
+                m_yengineDir = Path.Combine(Path.GetTempPath(), "phlox-harness-yengine-" + Guid.NewGuid().ToString("N"));
+                var y = config.AddConfig("YEngine");
+                y.Set("Enabled", "true");
+                y.Set("ScriptEnginesPath", m_yengineDir);
+                YEngine = new OpenSim.Region.ScriptEngine.Yengine.Yengine();
+                YEngine.Initialise(config);
+                YEngine.AddRegion(Scene);
             }
-        };
 
-        m_loader = Field(Engine, "m_ScriptLoader");
-        m_exe = Field(Engine, "m_ExeScheduler");
-        Assert.NotNull(m_loader);
-        Assert.NotNull(m_exe);
+            Engine = new PhloxEngine();
+            BytecodeDir = bytecodeDir ?? BytecodeDirForCaller();
+            // A relative folder is the production one, resolved as the loader resolves it; the seam is left unset for it.
+            if (Path.IsPathRooted(BytecodeDir)) Engine.BytecodeCacheDir = BytecodeDir;
+            Engine.Initialise(config);
+            Engine.AddRegion(Scene);
+            // RegionLoaded needs an IWorldComm; the test scene has none, so one is registered first.
+            if (Scene.RequestModuleInterface<IWorldComm>() is null)
+                Scene.RegisterModuleInterface<IWorldComm>(NullWorldComm.Create());
+            Engine.RegionLoaded(Scene);
+            if (YEngine != null)
+            {
+                // As the region does after every module's AddRegion: YEngine hooks its script events (listen among
+                // them) in RegionLoaded, and its worker threads run scripts only after StartProcessing.
+                YEngine.RegionLoaded(Scene);
+                YEngine.StartProcessing();
+            }
 
-        // The master scheduler owns a thread; this harness drives DoWork itself instead, so stop it.
-        if (!keepMasterThread) StopMasterThread();
+            var sog = SceneHelpers.AddSceneObject(Scene, "Phlox test prim", UUID.Random());
+            Prim = sog.RootPart;
+
+            // llSay goes Scene.SimChat -> EventManager.OnChatFromWorld (Scene.PacketHandlers.cs:51-85),
+            // so the real path is observed rather than a stub API injected into the engine - the engine
+            // builds its own LSLSystemAPI inside FinishedLoading and takes no seam for one.
+            // NPC chat arrives as CLIENT chat (NPCAvatar is a client), with the NPC as sender.
+            Scene.EventManager.OnChatFromClient += (sender, chat) =>
+            {
+                lock (m_said) m_clientChat.Add((chat.Channel, chat.Message ?? string.Empty, chat.Sender?.AgentId ?? chat.SenderUUID));
+            };
+            Scene.EventManager.OnChatFromWorld += (sender, chat) =>
+            {
+                lock (m_said)
+                {
+                    m_said.Add(chat.Message ?? string.Empty);
+                    m_saidOn.Add((chat.Channel, chat.Message ?? string.Empty));
+                }
+            };
+
+            m_loader = Field(Engine, "m_ScriptLoader");
+            m_exe = Field(Engine, "m_ExeScheduler");
+            Assert.NotNull(m_loader);
+            Assert.NotNull(m_exe);
+
+            // The master scheduler owns a thread; this harness drives DoWork itself instead, so stop it.
+            if (!keepMasterThread) StopMasterThread();
+        }
+        catch
+        {
+            ReleaseYEngineGate();
+            throw;
+        }
     }
 
     /// <summary>The loader's folder under the default ScriptEnginesPath, relative to the working directory.</summary>
@@ -584,6 +599,39 @@ public sealed class SchedulerHarness : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Pump only the execution scheduler, never the loader, until <paramref name="done"/> holds or <paramref name="cap"/>
+    /// passes; false on the cap. A load or unload the loader has queued stays queued.
+    /// </summary>
+    public bool PumpExeUntil(Func<bool> done, TimeSpan cap)
+    {
+        var until = DateTime.UtcNow + cap;
+        while (!done())
+        {
+            if (DateTime.UtcNow >= until) return false;
+            if (!Pending(((global::Phlox.ScriptEngine.PhloxExecutionScheduler)m_exe).DoWork())) System.Threading.Thread.Sleep(1);
+        }
+        return true;
+    }
+
+    /// <summary>Pump only the execution scheduler for a wall-clock window (a window that proves something did NOT happen).</summary>
+    public void PumpExeFor(TimeSpan how)
+    {
+        var until = DateTime.UtcNow + how;
+        while (DateTime.UtcNow < until)
+            if (!Pending(((global::Phlox.ScriptEngine.PhloxExecutionScheduler)m_exe).DoWork())) System.Threading.Thread.Sleep(1);
+    }
+
+    /// <summary>The API of the item's loaded Phlox instance, or null when none is loaded.</summary>
+    public global::Phlox.ScriptEngine.LSLSystemAPI ApiFor(UUID itemId)
+    {
+        var apis = (Dictionary<UUID, global::Phlox.ScriptEngine.LSLSystemAPI>)Field(m_exe, "m_Apis");
+        return apis.TryGetValue(itemId, out var api) ? api : null;
+    }
+
+    /// <summary>Ask the execution scheduler to reset the item's loaded instance, as Phlox's OnScriptReset does.</summary>
+    public void ResetOnScheduler(UUID itemId) => ((global::Phlox.ScriptEngine.PhloxExecutionScheduler)m_exe).ResetScript(itemId);
+
     /// <summary>Scripts handed to the loader's compile thread and not yet taken back by its DoWork.</summary>
     private int CompilesOutstanding => (int)typeof(global::Phlox.ScriptEngine.PhloxScriptLoader)
         .GetField("m_CompilesOutstanding", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(m_loader)!;
@@ -668,6 +716,14 @@ public sealed class SchedulerHarness : IDisposable
             try { WorldComm.RemoveRegion(Scene); } catch { }
             try { Directory.Delete(m_yengineDir, true); } catch { }   // the harness's own temp dir
         }
+        ReleaseYEngineGate();
+    }
+
+    private void ReleaseYEngineGate()
+    {
+        if (!m_holdsYEngineGate) return;
+        m_holdsYEngineGate = false;
+        YEngineProcessState.Exit();
     }
 }
 

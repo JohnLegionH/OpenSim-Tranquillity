@@ -192,6 +192,290 @@ public class LandManagementModuleTests : OpenSimTestCase
         Assert.Equal(0u, f.Current.Flags & (uint)ParcelFlags.UseBanList);
     }
 
+    // A selection holding no whole 4 m cell (a point, east of west, off the grid) gave a parcel with no land: kept,
+    // stored, and never removable, one more with each such request.
+    [Theory]
+    [InlineData(8, 8, 8, 8)]
+    [InlineData(9, 9, 11, 11)]
+    [InlineData(20, 20, 8, 8)]
+    public void TestSubdivideOfNoLandMakesNoParcel(int west, int south, int east, int north)
+    {
+        TestHelpers.InMethod();
+        ParcelFixture f = new ParcelFixture();
+        f.Stores = 0;
+
+        f.Module.Subdivide(west, south, east, north, f.OwnerId);
+
+        Assert.Single(f.Module.AllParcels());
+        Assert.Equal(f.Parcel.LandData.LocalID, f.Module.GetLandObject(west, south).LandData.LocalID);
+        Assert.Equal((int)(Constants.RegionSize * Constants.RegionSize), f.Parcel.LandData.Area);
+        Assert.Equal(0, f.Stores);
+    }
+
+    // The region's Allow Land Join/Divide was only sent to the viewer, which greys its buttons out; a client that sent
+    // ParcelDivide or ParcelJoin anyway, or a script (osParcelSubdivide), changed the parcels.
+    [Fact]
+    public void TestJoinAndDivideFollowTheRegionsSetting()
+    {
+        TestHelpers.InMethod();
+        UUID estateOwner = TestHelpers.ParseTail(0x10);
+        UUID resident = TestHelpers.ParseTail(0x11);
+
+        foreach (UUID owner in new[] { resident, estateOwner })
+        {
+            LandManagementModule lmm = new LandManagementModule();
+            Scene scene = new SceneHelpers().SetupScene();
+            SceneHelpers.SetupSceneModules(scene, new Nini.Config.IniConfigSource(), lmm,
+                new OpenSim.Region.CoreModules.World.Permissions.DefaultPermissionsModule());
+            scene.RegionInfo.EstateSettings.EstateOwner = estateOwner;
+            scene.RegionInfo.RegionSettings.AllowLandJoinDivide = false;
+
+            ILandObject lo = new LandObject(owner, false, scene);
+            lo.SetLandBitmap(lo.GetSquareLandBitmap(0, 0, (int)Constants.RegionSize, (int)Constants.RegionSize));
+            lmm.AddLandObject(lo);
+
+            lmm.Subdivide(0, 0, 16, 16, owner);
+            int expected = owner == estateOwner ? 2 : 1;
+            Assert.Equal(expected, lmm.AllParcels().Count);
+
+            if (owner == estateOwner)
+            {
+                lmm.Join(0, 0, 32, 16, owner);
+                Assert.Single(lmm.AllParcels());
+            }
+            else
+            {
+                // the resident divides once the region allows it, and joins only then
+                scene.RegionInfo.RegionSettings.AllowLandJoinDivide = true;
+                lmm.Subdivide(0, 0, 16, 16, owner);
+                Assert.Equal(2, lmm.AllParcels().Count);
+                scene.RegionInfo.RegionSettings.AllowLandJoinDivide = false;
+                lmm.Join(0, 0, 32, 16, owner);
+                Assert.Equal(2, lmm.AllParcels().Count);
+            }
+        }
+    }
+
+    // The UDP ParcelPropertiesUpdate carries no media type, description, size or loop and no avatar visibility or
+    // sound settings. Taking them as the message left them turned "see avatars" and the sounds off and set the
+    // media type to null, which the database refuses (NOT NULL): every later store of the parcel failed.
+    [Fact]
+    public void TestAUdpPropertiesUpdateKeepsWhatItDoesNotCarry()
+    {
+        TestHelpers.InMethod();
+        ParcelFixture f = new ParcelFixture();
+        LandData d = f.Current;
+        d.MediaType = "text/html";
+        d.MediaDescription = "the screen";
+        d.MediaWidth = 640;
+        d.MediaHeight = 480;
+        d.MediaLoop = true;
+        d.SeeAVs = true;
+        d.AnyAVSounds = true;
+        d.GroupAVSounds = true;
+
+        LandUpdateArgs udp = PropertiesSave(d, d.Flags);
+        udp.Name = "renamed";
+        udp.MediaType = null;
+        udp.MediaDescription = null;
+        udp.WithoutMediaDetailsAndAvatarSettings = true;
+        f.Parcel.UpdateLandProperties(udp, f.Client, out _, out _);
+
+        LandData now = f.Current;
+        Assert.Equal("renamed", now.Name);
+        Assert.Equal("text/html", now.MediaType);
+        Assert.Equal("the screen", now.MediaDescription);
+        Assert.Equal((640, 480, true), (now.MediaWidth, now.MediaHeight, now.MediaLoop));
+        Assert.True(now.SeeAVs && now.AnyAVSounds && now.GroupAVSounds);
+
+        // the capability carries them all, and they change
+        LandUpdateArgs cap = PropertiesSave(now, now.Flags);
+        cap.MediaType = "video/mp4";
+        cap.SeeAVs = false;
+        f.Parcel.UpdateLandProperties(cap, f.Client, out _, out _);
+        Assert.Equal("video/mp4", f.Current.MediaType);
+        Assert.False(f.Current.SeeAVs);
+    }
+
+    // A landing point is a place on the parcel: one elsewhere (another parcel, outside the region) or not a number
+    // sent arriving visitors there.
+    [Fact]
+    public void TestALandingPointIsAPlaceOnTheParcel()
+    {
+        TestHelpers.InMethod();
+        ParcelFixture f = new ParcelFixture();
+        f.Module.Subdivide(0, 0, 16, 16, f.OwnerId);
+        ILandObject big = f.Module.GetLandObject(100, 100);
+
+        LandUpdateArgs SetPoint(Vector3 at)
+        {
+            LandUpdateArgs a = PropertiesSave(big.LandData, big.LandData.Flags);
+            a.LandingType = (byte)LandingType.LandingPoint;
+            a.UserLocation = at;
+            a.UserLookAt = new Vector3(1, 0, 0);
+            return a;
+        }
+
+        big.UpdateLandProperties(SetPoint(new Vector3(100, 100, 25)), f.Client, out _, out _);
+        Assert.Equal(new Vector3(100, 100, 25), big.LandData.UserLocation);
+
+        foreach (Vector3 elsewhere in new[] {
+            new Vector3(8, 8, 25),                      // the other parcel
+            new Vector3(300, 100, 25),                  // outside the region
+            new Vector3(float.NaN, 100, 25),
+            new Vector3(100, float.PositiveInfinity, 25) })
+        {
+            big.UpdateLandProperties(SetPoint(elsewhere), f.Client, out _, out _);
+            Assert.Equal(new Vector3(100, 100, 25), big.LandData.UserLocation);
+        }
+
+        // no landing point at all is fine
+        LandUpdateArgs direct = SetPoint(Vector3.Zero);
+        direct.LandingType = (byte)LandingType.Direct;
+        big.UpdateLandProperties(direct, f.Client, out _, out _);
+        Assert.Equal((byte)LandingType.Direct, big.LandData.LandingType);
+        Assert.Equal(Vector3.Zero, big.LandData.UserLocation);
+    }
+
+    // A subdivide that takes the parent's landing point resets it, but the parent was stored before the reset: after
+    // a restart visitors to the parent landed on the new parcel, which may since have been sold.
+    [Fact]
+    public void TestASubdivideStoresTheParentWithItsLandingPointReset()
+    {
+        TestHelpers.InMethod();
+        ParcelFixture f = new ParcelFixture();
+        f.Current.LandingType = (byte)LandingType.LandingPoint;
+        f.Current.UserLocation = new Vector3(8, 8, 25);
+        int parent = f.Parcel.LandData.LocalID;
+        List<byte> stored = new();
+        f.Scene.EventManager.OnLandObjectAdded += lo =>
+        {
+            if (lo.LandData.LocalID == parent)
+                stored.Add(lo.LandData.LandingType);
+        };
+
+        f.Module.Subdivide(0, 0, 16, 16, f.OwnerId);
+
+        Assert.NotEmpty(stored);
+        Assert.All(stored, t => Assert.Equal((byte)LandingType.Direct, t));
+    }
+
+    // The overlay loop skipped a cell no parcel holds without moving on, and spun for good: between the land being
+    // cleared and loaded again (an OAR load) any avatar asking for the overlay hung that thread.
+    [Fact]
+    public void TestTheOverlayOfCellsNoParcelHoldsIsSent()
+    {
+        TestHelpers.InMethod();
+        ParcelFixture f = new ParcelFixture();
+        IClientAPI client = SceneHelpers.AddScenePresence(f.Scene, TestHelpers.ParseTail(0x3)).ControllingClient;
+        f.Module.Clear(false);
+
+        Task send = Task.Run(() => f.Module.SendParcelOverlay(client));
+        Assert.True(send.Wait(TimeSpan.FromSeconds(10)), "the overlay was never sent");
+    }
+
+    // About Land compared the selection's south edge with the region's width: in a region taller than wide nothing
+    // north of the width was answered, and in one wider than tall a south edge past the height reached the parcel map.
+    [Fact]
+    public void TestAboutLandIsAnsweredAllOverARegionTallerThanWide()
+    {
+        TestHelpers.InMethod();
+        UUID owner = TestHelpers.ParseTail(0x1);
+        LandManagementModule lmm = new LandManagementModule();
+        Scene scene = new SceneHelpers().SetupScene("tall", UUID.Random(), 1000, 1000, 256, 512, new Nini.Config.IniConfigSource());
+        SceneHelpers.SetupSceneModules(scene, lmm);
+        ILandObject lo = new LandObject(owner, false, scene);
+        lo.SetLandBitmap(lo.GetSquareLandBitmap(0, 0, 256, 512));
+        lmm.AddLandObject(lo);
+        TestClient client = (TestClient)SceneHelpers.AddScenePresence(scene, owner).ControllingClient;
+        List<int> answered = new();
+        client.OnSentLandProperties += (sequence, _) => answered.Add(sequence);
+
+        lmm.ClientOnParcelPropertiesRequest(0, 400, 4, 404, 7, false, client);
+
+        Assert.Equal(new List<int> { 7 }, answered);
+    }
+
+    // UpdateLandProperties stored the parcel only when the user could change one of its flags. A group role whose
+    // powers change fields but no flag (the name and description, the landing point) had its save dropped without
+    // a word.
+    [Fact]
+    public void TestAnEditByARoleThatChangesNoFlagIsStored()
+    {
+        TestHelpers.InMethod();
+        ParcelFixture f = new ParcelFixture();
+        f.Scene.Permissions.OnEditParcelProperties += (user, parcel, p, manager) => p == GroupPowers.LandChangeIdentity;
+
+        LandUpdateArgs a = PropertiesSave(f.Current, f.Current.Flags);
+        a.Name = "renamed";
+        a.Desc = "by a role that may change the identity only";
+        a.ParcelFlags = f.Current.Flags ^ (uint)ParcelFlags.AllowFly;
+        f.Parcel.UpdateLandProperties(a, f.Client, out _, out _);
+
+        Assert.Equal("renamed", f.Current.Name);
+        Assert.Equal("by a role that may change the identity only", f.Current.Description);
+        // the flag it may not change is as it was
+        Assert.Equal(0u, (a.ParcelFlags ^ f.Current.Flags) & ~(uint)ParcelFlags.AllowFly);
+        Assert.NotEqual(a.ParcelFlags & (uint)ParcelFlags.AllowFly, f.Current.Flags & (uint)ParcelFlags.AllowFly);
+    }
+
+    // The list of who owns objects on a parcel started a recount of every object of the region before it checked
+    // that the asker may see the list: any visitor asking again and again kept the region busy.
+    [Fact]
+    public void TestOnlyThoseWhoMaySeeTheObjectOwnersStartARecount()
+    {
+        TestHelpers.InMethod();
+        ParcelFixture f = new ParcelFixture();
+        bool allowed = false;
+        f.Scene.Permissions.OnEditParcelProperties += (user, parcel, p, manager) => allowed;
+        int recounts = 0;
+        f.Scene.EventManager.OnParcelPrimCountUpdate += () => recounts++;
+
+        f.Module.ClientOnParcelObjectOwnerRequest(f.Parcel.LandData.LocalID, f.Client);
+        Assert.Equal(0, recounts);
+
+        allowed = true;
+        f.Module.ClientOnParcelObjectOwnerRequest(f.Parcel.LandData.LocalID, f.Client);
+        Assert.Equal(1, recounts);
+    }
+
+    // Join stored its parcels, and so fired their events, holding the land list's lock. A handler takes the prim
+    // count's lock (PrimCountModule), which Recount holds while it asks for every parcel (the land list's lock): the
+    // two threads waited on each other for good. Loading the parcels from storage (startup, an OAR) did the same.
+    [Fact]
+    public void TestLandEventsFireWithTheLandListUnlocked()
+    {
+        TestHelpers.InMethod();
+        ParcelFixture f = new ParcelFixture();
+        object landList = typeof(LandManagementModule)
+            .GetField("m_landList", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            .GetValue(f.Module);
+        List<string> locked = new();
+        int events = 0;
+        void Check(string what)
+        {
+            events++;
+            if (Monitor.IsEntered(landList))
+                locked.Add(what);
+        }
+        f.Scene.EventManager.OnLandObjectAdded += _ => Check("added");
+        f.Scene.EventManager.OnLandObjectRemoved += _ => Check("removed");
+        f.Scene.EventManager.OnParcelPrimCountTainted += () => Check("tainted");
+
+        f.Module.Subdivide(0, 0, 16, 16, f.OwnerId);
+        f.Module.Subdivide(16, 0, 32, 16, f.OwnerId);
+        f.Module.Join(0, 0, 32, 16, f.OwnerId);
+        Assert.Equal(2, f.Module.AllParcels().Count);
+
+        List<LandData> stored = f.Module.AllParcels().ConvertAll(lo => lo.LandData.Copy());
+        f.Module.Clear(false);
+        f.Scene.EventManager.TriggerIncomingLandDataFromStorage(stored);
+        Assert.Equal(2, f.Module.AllParcels().Count);
+
+        Assert.True(events > 0);
+        Assert.Empty(locked);
+    }
+
     /// <summary>
     /// Test parcels on region when no land data exists to be loaded.
     /// </summary>

@@ -132,11 +132,13 @@ public class PGSQLUserAccountData : PGSQLGenericTableHandler<UserAccountData>,IU
 
                     if (m_ColumnNames == null)
                     {
-                        m_ColumnNames = new List<string>();
+                        // filled, then published whole: a query on another thread uses the list as soon as it is set
+                        List<string> columnNames = new List<string>();
 
                         DataTable schemaTable = result.GetSchemaTable();
                         foreach (DataRow row in schemaTable.Rows)
-                            m_ColumnNames.Add(row["ColumnName"].ToString());
+                            columnNames.Add(row["ColumnName"].ToString());
+                        m_ColumnNames = columnNames;
                     }
 
                     foreach (string s in m_ColumnNames)
@@ -274,17 +276,8 @@ public class PGSQLUserAccountData : PGSQLGenericTableHandler<UserAccountData>,IU
 
     public UserAccountData[] GetUsers(UUID scopeID, string query)
     {
-        string[] words = query.Split();
-
-        for (int i = 0; i < words.Length; i++)
-        {
-            if (words[i].Length < 3)
-            {
-                if (i != words.Length - 1)
-                    Array.Copy(words, i + 1, words, i, words.Length - i - 1);
-                Array.Resize(ref words, words.Length - 1);
-            }
-        }
+        // Words shorter than three characters are not searched.
+        string[] words = UserSearchWords.From(query);
 
         if (words.Length == 0)
             return new UserAccountData[0];

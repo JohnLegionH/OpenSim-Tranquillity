@@ -45,6 +45,8 @@ using OpenSim.Region.ClientStack.LindenCaps;
 
 namespace OpenSim.Region.ClientStack.Linden.Tests
 {
+    // Shares MainServer's port 9999 with ScriptEngineReplyTests, so the two never run at once.
+    [Collection("EventQueueMainServer")]
     public class EventQueueTests : OpenSimTestCase
     {
         private TestScene m_scene;
@@ -190,6 +192,51 @@ namespace OpenSim.Region.ClientStack.Linden.Tests
             Assert.NotNull(update);
             Assert.Equal(sessionId, update["session_id"].AsUUID());
             Assert.Equal(moderated, ((OSDMap)((OSDMap)update["info"])["moderated_mode"])["voice"].AsBoolean());
+        }
+
+        /// <summary>
+        /// ScriptRunningReply tells the viewer's script editor the compile target to show: Mono, Luau (the Luau
+        /// compiler is in use) and LuauLanguage (the script is written in Lua), the fields Second Life's viewer reads.
+        /// "luau" is Luau and LuauLanguage, "lsl-luau" is Luau only, and anything else is Mono as before.
+        /// </summary>
+        [Theory]
+        [InlineData(ScriptCompileTarget.Luau, false, true, true)]
+        [InlineData(ScriptCompileTarget.LslOnLuau, false, true, false)]
+        [InlineData(ScriptCompileTarget.Unspecified, true, false, false)]
+        public void TestScriptRunningReplyCarriesTheCompileTarget(ScriptCompileTarget target, bool mono, bool luau, bool luauLanguage)
+        {
+            TestHelpers.InMethod();
+
+            ScenePresence sp = SceneHelpers.AddScenePresence(m_scene, TestHelpers.ParseTail(0x1));
+            UUID objectId = TestHelpers.ParseTail(0x51), itemId = TestHelpers.ParseTail(0x52);
+
+            m_eqgMod.ScriptRunningEvent(objectId, itemId, true, sp.UUID, target);
+
+            OSDMap script = null;
+            for (int attempt = 0; attempt < 3 && script is null; attempt++)
+            {
+                Hashtable eventsResponse = m_eqgMod.GetEvents(UUID.Zero, sp.UUID);
+                if ((int)eventsResponse["int_response_code"] != (int)HttpStatusCode.OK
+                    || eventsResponse["bin_response_data"] is null)
+                    continue;
+
+                string data = Encoding.UTF8.GetString((byte[])eventsResponse["bin_response_data"]);
+                OSDArray eventsOsd = (OSDArray)((OSDMap)OSDParser.DeserializeLLSDXml(data))["events"];
+                foreach (OSD osd in eventsOsd)
+                {
+                    OSDMap eventOsd = (OSDMap)osd;
+                    if (eventOsd["message"] == "ScriptRunningReply")
+                        script = (OSDMap)((OSDArray)((OSDMap)eventOsd["body"])["Script"])[0];
+                }
+            }
+
+            Assert.NotNull(script);
+            Assert.Equal(objectId, script["ObjectID"].AsUUID());
+            Assert.Equal(itemId, script["ItemID"].AsUUID());
+            Assert.True(script["Running"].AsBoolean());
+            Assert.Equal(mono, script["Mono"].AsBoolean());
+            Assert.Equal(luau, script.ContainsKey("Luau") && script["Luau"].AsBoolean());
+            Assert.Equal(luauLanguage, script.ContainsKey("LuauLanguage") && script["LuauLanguage"].AsBoolean());
         }
 
         /// <summary>

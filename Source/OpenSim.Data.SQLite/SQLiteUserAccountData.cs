@@ -39,17 +39,8 @@ public class SQLiteUserAccountData : SQLiteGenericTableHandler<UserAccountData>,
 
     public UserAccountData[] GetUsers(UUID scopeID, string query)
     {
-        string[] words = query.Split();
-
-        for (int i = 0 ; i < words.Length ; i++)
-        {
-            if (words[i].Length < 3)
-            {
-                if (i != words.Length - 1)
-                    Array.Copy(words, i + 1, words, i, words.Length - i - 1);
-                Array.Resize(ref words, words.Length - 1);
-            }
-        }
+        // Words shorter than three characters are not searched.
+        string[] words = UserSearchWords.From(query);
 
         if (words.Length == 0)
             return new UserAccountData[0];
@@ -61,21 +52,42 @@ public class SQLiteUserAccountData : SQLiteGenericTableHandler<UserAccountData>,
         {
             if (words.Length == 1)
             {
-                cmd.CommandText = String.Format("select * from {0} where (ScopeID='{1}' or ScopeID='00000000-0000-0000-0000-000000000000') and (FirstName like '{2}%' or LastName like '{2}%')",
-                    m_Realm, scopeID.ToString(), words[0]);
+                cmd.CommandText = String.Format("select * from {0} where (ScopeID=:ScopeID or ScopeID='00000000-0000-0000-0000-000000000000') and (FirstName like :search or LastName like :search)",
+                    m_Realm);
+                cmd.Parameters.Add(new SQLiteParameter(":ScopeID", scopeID.ToString()));
+                cmd.Parameters.Add(new SQLiteParameter(":search", words[0] + "%"));
             }
             else
             {
-                cmd.CommandText = String.Format("select * from {0} where (ScopeID='{1}' or ScopeID='00000000-0000-0000-0000-000000000000') and (FirstName like '{2}%' or LastName like '{3}%')",
-                    m_Realm, scopeID.ToString(), words[0], words[1]);
+                cmd.CommandText = String.Format("select * from {0} where (ScopeID=:ScopeID or ScopeID='00000000-0000-0000-0000-000000000000') and (FirstName like :searchFirst or LastName like :searchLast)",
+                    m_Realm);
+                cmd.Parameters.Add(new SQLiteParameter(":ScopeID", scopeID.ToString()));
+                cmd.Parameters.Add(new SQLiteParameter(":searchFirst", words[0] + "%"));
+                cmd.Parameters.Add(new SQLiteParameter(":searchLast", words[1] + "%"));
             }
 
             return DoQuery(cmd);
         }
     }
 
+    /// <summary>
+    /// The accounts matching a condition the account service builds (GetUserAccounts' id list,
+    /// GetUserAccountsWhere), in the scope or the default one, as the MySQL and PostgreSQL stores do. It returned
+    /// nothing at all, so every multi-account lookup on a SQLite grid or standalone came back empty.
+    /// </summary>
     public UserAccountData[] GetUsersWhere(UUID scopeID, string where)
     {
-        return null;
+        using (SQLiteCommand cmd = new SQLiteCommand())
+        {
+            if (!scopeID.IsZero())
+            {
+                where = "(ScopeID=:ScopeID or ScopeID='00000000-0000-0000-0000-000000000000') and (" + where + ")";
+                cmd.Parameters.Add(new SQLiteParameter(":ScopeID", scopeID.ToString()));
+            }
+
+            cmd.CommandText = String.Format("select * from {0} where " + where, m_Realm);
+
+            return DoQuery(cmd);
+        }
     }
 }

@@ -7,6 +7,9 @@
  */
 
 /*
+ * Copyright (c) 2015, InWorldz Halcyon Developers
+ * All rights reserved.
+ * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  * 
@@ -574,6 +577,7 @@ namespace Phlox.ScriptEngine
         void osCollisionSound(string impact_sound, float impact_volume);
         void osForceAttachToAvatar(int attachmentPoint);
         void osForceAttachToAvatarFromInventory(string itemName, int attachmentPoint);
+        int osSetScriptEngine(string scriptName, string target);
         void osForceAttachToOtherAvatarFromInventory(string rawAvatarId, string itemName, int attachmentPoint);
         void osForceDetachFromAvatar();
         void osForceDropAttachment();

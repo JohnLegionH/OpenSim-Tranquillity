@@ -274,9 +274,9 @@ namespace Phlox.ScriptEngine
             m_WorkArrived();
         }
 
-        public void PostUnloadRequest(uint localID, UUID itemID)
+        public void PostUnloadRequest(uint localID, UUID itemID, bool letGo = false)
         {
-            var req = new PhloxUnloadRequest { LocalID = localID, ItemID = itemID };
+            var req = new PhloxUnloadRequest { LocalID = localID, ItemID = itemID, LetGo = letGo };
             NotePosted(req);
             lock (m_PendingUnloads)
                 m_PendingUnloads.AddLast(req);
@@ -289,7 +289,8 @@ namespace Phlox.ScriptEngine
         /// and drop its loads still queued. Then on the load worker, after any unload posted before this: unload a Phlox
         /// instance if there is one, with its normal save. The item's state row is kept, as YEngine keeps its own state
         /// file for a script it declines (XMREngine.OnRezScript): if the script comes back to Phlox with the same asset it
-        /// resumes from that row, and an edited script has a new asset, so LoadState does not restore the row.
+        /// resumes from that row, and an edited script has a new asset, so LoadState does not restore the row. When the
+        /// region changes the item's engine, it discards the row first (StateManager.Discard) and the unload saves none.
         /// </summary>
         internal void Disown(uint localID, UUID itemID)
         {
@@ -423,13 +424,21 @@ namespace Phlox.ScriptEngine
 
         private void PerformUnload(PhloxUnloadRequest req)
         {
-            // A compile of this item still running is now stale.
-            BumpGeneration(req.ItemID);
-            lock (m_PendingOps) m_PendingOps.Remove(req.ItemID);
-            m_ExeScheduler.DropDeferred(req.ItemID);   // Events held for a load that is now cancelled
-            Interpreter script = m_ExeScheduler.FindScript(req.ItemID);
-            if (script != null)
-                UnloadScript(req, script);
+            try
+            {
+                // A compile of this item still running is now stale.
+                BumpGeneration(req.ItemID);
+                lock (m_PendingOps) m_PendingOps.Remove(req.ItemID);
+                m_ExeScheduler.DropDeferred(req.ItemID);   // Events held for a load that is now cancelled
+                Interpreter script = m_ExeScheduler.FindScript(req.ItemID);
+                if (script != null)
+                    UnloadScript(req, script);
+            }
+            finally
+            {
+                // The instance the region let go is gone: a load of the item posted after this unload runs as usual.
+                if (req.LetGo) m_Engine?.LetGoUnloaded(req.ItemID);
+            }
         }
 
         private void UnloadScript(PhloxUnloadRequest req, Interpreter script)
@@ -478,6 +487,15 @@ namespace Phlox.ScriptEngine
             {
                 // A load that waited behind its prim's compile while the item went to another engine.
                 if (!IsOwned(req.ItemID)) return;
+
+                // A load queued before the region moved the item to another engine (a switch away and back and away again
+                // before this loader ran): that engine holds the item now, and an instance started here would set up URLs,
+                // requests and controls under the item's id beside the other engine's. It never starts.
+                if (m_Engine != null && m_Engine.HeldByAnotherEngine(req.ItemID))
+                {
+                    PublishOutcome(req, new List<string>());
+                    return;
+                }
 
                 // An instance of this item on another asset is still here: an earlier load started in the moment between a
                 // save's unload and its new asset. The latest load replaces it, as that save's unload would have.
@@ -714,8 +732,9 @@ namespace Phlox.ScriptEngine
         }
 
         /// <summary>
-        /// Compile the script as LSL or SLua. A first line naming Phlox ("//InWorldz.Phlox:&lt;language&gt;", the header that
-        /// gives a script to Phlox on any region, <see cref="PhloxEngineHeader"/>) decides by its language part, read as
+        /// Compile the script as LSL or SLua. A first line naming Phlox ("//InWorldz.Phlox:&lt;language&gt;" or the short
+        /// "//Phlox:&lt;language&gt;", the headers that give a script to Phlox on any region, <see cref="PhloxEngineHeader"/>)
+        /// decides by its language part, read as
         /// YEngine reads its own: "" or "lsl" is LSL; "slua" is SLua, compiled with the header line blanked (its newline
         /// kept) so error line numbers match the source; anything else is a compile error on line 1. The language part
         /// is lowercased first, as YEngine does, so "SLua" and "SLUA" are SLua too. Without that header, the source decides
@@ -723,7 +742,7 @@ namespace Phlox.ScriptEngine
         /// </summary>
         internal static CompiledScript CompileByLanguage(CompilerFrontend frontend, string scriptText)
         {
-            if (PhloxEngineHeader.NamedEngine(scriptText) == PhloxEngineHeader.PhloxName)
+            if (PhloxEngineHeader.IsPhloxName(PhloxEngineHeader.NamedEngine(scriptText)))
             {
                 string language = PhloxEngineHeader.Language(scriptText);
                 if (language == "slua")

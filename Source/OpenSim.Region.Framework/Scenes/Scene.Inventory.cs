@@ -96,8 +96,11 @@ public partial class Scene
     }
 
     /// <summary>
-    /// The script engine that will run a script: the engine named on the script's first line
-    /// ("//engine:language") if loaded, otherwise an engine with matching saved state (default first),
+    /// The script engine that will run a script: a compile target or engine saved with the item, if an engine for it
+    /// is loaded (<see cref="ScriptCompileTargets"/>, <see cref="ScriptEngineChoices"/>), otherwise the engine named on the script's first line
+    /// ("//engine:language", the engine's name or one of its header aliases) if loaded, otherwise an engine with
+    /// matching saved state (default first), otherwise the first engine that claims the script (a script with
+    /// source is offered to each engine that implements <see cref="IScriptEngineSelection"/>),
     /// otherwise the default engine; null if no suitable engine is loaded.
     /// </summary>
     /// <param name="defaultEngine">the engine name the caller passes to CreateScriptInstance (DefaultScriptEngine)</param>
@@ -105,6 +108,40 @@ public partial class Scene
     public IScriptModule ResolveScriptEngine(string defaultEngine, string scriptSource, TaskInventoryItem item = null)
     {
         IScriptModule[] engines = RequestModuleInterfaces<IScriptModule>();
+
+        // A viewer's compile target kept with the item (the editor's "Lua" and "LSL on Lua" choices) comes first,
+        // as the editor's choice does in Second Life. Saved state for this item and asset still places a script
+        // that already runs elsewhere; an edited script has a new asset and so none.
+        if (item is not null)
+        {
+            ScriptCompileTarget target = ScriptCompileTargets.FromFlags(item.Flags);
+            if (target != ScriptCompileTarget.Unspecified)
+            {
+                foreach (IScriptModule engine in engines)
+                {
+                    if (engine is IScriptEngineSelection selection && selection.AcceptsCompileTarget(target))
+                    {
+                        if (!AnotherEngineHoldsSavedState(engines, engine, item))
+                            return engine;
+                        break;
+                    }
+                }
+            }
+
+            // An engine saved with the script ("engine:<Name>") places it when that engine is loaded here. The choice is
+            // changed without changing the script's text (SetScriptEngine), so state another engine saved for the same item
+            // and text is from before the choice and does not hold the script there. An engine that is not loaded here
+            // leaves the script to the steps below, as a first line naming it does.
+            string chosen = ScriptEngineChoices.NameFor(ScriptEngineChoices.FromFlags(item.Flags));
+            if (chosen is not null)
+            {
+                foreach (IScriptModule engine in engines)
+                {
+                    if (engine.ScriptEngineName == chosen)
+                        return engine;
+                }
+            }
+        }
 
         // the same first-line parse YEngine uses to pick its engine
         if (scriptSource is not null && scriptSource.StartsWith("//"))
@@ -119,7 +156,8 @@ public partial class Scene
                     string named = firstline[..colon].TrimEnd();
                     foreach (IScriptModule engine in engines)
                     {
-                        if (engine.ScriptEngineName == named)
+                        if (engine.ScriptEngineName == named
+                            || (engine is IScriptEngineSelection selection && HasHeaderAlias(selection, named)))
                             return engine;
                     }
                 }
@@ -149,7 +187,324 @@ public partial class Scene
                     return engine;
             }
         }
+
+        // No header and no saved state placed the script. An engine may still ask for it; a script with no source
+        // (a crossing that carries its state) has nothing to claim.
+        if (!string.IsNullOrEmpty(scriptSource))
+        {
+            foreach (IScriptModule engine in engines)
+            {
+                if (engine is IScriptEngineSelection selection && selection.ClaimsScript(scriptSource))
+                    return engine;
+            }
+        }
         return defaultModule;
+    }
+
+    /// <summary>
+    /// The asset a new script item gets as its text, given the flags the viewer created the item with. A viewer that has
+    /// been told the region runs Lua (the "LuaScriptsEnabled" simulator feature) creates a new script with the Lua subtype,
+    /// the value 1 in the low byte of the flags, and expects the region to choose the Lua default text for it. That is done
+    /// only when a loaded engine takes Lua scripts; otherwise the LSL default is kept. <paramref name="flags"/> comes back
+    /// with the subtype the new script really has: Lua, or none.
+    /// </summary>
+    public UUID GetDefaultScriptAsset(ref uint flags)
+    {
+        ScriptCompileTarget asked = (flags & ScriptCompileTargets.SubtypeMask) == (uint)ScriptCompileTarget.Luau
+            ? ScriptCompileTarget.Luau : ScriptCompileTarget.Unspecified;
+        if (asked != ScriptCompileTarget.Unspecified && !AnyEngineAcceptsCompileTarget(asked))
+            asked = ScriptCompileTarget.Unspecified;
+        flags = ScriptCompileTargets.WithTarget(flags, asked);
+
+        if (asked != ScriptCompileTarget.Luau)
+            return Constants.DefaultScriptID;
+
+        // The LSL default is one of the grid's default assets; the Lua default is stored here the first time it is needed.
+        if (AssetService.GetMetadata(DefaultLuaScript.ID.ToString()) is null)
+        {
+            AssetService.Store(new AssetBase(DefaultLuaScript.ID, "Default Lua script", (sbyte)AssetType.LSLText, UUID.Zero.ToString())
+            {
+                Data = Encoding.ASCII.GetBytes(DefaultLuaScript.Text),
+            });
+        }
+        return DefaultLuaScript.ID;
+    }
+
+    private bool AnyEngineAcceptsCompileTarget(ScriptCompileTarget target)
+    {
+        foreach (IScriptModule engine in RequestModuleInterfaces<IScriptModule>())
+        {
+            if (engine is IScriptEngineSelection selection && selection.AcceptsCompileTarget(target))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool AnotherEngineHoldsSavedState(IScriptModule[] engines, IScriptModule except, TaskInventoryItem item)
+    {
+        foreach (IScriptModule engine in engines)
+        {
+            if (engine != except && engine is IScriptStateProvider state
+                && state.HasSavedScriptState(item.ItemID, item.AssetID))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool HasHeaderAlias(IScriptEngineSelection engine, string named)
+    {
+        IReadOnlyList<string> aliases = engine.HeaderAliases;
+        if (aliases is null)
+            return false;
+        for (int i = 0; i < aliases.Count; i++)
+        {
+            if (aliases[i] == named)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// The compile target kept with a script in a prim's inventory, which the viewer's editor shows for the script;
+    /// <see cref="ScriptCompileTarget.Unspecified"/> when the script, the prim or the target is not there.
+    /// </summary>
+    public ScriptCompileTarget GetScriptCompileTarget(UUID primId, UUID itemId)
+    {
+        TaskInventoryItem item = GetSceneObjectPart(primId)?.Inventory.GetInventoryItem(itemId);
+        return item is null ? ScriptCompileTarget.Unspecified : ScriptCompileTargets.FromFlags(item.Flags);
+    }
+
+    /// <summary>
+    /// Whether this region keeps a script engine a person chooses for a script ([Startup] ScriptEngineChoice, default
+    /// on). When off, "engine:&lt;Name&gt;" saves change nothing; engines already saved with scripts still place them.
+    /// </summary>
+    public bool ScriptEngineChoiceEnabled => m_scriptEngineChoice;
+
+    /// <summary>
+    /// Whether an object's owner may choose the engine of a script in it that they may not edit (no modify or no copy)
+    /// ([Startup] ScriptEngineChoiceNoMod, default off: in Second Life no one can retarget a script they cannot edit).
+    /// </summary>
+    public bool ScriptEngineChoiceNoModEnabled => m_scriptEngineChoiceNoMod;
+
+    /// <summary>
+    /// The engine number for a name a save or a request used: a name or alias in <see cref="ScriptEngineChoices"/>'s
+    /// table, or a header alias of a loaded engine whose name is in the table. <see cref="ScriptEngineChoices.None"/>
+    /// when the name is not known, and always when this region keeps no choices.
+    /// </summary>
+    public int ScriptEngineCodeFor(string engineName)
+    {
+        if (!m_scriptEngineChoice)
+            return ScriptEngineChoices.None;
+        int code = ScriptEngineChoices.CodeFor(engineName);
+        if (code != ScriptEngineChoices.None || string.IsNullOrWhiteSpace(engineName))
+            return code;
+        string name = engineName.Trim();
+        foreach (IScriptModule engine in RequestModuleInterfaces<IScriptModule>())
+        {
+            if (engine is IScriptEngineSelection selection && HasHeaderAlias(selection, name))
+                return ScriptEngineChoices.CodeFor(engine.ScriptEngineName);
+        }
+        return ScriptEngineChoices.None;
+    }
+
+    /// <summary>
+    /// A save's target as this region applies it: on a region that keeps no choices an "engine:" target, named or empty,
+    /// is no target at all, so the save changes no choice.
+    /// </summary>
+    private string SaveTargetHere(string target)
+        => !m_scriptEngineChoice && ScriptEngineChoices.IsEngineTarget(target) ? null : target;
+
+    /// <summary>
+    /// The ScriptEngineName of the engine that holds a script of a prim's inventory (running or not); empty when the
+    /// prim or the script is not there or no loaded engine holds it, for example while it compiles.
+    /// </summary>
+    public string GetScriptEngineRunning(UUID primId, UUID itemId)
+    {
+        if (GetSceneObjectPart(primId)?.Inventory.GetInventoryItem(itemId) is null)
+            return string.Empty;
+        foreach (IScriptModule engine in RequestModuleInterfaces<IScriptModule>())
+        {
+            if (engine.HasScript(itemId, out _))
+                return engine.ScriptEngineName ?? string.Empty;
+        }
+        return string.Empty;
+    }
+
+    /// <summary>The ScriptEngineName of the engine saved with a script in a prim's inventory; empty when there is none.</summary>
+    public string GetScriptEngineChoice(UUID primId, UUID itemId)
+    {
+        TaskInventoryItem item = GetSceneObjectPart(primId)?.Inventory.GetInventoryItem(itemId);
+        return item is null ? string.Empty : ScriptEngineChoices.NameFor(ScriptEngineChoices.FromFlags(item.Flags)) ?? string.Empty;
+    }
+
+    /// <summary>
+    /// Chooses the engine of a script in a prim's inventory without saving its text: the SetScriptEngine capability and
+    /// osSetScriptEngine. <paramref name="target"/> is an engine's name or alias ("Phlox"), "engine:&lt;Name&gt;", or any
+    /// other save target ("luau", "lsl-luau", "mono", "lsl2"), and follows the save rule
+    /// (<see cref="ScriptCompileTargets.ApplySaveTarget"/>); null or empty clears the choice.
+    /// </summary>
+    /// <remarks>
+    /// <para>Whoever may save the script (<see cref="IPermissionsModule.CanEditScript"/>, which needs modify and copy on it) may
+    /// choose its engine, and with [Startup] ScriptEngineChoiceNoMod on, so may the object's owner for a script they cannot
+    /// edit.</para>
+    /// <para>The script's text is not stored again: only the saved choice and the engine that runs it change. When the
+    /// engine the region now places the script in is the one already running it, the choice is saved and nothing restarts.
+    /// Otherwise the script is stopped and started again in that engine, keeping its running or stopped setting. It starts
+    /// fresh there, as a script does after a recompile: every engine discards the state it saved for the script
+    /// (<see cref="IScriptStateProvider.DiscardSavedScriptState"/>) after the old engine has been asked to let it go and
+    /// before the new one starts it, so no state from before the change comes back, also when the script later returns to an
+    /// engine it ran in before. When the request sets an engine, state its earlier engine saved does not hold it back (a
+    /// saved engine places a script ahead of saved state, see <see cref="ResolveScriptEngine"/>); when it clears the choice,
+    /// the ordinary steps place the script, saved state among them, so a script whose engine holds its state stays there and
+    /// keeps it. An engine that still reports state for the script after the discard (one that does not implement it) has
+    /// the script reset as it starts. A request that leaves the choice as it was restarts nothing. When the engine the region
+    /// now places the script in is the one running it, or, while no engine reports the script (it is still loading), the
+    /// one its earlier flags placed it in, nothing restarts and nothing is discarded.</para>
+    /// <para>Calls for one script are made one at a time, so a capability call and an OSSL call on the same script cannot
+    /// interleave.</para>
+    /// </remarks>
+    /// <param name="agentId">who asks: the viewer's agent, or the owner of the calling script's prim</param>
+    /// <param name="callerItemId">the calling script's item, which may not change its own engine; zero for a viewer</param>
+    public ScriptEngineChoiceResult SetScriptEngine(UUID agentId, UUID primId, UUID itemId, string target, UUID callerItemId = default)
+    {
+        if (!m_scriptEngineChoice)
+            return ScriptEngineChoiceResult.Disabled;
+
+        SceneObjectPart part = GetSceneObjectPart(primId);
+        TaskInventoryItem item = part?.Inventory.GetInventoryItem(itemId);
+        if (item is null || item.InvType != (int)InventoryType.LSL)
+            return ScriptEngineChoiceResult.NotFound;
+        if (itemId == callerItemId)
+            return ScriptEngineChoiceResult.OwnScript;
+        if (!MayChooseScriptEngine(agentId, part, item))
+            return ScriptEngineChoiceResult.NotAllowed;
+
+        string saveTarget = ScriptEngineSaveTarget(target);
+        string engineName = ScriptEngineChoices.EngineNameOf(saveTarget);
+        if (!string.IsNullOrEmpty(engineName) && ScriptEngineCodeFor(engineName) == ScriptEngineChoices.None)
+            return ScriptEngineChoiceResult.UnknownEngine;
+
+        object gate = EnterScriptEngineChange(itemId);
+        try
+        {
+            // read again under the gate: another call may have changed the script while this one waited
+            item = part.Inventory.GetInventoryItem(itemId);
+            if (item is null)
+                return ScriptEngineChoiceResult.NotFound;
+            uint flags = ScriptCompileTargets.ApplySaveTarget(item.Flags, saveTarget, ScriptEngineCodeFor);
+            if (flags == item.Flags)
+                return ScriptEngineChoiceResult.Unchanged;
+
+            AssetBase text = AssetService.Get(item.AssetID.ToString());
+            if (text?.Data is null)
+                return ScriptEngineChoiceResult.NotFound;
+
+            IScriptModule running = null;
+            foreach (IScriptModule engine in RequestModuleInterfaces<IScriptModule>())
+            {
+                if (engine.HasScript(itemId, out _))
+                {
+                    running = engine;
+                    break;
+                }
+            }
+
+            string source = Utils.BytesToString(text.Data);
+            // An engine may not report a script it is still loading. The engine the script's flags as they were place it in
+            // then stands in for the one running it, so choosing that engine restarts nothing and discards nothing.
+            running ??= ResolveScriptEngine(DefaultScriptEngine, source, item);
+            item.Flags = flags;
+            IScriptModule placed = ResolveScriptEngine(DefaultScriptEngine, source, item);
+            if (running is not null && running == placed)
+            {
+                // the engine running the script stays the same: only the choice changes
+                part.ParentGroup.UpdateInventoryItem(item);
+                return ScriptEngineChoiceResult.Changed;
+            }
+
+            part.Inventory.RemoveScriptInstance(item.ItemID, false);
+            part.ParentGroup.UpdateInventoryItem(item);
+            // The script starts fresh in its new engine, as after a recompile: every engine forgets the state it saved for it,
+            // the old one after it has been asked to let the script go, and before the new one starts it.
+            foreach (IScriptModule engine in RequestModuleInterfaces<IScriptModule>())
+            {
+                if (engine is IScriptStateProvider state)
+                    state.DiscardSavedScriptState(item.ItemID);
+            }
+            // An engine that does not implement the discard still reports its state: the script is reset as it starts there.
+            bool keptState = placed is IScriptStateProvider kept && kept.HasSavedScriptState(item.ItemID, item.AssetID);
+            // Not the variant that waits for compile errors: no one reads them here, and the caller may be a script thread.
+            part.Inventory.CreateScriptInstance(item.ItemID, 0, false, DefaultScriptEngine, 1);
+            if (keptState)
+                EventManager.TriggerScriptReset(part.LocalId, item.ItemID);
+            EventManager.TriggerUpdateScript(agentId, itemId, primId, item.ScriptRunning, item.AssetID);
+            part.ParentGroup.ResumeScripts();
+            return ScriptEngineChoiceResult.Changed;
+        }
+        finally
+        {
+            ExitScriptEngineChange(itemId, gate);
+        }
+    }
+
+    // One gate per script while an engine change of it is in progress; removed when no call holds or waits for it.
+    private readonly Dictionary<UUID, (object Gate, int Users)> m_scriptEngineChangeGates = new();
+
+    private object EnterScriptEngineChange(UUID itemId)
+    {
+        object gate;
+        lock (m_scriptEngineChangeGates)
+        {
+            if (!m_scriptEngineChangeGates.TryGetValue(itemId, out var entry))
+                entry = (new object(), 0);
+            gate = entry.Gate;
+            m_scriptEngineChangeGates[itemId] = (gate, entry.Users + 1);
+        }
+        Monitor.Enter(gate);
+        return gate;
+    }
+
+    private void ExitScriptEngineChange(UUID itemId, object gate)
+    {
+        Monitor.Exit(gate);
+        lock (m_scriptEngineChangeGates)
+        {
+            var entry = m_scriptEngineChangeGates[itemId];
+            if (entry.Users <= 1)
+                m_scriptEngineChangeGates.Remove(itemId);
+            else
+                m_scriptEngineChangeGates[itemId] = (gate, entry.Users - 1);
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="agentId"/> may choose the engine of this script: whoever may save it, and, when
+    /// <see cref="ScriptEngineChoiceNoModEnabled"/> is on, the owner of the object for a script they may not edit
+    /// (no modify or no copy on the item).
+    /// </summary>
+    private bool MayChooseScriptEngine(UUID agentId, SceneObjectPart part, TaskInventoryItem item)
+    {
+        if (Permissions.CanEditScript(item.ItemID, part.UUID, agentId))
+            return true;
+        const uint editable = (uint)(PermissionMask.Modify | PermissionMask.Copy);
+        return m_scriptEngineChoiceNoMod
+            && agentId.IsNotZero()
+            && agentId == part.ParentGroup.OwnerID
+            && (item.CurrentPermissions & editable) != editable;
+    }
+
+    /// <summary>A SetScriptEngine target as a save target: a bare engine name becomes "engine:&lt;Name&gt;", nothing becomes "engine:".</summary>
+    private static string ScriptEngineSaveTarget(string target)
+    {
+        if (string.IsNullOrWhiteSpace(target))
+            return ScriptEngineChoices.TargetPrefix;
+        string value = target.Trim();
+        if (ScriptEngineChoices.IsEngineTarget(value)
+            || ScriptCompileTargets.Parse(value) != ScriptCompileTarget.Unspecified
+            || value.Equals("mono", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("lsl2", StringComparison.OrdinalIgnoreCase))
+            return value;
+        return ScriptEngineChoices.TargetPrefix + value;
     }
 
     /// <summary>
@@ -294,9 +649,32 @@ public partial class Scene
     }
 
     /// <summary>
+    /// Keeps the compile target with a script in an avatar's inventory (in the item's flags), after the script was saved.
+    /// Other kinds of item are left alone.
+    /// </summary>
+    private void StoreScriptCompileTarget(UUID avatarId, UUID itemId, string target)
+    {
+        InventoryItemBase item = InventoryService.GetItem(avatarId, itemId);
+        if (item is null || item.InvType != (int)InventoryType.LSL)
+            return;
+        uint flags = ScriptCompileTargets.ApplySaveTarget(item.Flags, SaveTargetHere(target), ScriptEngineCodeFor);
+        if (flags == item.Flags)
+            return;
+        item.Flags = flags;
+        InventoryService.UpdateItem(item);
+    }
+
+    /// <summary>
     /// <see>CapsUpdatedInventoryItemAsset(IClientAPI, UUID, byte[])</see>
     /// </summary>
     public UUID CapsUpdateItemAsset(UUID avatarId, UUID itemID, UUID objectID, byte[] data)
+        => CapsUpdateItemAsset(avatarId, itemID, objectID, data, null);
+
+    /// <summary>
+    /// The same, with the compile target the viewer's editor sent when the item is a script ("luau", "lsl-luau", "mono",
+    /// "lsl2"; null when it sent none).
+    /// </summary>
+    public UUID CapsUpdateItemAsset(UUID avatarId, UUID itemID, UUID objectID, byte[] data, string compileTarget)
     {
         if (!TryGetScenePresence(avatarId, out ScenePresence avatar))
         {
@@ -307,7 +685,10 @@ public partial class Scene
         if (objectID.IsZero())
         {
             IInventoryAccessModule invAccess = RequestModuleInterface<IInventoryAccessModule>();
-            return invAccess is not null ? invAccess.CapsUpdateInventoryItemAsset(avatar.ControllingClient, itemID, data) : UUID.Zero;
+            UUID newAssetId = invAccess is not null ? invAccess.CapsUpdateInventoryItemAsset(avatar.ControllingClient, itemID, data) : UUID.Zero;
+            if (!newAssetId.IsZero() && compileTarget is not null)
+                StoreScriptCompileTarget(avatarId, itemID, compileTarget);
+            return newAssetId;
         }
 
         SceneObjectPart sop = GetSceneObjectPart(objectID);
@@ -412,7 +793,24 @@ public partial class Scene
     /// <param name="data"></param>
     public ArrayList CapsUpdateTaskInventoryScriptAsset(IClientAPI remoteClient, UUID itemId,
                                                    UUID primId, bool isScriptRunning, UUID experience, byte[] data)
+        => CapsUpdateTaskInventoryScriptAsset(remoteClient, itemId, primId, isScriptRunning, experience, data, null);
+
+    /// <summary>
+    /// The same, with the compile target the viewer's editor sent ("luau", "lsl-luau", "mono", "lsl2"; null when it sent none).
+    /// </summary>
+    public ArrayList CapsUpdateTaskInventoryScriptAsset(IClientAPI remoteClient, UUID itemId,
+                                                   UUID primId, bool isScriptRunning, UUID experience, byte[] data, string compileTarget)
+        => CapsUpdateTaskInventoryScriptAsset(remoteClient, itemId, primId, isScriptRunning, experience, data, compileTarget, out _);
+
+    /// <summary>
+    /// The same, and gives the id of the asset the save stored in <paramref name="newAssetId"/>: UUID.Zero when the
+    /// save stored nothing (no permission to edit the script, or the prim or the item is gone).
+    /// </summary>
+    public ArrayList CapsUpdateTaskInventoryScriptAsset(IClientAPI remoteClient, UUID itemId,
+                                                   UUID primId, bool isScriptRunning, UUID experience, byte[] data, string compileTarget,
+                                                   out UUID newAssetId)
     {
+        newAssetId = UUID.Zero;
         if (!Permissions.CanEditScript(itemId, primId, remoteClient.AgentId))
         {
             remoteClient.SendAgentAlertMessage("Insufficient permissions to edit script", false);
@@ -439,8 +837,12 @@ public partial class Scene
         }
 
         item.ScriptRunning = isScriptRunning;
+        // "mono" and "lsl2" are a choice too: they clear an earlier Luau target, and keep a saved engine, since they are all
+        // a viewer that cannot name engines sends. A save that names no target leaves both be.
+        item.Flags = ScriptCompileTargets.ApplySaveTarget(item.Flags, SaveTargetHere(compileTarget), ScriptEngineCodeFor);
         AssetBase asset = CreateAsset(item.Name, item.Description, (sbyte)AssetType.LSLText, data, remoteClient.AgentId);
         AssetService.Store(asset);
+        newAssetId = asset.FullID;
 
         //m_log.LogDebug(
         //    "[PRIM INVENTORY]: Stored asset {0} when updating item {1} in prim {2} for {3}",
@@ -491,14 +893,31 @@ public partial class Scene
     /// </summary>
     public ArrayList CapsUpdateTaskInventoryScriptAsset(UUID avatarId, UUID itemId,
                                                     UUID primId, bool isScriptRunning, UUID experience, byte[] data)
+        => CapsUpdateTaskInventoryScriptAsset(avatarId, itemId, primId, isScriptRunning, experience, data, null);
+
+    /// <summary>
+    /// The same, with the compile target the viewer's editor sent ("luau", "lsl-luau", "mono", "lsl2"; null when it sent none).
+    /// </summary>
+    public ArrayList CapsUpdateTaskInventoryScriptAsset(UUID avatarId, UUID itemId,
+                                                    UUID primId, bool isScriptRunning, UUID experience, byte[] data, string compileTarget)
+        => CapsUpdateTaskInventoryScriptAsset(avatarId, itemId, primId, isScriptRunning, experience, data, compileTarget, out _);
+
+    /// <summary>
+    /// The same, and gives the id of the asset the save stored in <paramref name="newAssetId"/> (UUID.Zero when it
+    /// stored nothing).
+    /// </summary>
+    public ArrayList CapsUpdateTaskInventoryScriptAsset(UUID avatarId, UUID itemId,
+                                                    UUID primId, bool isScriptRunning, UUID experience, byte[] data, string compileTarget,
+                                                    out UUID newAssetId)
     {
         if (TryGetScenePresence(avatarId, out ScenePresence avatar))
         {
             return CapsUpdateTaskInventoryScriptAsset(
-                avatar.ControllingClient, itemId, primId, isScriptRunning, experience, data);
+                avatar.ControllingClient, itemId, primId, isScriptRunning, experience, data, compileTarget, out newAssetId);
         }
         else
         {
+            newAssetId = UUID.Zero;
             m_log.LogError("[PRIM INVENTORY]: Avatar {0} cannot be found to update its prim item asset", avatarId);
             return new ArrayList();
         }
@@ -2191,9 +2610,10 @@ public partial class Scene
         }
 
         UUID assetID;
+        uint flags = itemBase.Flags;
 
         if (scriptText is null)
-            assetID = Constants.DefaultScriptID;
+            assetID = GetDefaultScriptAsset(ref flags);
         else
         {
             AssetBase asset = CreateAsset(
@@ -2226,7 +2646,7 @@ public partial class Scene
             GroupPermissions = 0,
             NextPermissions = itemBase.NextPermissions,
             GroupID = itemBase.GroupID,
-            Flags = itemBase.Flags,
+            Flags = flags,
             PermsGranter = UUID.Zero,
             PermsMask = 0,
             AssetID = assetID

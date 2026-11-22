@@ -141,6 +141,94 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
     /// </summary>
     private EntityTransferStateMachine m_entityTransferStateMachine;
 
+    /// <summary>
+    /// Teleports waiting for the destination to report the viewer's arrival (UpdateAgent with wait_for_root), by
+    /// agent: where to, and the session id that authorises a close there. A viewer that logs out meanwhile will not
+    /// arrive, so the destination is told at once instead of waiting it out.
+    /// </summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<UUID, (GridRegion Destination, string AuthToken)>
+        m_awaitingArrival = new();
+
+    /// <summary>
+    /// A crossing out of this region whose viewer may not have taken it in: what the CrossedRegion event said, so it
+    /// can be sent again while the viewer keeps sending agent updates here (it believes it is still in this region,
+    /// where the avatar is now a child agent, and the neighbour waits for it: stuck at the border).
+    /// </summary>
+    private sealed class CrossedAway
+    {
+        public GridRegion Destination;
+        public Vector3 Position, Velocity;
+        public IPEndPoint EndPoint;
+        public string CapsPath;
+        public UUID SessionID;
+        public long SentMs, ExpiresMs;
+        public int Resends;
+    }
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<UUID, CrossedAway> m_crossedAway = new();
+
+    /// <summary>How long after a crossing a viewer still sending here counts as having missed it.</summary>
+    public int CrossedRegionResendAfterMs { get; set; } = 3000;
+
+    /// <summary>How many times CrossedRegion is sent again to a viewer that keeps sending here.</summary>
+    public int CrossedRegionMaxResends { get; set; } = 3;
+
+    /// <summary>How long after a crossing the old region watches for a viewer that missed it.</summary>
+    public int CrossedRegionWatchMs { get; set; } = 60000;
+
+    private void WatchCrossedAway(ScenePresence agent, GridRegion destination, Vector3 pos, Vector3 vel,
+        IPEndPoint endpoint, string capsPath)
+    {
+        if (m_eqModule is null)
+            return;
+        long now = Environment.TickCount64;
+        m_crossedAway[agent.UUID] = new CrossedAway
+        {
+            Destination = destination, Position = pos, Velocity = vel, EndPoint = endpoint, CapsPath = capsPath,
+            SessionID = agent.ControllingClient.SessionId, SentMs = now, ExpiresMs = now + CrossedRegionWatchMs
+        };
+        agent.OnAgentUpdateWhileChild -= ResendCrossingToALostViewer;
+        agent.OnAgentUpdateWhileChild += ResendCrossingToALostViewer;
+    }
+
+    private void ResendCrossingToALostViewer(ScenePresence agent)
+    {
+        if (!m_crossedAway.TryGetValue(agent.UUID, out CrossedAway c))
+        {
+            agent.OnAgentUpdateWhileChild -= ResendCrossingToALostViewer;
+            return;
+        }
+
+        long now = Environment.TickCount64;
+        if (now > c.ExpiresMs || agent.IsDeleted)
+        {
+            m_crossedAway.TryRemove(agent.UUID, out _);
+            agent.OnAgentUpdateWhileChild -= ResendCrossingToALostViewer;
+            return;
+        }
+        if (now - c.SentMs < CrossedRegionResendAfterMs)
+            return;
+
+        if (c.Resends >= CrossedRegionMaxResends)
+        {
+            m_log.LogWarning(
+                "[ENTITY TRANSFER MODULE]: The viewer of {0} still acts as if in {1} after a crossing into {2} and {3} resends; giving up",
+                agent.Name, m_sceneName, c.Destination.RegionName, c.Resends);
+            m_crossedAway.TryRemove(agent.UUID, out _);
+            agent.OnAgentUpdateWhileChild -= ResendCrossingToALostViewer;
+            return;
+        }
+
+        c.Resends++;
+        c.SentMs = now;
+        m_log.LogInformation(
+            "[ENTITY TRANSFER MODULE]: The viewer of {0} still acts as if in {1} after crossing into {2}: sending the crossing again ({3})",
+            agent.Name, m_sceneName, c.Destination.RegionName, c.Resends);
+        m_eqModule.CrossRegion(
+            c.Destination.RegionHandle, c.Position, c.Velocity, c.EndPoint, c.CapsPath, agent.UUID, c.SessionID,
+            c.Destination.RegionSizeX, c.Destination.RegionSizeY);
+    }
+
     // For performance, we keed a cached of banned regions so we don't keep going
     //    to the grid service.
     private class BannedRegionCache
@@ -485,6 +573,19 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
             m_log.LogDebug(
                 "[ENTITY TRANSFER MODULE]: Aborted teleport request from {0} in {1} due to simultaneous logout",
                 client.Name, m_sceneName);
+
+            // the destination is holding the agent for a viewer that has gone: close it there, which ends its wait
+            if (m_awaitingArrival.TryRemove(client.AgentId, out var awaiting))
+            {
+                UUID agentID = client.AgentId;
+                Util.FireAndForget(_ =>
+                {
+                    m_log.LogDebug(
+                        "[ENTITY TRANSFER MODULE]: Closing {0} in {1}: its viewer logged out before arriving",
+                        agentID, awaiting.Destination.RegionName);
+                    m_scene.SimulationService.CloseAgent(awaiting.Destination, agentID, awaiting.AuthToken);
+                }, null, "EntityTransferModule.CloseAbandonedArrival");
+            }
         }
     }
 
@@ -500,6 +601,19 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
     public void Teleport(ScenePresence sp, ulong regionHandle, Vector3 position, Vector3 lookAt, uint teleportFlags)
     {
         UUID spUUID = sp.UUID;
+
+        // A child agent is the avatar seen from a neighbour; the avatar itself is in its root region. Teleporting
+        // from here would move a copy, and a destination that is the root region would close the real avatar and
+        // log it off the grid. A viewer that lost track of a crossing asks the wrong region; tell it so. (The root
+        // region marks its own avatar child while it is in transit; the transit check below answers that.)
+        if (sp.IsChildAgent && !sp.IsInTransit)
+        {
+            m_log.LogDebug(
+                "[ENTITY TRANSFER MODULE]: Ignoring teleport request of {0} in {1}: only a child agent here, the avatar is in another region",
+                sp.Name, m_sceneName);
+            sp.ControllingClient?.SendTeleportFailed("You are not in this region. Please try again in a moment.");
+            return;
+        }
         if (m_scene.Permissions.IsGridGod(spUUID))
         {
             // This user will be a God in the destination scene, too
@@ -899,6 +1013,11 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
         if (currentAgentCircuit is not null)
         {
             agentCircuit.ServiceURLs = currentAgentCircuit.ServiceURLs;
+            // The home grid authorises every hypergrid hop against the ServiceSessionID it
+            // issued and rotates it on each hop. This circuit comes from RequestClientInfo(),
+            // which does not carry it, so without this line an outbound hop presents an EMPTY
+            // token and the traveller's home grid refuses it - including the trip home.
+            agentCircuit.ServiceSessionID = currentAgentCircuit.ServiceSessionID;
             agentCircuit.IPAddress = currentAgentCircuit.IPAddress;
             agentCircuit.Viewer = currentAgentCircuit.Viewer;
             agentCircuit.Channel = currentAgentCircuit.Channel;
@@ -968,7 +1087,8 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
                 "[ENTITY TRANSFER MODULE]: Teleport of {0} from {1} to {2} was refused because {3}",
                 sp.Name, sp.Scene.RegionInfo.RegionName, finalDestination.RegionName, reason);
 
-            sp.ControllingClient.SendTeleportFailed(reason);
+            // the presence can have been closed while the destination was asked (its client is then gone)
+            sp.ControllingClient?.SendTeleportFailed(reason);
             sp.IsInTransit = false;
             return;
         }
@@ -1211,7 +1331,8 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
                 "[ENTITY TRANSFER MODULE]: Teleport of {0} from {1} to {2} was refused because {3}",
                 sp.Name, sp.Scene.RegionInfo.RegionName, finalDestination.RegionName, reason);
 
-            sp.ControllingClient.SendTeleportFailed(reason);
+            // the presence can have been closed while the destination was asked (its client is then gone)
+            sp.ControllingClient?.SendTeleportFailed(reason);
             sp.IsInTransit = false;
             return;
         }
@@ -1287,7 +1408,18 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
         // Send the Update. If this returns true, we know the client has contacted the destination
         // via CompleteMovementIntoRegion, so we can let go.
         // If it returns false, something went wrong, and we need to abort.
-        if (!UpdateAgent(reg, finalDestination, agent, sp, ctx))
+        m_awaitingArrival[spUUID] = (finalDestination, agentCircuit.SessionID.ToString());
+        bool arrived;
+        try
+        {
+            arrived = UpdateAgent(reg, finalDestination, agent, sp, ctx);
+        }
+        finally
+        {
+            m_awaitingArrival.TryRemove(spUUID, out _);
+        }
+
+        if (!arrived)
         {
             sp.IsChildAgent = false;
             if (m_entityTransferStateMachine.GetAgentTransferState(sp.UUID) == AgentTransferState.Aborting)
@@ -1335,15 +1467,9 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
         // if far jump we do need to close anyways
         if (NeedsClosing(reg, OutSideViewRange))
         {
-            int count = 60;
-            do
-            {
-                Thread.Sleep(250);
-                if(sp.IsDeleted)
-                    return;
-                if(!sp.IsInTransit)
-                    break;
-            } while (--count > 0);
+            WaitForRelease(sp, ReleaseWait);
+            if (sp.IsDeleted)
+                return;
 
             if (!sp.IsDeleted)
             {
@@ -1395,11 +1521,16 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
 
         m_interRegionTeleportFailures.Value++;
 
-        sp.ControllingClient.SendTeleportFailed(
+        // the presence can have been closed while the destination was asked: nobody is left to tell
+        IClientAPI client = sp.ControllingClient;
+        if (client is null)
+            return;
+
+        client.SendTeleportFailed(
             string.Format(
                 "Problems connecting to destination {0}, reason: {1}", finalDestination.RegionName, reason));
 
-        sp.Scene.EventManager.TriggerTeleportFail(sp.ControllingClient, logout);
+        sp.Scene.EventManager.TriggerTeleportFail(client, logout);
     }
 
     protected virtual bool CreateAgent(ScenePresence sp, GridRegion reg, GridRegion finalDestination, AgentCircuitData agentCircuit, uint teleportFlags, EntityTransferContext ctx, out string reason, out bool logout)
@@ -1777,6 +1908,11 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
         if (currentAgentCircuit is not null)
         {
             agentCircuit.ServiceURLs = currentAgentCircuit.ServiceURLs;
+            // The home grid authorises every hypergrid hop against the ServiceSessionID it
+            // issued and rotates it on each hop. This circuit comes from RequestClientInfo(),
+            // which does not carry it, so without this line an outbound hop presents an EMPTY
+            // token and the traveller's home grid refuses it - including the trip home.
+            agentCircuit.ServiceSessionID = currentAgentCircuit.ServiceSessionID;
             agentCircuit.IPAddress = currentAgentCircuit.IPAddress;
             agentCircuit.Viewer = currentAgentCircuit.Viewer;
             agentCircuit.Channel = currentAgentCircuit.Channel;
@@ -1970,6 +2106,7 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
                 neighbourRegion.RegionHandle, pos, vel2 /* agent.Velocity */,
                 endpoint, capsPath, agentUUID, agent.ControllingClient.SessionId,
                 neighbourRegion.RegionSizeX, neighbourRegion.RegionSizeY);
+            WatchCrossedAway(agent, neighbourRegion, pos, vel2, endpoint, capsPath);
         }
         else
         {
@@ -2723,6 +2860,42 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
         //Scene.CloseAgent(sp.UUID, false);
         sp.IsInTransit = false;
         //m_entityTransferStateMachine.SetAgentArrivedAtDestination(id);
+
+        if (m_awaitingRelease.TryGetValue(id, out ManualResetEventSlim released))
+            released.Set();
+    }
+
+    /// <summary>How long the departing region waits for the destination's release call after a far teleport.</summary>
+    public TimeSpan ReleaseWait { get; set; } = TimeSpan.FromSeconds(15);
+
+    // far teleports waiting for the destination's release call, by agent
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<UUID, ManualResetEventSlim> m_awaitingRelease = new();
+
+    /// <summary>
+    /// Wait until the destination has released <paramref name="sp"/> (AgentArrivedAtDestination clears its transit
+    /// flag) or it is closed here, for at most <paramref name="wait"/>. The release wakes the wait at once; it used to
+    /// be looked for every 250 ms.
+    /// </summary>
+    private void WaitForRelease(ScenePresence sp, TimeSpan wait)
+    {
+        // registered before the flag is looked at, so a release in between is not missed
+        ManualResetEventSlim released = new(false);
+        m_awaitingRelease[sp.UUID] = released;
+        try
+        {
+            long deadline = Environment.TickCount64 + (long)wait.TotalMilliseconds;
+            while (sp.IsInTransit && !sp.IsDeleted)
+            {
+                long left = deadline - Environment.TickCount64;
+                if (left <= 0)
+                    break;
+                released.Wait((int)Math.Min(left, 250));
+            }
+        }
+        finally
+        {
+            m_awaitingRelease.TryRemove(new KeyValuePair<UUID, ManualResetEventSlim>(sp.UUID, released));
+        }
     }
 
     #endregion

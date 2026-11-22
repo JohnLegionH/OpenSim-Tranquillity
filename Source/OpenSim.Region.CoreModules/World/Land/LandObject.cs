@@ -533,6 +533,9 @@ public class LandObject : ILandObject
         LandData newData = LandData.Copy();
 
         uint allowedDelta = 0;
+        // a power that changes fields but no flag (the name, the landing point, the media…) is still a change to
+        // store: only the flags were looked at, and a group role with only such powers saved nothing
+        bool edited = false;
 
         // These two are always blocked as no client can set them anyway
         // ParcelFlags.ForSaleObjects
@@ -540,6 +543,7 @@ public class LandObject : ILandObject
 
         if (m_scenePermissions.CanEditParcelProperties(remote_client.AgentId, this, GroupPowers.LandOptions, false))
         {
+            edited = true;
             allowedDelta |= (uint)(ParcelFlags.AllowLandmark |
                     ParcelFlags.AllowTerraform |
                     ParcelFlags.AllowDamage |
@@ -551,38 +555,52 @@ public class LandObject : ILandObject
                     ParcelFlags.AllowAPrimitiveEntry |
                     ParcelFlags.AllowGroupObjectEntry |
                     ParcelFlags.AllowFly);
-            newData.SeeAVs = args.SeeAVs;
-            newData.AnyAVSounds = args.AnyAVSounds;
-            newData.GroupAVSounds = args.GroupAVSounds;
+            if (!args.WithoutMediaDetailsAndAvatarSettings)
+            {
+                newData.SeeAVs = args.SeeAVs;
+                newData.AnyAVSounds = args.AnyAVSounds;
+                newData.GroupAVSounds = args.GroupAVSounds;
+            }
         }
 
         if (m_scenePermissions.CanEditParcelProperties(remote_client.AgentId, this, GroupPowers.LandSetSale, true))
         {
-            if (args.AuthBuyerID != newData.AuthBuyerID ||
-                args.SalePrice != newData.SalePrice)
+            edited = true;
+            // Without the estate's "allow land resell" only the estate owner, its managers and administrators put land
+            // up for sale; the viewer only hides its sell button.
+            if (CanResell(remote_client.AgentId))
             {
-                snap_selection = true;
-            }
+                if (args.AuthBuyerID != newData.AuthBuyerID ||
+                    args.SalePrice != newData.SalePrice)
+                {
+                    snap_selection = true;
+                }
 
-            newData.AuthBuyerID = args.AuthBuyerID;
-            newData.SalePrice = args.SalePrice;
+                newData.AuthBuyerID = args.AuthBuyerID;
+                newData.SalePrice = args.SalePrice;
+                allowedDelta |= (uint)ParcelFlags.ForSale;
+            }
 
             if (!LandData.IsGroupOwned)
             {
-                newData.GroupID = args.GroupID;
-                if(newData.GroupID != LandData.GroupID)
-                    m_groupMemberCache.Clear();
+                // The parcel's group must be one the user is in (any group, or none, for an administrator).
+                if (args.GroupID.IsZero() || args.GroupID.Equals(LandData.GroupID) ||
+                    m_scenePermissions.IsAdministrator(remote_client.AgentId) || IsMemberOf(args.GroupID, remote_client.AgentId))
+                {
+                    newData.GroupID = args.GroupID;
+                    if(newData.GroupID != LandData.GroupID)
+                        m_groupMemberCache.Clear();
+                }
 
                 allowedDelta |= (uint)(ParcelFlags.AllowDeedToGroup |
                         ParcelFlags.ContributeWithDeed |
                         ParcelFlags.SellParcelObjects);
             }
-
-            allowedDelta |= (uint)ParcelFlags.ForSale;
         }
 
         if (m_scenePermissions.CanEditParcelProperties(remote_client.AgentId,this, GroupPowers.FindPlaces, false))
         {
+            edited = true;
             newData.Category = args.Category;
 
             allowedDelta |= (uint)(ParcelFlags.ShowDirectory |
@@ -592,6 +610,7 @@ public class LandObject : ILandObject
 
         if (m_scenePermissions.CanEditParcelProperties(remote_client.AgentId,this, GroupPowers.LandChangeIdentity, false))
         {
+            edited = true;
             newData.Description = args.Desc;
             newData.Name = args.Name;
             newData.SnapshotID = args.SnapshotID;
@@ -599,22 +618,34 @@ public class LandObject : ILandObject
 
         if (m_scenePermissions.CanEditParcelProperties(remote_client.AgentId,this, GroupPowers.SetLandingPoint, false))
         {
-            newData.LandingType = args.LandingType;
-            newData.UserLocation = args.UserLocation;
-            newData.UserLookAt = args.UserLookAt;
+            edited = true;
+            // a landing point is a place on the parcel, as on Second Life: one elsewhere (another parcel, a banned
+            // one, outside the region) or not a number would send arriving visitors there
+            Vector3 at = args.UserLocation;
+            bool unset = at == Vector3.Zero;
+            if (unset || (at.IsFinite() && ContainsPoint((int)at.X, (int)at.Y)))
+            {
+                newData.LandingType = args.LandingType;
+                newData.UserLocation = at;
+                newData.UserLookAt = args.UserLookAt.IsFinite() ? args.UserLookAt : Vector3.Zero;
+            }
         }
 
         if (m_scenePermissions.CanEditParcelProperties(remote_client.AgentId,this, GroupPowers.ChangeMedia, false))
         {
+            edited = true;
             newData.MediaAutoScale = args.MediaAutoScale;
             newData.MediaID = args.MediaID;
             newData.MediaURL = args.MediaURL;
             newData.MusicURL = args.MusicURL;
-            newData.MediaType = args.MediaType;
-            newData.MediaDescription = args.MediaDescription;
-            newData.MediaWidth = args.MediaWidth;
-            newData.MediaHeight = args.MediaHeight;
-            newData.MediaLoop = args.MediaLoop;
+            if (!args.WithoutMediaDetailsAndAvatarSettings)
+            {
+                newData.MediaType = args.MediaType;
+                newData.MediaDescription = args.MediaDescription;
+                newData.MediaWidth = args.MediaWidth;
+                newData.MediaHeight = args.MediaHeight;
+                newData.MediaLoop = args.MediaLoop;
+            }
             //newData.ObscureMusic = args.ObscureMusic;
             newData.ObscureMusic = false; // obsolete
             //newData.ObscureMedia = args.ObscureMedia;
@@ -632,6 +663,7 @@ public class LandObject : ILandObject
             // don't allow passes on group owned until we can give money to groups
             if (!newData.IsGroupOwned && m_scenePermissions.CanEditParcelProperties(remote_client.AgentId,this, GroupPowers.LandManagePasses, false))
             {
+                edited = true;
                 newData.PassHours = args.PassHours;
                 newData.PassPrice = args.PassPrice;
 
@@ -665,7 +697,7 @@ public class LandObject : ILandObject
             allowedDelta |= (uint)ParcelFlags.DenyAnonymous;
         }
 
-        if (allowedDelta != (uint)ParcelFlags.None)
+        if (edited || allowedDelta != (uint)ParcelFlags.None)
         {
             uint preserve = LandData.Flags & ~allowedDelta;
             newData.Flags = preserve | (args.ParcelFlags & allowedDelta);
@@ -702,10 +734,22 @@ public class LandObject : ILandObject
         return false;
     }
 
+    /// <summary>Whether <paramref name="user"/> may sell land here (the estate's "allow land resell").</summary>
+    private bool CanResell(UUID user)
+    {
+        return m_scene.RegionInfo.RegionSettings.AllowLandResell
+            || m_scene.RegionInfo.EstateSettings.IsEstateManagerOrOwner(user)
+            || m_scenePermissions.IsAdministrator(user);
+    }
+
+    private bool IsMemberOf(UUID group, UUID user)
+        => m_scene.RequestModuleInterface<IGroupsModule>()?.GetMembershipData(group, user) is not null;
+
     public void UpdateLandSold(UUID avatarID, UUID groupID, bool groupOwned, uint AuctionID, int claimprice, int area)
     {
         LandData newData = LandData.Copy();
-        newData.OwnerID = avatarID;
+        // Land bought for a group belongs to the group, as land deeded to it does (DeedToGroup).
+        newData.OwnerID = groupOwned ? groupID : avatarID;
         newData.GroupID = groupID;
         newData.IsGroupOwned = groupOwned;
         //newData.auctionID = AuctionID;

@@ -4268,6 +4268,29 @@ public class OSSL_Api : IOSSL_Api, IScriptApi
         ForceAttachToAvatarFromInventory(m_host.OwnerID, itemName, attachmentPoint);
     }
 
+    /// <summary>
+    /// Chooses the engine of another script in this prim for the prim's owner (Scene.SetScriptEngine): the owner may do
+    /// this for a script they may save. Like osForceAttachToAvatarFromInventory, it acts on an item in the host prim's
+    /// own inventory, for the prim's owner, at threat level High.
+    /// </summary>
+    public LSL_Integer osSetScriptEngine(string scriptName, string target)
+    {
+        CheckThreatLevel(ThreatLevel.High, "osSetScriptEngine");
+
+        TaskInventoryItem item = m_host.Inventory.GetInventoryItem(scriptName);
+        if (item is null || item.InvType != (int)InventoryType.LSL)
+        {
+            OSSLShoutError($"osSetScriptEngine: no script '{scriptName}' in this prim");
+            return 0;
+        }
+
+        ScriptEngineChoiceResult result = World.SetScriptEngine(m_host.OwnerID, m_host.UUID, item.ItemID, target, m_item.ItemID);
+        if (result == ScriptEngineChoiceResult.Changed || result == ScriptEngineChoiceResult.Unchanged)
+            return 1;
+        OSSLShoutError($"osSetScriptEngine: {result} for '{scriptName}'");
+        return 0;
+    }
+
     public void osForceAttachToOtherAvatarFromInventory(string rawAvatarId, string itemName, int attachmentPoint)
     {
         CheckThreatLevel(ThreatLevel.VeryHigh, "osForceAttachToOtherAvatarFromInventory");
@@ -6025,7 +6048,8 @@ public class OSSL_Api : IOSSL_Api, IScriptApi
         {
             if(script.ItemID.Equals(me))
                 continue;
-            m_ScriptEngine.ResetScript(script.ItemID);
+            foreach (IScriptEngine e in LSL_Api.ScriptEnginesFor(m_ScriptEngine, script.ItemID))
+                e.ResetScript(script.ItemID);
         }
 
         m_UrlModule?.ScriptRemoved(me);

@@ -54,9 +54,8 @@ namespace osWebRtcVoice.Tests
         private sealed class MatrixFeed : IVisibilityFeed
         {
             public VisibilityMatrix Current { get; private set; } = VisibilityMatrix.Empty;
-#pragma warning disable CS0067
-            public event Action<VisibilityBatch> BatchProduced;
-#pragma warning restore CS0067
+            // Required by the interface; this fake never raises it.
+            public event Action<VisibilityBatch> BatchProduced { add { } remove { } }
             public VisibilityBatch SnapshotFor(UUID listener) => DeltaComputer.SnapshotFor(Current, listener, -999);
 
             public VisibilityBatch Tick(IFeederWorld world)
@@ -145,7 +144,7 @@ namespace osWebRtcVoice.Tests
 
         // The test restarts the mixer's container and waits up to 90 s for its Admin API, so the
         // assembly-wide 10 s limit is too short for it.
-#pragma warning disable CS0618
+#pragma warning disable CS0618 // Timeout is [Obsolete], but CancelAfter only cancels a token the test must check; Timeout also fails a test that hangs.
         [Test, Timeout(240000)]
 #pragma warning restore CS0618
         public async Task RealSimPath_ArmsHeartbeatsAndDetectsAMixerRestart()
@@ -157,8 +156,7 @@ namespace osWebRtcVoice.Tests
             string createRoom = Env("LVM_LIVE_CREATE_ROOM");
 
             var collector = new LineCollector();
-            ILoggerFactory previous = LoggerProvider.LoggerFactory;
-            LoggerProvider.LoggerFactory = LoggerFactory.Create(b => b.AddProvider(collector).SetMinimumLevel(LogLevel.Debug));
+            var logging = new LogCapture(collector, LogLevel.Debug);
             try
             {
                 UUID a = new UUID("0a000000-0000-4000-8000-00000000000a"), b = new UUID("0b000000-0000-4000-8000-00000000000b");
@@ -207,7 +205,7 @@ namespace osWebRtcVoice.Tests
             }
             finally
             {
-                LoggerProvider.LoggerFactory = previous;
+                logging.Dispose();
             }
         }
     }

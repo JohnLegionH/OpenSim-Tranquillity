@@ -6913,7 +6913,7 @@ namespace InWorldz.Phlox.Types
                 ParamNames = new string[] { "avatar", "options" },
                 TableIndex = 972
             }},
-            {"llFindNotecardTextSync__2", new FunctionSig {
+            {"llFindNotecardTextSync__5", new FunctionSig {
                 FunctionName = "llFindNotecardTextSync",
                 ReturnType = VarType.List,
                 ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.Integer, VarType.Integer, VarType.List },
@@ -6969,26 +6969,33 @@ namespace InWorldz.Phlox.Types
                 ParamNames = new string[] { "id" },
                 TableIndex = 980
             }},
-            {"llMapBeacon__2", new FunctionSig {
+            {"llMapBeacon__3", new FunctionSig {
                 FunctionName = "llMapBeacon",
                 ReturnType = VarType.Void,
                 ParamTypes = new VarType[] { VarType.String, VarType.Vector, VarType.List },
                 ParamNames = new string[] { "region_name", "pos", "options" },
                 TableIndex = 981
             }},
-            {"llGiveAgentInventory__2", new FunctionSig {
+            {"llGiveAgentInventory__4", new FunctionSig {
                 FunctionName = "llGiveAgentInventory",
                 ReturnType = VarType.Integer,
                 ParamTypes = new VarType[] { VarType.Key, VarType.String, VarType.List, VarType.List },
                 ParamNames = new string[] { "agent", "folder", "inventory", "options" },
                 TableIndex = 982
             }},
-            {"llTransferOwnership__2", new FunctionSig {
+            {"llTransferOwnership__3", new FunctionSig {
                 FunctionName = "llTransferOwnership",
                 ReturnType = VarType.Integer,
                 ParamTypes = new VarType[] { VarType.Key, VarType.Integer, VarType.List },
                 ParamNames = new string[] { "agent", "flags", "options" },
                 TableIndex = 983
+            }},
+            {"osSetScriptEngine", new FunctionSig {
+                FunctionName = "osSetScriptEngine",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.String, VarType.String },
+                ParamNames = new string[] { "scriptName", "target" },
+                TableIndex = 984
             }},
          };
 

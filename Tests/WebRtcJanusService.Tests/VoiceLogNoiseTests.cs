@@ -84,22 +84,19 @@ namespace osWebRtcVoice.Tests
         }
 
         private Capture _log;
-        private ILoggerFactory _previous;
+        private LogCapture _logging;
 
         [SetUp]
         public void SetUp()
         {
             _log = new Capture();
-            _previous = LoggerProvider.LoggerFactory;
-            LoggerProvider.LoggerFactory = LoggerFactory.Create(b => b.AddProvider(_log).SetMinimumLevel(LogLevel.Trace));
+            _logging = new LogCapture(_log, LogLevel.Trace);
         }
 
         [TearDown]
         public void TearDown()
         {
-            ILoggerFactory ours = LoggerProvider.LoggerFactory;
-            LoggerProvider.LoggerFactory = _previous;
-            ours.Dispose();
+            _logging.Dispose();
             _log.Dispose();
         }
 
@@ -118,9 +115,8 @@ namespace osWebRtcVoice.Tests
         private sealed class MatrixFeed : IVisibilityFeed
         {
             public VisibilityMatrix Current { get; private set; } = VisibilityMatrix.Empty;
-#pragma warning disable CS0067
-            public event Action<VisibilityBatch> BatchProduced;
-#pragma warning restore CS0067
+            // Required by the interface; this fake never raises it.
+            public event Action<VisibilityBatch> BatchProduced { add { } remove { } }
             public VisibilityBatch SnapshotFor(UUID listener) => DeltaComputer.SnapshotFor(Current, listener, -999);
 
             public VisibilityBatch Tick(IFeederWorld world)

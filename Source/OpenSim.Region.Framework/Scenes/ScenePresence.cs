@@ -1830,6 +1830,25 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         TeleportWithMomentum(pos, Vector3.Zero);
     }
 
+    /// <summary>
+    /// Raised, at most once a second, when this presence is a child agent and its viewer still sends agent updates
+    /// here: the viewer believes this is its region. After a crossing out of here that means the viewer did not take
+    /// in the crossing (the CrossedRegion event was lost or late).
+    /// </summary>
+    public event Action<ScenePresence> OnAgentUpdateWhileChild;
+
+    private long m_lastAgentUpdateWhileChildMs;
+
+    /// <summary>Called by the client stack for an agent update that reached this presence while it is a child.</summary>
+    public void AgentUpdateWhileChild()
+    {
+        long now = System.Environment.TickCount64;
+        if (now - m_lastAgentUpdateWhileChildMs < 1000)
+            return;
+        m_lastAgentUpdateWhileChildMs = now;
+        OnAgentUpdateWhileChild?.Invoke(this);
+    }
+
     public void TeleportWithMomentum(Vector3 pos, Vector3? v)
     {
         if(!CheckLocalTPLandingPoint(ref pos))
@@ -4534,7 +4553,20 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         // -1 unless this simulator baked this avatar in this region, in which case the appearance carries the
         // AppearanceData block the LL viewer needs to accept its own appearance (V4/V5). On a region with no
         // baking module, or with the flag off, this is -1 for everyone and the packet is unchanged.
-        int cofVersion = m_scene.RequestModuleInterface<IServerSideBakingRegion>()?.BakedCofVersion(UUID) ?? -1;
+        IServerSideBakingRegion ssb = m_scene.RequestModuleInterface<IServerSideBakingRegion>();
+        int cofVersion = ssb?.BakedCofVersion(UUID) ?? -1;
+
+        // A recipient this region does not bake for, a Hypergrid visitor, fetches server bakes only from its own
+        // grid's appearance service, which has none of the bakes made here: every avatar would stay grey to it.
+        // It gets the pre-SSB message, no block and parameter 11000 at 0, and fetches the stored bakes the faces
+        // name from this region by id, as viewers did before server-side baking.
+        bool recipientClientBakes = ssb is { ServerSideBakingEnabled: true } && !ssb.BakesFor(avatar.UUID);
+        if (recipientClientBakes)
+        {
+            avatar.ControllingClient.SendAppearance(UUID, AvatarAppearance.WithAppearanceVersion(Appearance.VisualParams, 0),
+                Appearance.Texture.GetBakesBytes(), Appearance.AvatarPreferencesHoverZ, -1);
+            return;
+        }
 
         // The AppearanceData block is not enough on its own. The viewer prefers the appearance-version *parameter*
         // over the block's field, and discards the whole message when the two disagree
@@ -4545,7 +4577,7 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         byte[] visualParams;
         if (cofVersion >= 0)
             visualParams = AvatarAppearance.WithAppearanceVersion(Appearance.VisualParams, 1);
-        else if (IsNPC)
+        else if (IsNPC || (ssb is { ServerSideBakingEnabled: true } && !ssb.BakesFor(UUID)))
             // An NPC's appearance is a clone of its owner's, parameter 11000 included, and an owner on a
             // server-bake region sends that parameter as 1. Nothing ever bakes an NPC, so its message has no
             // AppearanceData block - and a parameter of 1 beside no block puts the viewer on the server-bake path
@@ -4554,6 +4586,8 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
             // the NPC never leaves the cloud state. Say 0 - the message every avatar carried before SSB - and the
             // viewer fetches the stored bake assets the faces name from the region, as it always did. On a copy:
             // the parameter is a property of the message, not of the appearance.
+            // A Hypergrid visitor is the same case: not baked here, and arriving with its home grid's parameter,
+            // which says 1 where that grid bakes; this grid's appearance service has no index under its UUID.
             visualParams = AvatarAppearance.WithAppearanceVersion(Appearance.VisualParams, 0);
         else
             visualParams = Appearance.VisualParams;
@@ -6029,7 +6063,7 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         if (p != this && sog.HasPrivateAttachmentPoint)
             return;
 
-        SceneObjectPart[] parts = sog.Parts;
+        SceneObjectPart[] parts = sog.PartsInLinkOrder;
         SceneObjectPart rootpart = sog.RootPart;
 
         PrimUpdateFlags update = PrimUpdateFlags.FullUpdate;
@@ -6052,7 +6086,7 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         if (IsChildAgent || IsInTransit || IsDeleted)
             return;
 
-        SceneObjectPart[] origparts = sog.Parts;
+        SceneObjectPart[] origparts = sog.PartsInLinkOrder;
         SceneObjectPart[] parts = new SceneObjectPart[origparts.Length];
         PrimUpdateFlags[] flags = new PrimUpdateFlags[origparts.Length];
 
@@ -6113,7 +6147,7 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         if (IsChildAgent || IsInTransit)
             return;
 
-        SceneObjectPart[] origparts = sog.Parts;
+        SceneObjectPart[] origparts = sog.PartsInLinkOrder;
         SceneObjectPart[] parts = new SceneObjectPart[origparts.Length];
         PrimUpdateFlags[] flags = new PrimUpdateFlags[origparts.Length];
 

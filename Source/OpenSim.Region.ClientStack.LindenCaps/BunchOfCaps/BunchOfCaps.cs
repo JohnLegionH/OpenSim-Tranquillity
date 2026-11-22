@@ -58,14 +58,26 @@ public delegate void UpLoadedAsset(
     int cost, UUID texturesFolder, int nreqtextures, int nreqmeshs, int nreqinstances,
     bool IsAtestUpload, ref string error, ref int nextOwnerMask, ref int groupMask, ref int everyoneMask, int[] meshesSides);
 
-public delegate void UpdateTaskScript(UUID itemID, UUID primID, bool isScriptRunning, UUID experience, byte[] data, ref ArrayList errors);
+public delegate void UpdateTaskScript(UUID itemID, UUID primID, bool isScriptRunning, UUID experience, byte[] data, string compileTarget, ref ArrayList errors);
+
+/// <summary>
+/// As <see cref="UpdateTaskScript"/>, and gives the id of the asset the save stored (UUID.Zero when it stored nothing).
+/// </summary>
+public delegate void SaveTaskScript(UUID itemID, UUID primID, bool isScriptRunning, UUID experience, byte[] data, string compileTarget,
+                                    ref ArrayList errors, out UUID newAssetID);
 
 public delegate void NewInventoryItem(UUID userID, InventoryItemBase item, uint cost);
 
 public delegate void NewAsset(AssetBase asset);
 
 public delegate ArrayList TaskScriptUpdatedCallback(UUID userID, UUID itemID, UUID primID,
-                                               bool isScriptRunning, UUID experience, byte[] data);
+                                               bool isScriptRunning, UUID experience, byte[] data, string compileTarget);
+
+/// <summary>
+/// As <see cref="TaskScriptUpdatedCallback"/>, and gives the id of the asset the save stored (UUID.Zero when it stored nothing).
+/// </summary>
+public delegate ArrayList TaskScriptSavedCallback(UUID userID, UUID itemID, UUID primID,
+                                               bool isScriptRunning, UUID experience, byte[] data, string compileTarget, out UUID newAssetID);
 
 /// <summary>
 /// XXX Probably not a particularly nice way of allow us to get the scene presence from the scene (chiefly so that
@@ -93,6 +105,10 @@ public partial class BunchOfCaps
     public NewAsset AddNewAsset = null;
     public ItemUpdatedCallback ItemUpdatedCall = null;
     public TaskScriptUpdatedCallback TaskScriptUpdatedCall = null;
+    public TaskScriptSavedCallback TaskScriptSavedCall = null;
+    // what the constructor set, so TaskScriptUpdated can tell a callback a module replaced
+    private readonly TaskScriptUpdatedCallback m_defaultTaskScriptUpdatedCall;
+    private readonly TaskScriptSavedCallback m_defaultTaskScriptSavedCall;
     public GetClientDelegate GetClient = null;
     
     private IAssetService m_assetService;
@@ -138,7 +154,8 @@ public partial class BunchOfCaps
 
         AddNewInventoryItem = m_Scene.AddUploadedInventoryItem;
         ItemUpdatedCall = m_Scene.CapsUpdateItemAsset;
-        TaskScriptUpdatedCall = m_Scene.CapsUpdateTaskInventoryScriptAsset;
+        TaskScriptUpdatedCall = m_defaultTaskScriptUpdatedCall = m_Scene.CapsUpdateTaskInventoryScriptAsset;
+        TaskScriptSavedCall = m_defaultTaskScriptSavedCall = m_Scene.CapsUpdateTaskInventoryScriptAsset;
         GetClient = m_Scene.SceneGraph.GetControllingClient;
 
         RegisterHandlers();
@@ -258,6 +275,12 @@ public partial class BunchOfCaps
                 m_HostCapsObj.RegisterSimpleHandler("UpdateScriptTaskInventory", oreq, true); //legacy
             }
 
+            if (m_Scene.ScriptEngineChoiceEnabled)
+            {
+                m_HostCapsObj.RegisterSimpleHandler("SetScriptEngine",
+                    new SimpleOSDMapHandler("POST", GetNewCapPath(), SetScriptEngineRequest));
+            }
+
             m_HostCapsObj.RegisterSimpleHandler("CopyInventoryFromNotecard",
                 new SimpleOSDMapHandler("POST", GetNewCapPath(), CopyInventoryFromNotecard));
 
@@ -285,6 +308,14 @@ public partial class BunchOfCaps
             m_log.LogError("[CAPS]: Error " + e.Message);
         }
     }
+    /// <summary>
+    /// The seed flag a viewer sets by listing a capability in its seed request, for the capabilities that also change
+    /// what the region sends it: SetScriptEngine adds the script's engines to ScriptRunningReply
+    /// (<see cref="Caps.CapsFlags.ScriptEngineChoice"/>). <see cref="Caps.CapsFlags.None"/> for any other name.
+    /// </summary>
+    public static Caps.CapsFlags FlagForRequestedCap(string capName)
+        => capName == "SetScriptEngine" ? Caps.CapsFlags.ScriptEngineChoice : Caps.CapsFlags.None;
+
     /// <summary>
     /// Construct a client response detailing all the capabilities this server can provide.
     /// </summary>
@@ -370,6 +401,7 @@ public partial class BunchOfCaps
                     m_HostCapsObj.Flags |= Caps.CapsFlags.PBR;
                     break;
                 default:
+                    m_HostCapsObj.Flags |= FlagForRequestedCap(cstr);
                     break;
             }
             validCaps.Add(cstr);
@@ -945,7 +977,17 @@ public partial class BunchOfCaps
                     prim.RezzerID = creatorID;
                     prim.CreationDate = Util.UnixTimeSinceEpoch();
 
-                    if (grp == null)
+                    if (inner_instance_list.TryGetValue("mesh_name", out tmp))
+                    {
+                        string meshName = tmp.AsString();
+                        if (!string.IsNullOrWhiteSpace(meshName))
+                            prim.Name = meshName;
+                        else if (grp == null)
+                            prim.Name = assetName;
+                        else
+                            prim.Name = assetName + "#" + i.ToString();
+                    }
+                    else if (grp == null)
                         prim.Name = assetName;
                     else
                         prim.Name = assetName + "#" + i.ToString();

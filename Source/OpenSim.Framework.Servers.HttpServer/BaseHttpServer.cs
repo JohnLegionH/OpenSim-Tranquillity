@@ -1216,7 +1216,8 @@ public class BaseHttpServer : IHttpServer
         XmlRpcResponse xmlRpcResponse;
         if (methodWasFound)
         {
-            xmlRprcRequest.Params.Add(request.RemoteIPEndPoint); // Param[1]
+            IPEndPoint caller = ScriptRequestEndPoint.Of(request);
+            xmlRprcRequest.Params.Add(caller); // Param[1]
             xmlRprcRequest.Params.Add(request.Url); // Param[2]
 
             string xff = "X-Forwarded-For";
@@ -1243,7 +1244,7 @@ public class BaseHttpServer : IHttpServer
 
             try
             {
-                xmlRpcResponse = method(xmlRprcRequest, request.RemoteIPEndPoint);
+                xmlRpcResponse = method(xmlRprcRequest, caller);
             }
             catch(Exception e)
             {
@@ -1354,7 +1355,8 @@ public class BaseHttpServer : IHttpServer
         XmlRpcResponse xmlRpcResponse;
         if (methodWasFound)
         {
-            xmlRprcRequest.Params.Add(request.RemoteIPEndPoint); // Param[1]
+            IPEndPoint caller = ScriptRequestEndPoint.Of(request);
+            xmlRprcRequest.Params.Add(caller); // Param[1]
             xmlRprcRequest.Params.Add(request.Url); // Param[2]
 
             foreach (string s in request.Headers.AllKeys)
@@ -1374,7 +1376,7 @@ public class BaseHttpServer : IHttpServer
 
             try
             {
-                xmlRpcResponse = method(xmlRprcRequest, request.RemoteIPEndPoint);
+                xmlRpcResponse = method(xmlRprcRequest, caller);
             }
             catch (Exception e)
             {
@@ -2004,7 +2006,7 @@ public class BaseHttpServer : IHttpServer
             }
             else
             {
-                m_httpListener = tinyHTTPListener.Create(IPAddress.Any, (int)m_port, m_cert);
+                m_httpListener = tinyHTTPListener.Create(m_listenIPAddress, (int)m_port, m_cert);
                 if(m_certificateValidationCallback is not null)
                     m_httpListener.CertificateValidationCallback = m_certificateValidationCallback;
                 m_httpListener.ExceptionThrown += httpServerException;

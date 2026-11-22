@@ -401,11 +401,7 @@ public class TestClient : IClientAPI, IClientCore
 
     public int PingTimeMS { get { return 0; } }
 
-    public bool IsActive
-    {
-        get { return true; }
-        set { }
-    }
+    public bool IsActive { get; set; } = true;
 
     public bool IsLoggingOut { get; set; }
 
@@ -849,7 +845,7 @@ public class TestClient : IClientAPI, IClientCore
 
     public virtual void SendAbortXferPacket(ulong xferID)
     {
-
+        OnSentAbortXfer?.Invoke(xferID);
     }
 
     public virtual void SendEconomyData(float EnergyEfficiency, int ObjectCapacity, int ObjectCount, int PriceEnergyUnit,
@@ -878,6 +874,15 @@ public class TestClient : IClientAPI, IClientCore
     public void TriggerAvatarNowWearing(AvatarWearingArgs e)
     {
         OnAvatarNowWearing?.Invoke(this, e);
+    }
+
+    /// <summary>
+    /// Test seam: raise <see cref="OnModifyTerrain"/> as if a ModifyLand packet had arrived.
+    /// </summary>
+    public void TriggerModifyTerrain(float height, float seconds, float brushSize, byte action,
+                                     float north, float west, float south, float east, int parcelLocalID)
+    {
+        OnModifyTerrain?.Invoke(AgentId, height, seconds, brushSize, action, north, west, south, east, parcelLocalID);
     }
 
     /// <summary>
@@ -935,12 +940,27 @@ public class TestClient : IClientAPI, IClientCore
     {
     }
 
+    /// <summary>Test seam: the xfer messages the region sends this client.</summary>
+    public event Action<ulong, uint> OnSentConfirmXfer;
+    public event Action<ulong> OnSentAbortXfer;
+    public event Action<ulong, string> OnSentXferRequest;
+
     public void SendConfirmXfer(ulong xferID, uint PacketID)
     {
+        OnSentConfirmXfer?.Invoke(xferID, PacketID);
     }
 
     public void SendXferRequest(ulong XferID, short AssetType, UUID vFileID, byte FilePath, byte[] FileName)
     {
+        OnSentXferRequest?.Invoke(XferID, Utils.BytesToString(FileName));
+    }
+
+    /// <summary>
+    /// Test seam: raise <see cref="OnUploadTerrain"/> as if the estate tools had asked to upload a terrain file.
+    /// </summary>
+    public void TriggerUploadTerrain(string clientFileName)
+    {
+        OnUploadTerrain?.Invoke(this, clientFileName);
     }
 
     public void SendInitiateDownload(string simFileName, string clientFileName)
@@ -1147,8 +1167,14 @@ public class TestClient : IClientAPI, IClientCore
     {
     }
 
+    /// <summary>
+    /// Test seam: the ParcelProperties the region sends this client (sequence id, parcel).
+    /// </summary>
+    public event Action<int, ILandObject> OnSentLandProperties;
+
     public void SendLandProperties(int sequence_id, bool snap_selection, int request_result, ILandObject lo, float simObjectBonusFactor, int parcelObjectCapacity, int simObjectCapacity, uint regionFlags)
     {
+        OnSentLandProperties?.Invoke(sequence_id, lo);
     }
 
     public void SendLandAccessListData(List<LandAccessEntry> accessList, uint accessFlag, int localLandID)
@@ -1190,6 +1216,15 @@ public class TestClient : IClientAPI, IClientCore
 
     public void SendScriptRunningReply(UUID objectID, UUID itemID, bool running)
     {
+        ScriptRunningReplies.Add((objectID, itemID, running, ScriptCompileTarget.Unspecified));
+    }
+
+    /// <summary>Every script running reply sent to this client, with the compile target it carried.</summary>
+    public readonly List<(UUID ObjectID, UUID ItemID, bool Running, ScriptCompileTarget Target)> ScriptRunningReplies = new();
+
+    public void SendScriptRunningReply(UUID objectID, UUID itemID, bool running, ScriptCompileTarget target)
+    {
+        ScriptRunningReplies.Add((objectID, itemID, running, target));
     }
 
     public void SendAsset(AssetRequestToClient req)

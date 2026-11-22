@@ -89,11 +89,15 @@ public static class AisEnvelope
             ["desc"] = item.Description ?? "",
             ["type"] = item.AssetType,
             ["inv_type"] = item.InvType,
-            ["flags"] = (int)item.Flags,
+            ["flags"] = (int)ScriptCompileTargets.ForViewer(item.Flags),
             ["created_at"] = item.CreationDate,
             ["permissions"] = Permissions(item),
             ["sale_info"] = SaleInfo(item),
         };
+        // A script's runtime as Second Life's viewer reads it ("script": {"runtime": ...}, LLInventoryItem::fromLLSD)
+        string runtime = item.InvType == (int)InventoryType.LSL ? ScriptCompileTargets.ViewerRuntime(item.Flags) : null;
+        if (runtime is not null)
+            map["script"] = new OSDMap { ["runtime"] = runtime };
         return map;
     }
 
@@ -114,7 +118,7 @@ public static class AisEnvelope
         ["desc"] = link.Description ?? "",
         ["type"] = link.AssetType,
         ["inv_type"] = link.InvType,
-        ["flags"] = (int)link.Flags,
+        ["flags"] = (int)ScriptCompileTargets.ForViewer(link.Flags),
         ["created_at"] = link.CreationDate,
     };
 

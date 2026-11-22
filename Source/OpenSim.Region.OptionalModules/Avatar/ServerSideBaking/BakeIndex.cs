@@ -40,12 +40,12 @@ public sealed record StoredBake(UUID AssetId, string Hash);
 /// (<c>OpenSim.Data.MySQL/Resources/Avatar.migrations:7</c>).
 ///
 /// <para>
-/// <b>Why every key here starts with "Bake".</b> <c>AvatarService.SetAvatar</c> deletes every row for the
-/// principal before rewriting the appearance keys, and it has to: the appearance keys are of variable cardinality
-/// and are read back additively, so a row left behind by a garment that was taken off would put it back on. Until
-/// that was fixed, the delete took this index with it, and every appearance save destroyed it. The service now
-/// preserves the names <see cref="AvatarDataKeys.IsPreserved"/> accepts, and this class derives its two prefixes
-/// from <see cref="AvatarDataKeys.BakeIndexPrefix"/> so the two cannot drift apart.
+/// <b>Why every key here starts with "Bake".</b> <c>AvatarService.SetAvatar</c> deletes the appearance rows the new
+/// appearance does not have, and it has to: the appearance keys are of variable cardinality and are read back
+/// additively, so a row left behind by a garment that was taken off would put it back on. It leaves alone the names
+/// <see cref="AvatarDataKeys.IsPreserved"/> accepts, so a save never touches this index, not even one written while
+/// the save is under way. This class derives its two prefixes from <see cref="AvatarDataKeys.BakeIndexPrefix"/> so
+/// the two cannot drift apart.
 /// </para>
 ///
 /// <para>
@@ -149,8 +149,8 @@ public sealed class BakeIndex
     /// <summary>
     /// Write the index for one agent: one <c>Bake:</c>/<c>BakeHash:</c> pair per live bake plus the three scalars,
     /// in a single <see cref="IAvatarService.SetItems"/> call. Channels absent from <paramref name="bakes"/> are
-    /// left exactly as they are — a channel that stops being produced (a skirt taken off) keeps its key and its
-    /// asset, because the agent's face still points at that asset; expiry is the reaper's job (ADR-004).
+    /// left exactly as they are here. A channel the outfit stops using (a skirt taken off) is dropped separately
+    /// with <see cref="Remove"/> once its face has been reset (<see cref="BakeOrchestrator.Run"/>).
     /// </summary>
     public static bool Write(IAvatarService avatars, UUID agentId, IEnumerable<KeyValuePair<BakeChannel, StoredBake>> bakes,
         int cofVersion, int bakeSize, DateTime updatedUtc)
@@ -171,11 +171,17 @@ public sealed class BakeIndex
         return avatars.SetItems(agentId, names.ToArray(), values.ToArray());
     }
 
-    /// <summary>Drop the keys for the named channels (the reaper's per-channel half; nothing in the bake path calls it).</summary>
+    /// <summary>
+    /// Drop the keys for the named channels. The bake path calls it for a channel the outfit no longer uses, so the
+    /// appearance service stops serving that channel's old bake. False when nothing was removed or the service
+    /// could not be reached.
+    /// </summary>
     public static bool Remove(IAvatarService avatars, UUID agentId, IEnumerable<BakeChannel> channels)
     {
         if (avatars is null) return false;
         var names = channels.SelectMany(ch => new[] { BakeKey(ch), HashKey(ch) }).ToArray();
-        return names.Length != 0 && avatars.RemoveItems(agentId, names);
+        if (names.Length == 0) return false;
+        try { return avatars.RemoveItems(agentId, names); }
+        catch (Exception) { return false; }
     }
 }

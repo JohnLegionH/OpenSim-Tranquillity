@@ -99,6 +99,25 @@ public class UserAgentServiceSecurityTests
         Xunit.Assert.True(HypergridEgressPolicy.IsAllowedAddress(System.Net.IPAddress.Parse("8.8.8.8")));
     }
 
+    // The address filter left no way to Hypergrid between grids on a private network (a LAN grid, two grids on
+    // one host): [Hypergrid] AllowPrivateGrids names the ones allowed, by gatekeeper.
+    [Xunit.Fact]
+    public void HypergridEgressPolicyAllowsOnlyThePrivateGridsNamed()
+    {
+        Nini.Config.IniConfigSource config = new();
+        config.AddConfig("Hypergrid").Set("AllowPrivateGrids", "http://172.17.0.1:9400/, LAN-Grid:8002 ;[fd00::5]:8002");
+        HashSet<string> allowed = HypergridEgressPolicy.PrivateGridsAllowed(config);
+
+        Xunit.Assert.True(HypergridEgressPolicy.IsAllowedTarget("http://172.17.0.1:9400/", null, allowed));
+        Xunit.Assert.True(HypergridEgressPolicy.IsAllowedTarget("http://lan-grid:8002", null, allowed));
+        Xunit.Assert.True(HypergridEgressPolicy.IsAllowedTarget("http://[fd00::5]:8002/", null, allowed));
+        Xunit.Assert.False(HypergridEgressPolicy.IsAllowedTarget("http://172.17.0.1:9401/", null, allowed), "another port");
+        Xunit.Assert.False(HypergridEgressPolicy.IsAllowedTarget("http://10.0.0.5:9400/", null, allowed), "another host");
+        Xunit.Assert.False(HypergridEgressPolicy.IsAllowedTarget("ftp://172.17.0.1:9400/", null, allowed), "not http");
+        Xunit.Assert.False(HypergridEgressPolicy.IsAllowedTarget("http://172.17.0.1:9400/", null, null), "none named");
+        Xunit.Assert.Empty(HypergridEgressPolicy.PrivateGridsAllowed(new Nini.Config.IniConfigSource()));
+    }
+
     [Xunit.Fact]
     public void HypergridEgressPolicyAllowsLocalGatewayCarveOut()
     {
@@ -113,7 +132,7 @@ public class UserAgentServiceSecurityTests
         HGTravelingData travel = new()
         {
             SessionID = sessionID,
-            Data = new Dictionary<string, string> { ["UserID"] = userID.ToString() }
+            UserID = userID
         };
 
         Xunit.Assert.True(UserAgentService.TravelSessionMatches(travel, userID, sessionID));
@@ -127,10 +146,37 @@ public class UserAgentServiceSecurityTests
         HGTravelingData travel = new()
         {
             SessionID = sessionID,
-            Data = new Dictionary<string, string> { ["UserID"] = userID.ToString() }
+            UserID = userID
         };
 
         Xunit.Assert.False(UserAgentService.TravelSessionMatches(travel, UUID.Random(), sessionID));
         Xunit.Assert.False(UserAgentService.TravelSessionMatches(travel, userID, UUID.Random()));
+    }
+
+    [Xunit.Fact]
+    public void TravelSessionIgnoresUserIDInDataDictionary()
+    {
+        UUID userID = UUID.Random();
+        UUID sessionID = UUID.Random();
+        HGTravelingData travel = new()
+        {
+            SessionID = sessionID,
+            UserID = UUID.Random(),
+            Data = new Dictionary<string, string> { ["UserID"] = userID.ToString() }
+        };
+
+        Xunit.Assert.False(UserAgentService.TravelSessionMatches(travel, userID, sessionID));
+        Xunit.Assert.True(UserAgentService.TravelSessionMatches(travel, travel.UserID, sessionID));
+    }
+
+    [Xunit.Fact]
+    public void TravelSessionRejectsMissingRecordOrData()
+    {
+        UUID userID = UUID.Random();
+        UUID sessionID = UUID.Random();
+
+        Xunit.Assert.False(UserAgentService.TravelSessionMatches(null, userID, sessionID));
+        Xunit.Assert.False(UserAgentService.TravelSessionMatches(
+            new HGTravelingData { SessionID = sessionID, UserID = userID, Data = null }, userID, sessionID));
     }
 }

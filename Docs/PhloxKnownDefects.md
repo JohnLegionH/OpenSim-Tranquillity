@@ -719,10 +719,22 @@ pauses 15 ms after every chat call instead (`ChatThrottle`).
   (repeating sensors included) are cleared, listeners are removed, the event queue is emptied, and a
   `state_entry` event is queued if the script has one. This holds for every reset: `llResetScript`, `llResetOtherScript`,
   `osResetAllScripts`, the viewer's Reset, a reset asked for while the script is still compiling, and starting a
-  crashed script again. The fresh script's first event is its `state_entry`. An event posted to the script before
+  crashed script again; the next two items say what a reset does to a stopped script and when `llResetOtherScript`
+  does not reset at all. The fresh script's first event is its `state_entry`. An event posted to the script before
   the reset, and a `sensor`, `no_sensor` or `listen` raised by a sensor repeat or a listen of the old script while
   it resets, is dropped. Phlox used to run such an event in the fresh script before its `state_entry` when a sensor
   sweep or a listen delivery was under way at that moment.
+- A reset of a stopped script, one whose Running flag is off (the viewer's Running box unticked, or
+  `llSetScriptState(name, FALSE)`), resets its state and globals and leaves it stopped. Its `state_entry` waits and runs
+  once, when the script is set running again. The script is saved stopped with its `state_entry` waiting, so a region
+  restart does not start it. YEngine does the same: its reset (`XMRInstRun.ResetLocked`) posts `state_entry` and leaves
+  the running flag alone. Phlox used to start a stopped script when it was reset.
+- `llResetOtherScript` on a script that is not running has no effect, even after the script is set running again, as
+  the SL wiki's [llResetOtherScript](https://wiki.secondlife.com/wiki/LlResetOtherScript) page says (Caveats). This
+  holds whichever engine of the region runs that script. A script stopped by a runtime error is not covered by that
+  rule: `llResetOtherScript` restarts it, as the crash monitor example on the SL wiki's
+  [llGetScriptState](https://wiki.secondlife.com/wiki/LlGetScriptState) page does. Phlox used to reset a stopped script
+  on `llResetOtherScript` and queue its `state_entry` for its start.
 - Notecard text, as every notecard reader reads it: `llGetNotecardLine`, `llGetNumberOfNotecardLines`,
   `llGetNotecardLineSync`, `llFindNotecardTextSync`, `iwGetNotecardSegment`, the `iwGetLink*` notecard functions,
   `osGetNotecard`, `osGetNotecardLine` and `osGetNumberOfNotecardLines`. A notecard's stored "Text length" counts bytes
@@ -887,9 +899,11 @@ such list.
     SL's LSL does ([LlRezObjectWithParams](https://wiki.secondlife.com/wiki/LlRezObjectWithParams)).
     SLua's `ll.RezObjectWithParams` also returns `""` on failure, where SL's Lua returns
     `NULL_KEY`. YEngine returns `NULL_KEY` on failure.
-  - `REZ_FLAGS` and `REZ_DAMAGE` are ignored.
-  - A `REZ_*` rule it does not handle is skipped without consuming its value, so the rules
-    after it are misread.
+  - `REZ_FLAGS`, `REZ_ACCEL`, `REZ_OMEGA`, `REZ_DAMAGE`, `REZ_SOUND`, `REZ_SOUND_COLLIDE`,
+    `REZ_LOCK_AXES` and `REZ_DAMAGE_TYPE` are read and ignored; `REZ_VEL`'s `inherit` is ignored.
+  - `REZ_TORQUE`, which SL does not document, is an unknown rule: like any unknown rule, a rule
+    short of values or a value of the wrong type, it shouts an error and rezzes nothing, as
+    YEngine does.
 - `llDerezObject` refuses `DEREZ_TO_INVENTORY` (returns 0). `DEREZ_DIE` and
   `DEREZ_MAKE_TEMP` work.
 - `llTargetedEmail`, in its four-argument form, sends only to external addresses (target type
@@ -898,10 +912,9 @@ such list.
   raise "not yet supported for setting".
 - `llReplaceEnvironment` applies the day length and offset but never loads the named
   environment asset.
-- `llSetAgentEnvironment` and `llReplaceAgentEnvironment` change nothing, but return 0
-  (success).
+- `llSetAgentEnvironment` cannot apply its settings list yet: after SL's checks it shouts an
+  error and returns `ENV_INVALID_RULE`. `llReplaceAgentEnvironment` works.
 - `llGetEnvironment` returns fixed defaults for most sky parameters.
-- `llGetVehicleFlags` returns the vehicle type, not its flags.
 - `llGetAgentInfo` never sets `AGENT_AUTOPILOT`.
 - `llGetParcelDetails` / `osGetParcelDetails`:
   - name, description, owner, group, area and id are real;
@@ -933,10 +946,10 @@ such list.
   it is no longer an attachment. When the avatar crosses or teleports to another region the force goes with it in the
   agent data (optional fields `constant_force` and `constant_force_local`); arriving from a simulator that does not
   send them, the avatar has no force.
-  **No physics engine in this repository applies the force yet** (ubODE, BulletSim, POS and BasicPhysics keep the
-  default `SetConstantForce`, which does nothing), so the avatar does not move. ubODE's avatar has no constant force
-  at all: its `Force` property reports the avatar's walking target velocity and setting it does nothing. An engine
-  outside this repository, such as a Jolt module, shows no effect either until it implements `SetConstantForce`.
+  **Only the Jolt module applies the force** (`JoltCharacter.SetConstantForce` passes it to the Jolt character as a
+  constant force, and updates a local force as the avatar turns). ubODE, BulletSim, POS and BasicPhysics keep the default
+  `SetConstantForce`, which does nothing, so on those engines the avatar does not move. ubODE's avatar has no
+  constant force at all: its `Force` property reports the avatar's walking target velocity and setting it does nothing.
 - `llSetForce` in an unattached physical object: a local force (`local` TRUE) is turned once by the object's rotation
   when it is set, not kept in the object's frame as it turns.
 - `botFollowAvatar` goes straight for the avatar. Halcyon also steered around objects along the avatar's recent
@@ -946,6 +959,10 @@ such list.
 - `PRIM_HEALTH` and the damage type in `PRIM_DAMAGE` are accepted and dropped. Reading them
   back gives 0.0 and `DAMAGE_TYPE_GENERIC`.
 - `PRIM_PHYSICS_MATERIAL` can be set, but reading it returns nothing.
+- `PRIM_GLTF_*` and `llSetLinkGLTFOverrides`: SL lets a script change only the texture
+  transforms of a face whose glTF material is no-modify
+  ([GLTF Overrides](https://wiki.secondlife.com/wiki/GLTF_Overrides)). The material asset's
+  permissions are not checked here, on Phlox or YEngine, so every override can be changed.
 - `PRIM_SIT_FLAGS`: `SIT_FLAG_NO_COLLIDE` and `SIT_FLAG_NO_DAMAGE` are stored for read-back
   only.
 - `PRIM_SIT_TARGET` with a nonzero active value sets a target at `ZERO_VECTOR` with

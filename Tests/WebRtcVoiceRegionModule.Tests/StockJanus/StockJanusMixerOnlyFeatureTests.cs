@@ -24,7 +24,7 @@ using osWebRtcVoice.Tests.StockJanus;
 
 namespace osWebRtcVoice.Tests
 {
-#pragma warning disable CS0618
+#pragma warning disable CS0618 // Timeout is [Obsolete], but CancelAfter only cancels a token the test must check; Timeout also fails a test that hangs.
     [TestFixture, NUnit.Framework.Timeout(240000)]
 #pragma warning restore CS0618
     [NeedsPlugin(JanusPluginKind.Stock)]
@@ -75,8 +75,7 @@ namespace osWebRtcVoice.Tests
         public async Task StockPlugin_PlainJoinAndLeave_WritesNoWarningsOrErrors()
         {
             var problems = new ProblemCollector();
-            ILoggerFactory previous = LoggerProvider.LoggerFactory;
-            LoggerProvider.LoggerFactory = LoggerFactory.Create(b => b.AddProvider(problems).SetMinimumLevel(LogLevel.Warning));
+            var logging = new LogCapture(problems, LogLevel.Warning);
             try
             {
                 using var region = StockRegion.Create();
@@ -99,7 +98,7 @@ namespace osWebRtcVoice.Tests
             }
             finally
             {
-                LoggerProvider.LoggerFactory = previous;
+                logging.Dispose();
             }
         }
 
@@ -108,8 +107,7 @@ namespace osWebRtcVoice.Tests
         {
             StockJanusEnvironment.IgnoreUnlessPeerAvailable();
             var problems = new ProblemCollector();
-            ILoggerFactory previous = LoggerProvider.LoggerFactory;
-            LoggerProvider.LoggerFactory = LoggerFactory.Create(b => b.AddProvider(problems).SetMinimumLevel(LogLevel.Warning));
+            var logging = new LogCapture(problems, LogLevel.Warning);
             try
             {
                 using var region = StockRegion.Create(MixerOnlySwitchesOn);
@@ -145,7 +143,7 @@ namespace osWebRtcVoice.Tests
             }
             finally
             {
-                LoggerProvider.LoggerFactory = previous;
+                logging.Dispose();
             }
         }
 

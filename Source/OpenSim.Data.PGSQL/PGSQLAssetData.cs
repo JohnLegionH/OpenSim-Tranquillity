@@ -133,7 +133,7 @@ public class PGSQLAssetData : AssetDataBase
                     asset.Description = (string)reader["description"];
                     asset.Local = Convert.ToBoolean(reader["local"]);
                     asset.Temporary = Convert.ToBoolean(reader["temporary"]);
-                    asset.Flags = (AssetFlags)(Convert.ToInt32(reader["asset_flags"]));
+                    asset.Flags = StoredAssetFlags.FromStored(Convert.ToInt32(reader["asset_flags"]), asset.ID);
                     asset.Data = (byte[])reader["data"];
                     return asset;
                 }
@@ -307,7 +307,16 @@ public class PGSQLAssetData : AssetDataBase
 
     public override bool Delete(string id)
     {
-        return false;
+        if (!UUID.TryParse(id, out UUID assetID))
+            return false;
+
+        using (NpgsqlConnection conn = new NpgsqlConnection(m_connectionString))
+        using (NpgsqlCommand cmd = new NpgsqlCommand("DELETE FROM assets WHERE id = :id", conn))
+        {
+            cmd.Parameters.Add(m_database.CreateParameter("id", assetID));
+            conn.Open();
+            return cmd.ExecuteNonQuery() > 0;
+        }
     }
     #endregion
 }

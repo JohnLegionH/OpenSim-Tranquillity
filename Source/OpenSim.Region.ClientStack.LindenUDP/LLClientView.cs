@@ -612,13 +612,37 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             OutPacket(disable, ThrottleOutPacketType.Unknown);
         }
 
-        // Fire the callback for this connection closing
-        OnConnectionClosed?.Invoke(this);
+        // Fire the callback for this connection closing, each handler on its own: one that throws must not keep the
+        // others (the logouts from presence and grid user among them) from running, nor this client from being taken
+        // out of the scene below. The client is already inactive, which the timeout does not look at again, so an
+        // avatar left in the scene stayed until the region restarted.
+        Action<IClientAPI> closed = OnConnectionClosed;
+        if (closed is not null)
+        {
+            foreach (Action<IClientAPI> handler in closed.GetInvocationList())
+            {
+                try
+                {
+                    handler(this);
+                }
+                catch (Exception e)
+                {
+                    m_log.LogError(e, "{0} A connection closed handler for {1} in {2} failed", LogHeader, Name, m_scene.Name);
+                }
+            }
+        }
 
-        m_asyncPacketProcess.Stop();
+        try
+        {
+            m_asyncPacketProcess.Stop();
 
-        // Flush all of the packets out of the UDP server for this client
-        m_udpServer?.Flush(m_udpClient);
+            // Flush all of the packets out of the UDP server for this client
+            m_udpServer?.Flush(m_udpClient);
+        }
+        catch (Exception e)
+        {
+            m_log.LogError(e, "{0} Stopping the packet processing of {1} in {2} failed", LogHeader, Name, m_scene.Name);
+        }
 
         // Remove ourselves from the scene
         m_scene.RemoveClient(m_agentId, true);
@@ -643,15 +667,33 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         m_killRecord.Clear();
         GroupsInView.Clear();
 
-        if(m_scene.GetNumberOfClients() == 0)
-        {
-            GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-            GC.Collect();
-            GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.Default;
-        }
+        // Give the memory back when the simulator has gone idle. This used to run when this region had no client
+        // left, on the thread closing the connection: on a simulator with several regions that was every time one of
+        // them emptied (a teleport out of a quiet region), and the full compacting collection stopped the whole
+        // process while the other regions had avatars in them.
+        if (NoClientsInAnyRegion())
+            Util.FireAndForget(_ => CollectWhenIdle(), null, "LLClientView.CollectWhenIdle");
     }
+
+    private bool NoClientsInAnyRegion()
+    {
+        if (m_scene.GetNumberOfClients() != 0)
+            return false;
+        foreach (Scene s in SceneManager.Instance.Scenes)
+            if (s.GetNumberOfClients() != 0)
+                return false;
+        return true;
+    }
+
+    /// <summary>The collection run when the last client of the simulator closes (replaceable in tests).</summary>
+    public static Action CollectWhenIdle = () =>
+    {
+        GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.Default;
+    };
 
     public void Kick(string message)
     {
@@ -663,7 +705,9 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             kupack.TargetBlock.TargetIP = 0;
             kupack.TargetBlock.TargetPort = 0;
             kupack.UserInfo.Reason = Util.StringToBytes256(message);
-            OutPacket(kupack, ThrottleOutPacketType.Task);
+            // sent at once, not queued behind the region's object updates, as LogoutReply is: the close that follows
+            // drops the client's queues
+            OutPacket(kupack, ThrottleOutPacketType.Unknown);
             // You must sleep here or users get no message!
             Thread.Sleep(500);
         }
@@ -995,8 +1039,9 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         // Viewer contract V1 (llviewerregion.cpp:3097): the viewer chooses the server-bake path for this region
         // iff bit 0 is set. It is set only where [Appearance] ServerSideBaking resolved true, so a region without
         // the module, or with the flag off, sends the value it always sent.
+        // Only for an agent the region bakes for: a Hypergrid visitor's viewer bakes it itself (BakesFor).
         ulong regionProtocols = 1UL << 63;
-        if (m_scene.RequestModuleInterface<IServerSideBakingRegion>() is { ServerSideBakingEnabled: true })
+        if (m_scene.RequestModuleInterface<IServerSideBakingRegion>() is { } ssb && ssb.BakesFor(m_agentId))
             regionProtocols |= 1UL;
         zc.AddUInt64(regionProtocols);
 
@@ -1945,6 +1990,13 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             agentData.CapsPath = capsModule.GetCapsPath(m_agentId);
             agentData.ChildrenCapSeeds = new Dictionary<ulong, string>(capsModule.GetChildrenSeeds(m_agentId));
         }
+        // Carry the hypergrid travel token from the circuit this client actually arrived
+        // on. A fresh AgentCircuitData has an empty ServiceSessionID, and a hop presenting
+        // an empty token is refused by the traveller's home grid.
+        AgentCircuitData storedCircuit = ((Scene)m_scene).AuthenticateHandler?.GetAgentCircuitData(m_circuitCode);
+        if (storedCircuit is not null && !string.IsNullOrEmpty(storedCircuit.ServiceSessionID))
+            agentData.ServiceSessionID = storedCircuit.ServiceSessionID;
+
         return agentData;
     }
 
@@ -2196,8 +2248,11 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         tpLocal.Info.LookAt = lookAt;
         tpLocal.Info.Position = position;
 
-        // Hack to get this out immediately and skip throttles
-        OutPacket(tpLocal, ThrottleOutPacketType.Unknown);
+        // In the queue the avatar's own terse updates use (Task), behind any already built. Sent ahead of them
+        // (it used to skip the throttles), a terse update built a moment before the teleport reached the viewer
+        // after this and put the avatar back where it had been until the next update: the snap back after a local
+        // teleport while moving.
+        OutPacket(tpLocal, ThrottleOutPacketType.Task);
     }
 
     public virtual void SendRegionTeleport(ulong regionHandle, byte simAccess, IPEndPoint newRegionEndPoint, uint locationID,
@@ -2613,7 +2668,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             data.GroupID = items[i].GroupID;
             data.GroupOwned = items[i].GroupOwned;
             data.GroupMask = items[i].GroupPermissions;
-            data.Flags = items[i].Flags;
+            data.Flags = ScriptCompileTargets.ForViewer(items[i].Flags);
             data.SalePrice = items[i].SalePrice;
             data.SaleType = items[i].SaleType;
 
@@ -3375,7 +3430,9 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
                 ItemID = UUID.Zero
             };
 
-            OutPacket(logReply, ThrottleOutPacketType.Task);
+            // sent at once, not queued behind the region's object updates: the close that follows a logout drops the
+            // client's queues (Flush does nothing), and a viewer that gets no reply waits out its own logout timeout
+            OutPacket(logReply, ThrottleOutPacketType.Unknown);
         }
     }
 
@@ -3630,7 +3687,14 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         }
     }
 
+    /// <summary>
+    /// The reply also tells the editor which compile target the script was saved with, which the region keeps with the
+    /// script item.
+    /// </summary>
     public void SendScriptRunningReply(UUID objectID, UUID itemID, bool running)
+        => SendScriptRunningReply(objectID, itemID, running, m_scene.GetScriptCompileTarget(objectID, itemID));
+
+    public void SendScriptRunningReply(UUID objectID, UUID itemID, bool running, ScriptCompileTarget target)
     {
         IEventQueue eq = Scene.RequestModuleInterface<IEventQueue>();
         if (eq is null)
@@ -3641,10 +3705,22 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             scriptRunningReply.Script.Running = running;
             OutPacket(scriptRunningReply, ThrottleOutPacketType.Task);
         }
+        else if (WantsScriptEngines())
+        {
+            eq.ScriptRunningEvent(objectID, itemID, running, m_agentId, target,
+                m_scene.GetScriptEngineRunning(objectID, itemID), m_scene.GetScriptEngineChoice(objectID, itemID));
+        }
         else
         {
-            eq.ScriptRunningEvent(objectID, itemID, running, m_agentId);
+            eq.ScriptRunningEvent(objectID, itemID, running, m_agentId, target);
         }
+    }
+
+    /// <summary>Whether this viewer listed SetScriptEngine in its seed request, and so is told a script's engines.</summary>
+    private bool WantsScriptEngines()
+    {
+        Caps caps = m_scene.CapsModule?.GetCapsForUser(CircuitCode);
+        return caps is not null && (caps.Flags & Caps.CapsFlags.ScriptEngineChoice) != 0;
     }
 
     public void SendAsset(AssetRequestToClient req)
@@ -5726,7 +5802,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
                 PrimUpdateFlags flags = PrimUpdateFlags.CancelKill;
                 if(viewerCache && grp.IsViewerCachable)
                     flags |= PrimUpdateFlags.UpdateProbe;
-                foreach (SceneObjectPart p in grp.Parts)
+                foreach (SceneObjectPart p in grp.PartsInLinkOrder)
                     SendEntityUpdate(p, flags);
             }
         }
@@ -5878,7 +5954,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
                     PrimUpdateFlags flags = PrimUpdateFlags.CancelKill;
                     if (grp.IsViewerCachable)
                         flags |= PrimUpdateFlags.UpdateProbe;
-                    foreach (SceneObjectPart p in grp.Parts)
+                    foreach (SceneObjectPart p in grp.PartsInLinkOrder)
                         SendEntityUpdate(p, flags);
                 }
             }
@@ -5888,7 +5964,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
                 PrimUpdateFlags flags = PrimUpdateFlags.CancelKill;
                 foreach (SceneObjectGroup grp in GroupsNeedFullUpdate)
                 {
-                    foreach (SceneObjectPart p in grp.Parts)
+                    foreach (SceneObjectPart p in grp.PartsInLinkOrder)
                         SendEntityUpdate(p, flags);
                 }
             }
@@ -8758,6 +8834,11 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         if(c.SceneAgent is null || c.SceneAgent.IsChildAgent ||
                 c.SceneAgent.IsInTransit || seq <= c.m_thisAgentUpdateArgs.lastpacketSequence )
         {
+            // a viewer sends agent updates to the region it believes it is in: one still sending them to a region
+            // that holds it only as a child agent has not taken in a crossing out of here
+            if (c.SceneAgent is ScenePresence child && child.IsChildAgent && !child.IsInTransit)
+                child.AgentUpdateWhileChild();
+
             // throttle reset is done at MoveAgentIntoRegion()
             // called by scenepresence on completemovement
             //PacketPool.Instance.ReturnPacket(packet);
@@ -9213,8 +9294,13 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         //m_log.LogInformation("[LAND]: LAND:" + modify.ToString());
         for (int i = 0; i < modify.ParcelData.Length; i++)
         {
+            // the real size in ModifyBlockExtended; a viewer without it sends the old brush index
+            // only (LLToolBrushLand: 0, 1, 2 for 1, 2 and 4 m)
+            float brushSize = i < modify.ModifyBlockExtended.Length
+                ? modify.ModifyBlockExtended[i].BrushSize
+                : 1 << Math.Min((int)modify.ModifyBlock.BrushSize, 2);
             c.OnModifyTerrain?.Invoke(c.m_agentId, modify.ModifyBlock.Height, modify.ModifyBlock.Seconds,
-                                modify.ModifyBlockExtended[i].BrushSize, modify.ModifyBlock.Action,
+                                brushSize, modify.ModifyBlock.Action,
                                 modify.ParcelData[i].North, modify.ParcelData[i].West,
                                 modify.ParcelData[i].South, modify.ParcelData[i].East,
                                 modify.ParcelData[i].LocalID);
@@ -10651,10 +10737,11 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             {
                 lm = new AssetLandmark(lma);
             }
-            catch (NullReferenceException)
+            catch (Exception e)
             {
-                // asset not found generates null ref inside the assetlandmark constructor.
-                c.SendTeleportFailed("Could not find the landmark asset data");
+                // The landmark's data is not a landmark (empty, cut short or of another format).
+                m_log.LogWarning("[llClient]: landmark asset {0} could not be read: {1}", lmid, e.Message);
+                c.SendTeleportFailed("Could not read the landmark asset data");
                 return;
             }
         }
@@ -10839,7 +10926,8 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             SalePrice = parcelPropertiesPacket.ParcelData.SalePrice,
             SnapshotID = parcelPropertiesPacket.ParcelData.SnapshotID,
             UserLocation = parcelPropertiesPacket.ParcelData.UserLocation,
-            UserLookAt = parcelPropertiesPacket.ParcelData.UserLookAt
+            UserLookAt = parcelPropertiesPacket.ParcelData.UserLookAt,
+            WithoutMediaDetailsAndAvatarSettings = true
         };
 
         c.OnParcelPropertiesUpdateRequest?.Invoke(args, parcelPropertiesPacket.ParcelData.LocalID, c);
@@ -13589,7 +13677,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
                 LLSDxmlEncode2.AddElem("AssetID", item.AssetID, sb);
                 LLSDxmlEncode2.AddElem("Type", item.AssetType, sb);
                 LLSDxmlEncode2.AddElem("InvType", item.InvType, sb);
-                LLSDxmlEncode2.AddElem("Flags", item.Flags, sb);
+                LLSDxmlEncode2.AddElem("Flags", ScriptCompileTargets.ForViewer(item.Flags), sb);
                 LLSDxmlEncode2.AddElem("SaleType", item.SaleType, sb);
                 LLSDxmlEncode2.AddElem("SalePrice", item.SalePrice, sb);
                 LLSDxmlEncode2.AddElem("Name", item.Name, sb);
