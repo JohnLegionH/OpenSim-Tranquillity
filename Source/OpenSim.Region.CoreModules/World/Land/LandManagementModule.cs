@@ -1670,8 +1670,16 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
                 {
                     if(land != aland)
                         land.SendLandProperties(-10000, false, LandChannel.LAND_RESULT_SINGLE, client);
-                    else if (land == aland)
-                         aland.SendLandProperties(0, true, LandChannel.LAND_RESULT_SINGLE, client);
+                    else
+                    {
+                        // The parcel the avatar stands on is sent as the agent's own parcel, sequence id 0: the viewer
+                        // starts a changed music or media address only from that update (llviewerparcelmgr.cpp,
+                        // processParcelProperties); the id of the last request made it the selected parcel instead.
+                        aland.SendLandProperties(0, false, LandChannel.LAND_RESULT_SINGLE, client);
+                        // The avatar who saved also gets the selected parcel, which is what About Land shows.
+                        if (ReferenceEquals(client, remote_client))
+                            aland.SendLandProperties(-10000, true, LandChannel.LAND_RESULT_SINGLE, client);
+                    }
                 }
                 if (avatar.currentParcelUUID.Equals(parcelID))
                     avatar.currentParcelUUID = parcelID; // force parcel flags review

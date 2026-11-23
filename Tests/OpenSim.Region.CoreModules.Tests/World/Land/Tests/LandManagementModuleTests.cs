@@ -396,6 +396,51 @@ public class LandManagementModuleTests : OpenSimTestCase
         Assert.Equal(new List<int> { 7 }, answered);
     }
 
+    // A parcel save is sent to the avatars standing on the parcel as the update of the parcel they are on: the viewer
+    // starts a changed music or media address only from an update with sequence id 0 (llviewerparcelmgr.cpp,
+    // processParcelProperties); -10000 is the selected parcel, so it was filed as About Land's selection and the new
+    // address took effect only after the avatar came back. The avatar who saved also gets About Land refreshed.
+    private sealed record SentUpdate(int Sequence, bool Snap, string MusicUrl, string MediaUrl);
+
+    private static List<SentUpdate> Record(TestClient client)
+    {
+        List<SentUpdate> sent = new();
+        client.OnSentLandPropertiesSnap += (sequence, snap, lo) =>
+            sent.Add(new SentUpdate(sequence, snap, lo.LandData.MusicURL, lo.LandData.MediaURL));
+        return sent;
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void TestParcelSaveIsSentToAvatarsOnTheParcelAsSequenceZero(bool music)
+    {
+        TestHelpers.InMethod();
+        ParcelFixture f = new ParcelFixture();
+        TestClient editor = (TestClient)SceneHelpers.AddScenePresence(f.Scene, f.OwnerId).ControllingClient;
+        TestClient visitor = (TestClient)SceneHelpers.AddScenePresence(f.Scene, TestHelpers.ParseTail(0x2)).ControllingClient;
+        List<SentUpdate> toEditor = Record(editor);
+        List<SentUpdate> toVisitor = Record(visitor);
+
+        const string url = "http://example.org/changed";
+        LandUpdateArgs a = PropertiesSave(f.Current, f.Current.Flags);
+        if (music)
+            a.MusicURL = url;
+        else
+            a.MediaURL = url;
+        // an earlier About Land request, as the viewer sends it for the selected parcel
+        f.Parcel.SendLandProperties(-10000, true, LandChannel.LAND_RESULT_SINGLE, editor);
+        toEditor.Clear();
+
+        f.Module.UpdateLandProperties(f.Parcel, a, editor);
+
+        string Url(SentUpdate u) => music ? u.MusicUrl : u.MediaUrl;
+        Assert.Contains(toVisitor, u => u.Sequence == 0 && Url(u) == url);
+        Assert.DoesNotContain(toVisitor, u => u.Sequence != 0);
+        Assert.Contains(toEditor, u => u.Sequence == 0 && Url(u) == url);
+        Assert.Contains(toEditor, u => u.Sequence == -10000 && u.Snap && Url(u) == url);
+    }
+
     // UpdateLandProperties stored the parcel only when the user could change one of its flags. A group role whose
     // powers change fields but no flag (the name and description, the landing point) had its save dropped without
     // a word.

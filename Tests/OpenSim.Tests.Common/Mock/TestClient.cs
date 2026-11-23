@@ -1174,9 +1174,15 @@ public class TestClient : IClientAPI, IClientCore
     /// </summary>
     public event Action<int, ILandObject> OnSentLandProperties;
 
+    /// <summary>
+    /// Test seam: as <see cref="OnSentLandProperties"/>, with the snap-selection flag.
+    /// </summary>
+    public event Action<int, bool, ILandObject> OnSentLandPropertiesSnap;
+
     public void SendLandProperties(int sequence_id, bool snap_selection, int request_result, ILandObject lo, float simObjectBonusFactor, int parcelObjectCapacity, int simObjectCapacity, uint regionFlags)
     {
         OnSentLandProperties?.Invoke(sequence_id, lo);
+        OnSentLandPropertiesSnap?.Invoke(sequence_id, snap_selection, lo);
     }
 
     public void SendLandAccessListData(List<LandAccessEntry> accessList, uint accessFlag, int localLandID)
