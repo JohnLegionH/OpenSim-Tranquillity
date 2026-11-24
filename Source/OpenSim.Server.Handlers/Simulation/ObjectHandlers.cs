@@ -106,6 +106,7 @@ public class ObjectSimpleHandler : SimpleStreamHandler
         UUID uuid = UUID.Zero;
         string regionname = string.Empty;
         Vector3 newPosition = Vector3.Zero;
+        CrossTraceLog.MarkAny("?", "obj-post", "http-receive");
 
         if (args.ContainsKey("destination_x") && args["destination_x"] != null)
             Int32.TryParse(args["destination_x"].AsString(), out x);
@@ -159,6 +160,7 @@ public class ObjectSimpleHandler : SimpleStreamHandler
             //m_log.LogDebug("[OBJECT HANDLER]: received {0}", sogXmlStr);
             sog = s.DeserializeObject(sogXmlStr);
             sog.ExtraFromXmlString(extraStr);
+            CrossTraceLog.Mark(regionname, sog.Name, "deserialise-end");
         }
         catch (Exception ex)
         {

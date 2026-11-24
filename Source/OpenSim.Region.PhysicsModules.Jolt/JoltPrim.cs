@@ -478,9 +478,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private void Build()
         {
             ShapeId old = _shape;
+            CrossTraceLog.Mark("jolt", Name, "jolt-build-start");
             _shape = CookOwnShape(out _axisCorrection, out _shapeKind);
+            CrossTraceLog.Mark("jolt", Name, "jolt-shape-cooked");
             _ownMass = null;
             CreateBodyInternal();
+            CrossTraceLog.Mark("jolt", Name, "jolt-body-live", $"vel={_velocity.X:F2},{_velocity.Y:F2},{_velocity.Z:F2}");
             if (old.IsValid)
                 _module.ReleaseShape(_backend, old);
         }

@@ -4993,6 +4993,16 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             14 // ID (high frequency)
             };
 
+    // TEMPORARY measurement aid: one line per update about a traced object (or its seated rider) that goes to this viewer
+    private void TraceViewerUpdate(ISceneEntity entity, string kind)
+    {
+        if (entity is SceneObjectPart p && p.ParentGroup is not null && p == p.ParentGroup.RootPart)
+            CrossTraceLog.Mark(m_scene.Name, p.ParentGroup.Name, kind,
+                $"to={Name} pos={p.AbsolutePosition.X:F2},{p.AbsolutePosition.Y:F2},{p.AbsolutePosition.Z:F2} vel={p.Velocity.X:F2},{p.Velocity.Y:F2},{p.Velocity.Z:F2}");
+        else if (entity is ScenePresence sp && sp.ParentPart is not null && CrossTraceLog.Wanted(sp.ParentPart.ParentGroup?.Name))
+            CrossTraceLog.Mark(m_scene.Name, sp.ParentPart.ParentGroup.Name, kind + "-rider", $"to={Name} av={sp.Name}");
+    }
+
     private void ProcessEntityUpdates(int maxUpdatesBytes)
     {
         if (!IsActive)
@@ -5069,6 +5079,8 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
                 SceneObjectGroup grp = part.ParentGroup;
                 if (grp.inTransit && ((update.Flags & PrimUpdateFlags.SendInTransit) == 0))
                 {
+                    if (CrossTraceLog.Enabled && part == grp.RootPart)
+                        CrossTraceLog.Mark(m_scene.Name, grp.Name, "viewer-update-suppressed", $"to={Name}");
                     update.Free();
                     continue;
                 }
@@ -5365,6 +5377,8 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             for(int indx = 0; indx < objectUpdates.Count; ++indx)
             {
                 eu = objectUpdates[indx];
+                if (CrossTraceLog.Enabled)
+                    TraceViewerUpdate(eu.Entity, "viewer-full");
                 lastpos = zc.Position;
                 lastzc = zc.ZeroCount;
                 if (eu.Entity is ScenePresence sp)
@@ -5630,6 +5644,8 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
                         {
                             eu = terseUpdates[indx++];
                             lastpos = pos;
+                            if (CrossTraceLog.Enabled)
+                                TraceViewerUpdate(eu.Entity, "viewer-terse");
                             if(eu.Entity is ScenePresence sp)
                                 CreateAvatartImprovedTerseBlock(sp, ref data);
                             else

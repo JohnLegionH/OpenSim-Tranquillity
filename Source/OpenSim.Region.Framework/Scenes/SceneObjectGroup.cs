@@ -897,6 +897,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
                 if (!inTransit)
                 {
                     inTransit = true;
+                    CrossTrace.Mark(this, "border-detected", $"pos={val.X:F2},{val.Y:F2},{val.Z:F2} vel={m_rootPart.Velocity.X:F2},{m_rootPart.Velocity.Y:F2},{m_rootPart.Velocity.Z:F2} riders={m_sittingAvatars.Count}");
                     StartCrossing(val, null, "ObjCross-" + UUID.ToString());
                 }
                 return;
@@ -970,6 +971,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
             {
                 SceneObjectGroup stayed = CrossAsync(sog, val, tpdata);
                 crossed = stayed is null;
+                CrossTrace.Mark(sog, "crossasync-returned", $"crossed={crossed}");
                 CrossAsyncCompleted(stayed);
             }
             finally
@@ -1032,6 +1034,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
     private void CrossStep(string label)
     {
         m_crossStep = label;
+        CrossTrace.Mark(this, label);
         if (m_crossWatch is not null)
             m_log.LogDebug($"[SCENE OBJECT]: Crossing {Name} from {m_scene?.Name} to {m_crossDestinationName}: {label} at {m_crossWatch.ElapsedMilliseconds} ms");
         m_scene?.CrossingStepHook?.Invoke(this, label);
@@ -1232,7 +1235,9 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
 
         root.KeyframeMotion?.StartCrossingCheck();
 
+        CrossTrace.Mark(sog, "dest-found", destination?.RegionName ?? "none");
         root.PhysActor?.CrossingStart();
+        CrossTrace.Mark(sog, "physics-removed");
 
         if (destination is null)
         {
@@ -1433,6 +1438,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
                 sog.HideFromViewers(avsToCross);
             }
             sog.CrossStep("object-sent");
+            CrossTrace.Mark(sog, "object-sent-held", held.ToString());
 
             if(isTeleport)
             {
@@ -1459,7 +1465,10 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
             }
 
             if(crossedfar)
+            {
+                CrossTrace.Mark(sog, "far-child-sleep-1000ms");
                 Thread.Sleep(1000);
+            }
 
             bool anyCrossed = false;
             bool recallTried = false;
@@ -1551,6 +1560,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
             }
             avsToCrossFar.Clear();
             avsToCross.Clear();
+            CrossTrace.Mark(sog, "riders-done");
             if (!held)
             {
                 sog.RemoveScriptInstances(true);

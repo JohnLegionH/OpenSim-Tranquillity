@@ -327,8 +327,10 @@ public class LocalSimulationConnectorModule : ISharedRegionModule, ISimulationSe
             if (isLocalCall)
             {
                 // We need to make a local copy of the object
+                CrossTrace.Mark((SceneObjectGroup)sog, "serialise-start", "local clone");
                 ISceneObject sogClone = sog.CloneForNewScene();
                 sogClone.SetState(sog.GetStateSnapshot(), s);
+                CrossTrace.Mark((SceneObjectGroup)sog, "serialise-end", "local clone");
                 return s.IncomingCreateObject(newPosition, sogClone);
             }
             else
@@ -358,8 +360,10 @@ public class LocalSimulationConnectorModule : ISharedRegionModule, ISimulationSe
 
         if (isLocalCall)
         {
+            CrossTrace.Mark((SceneObjectGroup)sog, "serialise-start", "local clone");
             ISceneObject sogClone = sog.CloneForNewScene();
             sogClone.SetState(sog.GetStateSnapshot(), s);
+            CrossTrace.Mark((SceneObjectGroup)sog, "serialise-end", "local clone");
             return s.IncomingCreateObject(newPosition, sogClone, hold);
         }
 

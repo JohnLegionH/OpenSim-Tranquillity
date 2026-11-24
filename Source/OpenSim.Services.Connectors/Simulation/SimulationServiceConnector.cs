@@ -494,6 +494,7 @@ public class SimulationServiceConnector : ISimulationService
         {
             OSDMap args = new OSDMap(16);
 
+            CrossTraceLog.Mark("?", sog.Name, "serialise-start", "xml2");
             args["sog"] = OSD.FromString(sog.ToXml2());
             args["extra"] = OSD.FromString(sog.ExtraToXmlString());
             args["modified"] = OSD.FromBoolean(sog.HasGroupChanged);
@@ -502,6 +503,7 @@ public class SimulationServiceConnector : ISimulationService
             string state = sog.GetStateSnapshot();
             if (state.Length > 0)
                 args["state"] = OSD.FromString(state);
+            CrossTraceLog.Mark("?", sog.Name, "serialise-end", $"xml2 bytes={args["sog"].AsString().Length} state={state.Length}");
 
             // Add the input general arguments
             args["destination_x"] = OSD.FromString(destination.RegionLocX.ToString());
@@ -509,7 +511,9 @@ public class SimulationServiceConnector : ISimulationService
             args["destination_name"] = OSD.FromString(destination.RegionName);
             args["destination_uuid"] = OSD.FromString(destination.RegionID.ToString());
 
+            CrossTraceLog.Mark("?", sog.Name, "post-start");
             OSDMap result = PostObjectMessage(uri, args, 40000);
+            CrossTraceLog.Mark("?", sog.Name, "post-end");
 
             if (result == null)
                 return false;

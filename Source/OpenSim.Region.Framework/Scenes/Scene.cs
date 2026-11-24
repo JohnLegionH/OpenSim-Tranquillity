@@ -1272,6 +1272,12 @@ public partial class Scene : SceneBase
         ReprioritizationDistance = m_minReprioritizationDistance;
 
         m_eventManager = new EventManager();
+        if (CrossTraceLog.Enabled)
+            m_eventManager.OnChatFromWorld += (sender, chat) =>
+            {
+                if (chat.Message is not null && chat.Message.StartsWith("XT:", StringComparison.Ordinal))
+                    CrossTraceLog.MarkAny(RegionInfo?.RegionName ?? "?", chat.From, "script-chat", chat.Message);
+            };
 
         m_permissions = new ScenePermissions(this);
 
@@ -3099,6 +3105,7 @@ public partial class Scene : SceneBase
         // an object that came with no riders to wait for is not kept from crossing out again; the arrival with riders
         // (IncomingCreateObject with a hold) sets the stamp after this
         newObject.ArrivedWithRidersAtMs = double.NaN;
+        CrossTrace.Mark(newObject, "incoming-start");
 
         bool taken;
         try
@@ -3119,6 +3126,7 @@ public partial class Scene : SceneBase
 
         // Do this as late as possible so that listeners have full access to the incoming object
         EventManager.TriggerOnIncomingSceneObject(newObject);
+        CrossTrace.Mark(newObject, "incoming-done");
 
         return true;
     }

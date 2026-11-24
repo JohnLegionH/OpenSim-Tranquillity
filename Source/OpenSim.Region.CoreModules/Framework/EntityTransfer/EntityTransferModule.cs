@@ -2002,10 +2002,13 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
                 return agent;
             }
 
+            CrossTraceLog.MarkAny(m_sceneName, "XT-agent", "agent-cross-start", agent.Name);
             m_entityTransferStateMachine.SetInTransit(agent.UUID);
             agent.RemoveFromPhysicalScene();
 
-            if (!CrossAgentIntoNewRegionMain(agent, pos, neighbourRegion, endpoint, isFlying, ctx))
+            bool agentCrossed = CrossAgentIntoNewRegionMain(agent, pos, neighbourRegion, endpoint, isFlying, ctx);
+            CrossTraceLog.MarkAny(m_sceneName, "XT-agent", "agent-cross-end", $"{agent.Name} ok={agentCrossed}");
+            if (!agentCrossed)
             {
                 m_log.LogDebug("{0}: CrossAgentToNewRegionAsync: cross main failed. Resetting transfer state", LogHeader);
                 m_entityTransferStateMachine.ResetFromTransit(agent.UUID);
@@ -2053,7 +2056,10 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
             // Beyond this point, extra cleanup is needed beyond removing transit state
             m_entityTransferStateMachine.UpdateInTransit(agentUUID, AgentTransferState.Transferring);
 
-            if (sucess && !m_scene.SimulationService.UpdateAgent(neighbourRegion, cAgent, ctx))
+            CrossTraceLog.MarkAny(m_sceneName, "XT-agent", "update-agent-start", agent.Name);
+            bool updateAgentOk = m_scene.SimulationService.UpdateAgent(neighbourRegion, cAgent, ctx);
+            CrossTraceLog.MarkAny(m_sceneName, "XT-agent", "update-agent-end", $"{agent.Name} ok={updateAgentOk}");
+            if (sucess && !updateAgentOk)
             {
                 sucess = false;
                 reason = "agent update failed";
@@ -2113,6 +2119,7 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
 
         if (m_eqModule != null)
         {
+            CrossTraceLog.MarkAny(m_sceneName, "XT-agent", "crossregion-sent", agent.Name);
             m_eqModule.CrossRegion(
                 neighbourRegion.RegionHandle, pos, vel2 /* agent.Velocity */,
                 endpoint, capsPath, agentUUID, agent.ControllingClient.SessionId,
@@ -2977,8 +2984,10 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
 
         if (destination != null)
         {
+            CrossTrace.Mark(grp, "send-start");
             if (m_scene.SimulationService != null)
                 successYN = m_scene.SimulationService.CreateObject(destination, newPosition, grp, true);
+            CrossTrace.Mark(grp, "send-end", successYN.ToString());
 
             if (successYN)
             {
@@ -2986,6 +2995,7 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
                 try
                 {
                     grp.Scene.DeleteSceneObject(grp, silent, removeScripts);
+                    CrossTrace.Mark(grp, "source-deleted");
                 }
                 catch (Exception e)
                 {
@@ -3014,8 +3024,11 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
         Culture.SetCurrentCulture();
 
         grp.RootPart.ClearUpdateSchedule();
-        return destination is not null && m_scene.SimulationService is not null
+        CrossTrace.Mark(grp, "send-start", "held");
+        bool sentHeld = destination is not null && m_scene.SimulationService is not null
             && m_scene.SimulationService.CreateObject(destination, newPosition, grp, true, hold);
+        CrossTrace.Mark(grp, "send-end", sentHeld.ToString());
+        return sentHeld;
     }
 
     public bool RecallCrossingObject(GridRegion destination, SceneObjectGroup grp)
@@ -3091,6 +3104,7 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
         if (!newPosition.IsZero())
             so.RootPart.GroupPosition = newPosition;
 
+        CrossTrace.Mark(so, "dest-add-start", $"pos={newPosition.X:F2},{newPosition.Y:F2},{newPosition.Z:F2} vel={so.RootPart.Velocity.X:F2},{so.RootPart.Velocity.Y:F2},{so.RootPart.Velocity.Z:F2}");
         if (!m_scene.AddSceneObject(so))
         {
             m_log.LogDebug(
@@ -3115,6 +3129,7 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
                 return false;
             }
 
+            CrossTrace.Mark(so, "dest-scene-added", $"physactor={so.RootPart.PhysActor is not null}");
             m_scene.CrossingStepHook?.Invoke(so, "destination-add");
 
             // For attachments, we need to wait until the agent is root
@@ -3125,11 +3140,16 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
             {
                 m_scene.CrossingStepHook?.Invoke(so, "script-start");
 
+                CrossTrace.Mark(so, "scripts-create-start");
                 so.RootPart.ParentGroup.CreateScriptInstances(0, false, m_scene.DefaultScriptEngine, GetStateSource(so));
+                CrossTrace.Mark(so, "scripts-created");
 
                 // An object that arrived with riders starts when they have arrived (Scene.IncomingCreateObject)
                 if (!so.HeldForRiders)
+                {
                     so.ResumeScripts();
+                    CrossTrace.Mark(so, "scripts-resumed");
+                }
             }
             catch (Exception e)
             {
