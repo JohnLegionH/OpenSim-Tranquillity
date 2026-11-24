@@ -8,8 +8,9 @@
 // The [Jolt] config section.
 //
 // Every knob the module used to hardcode, read once in Initialise. The rule: every default reproduces the
-// module's built-in behaviour exactly (PhysicsBackendSettings.Default + CollisionSteps 6 + VelocityIterations 20 + the
-// MaxBodies area rule + today's step-buffer caps). Scaling the pair/contact caps with region area is opt-in (ScaleCapsWithArea). The
+// module's built-in behaviour exactly (PhysicsBackendSettings.Default + CollisionSteps 6 + VelocityIterations 20 + today's
+// step-buffer caps), except the engine limits MaxBodies, MaxBodyPairs and MaxContactConstraints: left at 0 they come from the
+// region's object and agent capacity (ToBackendSettings). Scaling the pair/contact caps with region area is opt-in (ScaleCapsWithArea). The
 // avatar speed factors are the exception: their defaults give Second Life's documented speeds (see below).
 // Invalid values (unparsable, non-finite, out of range) warn and fall back to the default - a typo in the INI
 // must never take a region down or silently change physics.
@@ -31,8 +32,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         /// <summary>Whose basic-forces behaviour the engine follows where InWorldz and Second Life differ: for now the physics material presets.</summary>
         internal enum BasicForces { InWorldz = 0, SecondLife }
 
-        // 65536 bodies per standard 256 x 256 m region, scaled by AREA for varregions.
+        // 65536 bodies per standard 256 x 256 m region, scaled by AREA for varregions: what the automatic MaxBodies was before
+        // it came from the region's capacity. The pair and contact caps were these fixed numbers.
         internal const int BaseMaxBodies = 65536;
+        internal const int BaseMaxBodyPairs = 65536;
+        internal const int BaseMaxContactConstraints = 16384;
         internal const long BaseArea = 256L * 256L;
 
         public float Gravity = -9.80665f;          // world Z gravity, m/s^2
@@ -41,9 +45,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public int VelocityIterations = 20;        // Jolt's own is 10, at which ten stacked boxes do not fall asleep at 45 Hz
         public int ThreadCount = 0;                // all pools together; 0 = automatic: each pool's share of ProcessorCount - 1, at most 4 (first region wins)
         public bool DeterministicMode = false;
-        public int MaxBodies = 0;                  // 0 = BaseMaxBodies scaled by area
-        public int MaxBodyPairs = 65536;
-        public int MaxContactConstraints = 16384;
+        public int MaxBodies = 0;                  // 0 = automatic, from the region's capacity (ToBackendSettings)
+        public int MaxBodyPairs = 0;               // 0 = automatic, likewise
+        public int MaxContactConstraints = 0;      // 0 = automatic, likewise
         public bool ScaleCapsWithArea = false;     // true: scale MaxBodyPairs / MaxContactConstraints by area too
         public int BodyUpdateBufferMax = 65536;
         public int CharacterUpdateBufferMax = 1024;
@@ -210,8 +214,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.ThreadCount = I(cfg, "ThreadCount", c.ThreadCount, 0, 256, warnings);
             c.DeterministicMode = B(cfg, "DeterministicMode", c.DeterministicMode, warnings);
             c.MaxBodies = I(cfg, "MaxBodies", c.MaxBodies, 0, 8_388_607, warnings);   // Jolt's BodyID index limit
-            c.MaxBodyPairs = I(cfg, "MaxBodyPairs", c.MaxBodyPairs, 1, 8_388_607, warnings);
-            c.MaxContactConstraints = I(cfg, "MaxContactConstraints", c.MaxContactConstraints, 1, 8_388_607, warnings);
+            c.MaxBodyPairs = I(cfg, "MaxBodyPairs", c.MaxBodyPairs, 0, 8_388_607, warnings);
+            c.MaxContactConstraints = I(cfg, "MaxContactConstraints", c.MaxContactConstraints, 0, 8_388_607, warnings);
             c.ScaleCapsWithArea = B(cfg, "ScaleCapsWithArea", c.ScaleCapsWithArea, warnings);
             c.AllowUnrecordedNative = B(cfg, "AllowUnrecordedNative", c.AllowUnrecordedNative, warnings);
             c.HonourConvexMesh = B(cfg, "HonourConvexMesh", c.HonourConvexMesh, warnings);
@@ -385,6 +389,58 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private static int ScaleByArea(int value, uint sizeX, uint sizeY)
             => (int)Math.Min((long)value * AreaFactorNumerator(sizeX, sizeY) / BaseArea, int.MaxValue);
 
+        // The region's object capacity ([Region] MaxPrims) and agent capacity ([Region] MaxAgents) when nothing else is known,
+        // RegionInfo's own defaults.
+        internal const int StandardObjectCapacity = 15000;
+        internal const int StandardAgentCapacity = 100;
+
+        // The highest MaxBodies Jolt takes (its BodyID index has 23 bits).
+        internal const int JoltMaxBodies = 8_388_607;
+
+        /// <summary>
+        /// The most bodies a region can legitimately hold: one for each prim of its object capacity (a prim has at most one
+        /// body, and the parts of a welded linkset share one, so the prim count is the upper bound), one for each avatar of its
+        /// agent capacity (an avatar's query body; its character is not a body), and the terrain. The object capacity is
+        /// taken as at least 15000 per 256 x 256 m of area, so a var region whose MaxPrims was never raised keeps room for
+        /// the content it may already hold: core enforces MaxPrims only when PrimLimitsModule is on.
+        /// </summary>
+        internal static int AutoBodyBound(uint sizeX, uint sizeY, int objectCapacity, int agentCapacity)
+        {
+            long areaPrims = StandardObjectCapacity * AreaFactorNumerator(sizeX, sizeY) / BaseArea;
+            long prims = Math.Max(Math.Max(objectCapacity, 0), areaPrims);
+            return (int)Math.Min(prims + Math.Max(agentCapacity, 0) + 1, JoltMaxBodies);
+        }
+
+        private static int RoundUpTo1024(long v) => (int)Math.Min((v + 1023) / 1024 * 1024, JoltMaxBodies);
+
+        /// <summary>
+        /// The backend settings for a region of this size and capacity. Each of MaxBodies, MaxBodyPairs and
+        /// MaxContactConstraints left at 0 is automatic and comes from <see cref="AutoBodyBound"/>: MaxBodies is half as
+        /// much again (a full region stays under the 80 % warning, with room for content past an unenforced MaxPrims);
+        /// MaxBodyPairs is one per body slot and MaxContactConstraints one per body at full capacity, each no higher than the
+        /// fixed 65536 and 16384 used before, since those caps count only pairs that touch a moving body. An explicit value
+        /// is used as it is, and ScaleCapsWithArea scales the pair and contact caps (explicit, or the earlier 65536 and
+        /// 16384) by area as before.
+        /// </summary>
+        internal PhysicsBackendSettings ToBackendSettings(uint sizeX, uint sizeY, float stepRate, int objectCapacity, int agentCapacity)
+        {
+            PhysicsBackendSettings s = SettingsWithoutLimits(stepRate);
+            int bound = AutoBodyBound(sizeX, sizeY, objectCapacity, agentCapacity);
+            int autoBodies = RoundUpTo1024(bound + (bound + 1) / 2);
+            s.MaxBodies = MaxBodies > 0 ? MaxBodies : autoBodies;
+            if (ScaleCapsWithArea)
+            {
+                s.MaxBodyPairs = ScaleByArea(MaxBodyPairs > 0 ? MaxBodyPairs : BaseMaxBodyPairs, sizeX, sizeY);
+                s.MaxContactConstraints = ScaleByArea(MaxContactConstraints > 0 ? MaxContactConstraints : BaseMaxContactConstraints, sizeX, sizeY);
+            }
+            else
+            {
+                s.MaxBodyPairs = MaxBodyPairs > 0 ? MaxBodyPairs : Math.Min(BaseMaxBodyPairs, autoBodies);
+                s.MaxContactConstraints = MaxContactConstraints > 0 ? MaxContactConstraints : Math.Min(BaseMaxContactConstraints, RoundUpTo1024(bound));
+            }
+            return s;
+        }
+
         /// <summary>The backend settings for a region of this size - what AddRegion hands Initialize.</summary>
         internal PhysicsBackendSettings ToBackendSettings(uint sizeX, uint sizeY) => ToBackendSettings(sizeX, sizeY, substepping: false);
 
@@ -412,8 +468,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 : CollisionSteps;
 
         /// <summary>As above, for a region whose physics steps at <paramref name="stepRate"/> a second (0: one step per
-        /// heartbeat).</summary>
+        /// heartbeat), with the standard object and agent capacity.</summary>
         internal PhysicsBackendSettings ToBackendSettings(uint sizeX, uint sizeY, float stepRate)
+            => ToBackendSettings(sizeX, sizeY, stepRate, StandardObjectCapacity, StandardAgentCapacity);
+
+        // Everything but the three engine limits, which ToBackendSettings sets.
+        private PhysicsBackendSettings SettingsWithoutLimits(float stepRate)
         {
             PhysicsBackendSettings s = PhysicsBackendSettings.Default;
             s.Gravity = new SVector3(0f, 0f, Gravity);
@@ -421,9 +481,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             s.RestitutionCombine = RestitutionCombine;
             s.TerrainFriction = TerrainFriction;
             s.TerrainRestitution = TerrainRestitution;
-            s.MaxBodies = MaxBodies > 0 ? MaxBodies : ScaleByArea(BaseMaxBodies, sizeX, sizeY);
-            s.MaxBodyPairs = ScaleCapsWithArea ? ScaleByArea(MaxBodyPairs, sizeX, sizeY) : MaxBodyPairs;
-            s.MaxContactConstraints = ScaleCapsWithArea ? ScaleByArea(MaxContactConstraints, sizeX, sizeY) : MaxContactConstraints;
             s.ThreadCount = ThreadCount;
             s.PositionIterations = PositionIterations;
             s.VelocityIterations = VelocityIterations;
