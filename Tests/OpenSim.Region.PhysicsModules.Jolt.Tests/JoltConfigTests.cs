@@ -45,7 +45,7 @@ public class JoltConfigTests
     }
 
     [Theory]
-    [InlineData(256u, 256u, 23552, 23552, 15360)]
+    [InlineData(256u, 256u, 65536, 65536, 16384)]
     [InlineData(1024u, 1024u, 360448, 65536, 16384)]
     public void Empty_config_reproduces_todays_settings(uint sx, uint sy, int expectedMaxBodies, int expectedPairs, int expectedContacts)
     {

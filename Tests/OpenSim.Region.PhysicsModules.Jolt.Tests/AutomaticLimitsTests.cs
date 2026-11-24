@@ -16,9 +16,10 @@ using OMVQuaternion = OpenMetaverse.Quaternion;
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
-/// The automatic [Jolt] MaxBodies, MaxBodyPairs and MaxContactConstraints (each 0, the default) come from what the
-/// region can hold: its object capacity ([Region] MaxPrims, never less than 15000 per 256 x 256 m of area) and its
-/// agent capacity ([Region] MaxAgents), plus the terrain. An explicit setting is used as it is. At 80 % of MaxBodies one
+/// The automatic [Jolt] MaxBodies, MaxBodyPairs and MaxContactConstraints (each 0, the default). MaxBodies comes from
+/// what the region can hold: its object capacity ([Region] MaxPrims, never less than 15000 per 256 x 256 m of area) and
+/// its agent capacity ([Region] MaxAgents), plus the terrain, and is never below 65536. MaxBodyPairs and
+/// MaxContactConstraints are 65536 and 16384. An explicit setting is used as it is. At 80 % of MaxBodies one
 /// warning names the key to raise; at MaxBodies a new body is refused, counted and reported, and the scene goes on.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
@@ -45,14 +46,14 @@ public class AutomaticLimitsTests
     // ------------------------------------------------------------------ the automatic values
 
     [Fact]
-    public void A_standard_256m_region_gets_limits_from_its_capacity()
+    public void A_standard_256m_region_keeps_the_earlier_limits()
     {
         // 15000 prims + 100 avatars (one query body each) + the terrain = 15101 bodies at most.
         Assert.Equal(15101, JoltConfig.AutoBodyBound(256, 256, 15000, 100));
         PhysicsBackendSettings s = Defaults().ToBackendSettings(256, 256, 0f, 15000, 100);
-        Assert.Equal(23552, s.MaxBodies);              // 1.5 x 15101, up to a multiple of 1024 (was 65536)
-        Assert.Equal(23552, s.MaxBodyPairs);           // one pair per body slot (was 65536)
-        Assert.Equal(15360, s.MaxContactConstraints);  // one per body at full capacity, up to a multiple of 1024 (was 16384)
+        Assert.Equal(65536, s.MaxBodies);              // 1.5 x 15101 is below the floor
+        Assert.Equal(65536, s.MaxBodyPairs);
+        Assert.Equal(16384, s.MaxContactConstraints);
     }
 
     [Fact]
@@ -62,7 +63,7 @@ public class AutomaticLimitsTests
         Assert.Equal(240101, JoltConfig.AutoBodyBound(1024, 1024, 15000, 100));
         PhysicsBackendSettings s = Defaults().ToBackendSettings(1024, 1024, 0f, 15000, 100);
         Assert.Equal(360448, s.MaxBodies);             // was 1048576
-        Assert.Equal(65536, s.MaxBodyPairs);           // never above the earlier fixed value
+        Assert.Equal(65536, s.MaxBodyPairs);
         Assert.Equal(16384, s.MaxContactConstraints);
     }
 
@@ -84,15 +85,15 @@ public class AutomaticLimitsTests
     [InlineData(1024u, 1024u, 15000, 100)]
     [InlineData(1024u, 1024u, 400000, 500)]
     [InlineData(4096u, 4096u, 15000, 100)]
-    public void A_full_region_stays_under_the_warning_and_inside_the_caps(uint sx, uint sy, int prims, int agents)
+    public void A_full_region_stays_under_the_warning_and_no_limit_is_below_its_floor(uint sx, uint sy, int prims, int agents)
     {
         int bound = JoltConfig.AutoBodyBound(sx, sy, prims, agents);
         Assert.True(bound >= Math.Max(prims, 15000L * sx * sy / (256 * 256)) + agents + 1);
         PhysicsBackendSettings s = Defaults().ToBackendSettings(sx, sy, 0f, prims, agents);
         Assert.True(s.MaxBodies * 4L > bound * 5L, $"MaxBodies {s.MaxBodies} leaves a full region ({bound}) at or above 80 %");
-        Assert.True(s.MaxBodyPairs >= Math.Min(65536, bound));
-        Assert.True(s.MaxContactConstraints >= Math.Min(16384, bound));
-        Assert.True(s.MaxBodyPairs <= 65536 && s.MaxContactConstraints <= 16384);
+        Assert.True(s.MaxBodies >= 65536, $"MaxBodies {s.MaxBodies} is below 65536");
+        Assert.Equal(65536, s.MaxBodyPairs);
+        Assert.Equal(16384, s.MaxContactConstraints);
         Assert.True(s.MaxBodies <= 8_388_607);
     }
 
@@ -207,6 +208,20 @@ public class AutomaticLimitsTests
         {
             PhysicsCapacityStats s = scene.Backend.GetCapacityStats();
             Assert.Equal(68608, s.MaxBodies);
+            Assert.Equal(65536, s.MaxBodyPairs);
+            Assert.Equal(16384, s.MaxContactConstraints);
+        }
+        finally { scene.Dispose(); }
+    }
+
+    [Fact]
+    public void The_scene_of_a_standard_256m_region_has_the_earlier_limits()
+    {
+        JoltScene scene = NewScene(256, 15000, 100);
+        try
+        {
+            PhysicsCapacityStats s = scene.Backend.GetCapacityStats();
+            Assert.Equal(65536, s.MaxBodies);
             Assert.Equal(65536, s.MaxBodyPairs);
             Assert.Equal(16384, s.MaxContactConstraints);
         }

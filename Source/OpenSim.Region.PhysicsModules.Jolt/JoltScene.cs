@@ -472,7 +472,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _regionSizeY = (int)sizeY;
 
             // Every knob comes from [Jolt] (JoltConfig). The defaults are exactly what this used to hardcode:
-            // the backend's default settings, the engine limits from the region's capacity (JoltConfig.ToBackendSettings), and
+            // the backend's default settings, the engine limits (JoltConfig.ToBackendSettings), and
             // CollisionSteps = 6 - the RIGID-BODY solver sub-stepped 6x inside _system.Update: at
             // OpenSim's ~11 fps a single integration lets a fast prim move ~1.5 m and tunnel through the terrain
             // heightfield. CollisionSteps slices the SOLVER only, NOT the character step (once per Step, before
