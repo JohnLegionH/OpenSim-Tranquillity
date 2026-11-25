@@ -355,13 +355,12 @@ public class VehicleRepeatedCrossingTests
     // The hand-overs measured between two regions in one process (28 ms) and the shortest seen at 60 m/s (5 ms). The
     // aircraft settings are those of a scripted aircraft that crosses at speed.
     [Theory]
-    [InlineData("Airplane", 30f, 0.028f)]
-    [InlineData("Airplane", 60f, 0.005f)]
-    public void A_vehicle_set_back_to_its_sample_after_crossing_keeps_its_motor(string kind, float speed, float sampleAge)
+    [InlineData(30f, 0.028f)]
+    [InlineData(60f, 0.005f)]
+    public void A_vehicle_set_back_to_its_sample_after_crossing_keeps_its_motor(float speed, float sampleAge)
     {
-        SharedVehicle type = kind == "Airplane" ? SharedVehicle.TYPE_AIRPLANE : SharedVehicle.TYPE_BOAT;
-        var (before, after) = RunArrivalWithSampleAge(type, speed, sampleAge, "InWorldz");
-        _out.WriteLine($"{kind} at {speed} m/s, sample {sampleAge * 1000:0} ms old: {before:F1} m/s before, {after:F1} m/s 2 s after");
+        var (before, after) = RunArrivalWithSampleAge(SharedVehicle.TYPE_AIRPLANE, speed, sampleAge, "InWorldz");
+        _out.WriteLine($"Airplane at {speed} m/s, sample {sampleAge * 1000:0} ms old: {before:F1} m/s before, {after:F1} m/s 2 s after");
         Assert.True(before > 0.8f * speed, $"it was driving east at about {speed} m/s ({before:F1})");
         Assert.True(after > 0.9f * before, $"the motor still drives it 2 s after the crossing ({before:F1} before, {after:F1} after)");
     }
