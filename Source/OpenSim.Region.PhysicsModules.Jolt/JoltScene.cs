@@ -493,7 +493,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
             // A [<RegionName>] section in the running configuration (not the region's own Regions/*.ini file - see
             // JoltRegionLimits.cs) may override MaxBodies, MaxBodyPairs or MaxContactConstraints for this region
-            // alone, the way AutoBackupModule and ServerSideBakingRegion.ResolveEnabled read their own per-region keys.
+            // alone, with the AIS_Enabled-style keys Jolt_MaxBodies, Jolt_MaxBodyPairs and Jolt_MaxContactConstraints -
+            // the way AutoBackupModule and ServerSideBakingRegion.ResolveEnabled read their own per-region keys.
             var limitWarnings = new List<string>();
             JoltRegionLimits regionLimits = JoltRegionLimits.FromConfig(m_Config, RegionName, limitWarnings);
             foreach (string w in limitWarnings)
@@ -540,9 +541,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             string maxBodiesSource = JoltRegionLimits.Source(regionLimits.MaxBodies, _joltConfig.MaxBodies, RegionName, "MaxBodies");
             string maxBodyPairsSource = JoltRegionLimits.Source(regionLimits.MaxBodyPairs, _joltConfig.MaxBodyPairs, RegionName, "MaxBodyPairs");
             string maxContactConstraintsSource = JoltRegionLimits.Source(regionLimits.MaxContactConstraints, _joltConfig.MaxContactConstraints, RegionName, "MaxContactConstraints");
-            _maxBodiesKey = regionLimits.MaxBodies > 0 ? $"[{RegionName}] MaxBodies" : "[Jolt] MaxBodies";
-            _maxBodyPairsKey = regionLimits.MaxBodyPairs > 0 ? $"[{RegionName}] MaxBodyPairs" : "[Jolt] MaxBodyPairs";
-            _maxContactConstraintsKey = regionLimits.MaxContactConstraints > 0 ? $"[{RegionName}] MaxContactConstraints" : "[Jolt] MaxContactConstraints";
+            _maxBodiesKey = regionLimits.MaxBodies > 0 ? $"[{RegionName}] Jolt_MaxBodies" : "[Jolt] MaxBodies";
+            _maxBodyPairsKey = regionLimits.MaxBodyPairs > 0 ? $"[{RegionName}] Jolt_MaxBodyPairs" : "[Jolt] MaxBodyPairs";
+            _maxContactConstraintsKey = regionLimits.MaxContactConstraints > 0 ? $"[{RegionName}] Jolt_MaxContactConstraints" : "[Jolt] MaxContactConstraints";
             m_log.LogInformation($"{LogHeader} region '{RegionName}' {sizeX}x{sizeY}m: backend initialised, MaxBodies={settings.MaxBodies} ({maxBodiesSource}), " +
                                  $"MaxBodyPairs={settings.MaxBodyPairs} ({maxBodyPairsSource}), MaxContactConstraints={settings.MaxContactConstraints} ({maxContactConstraintsSource}) " +
                                  $"(object capacity {objectCapacity}, agent capacity {agentCapacity}). {EngineName}");
