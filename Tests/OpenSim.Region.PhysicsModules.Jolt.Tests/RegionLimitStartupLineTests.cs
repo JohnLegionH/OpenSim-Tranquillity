@@ -14,7 +14,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
 /// The "backend initialised" start-up line names where each of MaxBodies, MaxBodyPairs and MaxContactConstraints
-/// came from: this region's own override, the process-wide [Jolt] setting, or automatic sizing.
+/// came from: this region's own override (read from its Jolt_MaxBodies / Jolt_MaxBodyPairs /
+/// Jolt_MaxContactConstraints keys), the process-wide [Jolt] setting, or automatic sizing.
 /// Serial: it swaps LoggerProvider.LoggerFactory, which is process-wide.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
@@ -102,8 +103,8 @@ public class RegionLimitStartupLineTests
     {
         string m = InitialisedLine("Example Region",
             new[] { ("MaxBodies", "9000") },
-            new[] { ("MaxBodies", "1234") });
-        Assert.Contains("MaxBodies=1234 (region override, [Example Region] MaxBodies = 1234)", m);
+            new[] { ("Jolt_MaxBodies", "1234") });
+        Assert.Contains("MaxBodies=1234 (region override, [Example Region] Jolt_MaxBodies = 1234)", m);
         // Not overridden for this region: still the process setting.
         Assert.Contains("MaxBodyPairs=65536 (automatic)", m);
     }

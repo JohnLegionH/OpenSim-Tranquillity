@@ -17,9 +17,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
 /// A region's own [&lt;Region Name&gt;] section may override [Jolt] MaxBodies, MaxBodyPairs and
-/// MaxContactConstraints for that region only: a region with no override is sized exactly as before, an override
-/// in one region's section never reaches a neighbour in the same process, and an invalid region value warns and
-/// falls back instead of taking the region down.
+/// MaxContactConstraints for that region only, with the keys Jolt_MaxBodies, Jolt_MaxBodyPairs and
+/// Jolt_MaxContactConstraints (named for Jolt the way AIS_Enabled is): a region with no override is sized exactly
+/// as before, an override in one region's section never reaches a neighbour in the same process, a region named
+/// the same as an existing section gets no accidental override from that section's bare keys, and an invalid
+/// region value warns and falls back instead of taking the region down.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
 [DeleteScratchFolders]
@@ -61,13 +63,31 @@ public class RegionLimitOverrideTests
     }
 
     [Fact]
+    public void A_region_named_the_same_as_an_existing_section_gets_no_accidental_override()
+    {
+        var src = new IniConfigSource();
+        IConfig jolt = src.AddConfig("Jolt");
+        jolt.Set("MaxBodies", "50000");   // the [Jolt] section's own key - unprefixed, process-wide, unaffected
+
+        // A region literally named "Jolt" looks up the same IConfig object the process-wide [Jolt] setting
+        // lives in (source.Configs["Jolt"]). The Jolt_ prefix on the region-override keys is what keeps that
+        // bare MaxBodies from being misread as this region's own override.
+        var warnings = new List<string>();
+        JoltRegionLimits limits = JoltRegionLimits.FromConfig(src, "Jolt", warnings);
+        Assert.Empty(warnings);
+        Assert.Equal(0, limits.MaxBodies);
+        Assert.Equal(0, limits.MaxBodyPairs);
+        Assert.Equal(0, limits.MaxContactConstraints);
+    }
+
+    [Fact]
     public void A_region_override_is_used_exactly_whatever_the_process_setting_or_automatic_bound()
     {
         var src = new IniConfigSource();
         IConfig regionA = src.AddConfig("Region A");
-        regionA.Set("MaxBodies", "9000");
-        regionA.Set("MaxBodyPairs", "9500");
-        regionA.Set("MaxContactConstraints", "9600");
+        regionA.Set("Jolt_MaxBodies", "9000");
+        regionA.Set("Jolt_MaxBodyPairs", "9500");
+        regionA.Set("Jolt_MaxContactConstraints", "9600");
         var warnings = new List<string>();
         JoltRegionLimits limits = JoltRegionLimits.FromConfig(src, "Region A", warnings);
         Assert.Empty(warnings);
@@ -87,7 +107,7 @@ public class RegionLimitOverrideTests
         j.Set("MaxBodies", "50000");
         j.Set("MaxBodyPairs", "50000");
         j.Set("MaxContactConstraints", "5000");
-        jolt.AddConfig("Region A").Set("MaxBodies", "9000");
+        jolt.AddConfig("Region A").Set("Jolt_MaxBodies", "9000");
 
         var warnings = new List<string>();
         JoltConfig c = JoltConfig.FromConfig(jolt, warnings);
@@ -105,7 +125,7 @@ public class RegionLimitOverrideTests
     public void A_region_key_of_zero_carries_no_override_the_same_as_an_absent_key()
     {
         var src = new IniConfigSource();
-        src.AddConfig("Region A").Set("MaxBodies", "0");
+        src.AddConfig("Region A").Set("Jolt_MaxBodies", "0");
         var warnings = new List<string>();
         JoltRegionLimits limits = JoltRegionLimits.FromConfig(src, "Region A", warnings);
         Assert.Empty(warnings);
@@ -120,12 +140,12 @@ public class RegionLimitOverrideTests
     public void An_invalid_region_value_warns_and_falls_back_to_the_process_setting()
     {
         var src = new IniConfigSource();
-        src.AddConfig("Region A").Set("MaxBodies", "not a number");
+        src.AddConfig("Region A").Set("Jolt_MaxBodies", "not a number");
         var warnings = new List<string>();
         JoltRegionLimits limits = JoltRegionLimits.FromConfig(src, "Region A", warnings);
         Assert.Equal(0, limits.MaxBodies);
         Assert.Single(warnings);
-        Assert.Contains("[Region A] MaxBodies", warnings[0]);
+        Assert.Contains("[Region A] Jolt_MaxBodies", warnings[0]);
         Assert.Contains("using [Jolt] MaxBodies", warnings[0]);
 
         PhysicsBackendSettings baseline = Defaults().ToBackendSettings(256, 256, 0f, 15000, 100);
@@ -137,12 +157,12 @@ public class RegionLimitOverrideTests
     public void An_out_of_range_region_value_warns_and_falls_back()
     {
         var src = new IniConfigSource();
-        src.AddConfig("Region A").Set("MaxContactConstraints", "-5");
+        src.AddConfig("Region A").Set("Jolt_MaxContactConstraints", "-5");
         var warnings = new List<string>();
         JoltRegionLimits limits = JoltRegionLimits.FromConfig(src, "Region A", warnings);
         Assert.Equal(0, limits.MaxContactConstraints);
         Assert.Single(warnings);
-        Assert.Contains("[Region A] MaxContactConstraints", warnings[0]);
+        Assert.Contains("[Region A] Jolt_MaxContactConstraints", warnings[0]);
     }
 
     // ------------------------------------------------------------------ source labels for the startup line
@@ -152,7 +172,7 @@ public class RegionLimitOverrideTests
     {
         string s = JoltRegionLimits.Source(regionValue: 9000, processValue: 50000, regionName: "Region A", key: "MaxBodies");
         Assert.Contains("region override", s);
-        Assert.Contains("[Region A] MaxBodies = 9000", s);
+        Assert.Contains("[Region A] Jolt_MaxBodies = 9000", s);
     }
 
     [Fact]
@@ -195,7 +215,7 @@ public class RegionLimitOverrideTests
         startup.Set("meshing", "Meshmerizer");
         startup.Set("DecodedSculptMapPath", ScratchFolders.Create());
         config.AddConfig("Jolt");   // no process-wide override: automatic
-        config.AddConfig("Region A").Set("MaxBodies", regionAMaxBodies.ToString());
+        config.AddConfig("Region A").Set("Jolt_MaxBodies", regionAMaxBodies.ToString());
         config.AddConfig("Region B");   // no override: Region B keeps the automatic/process limit
         return config;
     }
@@ -269,7 +289,7 @@ public class RegionLimitOverrideTests
     [Fact]
     public void The_80_percent_warning_names_the_regions_own_override_key()
     {
-        IConfigSource config = OneRegionConfig("Region A", new[] { ("MaxBodies", "20"), ("MaxBodyPairs", "64"), ("MaxContactConstraints", "64") });
+        IConfigSource config = OneRegionConfig("Region A", new[] { ("Jolt_MaxBodies", "20"), ("Jolt_MaxBodyPairs", "64"), ("Jolt_MaxContactConstraints", "64") });
         JoltScene scene = NewScene("Region A", 256, 15000, 100, config);
         try
         {
@@ -286,7 +306,7 @@ public class RegionLimitOverrideTests
             Assert.Equal(16, scene.Backend.GetCapacityStats().LiveBodyCount);   // 80 %
             Assert.Equal(1, scene.BodyLimitWarnings);
             Assert.Contains("16 of 20", scene.LastBodyLimitWarning);
-            Assert.Contains("raise [Region A] MaxBodies", scene.LastBodyLimitWarning);
+            Assert.Contains("raise [Region A] Jolt_MaxBodies", scene.LastBodyLimitWarning);
         }
         finally { scene.Dispose(); }
     }
@@ -295,7 +315,7 @@ public class RegionLimitOverrideTests
     public void The_refusal_at_full_names_the_regions_own_override_key()
     {
         IConfigSource config = OneRegionConfig("Region A",
-            new[] { ("MaxBodies", "20"), ("MaxBodyPairs", "64"), ("MaxContactConstraints", "64") },
+            new[] { ("Jolt_MaxBodies", "20"), ("Jolt_MaxBodyPairs", "64"), ("Jolt_MaxContactConstraints", "64") },
             new[] { ("CapacityLogIntervalSeconds", "3600") });
         JoltScene scene = NewScene("Region A", 256, 15000, 100, config);
         try
@@ -311,7 +331,7 @@ public class RegionLimitOverrideTests
             Step(scene, 2);
             Assert.Equal(1, scene.CapacityWarnings);
             Assert.Contains("bodies refused (MaxBodies 20 reached x1", scene.LastCapacityWarning);
-            Assert.Contains("raise [Region A] MaxBodies", scene.LastCapacityWarning);
+            Assert.Contains("raise [Region A] Jolt_MaxBodies", scene.LastCapacityWarning);
         }
         finally { scene.Dispose(); }
     }
