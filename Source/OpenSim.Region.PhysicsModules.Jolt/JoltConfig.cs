@@ -417,14 +417,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         /// as <see cref="AutoBodyBound"/> (a full region stays under the 80 % warning, with room for content past an
         /// unenforced MaxPrims), and never below 65536. MaxBodyPairs and MaxContactConstraints left at 0 are 65536 and
         /// 16384. An explicit value is used as it is, and ScaleCapsWithArea scales the pair and contact caps by area.
+        /// <paramref name="regionLimits"/> (0 fields: no override) takes priority over this process's own [Jolt]
+        /// values for whichever of the three keys it sets; a region with no override is sized exactly as before.
         /// </summary>
-        internal PhysicsBackendSettings ToBackendSettings(uint sizeX, uint sizeY, float stepRate, int objectCapacity, int agentCapacity)
+        internal PhysicsBackendSettings ToBackendSettings(uint sizeX, uint sizeY, float stepRate, int objectCapacity, int agentCapacity, JoltRegionLimits regionLimits = default)
         {
             PhysicsBackendSettings s = SettingsWithoutLimits(stepRate);
             int bound = AutoBodyBound(sizeX, sizeY, objectCapacity, agentCapacity);
-            s.MaxBodies = MaxBodies > 0 ? MaxBodies : Math.Max(BaseMaxBodies, RoundUpTo1024(bound + (bound + 1) / 2));
-            int pairs = MaxBodyPairs > 0 ? MaxBodyPairs : BaseMaxBodyPairs;
-            int contacts = MaxContactConstraints > 0 ? MaxContactConstraints : BaseMaxContactConstraints;
+            int maxBodies = regionLimits.MaxBodies > 0 ? regionLimits.MaxBodies : MaxBodies;
+            s.MaxBodies = maxBodies > 0 ? maxBodies : Math.Max(BaseMaxBodies, RoundUpTo1024(bound + (bound + 1) / 2));
+            int pairs = regionLimits.MaxBodyPairs > 0 ? regionLimits.MaxBodyPairs : (MaxBodyPairs > 0 ? MaxBodyPairs : BaseMaxBodyPairs);
+            int contacts = regionLimits.MaxContactConstraints > 0 ? regionLimits.MaxContactConstraints : (MaxContactConstraints > 0 ? MaxContactConstraints : BaseMaxContactConstraints);
             s.MaxBodyPairs = ScaleCapsWithArea ? ScaleByArea(pairs, sizeX, sizeY) : pairs;
             s.MaxContactConstraints = ScaleCapsWithArea ? ScaleByArea(contacts, sizeX, sizeY) : contacts;
             return s;

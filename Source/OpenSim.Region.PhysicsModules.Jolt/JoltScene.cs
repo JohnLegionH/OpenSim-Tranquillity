@@ -458,6 +458,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal string LastCapacityWarning { get; private set; }
         private readonly BodyLimitWatch _bodyLimitWatch = new BodyLimitWatch();
 
+        // The key an operator should raise for this region, for the 80 % warning and the dropped-collision/refused-body
+        // lines: this region's own override when InitialiseRegion found one, the matching [Jolt] key otherwise.
+        private string _maxBodiesKey = "[Jolt] MaxBodies";
+        private string _maxBodyPairsKey = "[Jolt] MaxBodyPairs";
+        private string _maxContactConstraintsKey = "[Jolt] MaxContactConstraints";
+
         // AddRegion's work once the scene is known. The heightmap and water height are read where AddRegion
         // always read them, after the backend exists.
         /// <summary>TEST-ONLY: run on the new backend before it is initialised, so a test can make Initialize fail.</summary>
@@ -485,7 +491,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 m_log.LogInformation($"{LogHeader} region '{RegionName}': {rateNote}");
             _substeps = stepRate > 0f ? new SubstepAccumulator(stepRate) : null;
 
-            PhysicsBackendSettings settings = _joltConfig.ToBackendSettings(sizeX, sizeY, _substeps != null ? stepRate : 0f, objectCapacity, agentCapacity);
+            // A [<RegionName>] section in the running configuration (not the region's own Regions/*.ini file - see
+            // JoltRegionLimits.cs) may override MaxBodies, MaxBodyPairs or MaxContactConstraints for this region
+            // alone, the way AutoBackupModule and ServerSideBakingRegion.ResolveEnabled read their own per-region keys.
+            var limitWarnings = new List<string>();
+            JoltRegionLimits regionLimits = JoltRegionLimits.FromConfig(m_Config, RegionName, limitWarnings);
+            foreach (string w in limitWarnings)
+                m_log.LogWarning($"{LogHeader} region '{RegionName}': {w}");
+
+            PhysicsBackendSettings settings = _joltConfig.ToBackendSettings(sizeX, sizeY, _substeps != null ? stepRate : 0f, objectCapacity, agentCapacity, regionLimits);
             CollisionSteps = Math.Max(1, settings.CollisionSteps);
             settings.RegionName = RegionName;   // names this region when another waits for its job pool (metrics)
             settings.RayCastClock = RayCastClock;
@@ -523,8 +537,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // to the backend for vehicle hover.
             base.Initialise(requestAsset, heightMap(), waterHeight());
 
-            m_log.LogInformation($"{LogHeader} region '{RegionName}' {sizeX}x{sizeY}m: backend initialised, MaxBodies={settings.MaxBodies}, " +
-                                 $"MaxBodyPairs={settings.MaxBodyPairs}, MaxContactConstraints={settings.MaxContactConstraints} " +
+            string maxBodiesSource = JoltRegionLimits.Source(regionLimits.MaxBodies, _joltConfig.MaxBodies, RegionName, "MaxBodies");
+            string maxBodyPairsSource = JoltRegionLimits.Source(regionLimits.MaxBodyPairs, _joltConfig.MaxBodyPairs, RegionName, "MaxBodyPairs");
+            string maxContactConstraintsSource = JoltRegionLimits.Source(regionLimits.MaxContactConstraints, _joltConfig.MaxContactConstraints, RegionName, "MaxContactConstraints");
+            _maxBodiesKey = regionLimits.MaxBodies > 0 ? $"[{RegionName}] MaxBodies" : "[Jolt] MaxBodies";
+            _maxBodyPairsKey = regionLimits.MaxBodyPairs > 0 ? $"[{RegionName}] MaxBodyPairs" : "[Jolt] MaxBodyPairs";
+            _maxContactConstraintsKey = regionLimits.MaxContactConstraints > 0 ? $"[{RegionName}] MaxContactConstraints" : "[Jolt] MaxContactConstraints";
+            m_log.LogInformation($"{LogHeader} region '{RegionName}' {sizeX}x{sizeY}m: backend initialised, MaxBodies={settings.MaxBodies} ({maxBodiesSource}), " +
+                                 $"MaxBodyPairs={settings.MaxBodyPairs} ({maxBodyPairsSource}), MaxContactConstraints={settings.MaxContactConstraints} ({maxContactConstraintsSource}) " +
                                  $"(object capacity {objectCapacity}, agent capacity {agentCapacity}). {EngineName}");
 
             RayWarmUpMs = WarmUpRayCasts();
@@ -3191,7 +3211,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             PhysicsCapacityStats s = backend.GetCapacityStats();
             long now = System.DateTime.UtcNow.Ticks;
             CheckGateWait(in s, now, timeStep);
-            string nearFull = _bodyLimitWatch.Check(RegionName, s.LiveBodyCount, s.MaxBodies);
+            string nearFull = _bodyLimitWatch.Check(RegionName, s.LiveBodyCount, s.MaxBodies, _maxBodiesKey);
             if (nearFull != null)
             {
                 m_log.LogWarning(nearFull);
@@ -3218,7 +3238,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (_capLastWarnTicks != 0 && now - _capLastWarnTicks < _capacityLogIntervalTicks)
                 return;                // quiet period: let the counts accumulate into the next line
             string msg = CapacityReport.Warning(RegionName,
-                _capBase, s, System.Math.Max(1.0, (now - _capBaseTicks) / (double)System.TimeSpan.TicksPerSecond));
+                _capBase, s, System.Math.Max(1.0, (now - _capBaseTicks) / (double)System.TimeSpan.TicksPerSecond),
+                _maxBodyPairsKey, _maxContactConstraintsKey, _maxBodiesKey);
             if (msg != null)
             {
                 m_log.LogWarning(msg);

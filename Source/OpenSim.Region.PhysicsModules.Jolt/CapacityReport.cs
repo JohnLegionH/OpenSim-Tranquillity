@@ -26,8 +26,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
     {
         private bool _warned;
 
-        /// <summary>The warning line, or null when there is nothing new to say.</summary>
-        internal string Check(string region, int liveBodies, int maxBodies)
+        /// <summary>The warning line, or null when there is nothing new to say. <paramref name="maxBodiesKey"/> names
+        /// the key an operator should raise for this region: the region's own override when it has one
+        /// ([&lt;Region Name&gt;] MaxBodies), [Jolt] MaxBodies otherwise.</summary>
+        internal string Check(string region, int liveBodies, int maxBodies, string maxBodiesKey = "[Jolt] MaxBodies")
         {
             if (maxBodies <= 0)
                 return null;
@@ -42,7 +44,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 return null;
             _warned = true;
             return $"{JoltScene.LogHeader} {region}: {liveBodies} of {maxBodies} physics bodies in use (80 % or more of MaxBodies); " +
-                   $"at {maxBodies} a new prim gets no physics - raise [Jolt] MaxBodies";
+                   $"at {maxBodies} a new prim gets no physics - raise {maxBodiesKey}";
         }
     }
 
@@ -51,9 +53,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         /// <summary>
         /// The warning for what went wrong between <paramref name="prev"/> and <paramref name="cur"/>, or null when
         /// nothing did. Example: "[JOLT SCENE] Region A: collisions dropped (ContactConstraintsFull x37 in 10s) - raise
-        /// [Jolt] MaxContactConstraints".
+        /// [Jolt] MaxContactConstraints". <paramref name="maxBodyPairsKey"/>, <paramref name="maxContactConstraintsKey"/>
+        /// and <paramref name="maxBodiesKey"/> name the key an operator should raise for this region: a region's own
+        /// override ([&lt;Region Name&gt;] ...) when it has one, the matching [Jolt] key otherwise.
         /// </summary>
-        internal static string Warning(string region, in PhysicsCapacityStats prev, in PhysicsCapacityStats cur, double seconds)
+        internal static string Warning(string region, in PhysicsCapacityStats prev, in PhysicsCapacityStats cur, double seconds,
+            string maxBodyPairsKey = "[Jolt] MaxBodyPairs", string maxContactConstraintsKey = "[Jolt] MaxContactConstraints",
+            string maxBodiesKey = "[Jolt] MaxBodies")
         {
             var dropped = new List<string>();
             var keys = new List<string>();
@@ -63,12 +69,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 dropped.Add($"{name} x{delta}");
                 if (!keys.Contains(key)) keys.Add(key);
             }
-            Flag("ContactConstraintsFull", cur.ContactConstraintsFullSteps - prev.ContactConstraintsFullSteps, "MaxContactConstraints");
-            Flag("BodyPairCacheFull", cur.BodyPairCacheFullSteps - prev.BodyPairCacheFullSteps, "MaxBodyPairs");
+            Flag("ContactConstraintsFull", cur.ContactConstraintsFullSteps - prev.ContactConstraintsFullSteps, maxContactConstraintsKey);
+            Flag("BodyPairCacheFull", cur.BodyPairCacheFullSteps - prev.BodyPairCacheFullSteps, maxBodyPairsKey);
             // Jolt sizes the manifold cache from both caps.
-            Flag("ManifoldCacheFull", cur.ManifoldCacheFullSteps - prev.ManifoldCacheFullSteps, "MaxBodyPairs");
-            if (cur.ManifoldCacheFullSteps > prev.ManifoldCacheFullSteps && !keys.Contains("MaxContactConstraints"))
-                keys.Add("MaxContactConstraints");
+            Flag("ManifoldCacheFull", cur.ManifoldCacheFullSteps - prev.ManifoldCacheFullSteps, maxBodyPairsKey);
+            if (cur.ManifoldCacheFullSteps > prev.ManifoldCacheFullSteps && !keys.Contains(maxContactConstraintsKey))
+                keys.Add(maxContactConstraintsKey);
 
             long refused = cur.BodyCreateFailures - prev.BodyCreateFailures;
             if (dropped.Count == 0 && refused <= 0)
@@ -77,10 +83,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             string span = $"{seconds:0}s";
             var sb = new StringBuilder($"{JoltScene.LogHeader} {region}:");
             if (dropped.Count > 0)
-                sb.Append($" collisions dropped ({string.Join(", ", dropped)} in {span}) - raise [Jolt] {string.Join(", ", keys)}");
+                sb.Append($" collisions dropped ({string.Join(", ", dropped)} in {span}) - raise {string.Join(", ", keys)}");
             if (refused > 0)
                 sb.Append(dropped.Count > 0 ? ";" : "")
-                  .Append($" bodies refused (MaxBodies {cur.MaxBodies} reached x{refused} in {span}; those prims have no physics) - raise [Jolt] MaxBodies");
+                  .Append($" bodies refused (MaxBodies {cur.MaxBodies} reached x{refused} in {span}; those prims have no physics) - raise {maxBodiesKey}");
             return sb.ToString();
         }
 
