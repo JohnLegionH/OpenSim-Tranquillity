@@ -34,7 +34,7 @@ using OpenSim.Region.Framework.Scenes;
 
 namespace OpenSim.Services.SimulationService;
 
-public class SimulationDataService : ServiceBase, ISimulationDataService
+public class SimulationDataService : ServiceBase, ISimulationDataService, ISimulationDataBatch
 {
     protected ISimulationDataStore m_database;
 
@@ -67,6 +67,44 @@ public class SimulationDataService : ServiceBase, ISimulationDataService
         m_database = LoadPlugin<ISimulationDataStore>(dllName, new Object[] { connString });
         if (m_database == null)
             throw new Exception("Could not find a storage interface in the given module");
+    }
+
+    // One service serves every region of the process, and each region backs up on its own thread. The store has one
+    // batch, so a pass that joined another region's would end without a commit and never learn that the commit failed.
+    private readonly object m_backupPassLock = new();
+
+    /// <summary>
+    /// Passed to the store when it supports batching; a store that does not is left alone. A pass then waits until no
+    /// other pass is open. BeginBackupBatch and EndBackupBatch are called on the same thread.
+    /// </summary>
+    public void BeginBackupBatch()
+    {
+        if (m_database is not ISimulationDataBatch batch)
+            return;
+        Monitor.Enter(m_backupPassLock);
+        try
+        {
+            batch.BeginBackupBatch();
+        }
+        catch
+        {
+            Monitor.Exit(m_backupPassLock);
+            throw;
+        }
+    }
+
+    public void EndBackupBatch()
+    {
+        if (m_database is not ISimulationDataBatch batch || !Monitor.IsEntered(m_backupPassLock))
+            return;
+        try
+        {
+            batch.EndBackupBatch();
+        }
+        finally
+        {
+            Monitor.Exit(m_backupPassLock);
+        }
     }
 
     public void StoreObject(SceneObjectGroup obj, UUID regionUUID)
