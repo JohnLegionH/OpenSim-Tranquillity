@@ -42,6 +42,8 @@ public sealed class LinksetContent
     public string Base { get; set; } = string.Empty;
     /// <summary>For an object: write the joint positions of a rigged mesh; null takes the manifest's (or the command line's) setting.</summary>
     public bool? JointPositions { get; set; }
+    /// <summary>For an object: the attachment point the object asset remembers; null leaves none.</summary>
+    public int? AttachPoint { get; set; }
 }
 
 /// <summary>A part's sit target: where an avatar sits and how it is turned, in the part's own axes.</summary>
@@ -108,7 +110,7 @@ public sealed class LinksetManifest
     private static readonly string[] ManifestKeys = { "name", "description", "pbr", "jointPositions", "parts" };
     private static readonly string[] PartKeys = { "name", "description", "folder", "base", "glb", "node", "lod2", "lod1", "lod0", "physics", "position", "rotation", "contents", "sit", "faces" };
     private static readonly string[] SourceKeys = { "glb", "node" };
-    private static readonly string[] ContentKeys = { "type", "file", "name", "description", "textures", "folder", "base", "jointPositions" };
+    private static readonly string[] ContentKeys = { "type", "file", "name", "description", "textures", "folder", "base", "jointPositions", "attachPoint" };
     private static readonly string[] SitKeys = { "position", "rotation" };
     private static readonly string[] FaceKeys = { "material", "face", "glow", "fullbright", "specular" };
     private static readonly string[] SpecularKeys = { "map", "color", "glossiness", "environment" };
