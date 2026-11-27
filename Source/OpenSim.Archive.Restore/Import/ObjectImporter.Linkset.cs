@@ -518,7 +518,14 @@ public static partial class ObjectImporter
         result.Textures.AddRange(inner.Textures);
         result.Materials.AddRange(inner.Materials);
         result.PbrMaterials.AddRange(inner.PbrMaterials);
-        byte[] xml = Utf8.GetBytes("<SceneObjectGroup><RootPart>" + single.PartXml + "</RootPart><OtherParts /></SceneObjectGroup>");
+        string partXml = single.PartXml;
+        if (c.AttachPoint is int point)
+        {
+            // a worn object's point is the shape's State; LastAttachPoint is where the region puts it when State is empty
+            string number = point.ToString(Inv);
+            partXml = PartXml.Edit(partXml, single.PartId, new List<ElementEdit> { ElementEdit.SetText("Shape/State", number), ElementEdit.SetText("Shape/LastAttachPoint", number) });
+        }
+        byte[] xml = Utf8.GetBytes("<SceneObjectGroup><RootPart>" + partXml + "</RootPart><OtherParts /></SceneObjectGroup>");
         Guid asset = MeshId.FromBytes(xml);
         assets[asset] = (xml, AssetType.Object);
         return asset;

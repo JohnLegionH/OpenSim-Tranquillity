@@ -79,7 +79,8 @@ A linked object: a JSON manifest, linkset.json, lists the parts, root part first
     { ""type"": ""object"", ""folder"": ""shirt-mesh"", ""base"": ""shirt"", ""jointPositions"": false }
         an object built from a mesh tool output folder exactly as oar-import <folder> builds it (rigged levels, collision shape, pictures), kept in the part as an
         object item, so a box can hold rigged garments that are taken out with ""Copy to inventory"" in the viewer. ""base"" names the model as --base does;
-        ""jointPositions"" left out takes the manifest's setting.
+        ""jointPositions"" left out takes the manifest's setting. ""attachPoint"" (1 to 55; 7 the left foot, 8 the right foot) is
+        the attachment point the object remembers, so Wear puts it there; left out, it remembers none.
   The check for a linked object writes the archive out with the exporter and compares link order, names, descriptions, places and turns (half a millimetre), triangle
   counts and contents (scripts byte for byte, notecard text, texture pixels) with the manifest and the files. A wearable's text must be its file's apart from the
   creator, the owner and the pictures, and each picture's pixels its file's; an object is checked as a single model is, its lines named after the item.

@@ -66,6 +66,7 @@ that hands them out: in the viewer, "Copy to inventory" on the box (or opening i
       "contents": [
         { "type": "object", "folder": "shirt-mesh", "base": "shirt", "name": "Shirt (mesh)", "jointPositions": false },
         { "type": "object", "folder": "skirt-mesh", "name": "Skirt (mesh)" },
+        { "type": "object", "folder": "left-shoe-mesh", "name": "Left shoe", "attachPoint": 7 },
         { "type": "wearable", "file": "undershirt.txt", "name": "Undershirt", "textures": { "1": "undershirt.png" } },
         { "type": "wearable", "file": "alpha.txt", "name": "Body alpha", "textures": { "21": "lower-alpha.png", "22": "upper-alpha.png" } }
       ] }
@@ -79,6 +80,9 @@ names the model as `--base` does; `jointPositions` left out takes the manifest's
 else the `base`, else the folder's name, and the object inside has the same name and description. The object's centre is its origin, so it is rezzed where it is
 put and a worn one sits on its attachment point. The asset is written in the form the region reads when it rezzes an object from an inventory (a
 `SceneObjectGroup` holding its part in `RootPart`).
+
+`"attachPoint"` on an object is the attachment point number its asset remembers (1 to 55; 7 is the left foot, 8 the right foot). Choosing Wear
+then puts the object on that point. Left out, the asset remembers none, and the region picks its default.
 
 **`"wearable"`**: system clothing or a body part, from an LLWearable text file as a viewer saves one. Its first line is `LLWearable version`, and it has a
 `type N` line, the wearable type: 0 shape, 1 skin, 2 hair and 3 eyes are body parts; 4 shirt, 5 pants, 6 shoes, 7 socks, 8 jacket, 9 gloves, 10 undershirt,

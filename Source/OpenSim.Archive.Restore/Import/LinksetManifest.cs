@@ -107,6 +107,9 @@ public sealed class LinksetManifest
     /// </summary>
     public const int AvatarTextureEntries = 45;
 
+    /// <summary>The highest attachment point number the region accepts (AttachmentPoint.LastValid in AttachmentsModule).</summary>
+    public const int MaxAttachPoint = 55;
+
     private static readonly string[] ManifestKeys = { "name", "description", "pbr", "jointPositions", "parts" };
     private static readonly string[] PartKeys = { "name", "description", "folder", "base", "glb", "node", "lod2", "lod1", "lod0", "physics", "position", "rotation", "contents", "sit", "faces" };
     private static readonly string[] SourceKeys = { "glb", "node" };
@@ -252,7 +255,7 @@ public sealed class LinksetManifest
             throw new ImportException(label + ": the content type '" + type + "' is not one of " + string.Join(", ", ContentTypes));
         bool isObject = type == "object";
         if (!isObject)
-            foreach (string key in new[] { "folder", "base", "jointPositions" })
+            foreach (string key in new[] { "folder", "base", "jointPositions", "attachPoint" })
                 if (ce.TryGetProperty(key, out _))
                     throw new ImportException(where + ": \"" + key + "\" is for an object, not a " + type);
         if (type != "wearable" && ce.TryGetProperty("textures", out _))
@@ -268,6 +271,7 @@ public sealed class LinksetManifest
                 throw new ImportException(label + ": the object folder '" + c.Folder + "' does not exist");
             c.Base = Text(ce, "base", where, required: false) ?? string.Empty;
             c.JointPositions = Flag(ce, "jointPositions", where);
+            c.AttachPoint = ReadAttachPoint(ce, where);
             c.Name = name ?? (c.Base.Length > 0 ? c.Base : Path.GetFileName(c.Folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)));
             return c;
         }
@@ -369,6 +373,16 @@ public sealed class LinksetManifest
             return null;
         if (v.ValueKind != JsonValueKind.Number || !v.TryGetInt32(out int n) || n < 0 || n > 255)
             throw new ImportException(where + ": \"" + key + "\" must be a whole number from 0 to 255");
+        return n;
+    }
+
+    /// <summary>The "attachPoint" of an object item: an attachment point number (7 the left foot, 8 the right foot), or null when left out.</summary>
+    private static int? ReadAttachPoint(JsonElement e, string where)
+    {
+        if (!e.TryGetProperty("attachPoint", out JsonElement v))
+            return null;
+        if (v.ValueKind != JsonValueKind.Number || !v.TryGetInt32(out int n) || n < 1 || n > MaxAttachPoint)
+            throw new ImportException(where + ": \"attachPoint\" must be a whole number from 1 to " + MaxAttachPoint.ToString(CultureInfo.InvariantCulture));
         return n;
     }
 

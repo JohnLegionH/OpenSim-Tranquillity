@@ -57,6 +57,10 @@ public class AttachPointContentsTests
     }
 
     [Fact]
+    public void TheHighestPointAcceptedIsTheRegionsHighest() =>
+        Assert.Equal((int)OpenMetaverse.AttachmentPoint.LastValid, LinksetManifest.MaxAttachPoint);
+
+    [Fact]
     public void AnAttachPointOnSomethingThatIsNotAnObjectIsRefused()
     {
         string contents = @"{ ""type"": ""wearable"", ""file"": ""alpha.wearable.txt"", ""name"": ""Test Alpha"", ""textures"": { ""22"": ""upper-alpha.png"", ""21"": ""lower-alpha.png"" }, ""attachPoint"": 8 }";
