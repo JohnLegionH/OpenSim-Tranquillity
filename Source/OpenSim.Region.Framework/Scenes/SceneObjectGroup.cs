@@ -962,9 +962,11 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         SceneObjectGroup sog = this;
         Scene scene = m_scene;
         scene.EventManager.TriggerGroupBeginInTransit(sog);
+        OpenSim.Framework.XtLog.Mark("P1-veh-detect", scene.Name, sog.UUID, $"name={sog.Name} sitters={sog.m_sittingAvatars.Count} pos={val}");
 
         Util.FireAndForget(delegate
         {
+            OpenSim.Framework.XtLog.Mark("P1-task-start", scene.Name, sog.UUID);
             bool crossed = false;
             try
             {
@@ -1182,7 +1184,11 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         // before the object's own physics body is touched: a physical object's CrossingStart takes it out of the
         // engine, and with it the ground under them
         if (entityTransfer is not null)
+        {
+            OpenSim.Framework.XtLog.Mark("P2-lookup-start", sogScene.Name, sog.UUID);
             destination = entityTransfer.GetObjectDestination(sog, val, out newpos);
+            OpenSim.Framework.XtLog.Mark("P2-lookup-end", sogScene.Name, sog.UUID);
+        }
         else
         {
             // No module to send the object with: it stays, as it did before, and is not taken for an object that left the world
@@ -1261,6 +1267,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
             sog.CaptureCrossingTargets(new Vector3(sogScene.RegionInfo.WorldLocX - destination.RegionLocX, sogScene.RegionInfo.WorldLocY - destination.RegionLocY, 0f));
 
         sog.CrossStep("motion-stopped");
+        OpenSim.Framework.XtLog.Mark("P3-motion-stopped", sogScene.Name, sog.UUID);
 
         if (sog.m_sittingAvatars.Count == 0 && riders is null)
         {
@@ -1291,7 +1298,10 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
                 return sog;
             }
 
-            if(!entityTransfer.checkAgentAccessToRegion(av, destination, newpos, ctx, out reason))
+            OpenSim.Framework.XtLog.Mark("P4-access-start", sogScene.Name, av.UUID);
+            bool xtAccess = entityTransfer.checkAgentAccessToRegion(av, destination, newpos, ctx, out reason);
+            OpenSim.Framework.XtLog.Mark("P4-access-end", sogScene.Name, av.UUID, $"ok={xtAccess}");
+            if(!xtAccess)
             {
                 sog.ReleaseStandingRiders(riders, curPos);
                 return sog;
@@ -1403,7 +1413,9 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
             if (!info.av.IsNPC)
                 expectedRiders.Add(info.av.UUID);
         }
+        OpenSim.Framework.XtLog.Mark("P5-held-probe-start", sogScene.Name, sog.UUID);
         bool held = !isTeleport && expectedRiders.Count > 0 && entityTransfer.SupportsHeldCrossing(destination);
+        OpenSim.Framework.XtLog.Mark("P5-held-probe-end", sogScene.Name, sog.UUID, $"held={held}");
 
         sog.CrossStep("before-send");
 
@@ -1412,6 +1424,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         state.SendHeld = held;
         state.Sending = true;
 
+        OpenSim.Framework.XtLog.Mark("P5-send-start", sogScene.Name, sog.UUID);
         bool sent = held
             ? entityTransfer.CrossPrimGroupIntoNewRegionHeld(destination, newpos, sog,
                 new OpenSim.Services.Interfaces.CrossingHoldRequest
@@ -1421,6 +1434,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
                 })
             : entityTransfer.CrossPrimGroupIntoNewRegion(destination, newpos, sog, true, false);
         state.Sending = false;
+        OpenSim.Framework.XtLog.Mark("P5-send-end", sogScene.Name, sog.UUID, $"sent={sent}");
 
         if (sent)
         {
@@ -1449,6 +1463,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
                     }
                 });
             }
+            if (avsToCrossFar.Count > 0) OpenSim.Framework.XtLog.Mark("P9-far-create-start", sogScene.Name, sog.UUID);
             bool crossedfar = false;
             foreach (ScenePresence av in avsToCrossFar)
             {
@@ -1460,6 +1475,8 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
 
             if(crossedfar)
                 Thread.Sleep(1000);
+
+            if (crossedfar) OpenSim.Framework.XtLog.Mark("P9-far-sleep1-end", sogScene.Name, sog.UUID);
 
             bool anyCrossed = false;
             bool recallTried = false;
@@ -1539,6 +1556,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
             if(crossedfar)
             {
                 Thread.Sleep(10000);
+                OpenSim.Framework.XtLog.Mark("P9-far-sleep10-end", sogScene.Name, sog.UUID);
                 foreach (ScenePresence av in avsToCrossFar)
                 {
                     if(av.IsChildAgent)

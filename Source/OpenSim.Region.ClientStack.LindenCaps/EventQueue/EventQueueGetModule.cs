@@ -208,6 +208,8 @@ public partial class  EventQueueGetModule : IEventQueue, INonSharedRegionModule
             if (queue != null)
             {
                 byte[] evData = Util.UTF8NBGetbytes(OSDParser.SerializeLLSDInnerXmlString(data));
+                if (OpenSim.Framework.XtLog.Enabled)
+                    OpenSim.Framework.XtLog.Mark("P12-eq-queued", m_scene.Name, avatarID, "msg=" + OpenSim.Framework.XtLog.EventName(evData));
                 lock (queue)
                     queue.Enqueue(evData);
             }
@@ -232,6 +234,8 @@ public partial class  EventQueueGetModule : IEventQueue, INonSharedRegionModule
             Queue<byte[]> queue = GetQueue(avatarID);
             if (queue != null)
             {
+                if (OpenSim.Framework.XtLog.Enabled && evData is not null)
+                    OpenSim.Framework.XtLog.Mark("P12-eq-queued", m_scene.Name, avatarID, "msg=" + OpenSim.Framework.XtLog.EventName(evData));
                 lock (queue)
                     queue.Enqueue(evData);
             }
@@ -258,6 +262,8 @@ public partial class  EventQueueGetModule : IEventQueue, INonSharedRegionModule
             Queue<byte[]> queue = GetQueue(avatarID);
             if (queue != null)
             {
+                if (OpenSim.Framework.XtLog.Enabled)
+                    OpenSim.Framework.XtLog.Mark("P12-eq-queued", m_scene.Name, avatarID, "msg=" + OpenSim.Framework.XtLog.EventName(o.ToArray()));
                 lock (queue)
                     queue.Enqueue(o.ToArray());
             }
@@ -465,6 +471,13 @@ public partial class  EventQueueGetModule : IEventQueue, INonSharedRegionModule
 
                 elements.Add(element);
                 totalSize += element.Length;
+                if (OpenSim.Framework.XtLog.Enabled)
+                {
+                    string xtName = OpenSim.Framework.XtLog.EventName(element);
+                    OpenSim.Framework.XtLog.Mark("P12-eq-dequeued", m_scene.Name, pAgentId, "msg=" + xtName);
+                    (OpenSim.Framework.XtLog.PendingEvents ??= new()).Add(xtName);
+                    OpenSim.Framework.XtLog.PendingAgent = pAgentId.ToString();
+                }
             }
         }
 

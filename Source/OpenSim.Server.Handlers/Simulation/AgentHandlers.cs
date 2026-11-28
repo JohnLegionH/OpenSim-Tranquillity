@@ -635,6 +635,7 @@ public class AgentSimpleHandler : SimpleStreamHandler
         bool result = true;
         if ("AgentData".Equals(messageType))
         {
+            OpenSim.Framework.XtLog.Mark("P11-ua-rx", regionname, args.ContainsKey("agent_uuid") ? args["agent_uuid"].AsString() : "-");
             AgentData agent = new AgentData();
             try
             {
@@ -648,6 +649,7 @@ public class AgentSimpleHandler : SimpleStreamHandler
                 return;
             }
 
+            OpenSim.Framework.XtLog.Mark("P11-ua-unpacked", regionname, agent.AgentID);
             //agent.Dump();
             // This is one of the meanings of PUT agent
             result = UpdateAgent(destination, agent);

@@ -2321,6 +2321,7 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
             client.Name, Scene.Name, AbsolutePosition);
 
         m_inTransit = true;
+        OpenSim.Framework.XtLog.Mark("P15-cm-start", Scene.Name, UUID);
 
         try
         {
@@ -2332,6 +2333,8 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
                     // The sending region never sent the UpdateAgent data, we have to refuse
                     return;
             }
+
+            OpenSim.Framework.XtLog.Mark("P15-ua-wait-end", Scene.Name, UUID);
 
             //m_log.LogDebug("[CompleteMovement] WaitForUpdateAgent: {0}ms", Util.EnvironmentTickCountSubtract(ts));
 
@@ -2374,6 +2377,8 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
             {
                 return; // how?
             }
+
+            OpenSim.Framework.XtLog.Mark("P15-root-end", Scene.Name, UUID);
 
             //m_log.LogDebug("[CompleteMovement] MakeRootAgent: {0}ms", Util.EnvironmentTickCountSubtract(ts));
 
@@ -2439,6 +2444,7 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
             }
 
             ControllingClient.MoveAgentIntoRegion(m_scene.RegionInfo, AbsolutePosition, look);
+            OpenSim.Framework.XtLog.Mark("P15-amc-queued", Scene.Name, UUID);
 
             bool isHGTP = (m_teleportFlags & TeleportFlags.ViaHGLogin) != 0;
 
@@ -2626,6 +2632,7 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         m_scene.NoteArrival(UUID);
 
         m_log.LogDebug("[CompleteMovement] end: {0}ms", Util.EnvironmentTickCountSubtract(ts));
+        OpenSim.Framework.XtLog.Mark("P15-cm-end", Scene.Name, UUID);
     }
 
     /// <summary>
@@ -4919,6 +4926,9 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         //m_log.LogDebug(
         //    "[SCENE PRESENCE]: Testing border check for projected position {0} of {1} in {2}",
         //       pos2, Name, Scene.Name);
+
+        if (!IsInTransit)
+            OpenSim.Framework.XtLog.Mark("P10-walker-detect", Scene.Name, UUID, $"pos={pos2} vel={vel} fly={Flying}");
 
         if (!CrossToNewRegion() && m_requestedSitTargetID == 0)
         {

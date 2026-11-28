@@ -940,8 +940,10 @@ public class LLUDPServer : OpenSimUDPBase
         int pos = 11;
 
         int count = 0;
+        System.Collections.Generic.List<uint> xtSeqs = OpenSim.Framework.XtLog.Enabled ? new() : null;
         while (udpClient.PendingAcks.Dequeue(out uint ack))
         {
+            xtSeqs?.Add(ack);
             Utils.UIntToBytes(ack, data, pos); pos += 4;
             ++count;
 
@@ -964,6 +966,8 @@ public class LLUDPServer : OpenSimUDPBase
             buf.DataLength = pos;
             SendUDPPacket(udpClient, buf, ThrottleOutPacketType.Unknown);
         }
+        if (xtSeqs is { Count: > 0 })
+            OpenSim.Framework.XtLog.Mark("P14-ack-flush", m_scene.Name, udpClient.AgentID, $"seq={string.Join(",", xtSeqs)} ep={udpClient.RemoteEndPoint}");
     }
 
     static private readonly byte[] StartPingCheckHeader = new byte[] {
@@ -1101,6 +1105,8 @@ public class LLUDPServer : OpenSimUDPBase
             int ackCount = 0;
             while (dataLength + 5 < MTU && ackCount < 256 && udpClient.PendingAcks.Dequeue(out uint ack))
             {
+                if (OpenSim.Framework.XtLog.Enabled)
+                    OpenSim.Framework.XtLog.Mark("P14-ack-piggyback", m_scene.Name, udpClient.AgentID, $"seq={ack} ep={udpClient.RemoteEndPoint}");
                 Utils.UIntToBytesBig(ack, buffer.Data, dataLength);
                 dataLength += 4;
                 ++ackCount;
@@ -1273,6 +1279,7 @@ public class LLUDPServer : OpenSimUDPBase
             // UseCircuitCode handling
             if (packet.Type == PacketType.UseCircuitCode)
             {
+                OpenSim.Framework.XtLog.Mark("P13-udp-rx-new", m_scene.Name, ((UseCircuitCodePacket)packet).CircuitCode.ID, $"type=UseCircuitCode seq={packet.Header.Sequence} resent={packet.Header.Resent} ep={endPoint}");
                 lock (m_pendingCache)
                 {
                     if (m_pendingCache.Contains(endPoint))
@@ -1309,6 +1316,9 @@ public class LLUDPServer : OpenSimUDPBase
         }
 
         LLUDPClient udpClient = lclient.UDPClient;
+
+        if (packet.Type == PacketType.UseCircuitCode || packet.Type == PacketType.CompleteAgentMovement)
+            OpenSim.Framework.XtLog.Mark("P13-udp-rx", m_scene.Name, lclient.AgentId, $"type={packet.Type} seq={packet.Header.Sequence} resent={packet.Header.Resent} ep={endPoint}");
 
         if (!udpClient.IsConnected)
         {
@@ -1370,6 +1380,10 @@ public class LLUDPServer : OpenSimUDPBase
             //    packet.Type, packet.Header.Sequence, client.Name, m_scene.Name);
 
             udpClient.PendingAcks.Enqueue(packet.Header.Sequence);
+
+            // TEMPORARY scratch-only switch
+            if (packet.Type == PacketType.UseCircuitCode && OpenSim.Framework.XtLog.AckNow)
+                SendAckImmediate(endPoint, packet.Header.Sequence);
 
             // This is a somewhat odd sequence of steps to pull the client.BytesSinceLastACK value out,
             // add the current received bytes to it, test if 2*MTU bytes have been sent, if so remove
@@ -1729,6 +1743,8 @@ public class LLUDPServer : OpenSimUDPBase
 
     public virtual void SendAckImmediate(IPEndPoint remoteEndpoint, PacketAckPacket ack)
     {
+        if (OpenSim.Framework.XtLog.Enabled)
+            OpenSim.Framework.XtLog.Mark("P14-ack-immediate", m_scene.Name, remoteEndpoint, $"seq={string.Join(",", System.Array.ConvertAll(ack.Packets, a => a.ID))}");
         byte[] packetData = ack.ToBytes();
         int length = packetData.Length;
 

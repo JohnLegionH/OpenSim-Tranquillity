@@ -4899,6 +4899,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
     /// </summary>
     public void SendEntityUpdate(ISceneEntity entity, PrimUpdateFlags updateFlags)
     {
+        XtUpdate(entity, "queued");
         if (entity is SceneObjectPart p)
         {
             SceneObjectGroup g = p.ParentGroup;
@@ -4992,6 +4993,22 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             0, // extra
             14 // ID (high frequency)
             };
+
+    // TEMPORARY measurement aid: vehicle roots and the viewer's own avatar
+    private void XtUpdate(ISceneEntity entity, string stage)
+    {
+        if (!OpenSim.Framework.XtLog.Enabled)
+            return;
+        if (entity is SceneObjectPart p)
+        {
+            if (p.ParentGroup is not null && p == p.ParentGroup.RootPart && p.VehicleType != 0)
+                OpenSim.Framework.XtLog.Mark("P8-veh-update-" + stage, m_scene.Name, p.UUID,
+                    $"to={AgentId} pos={p.AbsolutePosition} vel={p.Velocity}");
+        }
+        else if (entity is ScenePresence sp && sp.UUID == AgentId)
+            OpenSim.Framework.XtLog.Mark("P17-own-update-" + stage, m_scene.Name, sp.UUID,
+                $"child={sp.IsChildAgent} parent={sp.ParentID} pos={sp.AbsolutePosition} vel={sp.Velocity}");
+    }
 
     private void ProcessEntityUpdates(int maxUpdatesBytes)
     {
@@ -5364,6 +5381,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
             EntityUpdate eu;
             for(int indx = 0; indx < objectUpdates.Count; ++indx)
             {
+                XtUpdate(objectUpdates[indx].Entity, "written-full");
                 eu = objectUpdates[indx];
                 lastpos = zc.Position;
                 lastzc = zc.ZeroCount;
@@ -5630,6 +5648,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
                         {
                             eu = terseUpdates[indx++];
                             lastpos = pos;
+                            XtUpdate(eu.Entity, "written-terse");
                             if(eu.Entity is ScenePresence sp)
                                 CreateAvatartImprovedTerseBlock(sp, ref data);
                             else
@@ -9459,6 +9478,7 @@ public class LLClientView : IClientAPI, IClientCore, IClientIM, IClientChat, ICl
         //m_log.LogDebug("[LLClientView] HandleCompleteAgentMovement");
 
         CompleteAgentMovementPacket cmp = (CompleteAgentMovementPacket)Pack;
+        OpenSim.Framework.XtLog.Mark("P15-cm-handler", c.Scene.Name, c.AgentId);
         if(cmp.AgentData.CircuitCode == c.m_circuitCode)
             c.OnCompleteMovementToRegion?.Invoke(c, true);
     }

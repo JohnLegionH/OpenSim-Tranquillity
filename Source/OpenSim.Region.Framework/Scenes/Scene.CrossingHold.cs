@@ -166,6 +166,7 @@ public partial class Scene
     /// <summary>The receiving region reports the crossing of an object this region sent as complete: this region lets go of it.</summary>
     public void CrossingCompleted(UUID objectID, IList<UUID> missingRiders)
     {
+        OpenSim.Framework.XtLog.Mark("P16-completed-received", Name, objectID);
         SceneObjectGroup group;
         lock (m_crossingHoldLock)
         {
@@ -395,6 +396,7 @@ public partial class Scene
     /// </summary>
     private void ReleaseArrivalHold(ArrivalHold hold)
     {
+        OpenSim.Framework.XtLog.Mark("P16-hold-release", Name, "-");
         List<UUID> missing;
         List<SceneObjectGroup> deferred;
         lock (m_crossingHoldLock)
@@ -442,6 +444,7 @@ public partial class Scene
 
         try
         {
+            OpenSim.Framework.XtLog.Mark("P16-completed-posted", Name, group.UUID);
             SimulationService?.CrossingCompleted(hold.Source, group.UUID, missing);
         }
         catch (Exception e)

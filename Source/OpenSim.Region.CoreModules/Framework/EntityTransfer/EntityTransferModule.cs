@@ -1832,9 +1832,12 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
 
         string homeURI = m_scene.GetAgentHomeURI(agentID);
        
-        if (!m_scene.SimulationService.QueryAccess(
+        OpenSim.Framework.XtLog.Mark("P4-access-start", m_scene.Name, agentID, "path=walker");
+        bool xtOk = m_scene.SimulationService.QueryAccess(
                 neighbourRegion, agentID, homeURI, false, newpos,
-                m_scene.GetFormatsOffered(), ctx, out failureReason))
+                m_scene.GetFormatsOffered(), ctx, out failureReason);
+        OpenSim.Framework.XtLog.Mark("P4-access-end", m_scene.Name, agentID, $"path=walker ok={xtOk}");
+        if (!xtOk)
         {
             // remember the fail
             m_bannedRegionCache.Add(neighbourRegion.RegionHandle, agentID, 60);
@@ -1852,6 +1855,7 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
         ag.IsInTransit = true;
         WorkManager.RunInThreadPool(delegate
         {
+            OpenSim.Framework.XtLog.Mark("P10-task-start", m_scene.Name, ag.UUID);
             CrossAsync(ag, isFlying);
             if (ag.IsDeleted)
                 return;
@@ -2004,6 +2008,7 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
 
             m_entityTransferStateMachine.SetInTransit(agent.UUID);
             agent.RemoveFromPhysicalScene();
+            OpenSim.Framework.XtLog.Mark("P10-physics-removed", m_scene.Name, agent.UUID);
 
             if (!CrossAgentIntoNewRegionMain(agent, pos, neighbourRegion, endpoint, isFlying, ctx))
             {
@@ -2028,8 +2033,10 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
         UUID agentUUID = agent.UUID;
         try
         {
+            OpenSim.Framework.XtLog.Mark("P11-copyto-start", m_scene.Name, agent.UUID);
             AgentData cAgent = new();
             agent.CopyTo(cAgent,true);
+            OpenSim.Framework.XtLog.Mark("P11-copyto-end", m_scene.Name, agent.UUID, $"attachments={cAgent.AttachmentObjects?.Count ?? 0}");
 
             cAgent.Position = pos;
             cAgent.ChildrenCapSeeds = agent.KnownRegions;
@@ -2053,7 +2060,10 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
             // Beyond this point, extra cleanup is needed beyond removing transit state
             m_entityTransferStateMachine.UpdateInTransit(agentUUID, AgentTransferState.Transferring);
 
-            if (sucess && !m_scene.SimulationService.UpdateAgent(neighbourRegion, cAgent, ctx))
+            OpenSim.Framework.XtLog.Mark("P11-ua-start", m_scene.Name, agent.UUID);
+            bool xtUa = !sucess || m_scene.SimulationService.UpdateAgent(neighbourRegion, cAgent, ctx);
+            OpenSim.Framework.XtLog.Mark("P11-ua-end", m_scene.Name, agent.UUID, $"ok={xtUa}");
+            if (sucess && !xtUa)
             {
                 sucess = false;
                 reason = "agent update failed";
@@ -2111,6 +2121,7 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
         if((agent.m_crossingFlags & 2) != 0)
             vel2 = new Vector3(agent.Velocity.X, agent.Velocity.Y, 0);
 
+        OpenSim.Framework.XtLog.Mark("P12-crossedregion-call", m_scene.Name, agentUUID);
         if (m_eqModule != null)
         {
             m_eqModule.CrossRegion(
@@ -3116,6 +3127,7 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
             }
 
             m_scene.CrossingStepHook?.Invoke(so, "destination-add");
+            OpenSim.Framework.XtLog.Mark("P7-obj-added", m_scene.Name, so.UUID);
 
             // For attachments, we need to wait until the agent is root
             // before we restart the scripts, or else some functions won't work.
@@ -3124,12 +3136,14 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
             try
             {
                 m_scene.CrossingStepHook?.Invoke(so, "script-start");
+                OpenSim.Framework.XtLog.Mark("P7-scripts-start", m_scene.Name, so.UUID);
 
                 so.RootPart.ParentGroup.CreateScriptInstances(0, false, m_scene.DefaultScriptEngine, GetStateSource(so));
 
                 // An object that arrived with riders starts when they have arrived (Scene.IncomingCreateObject)
                 if (!so.HeldForRiders)
                     so.ResumeScripts();
+                OpenSim.Framework.XtLog.Mark("P7-scripts-end", m_scene.Name, so.UUID);
             }
             catch (Exception e)
             {

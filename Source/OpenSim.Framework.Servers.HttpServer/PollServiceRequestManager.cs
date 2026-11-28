@@ -148,8 +148,14 @@ public class PollServiceRequestManager
             {
                 try
                 {
+                    XtLog.PendingEvents?.Clear();
                     Hashtable responsedata = req.PollServiceArgs.GetEvents(req.RequestID, req.PollServiceArgs.Id);
                     req.DoHTTPGruntWork(responsedata);
+                    if (XtLog.PendingEvents is { Count: > 0 })
+                    {
+                        XtLog.Mark("P12-eq-written", "-", XtLog.PendingAgent, "msg=" + string.Join(",", XtLog.PendingEvents));
+                        XtLog.PendingEvents.Clear();
+                    }
                 }
                 catch { }
             }

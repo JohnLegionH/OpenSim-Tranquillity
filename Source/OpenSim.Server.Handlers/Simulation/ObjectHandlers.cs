@@ -154,6 +154,7 @@ public class ObjectSimpleHandler : SimpleStreamHandler
 
         IScene s = m_SimulationService.GetScene(destination.RegionID);
         ISceneObject sog = null;
+        OpenSim.Framework.XtLog.Mark("P6-obj-rx", s?.Name, destination.RegionID, $"bytes={sogXmlStr.Length}");
         try
         {
             //m_log.LogDebug("[OBJECT HANDLER]: received {0}", sogXmlStr);
@@ -202,6 +203,8 @@ public class ObjectSimpleHandler : SimpleStreamHandler
             source.ServerURI = args["hold_source_uri"].AsString();
             hold = new CrossingHoldRequest { Source = source, ExpectedRiders = ReadIds(riders) };
         }
+
+        OpenSim.Framework.XtLog.Mark("P6-deserialised", s.Name, sog.UUID);
 
         bool result = false;
         try

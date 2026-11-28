@@ -4807,6 +4807,7 @@ Label_GroupsDone:
         // or TeleportFinish (for the v2 teleport protocol).  This triggers the viewer to send
         // a UseCircuitCode packet which in turn calls AddNewAgent which finally creates the ScenePresence.
         ScenePresence sp = WaitGetScenePresence(cAgentData.AgentID);
+        OpenSim.Framework.XtLog.Mark("P11-presence-found", Name, cAgentData.AgentID, $"found={sp is not null}");
 
         if (sp is not null)
         {
@@ -4825,6 +4826,7 @@ Label_GroupsDone:
             }
 
             sp.UpdateChildAgent(cAgentData);
+            OpenSim.Framework.XtLog.Mark("P11-applied", Name, cAgentData.AgentID);
 
             if (cAgentData.SenderWantsToWaitForRoot && !WaitForRoot(sp))
                 return false;
